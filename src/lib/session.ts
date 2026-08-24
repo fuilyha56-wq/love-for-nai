@@ -1,4 +1,9 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from "node:crypto";
 import { cookies } from "next/headers";
 
 export type LfnSession = {
@@ -11,28 +16,36 @@ export type LfnSession = {
 const COOKIE_NAME = "lfn_session";
 const secret = () =>
   process.env.LFN_SESSION_SECRET || "lfn-development-secret-change-me";
-const sign = (value: string) =>
-  createHmac("sha256", secret()).update(value).digest("base64url");
+const encryptionKey = () => createHash("sha256").update(secret()).digest();
 
 export function encodeSession(session: LfnSession): string {
-  const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
-  return `${payload}.${sign(payload)}`;
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const encrypted = Buffer.concat([
+    cipher.update(JSON.stringify(session), "utf8"),
+    cipher.final(),
+  ]);
+  return [iv, cipher.getAuthTag(), encrypted]
+    .map((part) => part.toString("base64url"))
+    .join(".");
 }
 
 export function decodeSession(raw?: string): LfnSession | null {
   if (!raw) return null;
-  const [payload, signature] = raw.split(".");
-  if (!payload || !signature) return null;
-  const expected = sign(payload);
-  if (
-    signature.length !== expected.length ||
-    !timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
-  )
-    return null;
   try {
-    const session = JSON.parse(
-      Buffer.from(payload, "base64url").toString(),
-    ) as LfnSession;
+    const [ivRaw, tagRaw, encryptedRaw] = raw.split(".");
+    if (!ivRaw || !tagRaw || !encryptedRaw) return null;
+    const decipher = createDecipheriv(
+      "aes-256-gcm",
+      encryptionKey(),
+      Buffer.from(ivRaw, "base64url"),
+    );
+    decipher.setAuthTag(Buffer.from(tagRaw, "base64url"));
+    const decrypted = Buffer.concat([
+      decipher.update(Buffer.from(encryptedRaw, "base64url")),
+      decipher.final(),
+    ]);
+    const session = JSON.parse(decrypted.toString("utf8")) as LfnSession;
     return session.expiresAt > Date.now() ? session : null;
   } catch {
     return null;
@@ -47,7 +60,7 @@ export const sessionCookie = {
   name: COOKIE_NAME,
   options: {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.LFN_COOKIE_SECURE === "true",
     sameSite: "lax" as const,
     path: "/",
     maxAge: 604800,

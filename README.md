@@ -23,7 +23,7 @@ docker compose up -d --build
 
 默认暴露 `21142` 端口，可通过 `LFN_PORT` 调整。容器通过 `host.docker.internal` 访问宿主机上的 NewAPI；Linux Compose 已配置 `host-gateway`。
 
-必须将 `LFN_SESSION_SECRET` 替换为至少 32 字节的随机值。LFN 不保存用户密码，NewAPI 上游会话仅保存在签名的 `HttpOnly` Cookie 中。
+必须将 `LFN_SESSION_SECRET` 替换为至少 32 字节的随机值。LFN 不保存用户密码，NewAPI 上游会话仅保存在 AES-GCM 加密的 `HttpOnly` Cookie 中。使用 HTTPS 域名后应将 `LFN_COOKIE_SECURE` 改为 `true`；纯 HTTP IP 预览保持为 `false`。
 
 ## 验证
 
