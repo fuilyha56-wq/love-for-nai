@@ -16,6 +16,7 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -23,14 +24,14 @@ type Props = { userName: string; authenticated: boolean };
 type Me = { user?: { balance: number | null; group: string } };
 const sizes = ["832 × 1216", "1024 × 1024", "1216 × 832"];
 const models = [
-  "NAI Diffusion V5 Full",
-  "NAI Diffusion V5 Curated",
-  "NAI Diffusion V4.5 Full",
-  "NAI Diffusion V3",
+  { id: "nai-v5-full", name: "NAI Diffusion V5 Full" },
+  { id: "nai-v5-curated", name: "NAI Diffusion V5 Curated" },
+  { id: "nai-v4.5-full", name: "NAI Diffusion V4.5 Full" },
+  { id: "nai-v3", name: "NAI Diffusion V3" },
 ];
 
 export default function ImageStudio({ userName, authenticated }: Props) {
-  const [model, setModel] = useState(models[0]);
+  const [model, setModel] = useState(models[0].id);
   const [size, setSize] = useState(sizes[0]);
   const [steps, setSteps] = useState(28);
   const [scale, setScale] = useState(5);
@@ -43,6 +44,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [resultImage, setResultImage] = useState("");
   useEffect(() => {
     if (authenticated)
       fetch("/api/me")
@@ -76,7 +79,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             onChange={(event) => setModel(event.target.value)}
           >
             {models.map((item) => (
-              <option key={item}>{item}</option>
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
             ))}
           </select>
         </Control>
@@ -142,12 +147,40 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     </>
   );
 
-  function generate() {
-    setNotice(
-      authenticated
-        ? "真实生图暂未开放，当前版本先验证账号、余额与工作台交互，避免测试期间误扣费。"
-        : "体验模式不会发送真实请求。登录后可以读取你的 NewAPI 余额与分组。",
-    );
+  async function generate() {
+    if (!authenticated) {
+      setNotice(
+        "体验模式不会发送真实请求。登录后可以读取你的 NewAPI 余额并真实生成图片。",
+      );
+      return;
+    }
+    setGenerating(true);
+    setNotice("");
+    const [width, height] = size.split(" × ").map(Number);
+    try {
+      const response = await fetch("/api/images/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          prompt,
+          negativePrompt: negative,
+          width,
+          height,
+          steps,
+          scale,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "生成失败");
+      setResultImage(result.image);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "生成失败，请稍后重试",
+      );
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
@@ -216,18 +249,31 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             <div className="absolute left-5 top-4 flex items-center gap-2 text-xs text-[var(--muted)]">
               <Sparkles size={14} /> 当前画布 · {size}
             </div>
-            <div className="flex aspect-[832/1216] max-h-[calc(100vh-310px)] max-w-full flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-8 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)]">
-              <WandSparkles
-                className="mb-5 text-[var(--rose)]"
-                size={38}
-                strokeWidth={1.5}
-              />
-              <h2 className="font-[var(--font-display)] text-2xl">
-                画布等待你的想象
-              </h2>
-              <p className="mt-3 max-w-xs text-sm leading-6 text-[var(--muted)]">
-                调整提示词与参数，然后开始生成。结果会保留完整参数，方便再次创作。
-              </p>
+            <div className="flex aspect-[832/1216] max-h-[calc(100vh-310px)] max-w-full flex-col items-center justify-center overflow-hidden border border-[var(--line)] bg-[#ebe9e2] px-8 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)]">
+              {resultImage ? (
+                <Image
+                  src={resultImage}
+                  alt="NovelAI 生成结果"
+                  width={832}
+                  height={1216}
+                  unoptimized
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <>
+                  <WandSparkles
+                    className="mb-5 text-[var(--rose)]"
+                    size={38}
+                    strokeWidth={1.5}
+                  />
+                  <h2 className="font-[var(--font-display)] text-2xl">
+                    画布等待你的想象
+                  </h2>
+                  <p className="mt-3 max-w-xs text-sm leading-6 text-[var(--muted)]">
+                    调整提示词与参数，然后开始生成。结果会保留完整参数，方便再次创作。
+                  </p>
+                </>
+              )}
             </div>
           </div>
           {notice && (
@@ -245,10 +291,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </div>
             <button
               onClick={generate}
+              disabled={generating}
               className="flex h-12 flex-1 items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)]"
             >
               <Sparkles size={18} />
-              开始生成
+              {generating ? "生成中，请稍候..." : "开始生成"}
             </button>
             <button
               title="下载"
