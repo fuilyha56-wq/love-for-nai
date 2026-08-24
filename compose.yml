@@ -1,0 +1,20 @@
+services:
+  lfn-web:
+    build: .
+    container_name: love-for-nai
+    restart: unless-stopped
+    environment:
+      NEWAPI_BASE_URL: ${NEWAPI_BASE_URL:-http://host.docker.internal:3000}
+      QUOTA_PER_UNIT: ${QUOTA_PER_UNIT:-500000}
+      LFN_SESSION_SECRET: ${LFN_SESSION_SECRET:?LFN_SESSION_SECRET is required}
+      SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${LFN_PORT:-41800}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
