@@ -11,19 +11,19 @@ export async function POST(request: Request) {
     );
 
   const body = (await request.json()) as { code?: string };
+  // 备用码只在上游存哈希，格式未知，这里只做长度与字符集兜底。
   const code = body.code?.trim().replace(/\s+/g, "") || "";
-  if (!/^[0-9]{6}$|^[A-Za-z0-9-]{8,20}$/.test(code))
+  if (!/^[A-Za-z0-9-]{6,32}$/.test(code))
     return NextResponse.json(
       { message: "请输入 6 位验证码或备用恢复码" },
       { status: 400 },
     );
 
   try {
-    const { response, result } = await callNewApi(
-      "/api/user/login/2fa",
-      { code },
-      pending.upstreamCookie,
-    );
+    const { response, result } = await callNewApi("/api/user/login/2fa", {
+      flow_token: pending.flowToken,
+      code,
+    });
     if (!result.success || !result.data)
       return NextResponse.json(
         { message: result.message || "验证码不正确" },

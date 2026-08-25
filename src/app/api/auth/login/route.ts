@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 import { encodePendingSession, pendingCookie } from "@/lib/session";
-import {
-  callNewApi,
-  establishSession,
-  requiresTwoFactor,
-  upstreamCookieOf,
-} from "@/lib/login";
+import { callNewApi, establishSession, requiresTwoFactor } from "@/lib/login";
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
@@ -27,17 +22,17 @@ export async function POST(request: Request) {
       );
 
     if (requiresTwoFactor(result)) {
-      const pending = upstreamCookieOf(response);
-      if (!pending)
+      const flowToken = result.data.flow_token;
+      if (!flowToken)
         return NextResponse.json(
-          { message: "上游未返回两步验证会话" },
+          { message: "上游未返回两步验证令牌" },
           { status: 502 },
         );
       const next = NextResponse.json({ twoFactorRequired: true });
       next.cookies.set(
         pendingCookie.name,
         encodePendingSession({
-          upstreamCookie: pending,
+          flowToken,
           expiresAt: Date.now() + 300_000,
         }),
         pendingCookie.options,

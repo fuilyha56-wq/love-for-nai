@@ -19,20 +19,17 @@ export type NewApiLoginResponse = {
     access_token?: string;
     require_2fa?: boolean;
     two_fa_required?: boolean;
+    flow_token?: string;
   };
 };
 
 export async function callNewApi(
   path: string,
   body: unknown,
-  cookie?: string,
 ): Promise<{ response: Response; result: NewApiLoginResponse }> {
   const response = await fetch(`${newApiBaseUrl()}${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
     cache: "no-store",
     signal: AbortSignal.timeout(20_000),

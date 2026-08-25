@@ -14,9 +14,9 @@ export type LfnSession = {
   accessToken?: string;
   expiresAt: number;
 };
-// 2FA 第一步与第二步之间的临时状态，只保存上游待验证 Cookie。
+// 2FA 第一步与第二步之间的临时状态，只保存上游 flow_token。
 export type LfnPendingSession = {
-  upstreamCookie: string;
+  flowToken: string;
   expiresAt: number;
 };
 const COOKIE_NAME = "lfn_session";
@@ -70,7 +70,7 @@ export function encodePendingSession(pending: LfnPendingSession): string {
 export async function getPendingSession(): Promise<LfnPendingSession | null> {
   const raw = (await cookies()).get(PENDING_COOKIE_NAME)?.value;
   const decoded = decodeSession(raw) as unknown as LfnPendingSession | null;
-  return decoded?.upstreamCookie ? decoded : null;
+  return decoded?.flowToken ? decoded : null;
 }
 
 const cookieOptions = {
