@@ -94,10 +94,35 @@ export async function POST(request: Request) {
         { message: "上游返回了未支持的二进制响应" },
         { status: 502 },
       );
-    const result = await upstream.json();
+    // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
+    const text = await upstream.text();
+    let result: Record<string, unknown> & {
+      error?: { message?: string };
+      detail?: string;
+      message?: string;
+    } = {};
+    if (text.trim()) {
+      try {
+        result = JSON.parse(text);
+      } catch {
+        return NextResponse.json(
+          {
+            message: explainUpstreamFailure(
+              text.slice(0, 200),
+              upstream.status,
+              body,
+            ),
+          },
+          { status: upstream.ok ? 502 : upstream.status },
+        );
+      }
+    }
     if (!upstream.ok || result.error || result.detail) {
       const raw =
-        result.error?.message || result.detail || result.message || "上游操作失败";
+        result.error?.message ||
+        result.detail ||
+        result.message ||
+        (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
       return NextResponse.json(
         { message: explainUpstreamFailure(raw, upstream.status, body) },
         { status: upstream.status || 502 },
