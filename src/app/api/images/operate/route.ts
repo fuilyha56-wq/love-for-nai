@@ -28,8 +28,12 @@ export async function POST(request: Request) {
     );
   const body = (await request.json()) as Record<string, unknown> & {
     operation?: string;
+    model?: string;
   };
   const operation = body.operation || "generate";
+  const model = body.model;
+  if (!model)
+    return NextResponse.json({ message: "缺少模型参数" }, { status: 400 });
   if (["upscale", "annotate"].includes(operation)) {
     return NextResponse.json(
       {
@@ -42,7 +46,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
 
   try {
-    const key = await getImageToken(session);
+    const key = await getImageToken(session, model);
     const baseUrl = newApiBaseUrl();
     const endpoint =
       operation === "suggest-tags"

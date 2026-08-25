@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     );
 
   try {
-    const key = await getChatToken(session);
+    const key = await getChatToken(session, body.model);
     const upstream = await fetch(`${newApiBaseUrl()}/v1/chat/completions`, {
       method: "POST",
       headers: {

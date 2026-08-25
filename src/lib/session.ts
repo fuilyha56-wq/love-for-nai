@@ -12,6 +12,8 @@ export type LfnSession = {
   displayName: string;
   upstreamCookie: string;
   accessToken?: string;
+  // 系统访问令牌长期有效，与登录派发的 access_token 鉴权方式不同。
+  systemToken?: string;
   expiresAt: number;
 };
 // 2FA 第一步与第二步之间的临时状态，只保存上游 flow_token。

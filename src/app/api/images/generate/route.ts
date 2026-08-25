@@ -36,7 +36,7 @@ export async function POST(request: Request) {
   ];
   const baseUrl = newApiBaseUrl();
   try {
-    const key = await getImageToken(session);
+    const key = await getImageToken(session, body.model);
     const upstream = await fetch(`${baseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
