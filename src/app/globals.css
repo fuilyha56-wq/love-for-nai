@@ -383,7 +383,9 @@ button {
 }
 .popup-select-menu {
   z-index: 10000;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   overscroll-behavior: contain;
   scrollbar-width: none;
   padding: 4px;
@@ -396,6 +398,42 @@ button {
   backdrop-filter: blur(20px);
   transform-origin: top left;
   animation: popup-spring 260ms cubic-bezier(0.2, 1.45, 0.4, 1) both;
+}
+.popup-select-options {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.popup-select-options::-webkit-scrollbar {
+  display: none;
+}
+.popup-select-search {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+  padding: 4px 8px 7px;
+  color: var(--muted);
+}
+.popup-select-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  outline: none;
+}
+.popup-select-empty {
+  padding: 10px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
 }
 .popup-select-option {
   display: flex;

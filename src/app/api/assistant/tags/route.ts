@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getImageToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
+import { getChatToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
 
 type AssistantPayload = {
   model?: string;
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     );
 
   try {
-    const key = await getImageToken(session);
+    const key = await getChatToken(session);
     const upstream = await fetch(`${newApiBaseUrl()}/v1/chat/completions`, {
       method: "POST",
       headers: {

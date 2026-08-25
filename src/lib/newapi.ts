@@ -14,9 +14,10 @@ export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 // 绘图渠道只服务这些分组；Draw-Limit 由管理员分配，用户不可自选。
 const DRAW_GROUPS = ["Draw", "Draw-Limit", "Draw-Limit-2"];
 const LFN_TOKEN_PREFIX = "lfn-image-studio";
+const LFN_CHAT_TOKEN_PREFIX = "lfn-assistant";
 
-function tokenNameFor(group: string): string {
-  return `${LFN_TOKEN_PREFIX}-${group.toLowerCase()}`;
+function tokenNameFor(prefix: string, group: string): string {
+  return `${prefix}-${group.toLowerCase()}`;
 }
 
 export function newApiBaseUrl(): string {
@@ -65,7 +66,34 @@ function pickDrawGroup(candidates: Array<string | undefined>): string | null {
   return null;
 }
 
-export async function getImageToken(session: Session): Promise<string> {
+type TokenPurpose = {
+  prefix: string;
+  acceptsGroup: (group: string) => boolean;
+  pickGroup: (candidates: string[]) => string | null;
+  missingGroupMessage: string;
+};
+
+const imagePurpose: TokenPurpose = {
+  prefix: LFN_TOKEN_PREFIX,
+  acceptsGroup: (group) => DRAW_GROUPS.includes(group),
+  pickGroup: pickDrawGroup,
+  missingGroupMessage:
+    "当前账号没有绘图分组权限，请联系管理员加入 Draw 或 Draw-Limit 分组",
+};
+
+// 文本模型不在绘图渠道上，必须使用非绘图分组，否则 NewAPI 找不到渠道。
+const chatPurpose: TokenPurpose = {
+  prefix: LFN_CHAT_TOKEN_PREFIX,
+  acceptsGroup: (group) => !DRAW_GROUPS.includes(group),
+  pickGroup: (candidates) =>
+    candidates.find((group) => !DRAW_GROUPS.includes(group)) ?? null,
+  missingGroupMessage: "当前账号没有可用于文本模型的分组",
+};
+
+async function resolveToken(
+  session: Session,
+  purpose: TokenPurpose,
+): Promise<string> {
   const baseUrl = newApiBaseUrl();
   const headers = userHeaders(session);
   const selfResponse = await fetch(`${baseUrl}/api/user/self`, {
@@ -92,28 +120,25 @@ export async function getImageToken(session: Session): Promise<string> {
     return Array.isArray(result.data) ? result.data : result.data?.items || [];
   };
 
-  const tokens = await listTokens();
-  const usableDrawTokens = tokens.filter(
+  const usable = (await listTokens()).filter(
     (item) =>
       item.status === 1 &&
       typeof item.group === "string" &&
-      DRAW_GROUPS.includes(item.group) &&
+      purpose.acceptsGroup(item.group) &&
       !item.model_limits_enabled,
   );
-  // 已有可用绘图密钥时直接复用，优先 LFN 自建的那把。
+  // 已有可用密钥时直接复用，优先 LFN 自建的那把。
   let token: Token | undefined =
-    usableDrawTokens.find((item) =>
-      item.name.startsWith(LFN_TOKEN_PREFIX),
-    ) ?? usableDrawTokens[0];
+    usable.find((item) => item.name.startsWith(purpose.prefix)) ?? usable[0];
 
   if (!token) {
-    const usableGroups = await readUsableGroups(baseUrl, headers);
-    const group = pickDrawGroup([selfGroup, ...usableGroups]);
-    if (!group)
-      throw new Error(
-        "当前账号没有绘图分组权限，请联系管理员加入 Draw 或 Draw-Limit 分组",
-      );
-    const name = tokenNameFor(group);
+    const candidates = [
+      ...(selfGroup ? [selfGroup] : []),
+      ...(await readUsableGroups(baseUrl, headers)),
+    ];
+    const group = purpose.pickGroup(candidates);
+    if (!group) throw new Error(purpose.missingGroupMessage);
+    const name = tokenNameFor(purpose.prefix, group);
     const created = await fetch(`${baseUrl}/api/token/`, {
       method: "POST",
       headers,
@@ -146,6 +171,14 @@ export async function getImageToken(session: Session): Promise<string> {
   if (!keyResult.success || !keyResult.data?.key)
     throw new Error(keyResult.message || "无法读取 LFN 专用密钥");
   return keyResult.data.key;
+}
+
+export function getImageToken(session: Session): Promise<string> {
+  return resolveToken(session, imagePurpose);
+}
+
+export function getChatToken(session: Session): Promise<string> {
+  return resolveToken(session, chatPurpose);
 }
 
 // nai-chat 是 Gateway 的文本模型，不能按 nai- 前缀当成图像模型排除。

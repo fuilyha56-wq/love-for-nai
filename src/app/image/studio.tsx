@@ -422,6 +422,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               options={models}
               onChange={setModel}
               ariaLabel="模型"
+              searchable
             />
           </Control>
           <Control label="模式">
@@ -1062,6 +1063,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       options={assistantModels}
                       onChange={setAssistantModel}
                       ariaLabel="智能助手模型"
+                      searchable
                     />
                   ) : (
                     <p className="text-[11px] text-[var(--muted)]">
@@ -1493,17 +1495,28 @@ function PopupSelect({
   options,
   onChange,
   ariaLabel,
+  searchable,
 }: {
   value: string;
   options: SelectOption[];
   onChange: (value: string) => void;
   ariaLabel: string;
+  searchable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const visible =
+    searchable && query.trim()
+      ? options.filter((option) =>
+          `${option.label} ${option.value}`
+            .toLowerCase()
+            .includes(query.trim().toLowerCase()),
+        )
+      : options;
 
   function positionMenu() {
     const trigger = rootRef.current?.getBoundingClientRect();
@@ -1561,6 +1574,7 @@ function PopupSelect({
   function select(option: SelectOption) {
     onChange(option.value);
     setOpen(false);
+    setQuery("");
   }
 
   const selected = options.find((option) => option.value === value);
@@ -1574,7 +1588,10 @@ function PopupSelect({
         aria-haspopup="listbox"
         aria-controls={listboxId}
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          setOpen((current) => !current);
+          setQuery("");
+        }}
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           event.preventDefault();
@@ -1601,24 +1618,42 @@ function PopupSelect({
             style={menuStyle}
             onWheel={(event) => event.stopPropagation()}
           >
-            {options.map((option) => (
-              <button
-                type="button"
-                role="option"
-                aria-selected={option.value === value}
-                className="popup-select-option"
-                key={option.value}
-                onClick={() => select(option)}
-              >
-                <Check
-                  size={13}
-                  className={
-                    option.value === value ? "opacity-100" : "opacity-0"
-                  }
+            {searchable && (
+              <div className="popup-select-search">
+                <Search size={12} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索模型"
+                  aria-label="搜索模型"
+                  autoFocus
                 />
-                <span>{option.label}</span>
-              </button>
-            ))}
+              </div>
+            )}
+            <div className="popup-select-options">
+              {visible.length === 0 ? (
+                <p className="popup-select-empty">没有匹配的模型</p>
+              ) : (
+                visible.map((option) => (
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={option.value === value}
+                    className="popup-select-option"
+                    key={option.value}
+                    onClick={() => select(option)}
+                  >
+                    <Check
+                      size={13}
+                      className={
+                        option.value === value ? "opacity-100" : "opacity-0"
+                      }
+                    />
+                    <span>{option.label}</span>
+                  </button>
+                ))
+              )}
+            </div>
           </div>,
           document.body,
         )}
