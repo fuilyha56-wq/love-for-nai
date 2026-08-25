@@ -11,6 +11,7 @@ export type LfnSession = {
   username: string;
   displayName: string;
   upstreamCookie: string;
+  accessToken?: string;
   expiresAt: number;
 };
 const COOKIE_NAME = "lfn_session";

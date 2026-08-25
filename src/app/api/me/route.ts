@@ -7,16 +7,13 @@ export async function GET() {
   if (!session) return NextResponse.json({ authenticated: false });
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
-      headers: {
-        Cookie: session.upstreamCookie,
-        "New-Api-User": String(session.userId),
-      },
+      headers: userHeaders(session),
       cache: "no-store",
     });
     const result = await upstream.json();
     if (!result.success)
       return NextResponse.json({ authenticated: false }, { status: 401 });
-    const user = result.data;
+    const user = result.data?.user ?? result.data;
     return NextResponse.json({
       authenticated: true,
       user: {

@@ -8,11 +8,15 @@ export function newApiBaseUrl(): string {
   return process.env.NEWAPI_BASE_URL || "http://127.0.0.1:3000";
 }
 
-export function userHeaders(session: Session) {
+export function userHeaders(session: Session): Record<string, string> {
   return {
     Cookie: session.upstreamCookie,
     "New-Api-User": String(session.userId),
     "Content-Type": "application/json",
+    // 新版 NewAPI 控制台接口只认 access token，Cookie 仅用于刷新。
+    ...(session.accessToken
+      ? { Authorization: `Bearer ${session.accessToken}` }
+      : {}),
   };
 }
 
@@ -25,9 +29,11 @@ export async function getImageToken(session: Session): Promise<string> {
   });
   const selfResult = (await selfResponse.json()) as ApiResult<{
     group?: string;
+    user?: { group?: string };
   }>;
   if (!selfResult.success)
     throw new Error(selfResult.message || "无法读取用户分组");
+  const selfGroup = selfResult.data?.user?.group ?? selfResult.data?.group;
 
   const listTokens = async (): Promise<Token[]> => {
     const response = await fetch(`${baseUrl}/api/token/?p=1&size=100`, {
@@ -56,7 +62,7 @@ export async function getImageToken(session: Session): Promise<string> {
         model_limits_enabled: false,
         model_limits: "",
         allow_ips: "",
-        group: selfResult.data?.group || "default",
+        group: selfGroup || "default",
         cross_group_retry: false,
       }),
     });

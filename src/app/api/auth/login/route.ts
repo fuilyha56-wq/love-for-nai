@@ -7,7 +7,12 @@ type NewApiUser = {
   display_name?: string;
   require_2fa?: boolean;
 };
-type NewApiResponse = { success: boolean; message?: string; data?: NewApiUser };
+// 新版 NewAPI 把用户放在 data.user 并返回 access_token，旧版直接用 data。
+type NewApiResponse = {
+  success: boolean;
+  message?: string;
+  data?: NewApiUser & { user?: NewApiUser; access_token?: string };
+};
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
@@ -35,19 +40,25 @@ export async function POST(request: Request) {
         { message: result.message || "登录失败" },
         { status: 401 },
       );
-    if (result.data.require_2fa)
+    const user = result.data.user ?? result.data;
+    if (user.require_2fa || result.data.require_2fa)
       return NextResponse.json(
         { message: "此账号需要两步验证，首版暂请使用其他账号体验" },
         { status: 501 },
       );
+    if (typeof user.id !== "number" || !user.username)
+      return NextResponse.json(
+        { message: "上游未返回可用的账号信息" },
+        { status: 502 },
+      );
+    const accessToken = result.data.access_token;
     const upstreamCookie =
       upstream.headers.get("set-cookie")?.split(";")[0] || "";
-    if (!upstreamCookie)
+    if (!upstreamCookie && !accessToken)
       return NextResponse.json(
         { message: "上游未返回登录会话" },
         { status: 502 },
       );
-    const user = result.data;
     const response = NextResponse.json({
       user: { id: user.id, name: user.display_name || user.username },
     });
@@ -58,6 +69,7 @@ export async function POST(request: Request) {
         username: user.username,
         displayName: user.display_name || user.username,
         upstreamCookie,
+        accessToken,
         expiresAt: Date.now() + 604800000,
       }),
       sessionCookie.options,
