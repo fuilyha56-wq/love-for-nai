@@ -3,6 +3,7 @@
 import { ArrowLeft, Save, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { SessionExpiredNotice } from "@/app/session-notice";
 
 type Profile = {
   id: number;
@@ -18,14 +19,17 @@ export default function ProfilePage() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch("/api/me", { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json();
-        if (!response.ok || !result.authenticated)
-          throw new Error("请先登录后查看个人资料");
+        if (!response.ok || !result.authenticated) {
+          setExpired("登录状态已过期，请重新登录后查看个人资料");
+          return;
+        }
         setProfile(result.user);
         setUsername(result.user.username || "");
         setDisplayName(result.user.displayName || "");
@@ -69,6 +73,11 @@ export default function ProfilePage() {
           <ArrowLeft size={16} /> 返回工作台
         </Link>
       </header>
+      {expired && (
+        <div className="mx-auto max-w-4xl px-4 pt-4 sm:px-8">
+          <SessionExpiredNotice message={expired} />
+        </div>
+      )}
       <section className="mx-auto grid max-w-4xl gap-6 p-4 sm:p-8 md:grid-cols-[240px_1fr]">
         <aside className="border-r border-[var(--line)] pr-6">
           <div className="grid h-16 w-16 place-items-center rounded-full bg-[#292d2c] text-white">

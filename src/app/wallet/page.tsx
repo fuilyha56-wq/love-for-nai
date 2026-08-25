@@ -3,6 +3,11 @@
 import { ArrowLeft, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type Wallet = {
   newApi: { balance: number; used: number; group: string };
@@ -13,21 +18,21 @@ type Wallet = {
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
   useEffect(() => {
     fetch("/api/wallet", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || "读取钱包失败");
-        setWallet(result);
-      })
-      .catch((error) =>
-        setMessage(error instanceof Error ? error.message : "读取钱包失败"),
-      );
+      .then((response) => readJson<Wallet>(response, "读取钱包失败"))
+      .then(setWallet)
+      .catch((error) => {
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else setMessage(error instanceof Error ? error.message : "读取钱包失败");
+      });
   }, []);
   return (
     <main className="min-h-screen bg-[var(--paper)]">
       <PageHeader title="余额钱包" />
       <section className="mx-auto max-w-5xl p-4 sm:p-8">
+        {expired && <SessionExpiredNotice message={expired} />}
         {message && <Message text={message} />}
         <div className="grid gap-4 md:grid-cols-2">
           <article className="wallet-panel">

@@ -181,6 +181,17 @@ export function getChatToken(session: Session): Promise<string> {
   return resolveToken(session, chatPurpose);
 }
 
+// 上游会话过期时消息是英文的，前端需要据此提示重新登录而不是展示原文。
+export function isUpstreamAuthError(message?: string): boolean {
+  if (!message) return false;
+  const text = message.toLowerCase();
+  return (
+    text.includes("unauthorized") ||
+    text.includes("invalid access token") ||
+    text.includes("not logged in")
+  );
+}
+
 // nai-chat 是 Gateway 的文本模型，不能按 nai- 前缀当成图像模型排除。
 export function isNaiImageModel(model: string): boolean {
   const name = model.toLowerCase();

@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { isNaiImageModel, newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import {
+  isNaiImageModel,
+  isUpstreamAuthError,
+  newApiBaseUrl,
+  userHeaders,
+} from "@/lib/newapi";
 
 type ModelItem = string | { id?: string; model?: string; name?: string };
 
@@ -45,9 +50,12 @@ export async function GET() {
       .sort((left, right) => left.localeCompare(right));
     return NextResponse.json({ models });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "无法读取可用模型" },
-      { status: 502 },
-    );
+    const message = error instanceof Error ? error.message : "无法读取可用模型";
+    if (isUpstreamAuthError(message))
+      return NextResponse.json(
+        { message: "登录状态已过期，请重新登录", sessionExpired: true },
+        { status: 401 },
+      );
+    return NextResponse.json({ message }, { status: 502 });
   }
 }

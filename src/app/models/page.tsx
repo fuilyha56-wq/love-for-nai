@@ -3,21 +3,27 @@
 import { ArrowLeft, ImageIcon, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type ModelItem = { id: string; kind: string };
 export default function ModelsPage() {
   const [items, setItems] = useState<ModelItem[]>([]);
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
   useEffect(() => {
     fetch("/api/models", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || "读取模型失败");
-        setItems(result.items || []);
-      })
-      .catch((error) =>
-        setMessage(error instanceof Error ? error.message : "读取模型失败"),
-      );
+      .then((response) =>
+        readJson<{ items?: ModelItem[] }>(response, "读取模型失败"),
+      )
+      .then((result) => setItems(result.items || []))
+      .catch((error) => {
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else setMessage(error instanceof Error ? error.message : "读取模型失败");
+      });
   }, []);
   return (
     <main className="min-h-screen bg-[var(--paper)]">
@@ -35,6 +41,7 @@ export default function ModelsPage() {
         </Link>
       </header>
       <section className="mx-auto max-w-6xl p-4 sm:p-8">
+        {expired && <SessionExpiredNotice message={expired} />}
         {message && (
           <div className="mb-4 rounded border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
             {message}

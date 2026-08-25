@@ -218,16 +218,28 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
 
-  useEffect(() => {
-    if (authenticated)
-      fetch("/api/me")
-        .then((response) => response.json())
-        .then(setMe)
-        .catch(() => setMe(null));
-  }, [authenticated]);
+  // 服务端 prop 只是初值，会话可能在页面存活期间失效。
+  const [sessionValid, setSessionValid] = useState(authenticated);
+  const signedIn = authenticated && sessionValid;
 
   useEffect(() => {
     if (!authenticated) return;
+    fetch("/api/me")
+      .then((response) => response.json())
+      .then((result: Me & { authenticated?: boolean }) => {
+        if (result?.authenticated === false) {
+          setSessionValid(false);
+          setMe(null);
+          return;
+        }
+        setSessionValid(true);
+        setMe(result);
+      })
+      .catch(() => setMe(null));
+  }, [authenticated]);
+
+  useEffect(() => {
+    if (!signedIn) return;
     fetch("/api/assistant/models")
       .then(async (response) => {
         const result = await response.json();
@@ -242,7 +254,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       .catch((error) =>
         setNotice(error instanceof Error ? error.message : "无法读取助手模型"),
       );
-  }, [authenticated]);
+  }, [signedIn]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -697,8 +709,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   );
 
   async function runOperation() {
-    if (!authenticated) {
-      setNotice("体验模式不会发送真实请求。登录后可通过你的 NewAPI 钱包调用。");
+    if (!signedIn) {
+      setNotice(
+        authenticated
+          ? "登录状态已过期，请重新登录后再提交。"
+          : "体验模式不会发送真实请求。登录后可通过你的 NewAPI 钱包调用。",
+      );
       return;
     }
     if (
@@ -838,14 +854,28 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             <Code2 size={16} />
           </a>
           <span
-            className={`hidden px-2 py-1 text-xs sm:inline ${authenticated ? "text-emerald-700" : "text-amber-700"}`}
+            className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
           >
-            {authenticated ? "NewAPI 已连接" : "体验模式"}
+            {signedIn
+              ? "NewAPI 已连接"
+              : authenticated
+                ? "登录已过期"
+                : "体验模式"}
           </span>
-          <button className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm">
-            <UserRound size={16} />
-            {userName}
-          </button>
+          {signedIn || !authenticated ? (
+            <button className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm">
+              <UserRound size={16} />
+              {userName}
+            </button>
+          ) : (
+            <Link
+              href="/sign-in"
+              className="flex h-9 items-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-sm font-semibold text-[var(--rose)]"
+            >
+              <UserRound size={16} />
+              重新登录
+            </Link>
+          )}
         </div>
       </header>
       <div className="grid min-h-0 flex-1 lg:grid-cols-[310px_minmax(420px,1fr)_230px]">
@@ -1055,7 +1085,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
                 由你的 NewAPI 模型整理需求，再用 Danbooru 官方数据校验。
               </p>
-              {authenticated ? (
+              {signedIn ? (
                 <div className="mt-3 space-y-2">
                   {assistantModels.length ? (
                     <PopupSelect
@@ -1176,11 +1206,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">NewAPI 余额</span>
                 <b>
-                  {authenticated
-                    ? me?.user?.balance == null
-                      ? "读取中"
-                      : me.user.balance.toFixed(2)
-                    : "体验模式"}
+                  {!authenticated
+                    ? "体验模式"
+                    : !signedIn
+                      ? "登录已过期"
+                      : me?.user?.balance == null
+                        ? "读取中"
+                        : me.user.balance.toFixed(2)}
                 </b>
               </div>
               <div className="flex justify-between">
@@ -1192,7 +1224,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               href="/sign-in"
               className="mt-5 flex h-9 items-center justify-center rounded bg-[#292d2c] text-xs font-semibold text-white"
             >
-              {authenticated ? "切换账户" : "登录使用真实余额"}
+              {signedIn
+                ? "切换账户"
+                : authenticated
+                  ? "重新登录"
+                  : "登录使用真实余额"}
             </Link>
           </div>
         </aside>

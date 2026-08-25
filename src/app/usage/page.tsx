@@ -3,6 +3,11 @@
 import { ArrowLeft, ChevronLeft, ChevronRight, ListFilter } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type LogItem = Record<string, unknown>;
 
@@ -11,6 +16,7 @@ export default function UsagePage() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,16 +25,24 @@ export default function UsagePage() {
       cache: "no-store",
       signal: controller.signal,
     })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || "读取使用记录失败");
+      .then((response) =>
+        readJson<{ items?: LogItem[]; total?: number }>(
+          response,
+          "读取使用记录失败",
+        ),
+      )
+      .then((result) => {
         setItems(result.items || []);
         setTotal(result.total || 0);
         setMessage("");
       })
       .catch((error) => {
         if (error instanceof Error && error.name === "AbortError") return;
-        setMessage(error instanceof Error ? error.message : "读取使用记录失败");
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else
+          setMessage(
+            error instanceof Error ? error.message : "读取使用记录失败",
+          );
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
@@ -36,6 +50,7 @@ export default function UsagePage() {
 
   return (
     <ProductPage title="使用记录" icon={<ListFilter size={20} />}>
+      {expired && <SessionExpiredNotice message={expired} />}
       {message && <Notice>{message}</Notice>}
       <div className="overflow-hidden rounded-md border border-[var(--line)] bg-white">
         <div className="grid grid-cols-[minmax(140px,1fr)_100px_90px_150px] gap-3 border-b border-[var(--line)] bg-[#f2f0ea] px-4 py-3 text-xs font-semibold">

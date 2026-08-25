@@ -3,6 +3,11 @@
 import { ArrowLeft, KeyRound, Plus, Power, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type TokenItem = {
   id: number;
@@ -16,11 +21,14 @@ export default function KeysPage() {
   const [items, setItems] = useState<TokenItem[]>([]);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
   const [working, setWorking] = useState(false);
   async function load() {
     const response = await fetch("/api/keys", { cache: "no-store" });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.message || "读取密钥失败");
+    const result = await readJson<{ items?: TokenItem[] }>(
+      response,
+      "读取密钥失败",
+    );
     setItems(result.items || []);
   }
   useEffect(() => {
@@ -28,13 +36,16 @@ export default function KeysPage() {
     async function loadInitial() {
       try {
         const response = await fetch("/api/keys", { cache: "no-store" });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || "读取密钥失败");
+        const result = await readJson<{ items?: TokenItem[] }>(
+          response,
+          "读取密钥失败",
+        );
         if (active) setItems(result.items || []);
       } catch (error) {
-        if (active) {
+        if (!active) return;
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else
           setMessage(error instanceof Error ? error.message : "读取密钥失败");
-        }
       }
     }
     void loadInitial();
@@ -130,6 +141,11 @@ export default function KeysPage() {
         <p className="mt-2 text-xs text-[var(--muted)]">
           LFN 不保存或展示密钥明文。创建的密钥与 NewAPI 互通。
         </p>
+        {expired && (
+          <div className="my-4">
+            <SessionExpiredNotice message={expired} />
+          </div>
+        )}
         {message && (
           <div className="my-4 rounded border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
             {message}

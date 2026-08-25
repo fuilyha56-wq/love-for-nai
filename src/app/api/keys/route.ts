@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
 async function requireSession() {
   const session = await getSession();
@@ -8,11 +8,21 @@ async function requireSession() {
   return { session, headers: userHeaders(session) };
 }
 
+function failure(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : fallback;
+  if (isUpstreamAuthError(message))
+    return NextResponse.json(
+      { message: "登录状态已过期，请重新登录", sessionExpired: true },
+      { status: 401 },
+    );
+  return NextResponse.json({ message }, { status: 502 });
+}
+
 export async function GET() {
   const auth = await requireSession();
   if (!auth)
     return NextResponse.json(
-      { message: "请先登录后管理 API 密钥" },
+      { message: "请先登录后管理 API 密钥", sessionExpired: true },
       { status: 401 },
     );
   try {
@@ -29,10 +39,7 @@ export async function GET() {
       items: Array.isArray(source) ? source : source.items || [],
     });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "无法读取 API 密钥" },
-      { status: 502 },
-    );
+    return failure(error, "无法读取 API 密钥");
   }
 }
 

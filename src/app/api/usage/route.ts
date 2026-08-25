@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
 export async function GET(request: NextRequest) {
   const session = await getSession();
   if (!session)
     return NextResponse.json(
-      { message: "请先登录后查看使用记录" },
+      { message: "请先登录后查看使用记录", sessionExpired: true },
       { status: 401 },
     );
   const requested = Number(request.nextUrl.searchParams.get("page"));
@@ -36,9 +36,12 @@ export async function GET(request: NextRequest) {
       page,
     });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "无法读取使用记录" },
-      { status: 502 },
-    );
+    const message = error instanceof Error ? error.message : "无法读取使用记录";
+    if (isUpstreamAuthError(message))
+      return NextResponse.json(
+        { message: "登录状态已过期，请重新登录", sessionExpired: true },
+        { status: 401 },
+      );
+    return NextResponse.json({ message }, { status: 502 });
   }
 }

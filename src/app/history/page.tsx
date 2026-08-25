@@ -4,6 +4,11 @@ import { ArrowLeft, Download, History, RotateCcw, Trash2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type HistoryItem = {
   id: string;
@@ -23,18 +28,19 @@ export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
     fetch("/api/history", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message || "读取历史失败");
-        setItems(result.items || []);
-      })
+      .then((response) =>
+        readJson<{ items?: HistoryItem[] }>(response, "读取历史失败"),
+      )
+      .then((result) => setItems(result.items || []))
       .catch((error) => {
         if (error instanceof Error && error.name === "AbortError") return;
-        setMessage(error instanceof Error ? error.message : "读取历史失败");
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else setMessage(error instanceof Error ? error.message : "读取历史失败");
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
@@ -69,6 +75,7 @@ export default function HistoryPage() {
         </Link>
       </header>
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
+        {expired && <SessionExpiredNotice message={expired} />}
         {message && (
           <div className="mb-4 rounded border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
             {message}

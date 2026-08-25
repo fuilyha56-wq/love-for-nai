@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
 function collectModels(value: unknown): string[] {
   if (typeof value === "string") return [value];
@@ -20,7 +20,7 @@ export async function GET() {
   const session = await getSession();
   if (!session)
     return NextResponse.json(
-      { message: "请先登录后查看可用模型" },
+      { message: "请先登录后查看可用模型", sessionExpired: true },
       { status: 401 },
     );
   try {
@@ -42,9 +42,12 @@ export async function GET() {
       })),
     });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "无法读取可用模型" },
-      { status: 502 },
-    );
+    const message = error instanceof Error ? error.message : "无法读取可用模型";
+    if (isUpstreamAuthError(message))
+      return NextResponse.json(
+        { message: "登录状态已过期，请重新登录", sessionExpired: true },
+        { status: 401 },
+      );
+    return NextResponse.json({ message }, { status: 502 });
   }
 }
