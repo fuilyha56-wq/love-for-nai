@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isNaiImageModel, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
 type ModelItem = string | { id?: string; model?: string; name?: string };
 
@@ -32,10 +32,16 @@ export async function GET() {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    const result = (await response.json()) as { data?: ModelItem[] };
     if (!response.ok) throw new Error("无法读取可用模型");
+    const result = (await response.json()) as {
+      data?: ModelItem[];
+      success?: boolean;
+      message?: string;
+    };
+    if (result.success === false)
+      throw new Error(result.message || "无法读取可用模型");
     const models = [...new Set(collectModels(result.data || result))]
-      .filter((model) => model && !model.toLowerCase().startsWith("nai-"))
+      .filter((model) => model && !isNaiImageModel(model))
       .sort((left, right) => left.localeCompare(right));
     return NextResponse.json({ models });
   } catch (error) {

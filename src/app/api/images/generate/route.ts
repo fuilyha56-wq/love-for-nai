@@ -9,6 +9,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as Record<string, unknown> & {
     model?: string;
     prompt?: string;
+    negative_prompt?: string;
     negativePrompt?: string;
     width?: number;
     height?: number;
@@ -21,6 +22,18 @@ export async function POST(request: Request) {
       { status: 400 },
     );
 
+  // 只转发白名单字段，避免调用方注入 novelai_operation 绕过本端点的模型限制。
+  const forwarded = [
+    "steps",
+    "scale",
+    "n",
+    "n_samples",
+    "sampler",
+    "noise_schedule",
+    "cfg_rescale",
+    "seed",
+    "quality_tags",
+  ];
   const baseUrl = newApiBaseUrl();
   try {
     const key = await getImageToken(session);
@@ -31,13 +44,19 @@ export async function POST(request: Request) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        ...body,
+        ...Object.fromEntries(
+          forwarded
+            .filter((key) => body[key] !== undefined)
+            .map((key) => [key, body[key]]),
+        ),
+        model: body.model,
+        prompt: body.prompt,
         negative_prompt: body.negative_prompt || body.negativePrompt || "",
         size: `${body.width}x${body.height}`,
         response_format: "b64_json",
-        negativePrompt: undefined,
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(120_000),
     });
     const result = await upstream.json();
     if (!upstream.ok || result.error)

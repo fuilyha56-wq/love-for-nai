@@ -79,6 +79,12 @@ export async function getImageToken(session: Session): Promise<string> {
   return keyResult.data.key;
 }
 
+// nai-chat 是 Gateway 的文本模型，不能按 nai- 前缀当成图像模型排除。
+export function isNaiImageModel(model: string): boolean {
+  const name = model.toLowerCase();
+  return name.startsWith("nai-") && name !== "nai-chat";
+}
+
 export function imageFromResult(result: {
   data?: Array<{ b64_json?: string; url?: string }>;
 }): string[] {

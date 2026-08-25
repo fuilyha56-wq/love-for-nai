@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type GenerationParameters = {
@@ -49,7 +49,23 @@ async function readIndex(userId: number): Promise<HistoryItem[]> {
 
 async function writeIndex(userId: number, items: HistoryItem[]) {
   await mkdir(userDirectory(userId), { recursive: true });
-  await writeFile(indexPath(userId), JSON.stringify(items, null, 2), "utf8");
+  const target = indexPath(userId);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify(items, null, 2), "utf8");
+  await rename(temporary, target);
+}
+
+const userLocks = new Map<number, Promise<unknown>>();
+
+// 同一用户的历史读改写必须串行，否则并发生成会互相覆盖索引。
+function withUserLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
+  const previous = userLocks.get(userId) ?? Promise.resolve();
+  const current = previous.then(task, task);
+  userLocks.set(
+    userId,
+    current.catch(() => undefined),
+  );
+  return current;
 }
 
 function safeParameters(body: Record<string, unknown>): GenerationParameters {
@@ -82,39 +98,53 @@ export async function saveHistory(
   images: string[],
   usage: unknown,
 ) {
-  await mkdir(userDirectory(userId), { recursive: true });
-  const existing = await readIndex(userId);
-  const created: HistoryItem[] = [];
-  for (const image of images) {
-    const match = image.match(/^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/);
-    if (!match) continue;
-    const extension = match[1] === "jpeg" ? "jpg" : match[1];
-    const id = randomUUID();
-    const fileName = `${id}.${extension}`;
-    await writeFile(
-      path.join(userDirectory(userId), fileName),
-      Buffer.from(match[2], "base64"),
-    );
-    created.push({
-      id,
-      createdAt: new Date().toISOString(),
-      imagePath: fileName,
-      saved: false,
-      parameters: safeParameters(body),
-      usage,
-    });
-  }
-  const merged = [...created, ...existing];
-  const unsaved = merged.filter((item) => !item.saved);
-  const removed = unsaved.slice(10);
-  const retainedIds = new Set(removed.map((item) => item.id));
-  for (const item of removed)
-    await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
-      () => undefined,
-    );
-  const retained = merged.filter((item) => !retainedIds.has(item.id));
-  await writeIndex(userId, retained);
-  return created;
+  return withUserLock(userId, async () => {
+    await mkdir(userDirectory(userId), { recursive: true });
+    const created: HistoryItem[] = [];
+    for (const image of images) {
+      const match = image.match(
+        /^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/,
+      );
+      if (!match) continue;
+      const extension = match[1] === "jpeg" ? "jpg" : match[1];
+      const id = randomUUID();
+      const fileName = `${id}.${extension}`;
+      await writeFile(
+        path.join(userDirectory(userId), fileName),
+        Buffer.from(match[2], "base64"),
+      );
+      created.push({
+        id,
+        createdAt: new Date().toISOString(),
+        imagePath: fileName,
+        saved: false,
+        parameters: safeParameters(body),
+        usage,
+      });
+    }
+    const merged = [...created, ...(await readIndex(userId))];
+    let unsavedSeen = 0;
+    const retained: HistoryItem[] = [];
+    const expired: HistoryItem[] = [];
+    for (const item of merged) {
+      if (item.saved) {
+        retained.push(item);
+        continue;
+      }
+      unsavedSeen += 1;
+      if (unsavedSeen <= 10) retained.push(item);
+      else expired.push(item);
+    }
+    const referenced = new Set(retained.map((item) => item.imagePath));
+    for (const item of expired) {
+      if (referenced.has(item.imagePath)) continue;
+      await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
+        () => undefined,
+      );
+    }
+    await writeIndex(userId, retained);
+    return created;
+  });
 }
 
 export async function listHistory(userId: number) {
@@ -126,17 +156,18 @@ export async function findHistory(userId: number, id: string) {
 }
 
 export async function deleteHistory(userId: number, id: string) {
-  const items = await readIndex(userId);
-  const item = items.find((entry) => entry.id === id);
-  if (!item) return false;
-  await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
-    () => undefined,
-  );
-  await writeIndex(
-    userId,
-    items.filter((entry) => entry.id !== id),
-  );
-  return true;
+  return withUserLock(userId, async () => {
+    const items = await readIndex(userId);
+    const item = items.find((entry) => entry.id === id);
+    if (!item) return false;
+    const remaining = items.filter((entry) => entry.id !== id);
+    if (!remaining.some((entry) => entry.imagePath === item.imagePath))
+      await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
+        () => undefined,
+      );
+    await writeIndex(userId, remaining);
+    return true;
+  });
 }
 
 export function historyImagePath(userId: number, fileName: string) {

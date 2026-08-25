@@ -26,12 +26,23 @@ export async function POST(request: Request): Promise<Response> {
       { status: 400 },
     );
   }
-  const operation = typeof body.req_type === "string" ? operations[body.req_type] : undefined;
+  const operation =
+    typeof body.req_type === "string" ? operations[body.req_type] : undefined;
   if (!operation)
     return Response.json({ message: "Unsupported req_type" }, { status: 400 });
   if (typeof body.image !== "string" || !body.image)
     return Response.json({ message: "image is required" }, { status: 400 });
 
+  // Director Tools 按 Gateway 契约拒绝 -limit 模型，因此固定使用计费模型。
+  if (typeof body.model === "string" && body.model.includes("-limit"))
+    return Response.json(
+      { message: "Director tools do not support -limit models" },
+      { status: 400 },
+    );
+
+  const rest = { ...body };
+  delete rest.req_type;
+  delete rest.model;
   const upstream = await proxyNewApi(
     new Request(request.url, {
       method: "POST",
@@ -39,7 +50,7 @@ export async function POST(request: Request): Promise<Response> {
     }),
     "/v1/images/generations",
     JSON.stringify({
-      ...body,
+      ...rest,
       prompt: typeof body.prompt === "string" ? body.prompt : "",
       model: "nai-v4.5-full",
       novelai_operation: operation,

@@ -107,18 +107,24 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   const width = positiveInteger(parameters.width);
   const height = positiveInteger(parameters.height);
   const samples = positiveInteger(parameters.n_samples) ?? 1;
-  const action = typeof body.action === "string" ? body.action.toLowerCase() : "generate";
+  const action =
+    typeof body.action === "string" ? body.action.toLowerCase() : "generate";
   const operation =
-    action === "img2img" ? "img2img" : action === "infill" ? "inpainting" : undefined;
+    action === "img2img"
+      ? "img2img"
+      : action === "infill"
+        ? "inpainting"
+        : undefined;
+  const rest = { ...parameters };
+  delete rest.n_samples;
   return {
-    ...parameters,
+    ...rest,
     prompt: typeof body.input === "string" ? body.input : "",
     model: modelAlias(body.model),
-    n: samples,
+    n_samples: samples,
     ...(width && height ? { size: `${width}x${height}` } : {}),
     response_format: "b64_json",
     ...(operation ? { novelai_operation: operation } : {}),
-    novelai_parameters: parameters,
   };
 }
 
@@ -148,6 +154,7 @@ export async function naiZipResponse(upstream: Response): Promise<Response> {
   return new Response(zip, {
     headers: {
       "Content-Type": "application/zip",
+      "Content-Length": String(zip.byteLength),
       "Content-Disposition": 'attachment; filename="images.zip"',
       "X-LFN-Usage": encodeURIComponent(JSON.stringify(result.usage ?? null)),
     },

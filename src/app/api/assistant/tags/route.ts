@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getImageToken, newApiBaseUrl } from "@/lib/newapi";
+import { getImageToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
 
 type AssistantPayload = {
   model?: string;
@@ -42,30 +42,55 @@ function parseSuggestion(content: string): AssistantSuggestion {
   return JSON.parse(match[0]) as AssistantSuggestion;
 }
 
-async function validateTag(name: string) {
-  const normalized = name.trim().toLowerCase().replaceAll(" ", "_");
-  if (!normalized) return null;
+function normalizeTag(name: string): string {
+  return name.trim().toLowerCase().replaceAll(" ", "_");
+}
+
+type ValidatedTag = {
+  name: string;
+  displayName: string;
+  categoryName: string;
+  postCount: number;
+};
+// 区分「标签不存在」与「校验不可用」，后者不应被报告为已拒绝。
+type ValidationResult =
+  | { status: "valid"; tag: ValidatedTag }
+  | { status: "rejected" }
+  | { status: "unavailable" };
+
+async function validateTag(name: string): Promise<ValidationResult> {
+  const normalized = normalizeTag(name);
+  if (!normalized) return { status: "rejected" };
   const params = new URLSearchParams({
     "search[name]": normalized,
     limit: "1",
   });
-  const response = await fetch(
-    `https://danbooru.donmai.us/tags.json?${params}`,
-    {
-      headers: { "User-Agent": "Love-for-NAI/0.1 (assistant tag validation)" },
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(8_000),
-    },
-  );
-  if (!response.ok) return null;
-  const [tag] = (await response.json()) as DanbooruTag[];
-  if (!tag || tag.name !== normalized) return null;
-  return {
-    name: tag.name,
-    displayName: tag.name.replaceAll("_", " "),
-    categoryName: categoryNames[tag.category] || "其他",
-    postCount: tag.post_count,
-  };
+  try {
+    const response = await fetch(
+      `https://danbooru.donmai.us/tags.json?${params}`,
+      {
+        headers: {
+          "User-Agent": "Love-for-NAI/0.1 (assistant tag validation)",
+        },
+        next: { revalidate: 300 },
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!response.ok) return { status: "unavailable" };
+    const [tag] = (await response.json()) as DanbooruTag[];
+    if (!tag || tag.name !== normalized) return { status: "rejected" };
+    return {
+      status: "valid",
+      tag: {
+        name: tag.name,
+        displayName: tag.name.replaceAll("_", " "),
+        categoryName: categoryNames[tag.category] || "其他",
+        postCount: tag.post_count,
+      },
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
 }
 
 export async function POST(request: Request) {
@@ -76,9 +101,9 @@ export async function POST(request: Request) {
       { status: 401 },
     );
   const body = (await request.json()) as AssistantPayload;
-  if (!body.model || body.model.toLowerCase().startsWith("nai-"))
+  if (!body.model || isNaiImageModel(body.model))
     return NextResponse.json(
-      { message: "请选择一个非 NAI 文本模型" },
+      { message: "请选择一个文本对话模型" },
       { status: 400 },
     );
   if (!body.request?.trim() || body.request.length > 1000)
@@ -125,23 +150,27 @@ export async function POST(request: Request) {
     const content = result.choices?.[0]?.message?.content || "";
     const suggestion = parseSuggestion(content);
     const candidates = [...new Set((suggestion.tags || []).slice(0, 16))];
-    const validatedTags = (
-      await Promise.all(candidates.map((tag) => validateTag(tag)))
-    ).filter((tag) => tag !== null);
+    const results = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        result: await validateTag(candidate),
+      })),
+    );
     return NextResponse.json({
       suggestion: {
         prompt: suggestion.prompt || "",
         negativePrompt: suggestion.negativePrompt || "",
         parameters: suggestion.parameters || {},
-        tags: validatedTags,
+        tags: results.flatMap((item) =>
+          item.result.status === "valid" ? [item.result.tag] : [],
+        ),
       },
-      rejectedTags: candidates.filter(
-        (candidate) =>
-          !validatedTags.some(
-            (tag) =>
-              tag.name === candidate.trim().toLowerCase().replaceAll(" ", "_"),
-          ),
-      ),
+      rejectedTags: results
+        .filter((item) => item.result.status === "rejected")
+        .map((item) => item.candidate),
+      unverifiedTags: results
+        .filter((item) => item.result.status === "unavailable")
+        .map((item) => item.candidate),
     });
   } catch (error) {
     return NextResponse.json(

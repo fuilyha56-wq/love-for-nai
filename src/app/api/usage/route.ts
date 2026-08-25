@@ -9,11 +9,17 @@ export async function GET(request: NextRequest) {
       { message: "请先登录后查看使用记录" },
       { status: 401 },
     );
-  const page = Math.max(
-    1,
-    Number(request.nextUrl.searchParams.get("page")) || 1,
-  );
-  const params = new URLSearchParams({ p: String(page), page_size: "20" });
+  const requested = Number(request.nextUrl.searchParams.get("page"));
+  const page = Number.isInteger(requested)
+    ? Math.min(Math.max(requested, 1), 1000)
+    : 1;
+  // NewAPI 各版本在 p/page 与 size/page_size 之间不统一，同时提供两套命名。
+  const params = new URLSearchParams({
+    p: String(page),
+    page: String(page),
+    size: "20",
+    page_size: "20",
+  });
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/log/self?${params}`, {
       headers: userHeaders(session),
