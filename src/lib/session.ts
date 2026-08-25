@@ -14,7 +14,13 @@ export type LfnSession = {
   accessToken?: string;
   expiresAt: number;
 };
+// 2FA 第一步与第二步之间的临时状态，只保存上游待验证 Cookie。
+export type LfnPendingSession = {
+  upstreamCookie: string;
+  expiresAt: number;
+};
 const COOKIE_NAME = "lfn_session";
+const PENDING_COOKIE_NAME = "lfn_2fa";
 const secret = () =>
   process.env.LFN_SESSION_SECRET || "lfn-development-secret-change-me";
 const encryptionKey = () => createHash("sha256").update(secret()).digest();
@@ -57,13 +63,29 @@ export async function getSession(): Promise<LfnSession | null> {
   return decodeSession((await cookies()).get(COOKIE_NAME)?.value);
 }
 
+export function encodePendingSession(pending: LfnPendingSession): string {
+  return encodeSession(pending as unknown as LfnSession);
+}
+
+export async function getPendingSession(): Promise<LfnPendingSession | null> {
+  const raw = (await cookies()).get(PENDING_COOKIE_NAME)?.value;
+  const decoded = decodeSession(raw) as unknown as LfnPendingSession | null;
+  return decoded?.upstreamCookie ? decoded : null;
+}
+
+const cookieOptions = {
+  httpOnly: true,
+  secure: process.env.LFN_COOKIE_SECURE === "true",
+  sameSite: "lax" as const,
+  path: "/",
+};
+
 export const sessionCookie = {
   name: COOKIE_NAME,
-  options: {
-    httpOnly: true,
-    secure: process.env.LFN_COOKIE_SECURE === "true",
-    sameSite: "lax" as const,
-    path: "/",
-    maxAge: 604800,
-  },
+  options: { ...cookieOptions, maxAge: 604800 },
+};
+
+export const pendingCookie = {
+  name: PENDING_COOKIE_NAME,
+  options: { ...cookieOptions, maxAge: 300 },
 };

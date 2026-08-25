@@ -1,0 +1,95 @@
+import { NextResponse } from "next/server";
+import { encodeSession, sessionCookie } from "@/lib/session";
+import { newApiBaseUrl } from "@/lib/newapi";
+
+export type NewApiUser = {
+  id?: number;
+  username?: string;
+  display_name?: string;
+  require_2fa?: boolean;
+  two_fa_required?: boolean;
+};
+
+// 新版 NewAPI 把用户放在 data.user 并返回 access_token，旧版直接用 data。
+export type NewApiLoginResponse = {
+  success: boolean;
+  message?: string;
+  data?: NewApiUser & {
+    user?: NewApiUser;
+    access_token?: string;
+    require_2fa?: boolean;
+    two_fa_required?: boolean;
+  };
+};
+
+export async function callNewApi(
+  path: string,
+  body: unknown,
+  cookie?: string,
+): Promise<{ response: Response; result: NewApiLoginResponse }> {
+  const response = await fetch(`${newApiBaseUrl()}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
+    body: JSON.stringify(body),
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  return { response, result: (await response.json()) as NewApiLoginResponse };
+}
+
+export function upstreamCookieOf(response: Response): string {
+  return response.headers.get("set-cookie")?.split(";")[0] || "";
+}
+
+export function requiresTwoFactor(result: NewApiLoginResponse): boolean {
+  const data = result.data;
+  if (!data) return false;
+  const user = data.user ?? data;
+  return Boolean(
+    data.require_2fa ||
+      data.two_fa_required ||
+      user.require_2fa ||
+      user.two_fa_required,
+  );
+}
+
+export function establishSession(
+  result: NewApiLoginResponse,
+  response: Response,
+): NextResponse {
+  const data = result.data;
+  const user = data?.user ?? data;
+  if (!user || typeof user.id !== "number" || !user.username)
+    return NextResponse.json(
+      { message: "上游未返回可用的账号信息" },
+      { status: 502 },
+    );
+
+  const accessToken = data?.access_token;
+  const upstreamCookie = upstreamCookieOf(response);
+  if (!upstreamCookie && !accessToken)
+    return NextResponse.json(
+      { message: "上游未返回登录会话" },
+      { status: 502 },
+    );
+
+  const next = NextResponse.json({
+    user: { id: user.id, name: user.display_name || user.username },
+  });
+  next.cookies.set(
+    sessionCookie.name,
+    encodeSession({
+      userId: user.id,
+      username: user.username,
+      displayName: user.display_name || user.username,
+      upstreamCookie,
+      accessToken,
+      expiresAt: Date.now() + 604800000,
+    }),
+    sessionCookie.options,
+  );
+  return next;
+}

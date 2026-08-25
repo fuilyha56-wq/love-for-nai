@@ -10,6 +10,9 @@ export default function SignInPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [twoFactor, setTwoFactor] = useState(false);
+  const [code, setCode] = useState("");
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -24,8 +27,24 @@ export default function SignInPage() {
       }),
     });
     const result = await response.json();
-    if (response.ok) router.push("/image");
+    if (result.twoFactorRequired) setTwoFactor(true);
+    else if (response.ok) router.push("/image");
     else setError(result.message || "登录失败");
+    setLoading(false);
+  }
+
+  async function verify(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    const response = await fetch("/api/auth/2fa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    const result = await response.json();
+    if (response.ok) router.push("/image");
+    else setError(result.message || "验证失败");
     setLoading(false);
   }
   return (
@@ -66,10 +85,59 @@ export default function SignInPage() {
           <p className="mb-2 text-sm font-semibold text-[var(--rose)]">
             欢迎回来
           </p>
-          <h2 className="font-[var(--font-display)] text-4xl">登录创作空间</h2>
+          <h2 className="font-[var(--font-display)] text-4xl">
+            {twoFactor ? "两步验证" : "登录创作空间"}
+          </h2>
           <p className="mt-3 text-sm text-[var(--muted)]">
-            使用现有 NewAPI 账号登录
+            {twoFactor
+              ? "请输入验证器应用中的 6 位验证码，或使用备用恢复码"
+              : "使用现有 NewAPI 账号登录"}
           </p>
+          {twoFactor ? (
+            <form className="mt-9 space-y-5" onSubmit={verify}>
+              <label className="block text-sm font-medium">
+                验证码
+                <input
+                  className="field mt-2 h-12 px-4 tracking-[0.3em]"
+                  value={code}
+                  onChange={(event) => setCode(event.target.value)}
+                  autoComplete="one-time-code"
+                  inputMode="text"
+                  maxLength={20}
+                  autoFocus
+                  required
+                />
+              </label>
+              {error && (
+                <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {error}
+                </p>
+              )}
+              <button
+                disabled={loading}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
+              >
+                {loading ? (
+                  <LoaderCircle className="animate-spin" size={19} />
+                ) : (
+                  <>
+                    验证并登录 <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTwoFactor(false);
+                  setCode("");
+                  setError("");
+                }}
+                className="w-full text-sm text-[var(--muted)] hover:text-[var(--rose)]"
+              >
+                返回重新登录
+              </button>
+            </form>
+          ) : (
           <form className="mt-9 space-y-5" onSubmit={submit}>
             <label className="block text-sm font-medium">
               用户名
@@ -118,6 +186,7 @@ export default function SignInPage() {
               )}
             </button>
           </form>
+          )}
           <div className="my-7 flex items-center gap-4 text-xs text-[var(--muted)]">
             <span className="h-px flex-1 bg-[var(--line)]" />或
             <span className="h-px flex-1 bg-[var(--line)]" />
