@@ -13,7 +13,11 @@ export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 
 // 绘图渠道只服务这些分组；Draw-Limit 由管理员分配，用户不可自选。
 const DRAW_GROUPS = ["Draw", "Draw-Limit", "Draw-Limit-2"];
-const LFN_TOKEN_NAME = "lfn-image-studio";
+const LFN_TOKEN_PREFIX = "lfn-image-studio";
+
+function tokenNameFor(group: string): string {
+  return `${LFN_TOKEN_PREFIX}-${group.toLowerCase()}`;
+}
 
 export function newApiBaseUrl(): string {
   return process.env.NEWAPI_BASE_URL || "http://127.0.0.1:3000";
@@ -98,8 +102,9 @@ export async function getImageToken(session: Session): Promise<string> {
   );
   // 已有可用绘图密钥时直接复用，优先 LFN 自建的那把。
   let token: Token | undefined =
-    usableDrawTokens.find((item) => item.name === LFN_TOKEN_NAME) ??
-    usableDrawTokens[0];
+    usableDrawTokens.find((item) =>
+      item.name.startsWith(LFN_TOKEN_PREFIX),
+    ) ?? usableDrawTokens[0];
 
   if (!token) {
     const usableGroups = await readUsableGroups(baseUrl, headers);
@@ -108,11 +113,12 @@ export async function getImageToken(session: Session): Promise<string> {
       throw new Error(
         "当前账号没有绘图分组权限，请联系管理员加入 Draw 或 Draw-Limit 分组",
       );
+    const name = tokenNameFor(group);
     const created = await fetch(`${baseUrl}/api/token/`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        name: LFN_TOKEN_NAME,
+        name,
         expired_time: -1,
         remain_quota: 0,
         unlimited_quota: true,
@@ -127,7 +133,7 @@ export async function getImageToken(session: Session): Promise<string> {
     if (!result.success)
       throw new Error(result.message || "无法创建 LFN 专用密钥");
     token = (await listTokens()).find(
-      (item) => item.name === LFN_TOKEN_NAME && item.status === 1,
+      (item) => item.name === name && item.status === 1,
     );
   }
   if (!token) throw new Error("LFN 专用密钥创建后未找到");
