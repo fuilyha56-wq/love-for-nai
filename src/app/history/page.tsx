@@ -81,7 +81,7 @@ export default function HistoryPage() {
             {message}
           </div>
         )}
-        {loading ? (
+        {expired ? null : loading ? (
           <p className="py-20 text-center text-sm text-[var(--muted)]">
             正在读取历史…
           </p>

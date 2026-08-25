@@ -186,7 +186,7 @@ export default function KeysPage() {
             </article>
           ))}
         </div>
-        {!items.length && !message && (
+        {!items.length && !message && !expired && (
           <p className="py-16 text-center text-sm text-[var(--muted)]">
             正在读取 API 密钥…
           </p>

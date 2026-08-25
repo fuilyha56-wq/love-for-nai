@@ -67,7 +67,7 @@ export default function ModelsPage() {
             </article>
           ))}
         </div>
-        {!items.length && !message && (
+        {!items.length && !message && !expired && (
           <p className="py-20 text-center text-sm text-[var(--muted)]">
             正在读取当前分组可用模型…
           </p>

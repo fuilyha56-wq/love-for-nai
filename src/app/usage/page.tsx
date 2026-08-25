@@ -59,7 +59,9 @@ export default function UsagePage() {
           <span>状态</span>
           <span>时间</span>
         </div>
-        {loading ? (
+        {expired ? (
+          <Empty text="登录状态已过期" />
+        ) : loading ? (
           <Empty text="正在读取使用记录…" />
         ) : items.length ? (
           items.map((item, index) => (
