@@ -8,14 +8,20 @@ services:
       QUOTA_PER_UNIT: ${QUOTA_PER_UNIT:-500000}
       LFN_SESSION_SECRET: ${LFN_SESSION_SECRET:?LFN_SESSION_SECRET is required}
       LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}
+      LFN_DATA_DIR: /app/data
       SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "${LFN_PORT:-21142}:3000"
+    volumes:
+      - lfn-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+volumes:
+  lfn-data:
