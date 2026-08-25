@@ -194,7 +194,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [count, setCount] = useState(1);
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [schedule, setSchedule] = useState("native");
-  const [cfgRescale, setCfgRescale] = useState(1);
+  // 0 表示关闭重缩放；非 0 会被 NovelAI 部分模型拒绝，因此默认不启用。
+  const [cfgRescale, setCfgRescale] = useState(0);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [seed, setSeed] = useState("");
   const [strength, setStrength] = useState(0.7);
@@ -829,10 +830,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       n: count,
       sampler,
       noise_schedule: schedule,
-      cfg_rescale: cfgRescale,
       response_format: "b64_json",
       quality_tags: true,
     };
+    if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (seed) base.seed = Number(seed);
     if (["img2img", "inpainting", "edits"].includes(operation)) {
       base.image = source?.data;
