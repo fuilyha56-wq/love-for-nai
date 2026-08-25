@@ -1,9 +1,8 @@
 services:
   lfn-web:
-    build:
-      context: .
-      args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    # 镜像在本地构建后经 docker save/load 分发，服务器内存不足以编译前端。
+    image: ${LFN_IMAGE:-love-for-nai:latest}
+    pull_policy: never
     container_name: love-for-nai
     restart: unless-stopped
     environment:
