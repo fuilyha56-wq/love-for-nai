@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
+import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session)
     return NextResponse.json({ message: "请先登录后生成" }, { status: 401 });
-  const body = (await request.json()) as Record<string, unknown> & {
+  let body: Record<string, unknown> & {
     model?: string;
     prompt?: string;
     negative_prompt?: string;
@@ -14,6 +15,11 @@ export async function POST(request: Request) {
     width?: number;
     height?: number;
   };
+  try {
+    body = await parseJsonBody(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
   if (!body.model || !body.prompt || !body.width || !body.height)
     return NextResponse.json({ message: "生成参数不完整" }, { status: 400 });
   if (!body.model.startsWith("nai-v"))

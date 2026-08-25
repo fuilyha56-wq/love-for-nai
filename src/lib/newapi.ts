@@ -85,6 +85,7 @@ async function resolveToken(
   const selfResponse = await fetch(`${baseUrl}/api/user/self`, {
     headers,
     cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
   });
   const selfResult = (await selfResponse.json()) as ApiResult<{
     group?: string;
@@ -114,6 +115,7 @@ async function resolveToken(
     const response = await fetch(`${baseUrl}/api/token/?p=1&size=100`, {
       headers,
       cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
     });
     const result = (await response.json()) as ApiResult<
       { items?: Token[] } | Token[]
@@ -150,6 +152,7 @@ async function resolveToken(
         group,
         cross_group_retry: false,
       }),
+      signal: AbortSignal.timeout(10_000),
     });
     const result = (await created.json()) as ApiResult<unknown>;
     if (!result.success)
@@ -163,6 +166,7 @@ async function resolveToken(
     method: "POST",
     headers,
     cache: "no-store",
+    signal: AbortSignal.timeout(10_000),
   });
   const keyResult = (await keyResponse.json()) as ApiResult<{ key?: string }>;
   if (!keyResult.success || !keyResult.data?.key)

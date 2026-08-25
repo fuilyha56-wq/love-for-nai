@@ -4,6 +4,8 @@ import {
   Aperture,
   Brush,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ChevronsUpDown,
   Code2,
   Download,
@@ -24,10 +26,15 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Props = { userName: string; authenticated: boolean };
+
+function clampPanel(value: number, min: number, max: number): number {
+  return Math.min(Math.max(Math.round(value), min), max);
+}
 type Me = { user?: { balance: number | null; group: string } };
 type Operation =
   | "generate"
@@ -208,15 +215,72 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
-  const [tagQuery, setTagQuery] = useState("");
+
   const [tagResults, setTagResults] = useState<DanbooruTag[]>([]);
   const [tagSearching, setTagSearching] = useState(false);
   const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
   const [assistantModel, setAssistantModel] = useState("");
-  const [assistantRequest, setAssistantRequest] = useState("");
+  const [agentInput, setAgentInput] = useState("");
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
+  const router = useRouter();
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [leftWidth, setLeftWidth] = useState(310);
+  const [rightWidth, setRightWidth] = useState(230);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("lfn-layout");
+    if (!saved) return;
+    let parsed: { left?: number; right?: number };
+    try {
+      parsed = JSON.parse(saved) as { left?: number; right?: number };
+    } catch {
+      window.localStorage.removeItem("lfn-layout");
+      return;
+    }
+    // 异步应用，避免在 effect 内同步 setState 触发级联渲染。
+    const timer = window.setTimeout(() => {
+      if (parsed.left) setLeftWidth(clampPanel(parsed.left, 240, 520));
+      if (parsed.right) setRightWidth(clampPanel(parsed.right, 200, 460));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function startResize(side: "left" | "right", event: React.PointerEvent) {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startLeft = leftWidth;
+    const startRight = rightWidth;
+
+    let latestLeft = startLeft;
+    let latestRight = startRight;
+
+    function move(pointer: PointerEvent) {
+      const delta = pointer.clientX - startX;
+      if (side === "left") {
+        latestLeft = clampPanel(startLeft + delta, 240, 520);
+        setLeftWidth(latestLeft);
+      } else {
+        latestRight = clampPanel(startRight - delta, 200, 460);
+        setRightWidth(latestRight);
+      }
+    }
+    function end() {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", end);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.localStorage.setItem(
+        "lfn-layout",
+        JSON.stringify({ left: latestLeft, right: latestRight }),
+      );
+    }
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end);
+  }
 
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
@@ -304,34 +368,29 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     setPrompt((value) => `${value}${value.trim() ? ", " : ""}${tag}`);
   }
 
-  async function searchDanbooru() {
-    if (tagQuery.trim().length < 2) {
+  async function searchDanbooru(keyword: string) {
+    const query = keyword.trim();
+    if (query.length < 2) {
       setNotice("请输入至少 2 个字符的标签关键词。");
       return;
     }
     setTagSearching(true);
     try {
-      const response = await fetch(
-        `/api/tags?q=${encodeURIComponent(tagQuery)}`,
-      );
+      const response = await fetch(`/api/tags?q=${encodeURIComponent(query)}`);
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "标签搜索失败");
+      if (!response.ok) throw new Error(result.message || "标签检索失败");
       setTagResults(result.tags || []);
       if (!result.tags?.length) setNotice("没有找到匹配的 Danbooru 标签。");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "标签搜索失败");
+      setNotice(error instanceof Error ? error.message : "标签检索失败");
     } finally {
       setTagSearching(false);
     }
   }
 
-  async function askTagAssistant() {
+  async function askTagAssistant(request: string) {
     if (!assistantModel) {
-      setNotice("当前账户没有可用的非 NAI 文本模型。");
-      return;
-    }
-    if (!assistantRequest.trim()) {
-      setNotice("请先描述需要模型整理的画面或标签。");
+      setNotice("当前账户没有可用的文本模型，请改用直接检索。");
       return;
     }
     setAssistantLoading(true);
@@ -342,7 +401,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: assistantModel,
-          request: assistantRequest,
+          request,
           currentPrompt: prompt,
           currentNegativePrompt: negative,
         }),
@@ -355,6 +414,22 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     } finally {
       setAssistantLoading(false);
     }
+  }
+
+  // 短关键词直接查 Danbooru，成句需求交给 LLM 整理，用户不必自己选入口。
+  async function runAgent() {
+    const input = agentInput.trim();
+    if (!input) {
+      setNotice("请描述画面，或输入要查询的标签关键词。");
+      return;
+    }
+    setTagResults([]);
+    setAssistantSuggestion(null);
+    const looksLikeKeyword =
+      input.length <= 12 && !/[，。,.;；\s]/.test(input) && !/^\s*$/.test(input);
+    if (looksLikeKeyword || !signedIn || !assistantModel)
+      await searchDanbooru(input);
+    else await askTagAssistant(input);
   }
 
   function applySuggestedParameters(
@@ -878,10 +953,26 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           )}
         </div>
       </header>
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[310px_minmax(420px,1fr)_230px]">
+      <div
+        className="studio-layout grid min-h-0 flex-1"
+        style={
+          {
+            "--lfn-left": `${leftWidth}px`,
+            "--lfn-right": `${rightWidth}px`,
+          } as React.CSSProperties
+        }
+      >
         <aside className="panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
         </aside>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整左侧面板宽度"
+          className="panel-resizer hidden lg:block"
+          onPointerDown={(event) => startResize("left", event)}
+          onDoubleClick={() => setLeftWidth(310)}
+        />
         <section className="flex min-h-0 flex-col">
           <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
             <button
@@ -942,14 +1033,21 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                     key={`${image.slice(-24)}-${index}`}
                     className="relative overflow-hidden border border-[var(--line)] bg-white"
                   >
-                    <Image
-                      src={image}
-                      alt={`NAI 结果 ${index + 1}`}
-                      width={width}
-                      height={height}
-                      unoptimized
-                      className="h-auto w-full object-contain"
-                    />
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(index)}
+                      className="block w-full cursor-zoom-in"
+                      title="点击放大查看"
+                    >
+                      <Image
+                        src={image}
+                        alt={`NAI 结果 ${index + 1}`}
+                        width={width}
+                        height={height}
+                        unoptimized
+                        className="h-auto w-full object-contain"
+                      />
+                    </button>
                     <a
                       href={image}
                       download={`lfn-${index + 1}.png`}
@@ -999,6 +1097,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </button>
           </div>
         </section>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整右侧面板宽度"
+          className="panel-resizer hidden lg:block"
+          onPointerDown={(event) => startResize("right", event)}
+          onDoubleClick={() => setRightWidth(230)}
+        />
         <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
           <div className="border-b border-[var(--line)] p-4">
             <b className="text-sm">创作中心</b>
@@ -1036,31 +1142,54 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </nav>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
-            <b className="text-sm">Danbooru 标签检索</b>
+            <div className="flex items-center gap-2">
+              <WandSparkles size={15} className="text-[var(--rose)]" />
+              <b className="text-sm">标签助手</b>
+            </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              支持中文常用词和规范英文标签。
+              输入关键词直接查 Danbooru，描述整段画面则由模型整理并校验。
             </p>
+            {signedIn && assistantModels.length > 0 && (
+              <div className="mt-3">
+                <PopupSelect
+                  value={assistantModel}
+                  options={assistantModels}
+                  onChange={setAssistantModel}
+                  ariaLabel="智能助手模型"
+                  searchable
+                />
+              </div>
+            )}
             <form
-              className="mt-3 flex gap-2"
+              className="mt-3 space-y-2"
               onSubmit={(event) => {
                 event.preventDefault();
-                searchDanbooru();
+                runAgent();
               }}
             >
-              <input
-                className="field min-w-0 flex-1 px-2 text-xs"
-                value={tagQuery}
-                onChange={(event) => setTagQuery(event.target.value)}
-                placeholder="如：白发"
-                aria-label="Danbooru 标签关键词"
+              <textarea
+                className="field min-h-20 w-full resize-y p-2 text-xs"
+                value={agentInput}
+                onChange={(event) => setAgentInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey) return;
+                  event.preventDefault();
+                  runAgent();
+                }}
+                placeholder="白发　或　雨夜里的白发少女，霓虹灯和电影感构图"
+                aria-label="标签助手输入"
               />
               <button
                 type="submit"
-                disabled={tagSearching}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded bg-[#292d2c] text-white disabled:opacity-50"
-                title="搜索标签"
+                disabled={tagSearching || assistantLoading}
+                className="flex h-9 w-full items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
               >
-                <Search size={16} />
+                <Search size={15} />
+                {tagSearching
+                  ? "检索中…"
+                  : assistantLoading
+                    ? "模型分析中…"
+                    : "让助手处理"}
               </button>
             </form>
             <div className="mt-3 space-y-1.5">
@@ -1080,48 +1209,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 </button>
               ))}
             </div>
-            <div className="mt-5 border-t border-[var(--line)] pt-4">
-              <b className="text-sm">LLM 智能检索</b>
-              <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-                由你的 NewAPI 模型整理需求，再用 Danbooru 官方数据校验。
-              </p>
-              {signedIn ? (
-                <div className="mt-3 space-y-2">
-                  {assistantModels.length ? (
-                    <PopupSelect
-                      value={assistantModel}
-                      options={assistantModels}
-                      onChange={setAssistantModel}
-                      ariaLabel="智能助手模型"
-                      searchable
-                    />
-                  ) : (
-                    <p className="text-[11px] text-[var(--muted)]">
-                      正在读取可用文本模型…
-                    </p>
-                  )}
-                  <textarea
-                    className="field min-h-20 w-full resize-y p-2 text-xs"
-                    value={assistantRequest}
-                    onChange={(event) =>
-                      setAssistantRequest(event.target.value)
-                    }
-                    placeholder="例如：雨夜里的白发少女，霓虹灯和电影感构图"
-                    aria-label="智能标签创作需求"
-                  />
-                  <button
-                    type="button"
-                    onClick={askTagAssistant}
-                    disabled={assistantLoading || !assistantModel}
-                    className="flex h-9 w-full items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
-                  >
-                    <WandSparkles size={15} />
-                    {assistantLoading ? "模型分析中…" : "生成并校验建议"}
-                  </button>
-                </div>
-              ) : (
-                <p className="mt-3 rounded border border-[var(--line)] bg-white p-2 text-[11px] leading-5 text-[var(--muted)]">
-                  登录后可选择自己的 NewAPI 文本模型。模型调用会按原规则计费。
+            <div className="mt-4">
+              {!signedIn && (
+                <p className="rounded border border-[var(--line)] bg-white p-2 text-[11px] leading-5 text-[var(--muted)]">
+                  登录后助手可调用你的 NewAPI 文本模型整理提示词，按原规则计费。
                 </p>
               )}
               {assistantSuggestion && (
@@ -1230,9 +1321,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   ? "重新登录"
                   : "登录使用真实余额"}
             </Link>
+            {signedIn && (
+              <button
+                type="button"
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  router.push("/sign-in");
+                  router.refresh();
+                }}
+                className="mt-2 flex h-9 w-full items-center justify-center rounded border border-[var(--line)] bg-white text-xs font-semibold"
+              >
+                退出登录
+              </button>
+            )}
           </div>
         </aside>
       </div>
+      {lightboxIndex !== null && images[lightboxIndex] && (
+        <Lightbox
+          images={images}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onNavigate={setLightboxIndex}
+        />
+      )}
       {mobilePanel && (
         <div
           className="fixed inset-0 z-40 bg-black/35 lg:hidden"
@@ -1526,6 +1638,104 @@ function NumericSlider({
     </div>
   );
 }
+function Lightbox({
+  images,
+  index,
+  onClose,
+  onNavigate,
+}: {
+  images: string[];
+  index: number;
+  onClose: () => void;
+  onNavigate: (next: number) => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  // showModal 才会渲染 ::backdrop 并阻止背后页面交互。
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog || dialog.open) return;
+    dialog.showModal();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      if (dialog.open) dialog.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      onNavigate((index + step + images.length) % images.length);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [index, images.length, onNavigate]);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="lightbox"
+      aria-label="图片预览"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target === dialogRef.current) onClose();
+      }}
+    >
+      <div className="lightbox-surface">
+        <Image
+          src={images[index]}
+          alt={`预览 ${index + 1}`}
+          width={1600}
+          height={1600}
+          unoptimized
+          priority
+          className="lightbox-image"
+        />
+        <div className="lightbox-toolbar">
+          <span>
+            {index + 1} / {images.length}
+          </span>
+          <a href={images[index]} download={`lfn-${index + 1}.png`} title="下载">
+            <Download size={16} />
+          </a>
+          <button type="button" onClick={onClose} aria-label="关闭预览">
+            <X size={16} />
+          </button>
+        </div>
+        {images.length > 1 && (
+          <>
+            <button
+              type="button"
+              className="lightbox-nav is-prev"
+              aria-label="上一张"
+              onClick={() =>
+                onNavigate((index - 1 + images.length) % images.length)
+              }
+            >
+              <ChevronLeft size={22} />
+            </button>
+            <button
+              type="button"
+              className="lightbox-nav is-next"
+              aria-label="下一张"
+              onClick={() => onNavigate((index + 1) % images.length)}
+            >
+              <ChevronRight size={22} />
+            </button>
+          </>
+        )}
+      </div>
+    </dialog>
+  );
+}
+
 function PopupSelect({
   value,
   options,

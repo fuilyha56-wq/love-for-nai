@@ -1,20 +1,32 @@
 import { NextResponse } from "next/server";
 import { encodePendingSession, pendingCookie } from "@/lib/session";
 import { callNewApi, establishSession, requiresTwoFactor } from "@/lib/login";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    username?: string;
-    password?: string;
-  };
-  if (!body.username || !body.password)
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const username = optionalString(raw.username)?.trim();
+  const password = optionalString(raw.password);
+  if (!username || !password)
     return NextResponse.json(
       { message: "请输入用户名和密码" },
       { status: 400 },
     );
 
   try {
-    const { response, result } = await callNewApi("/api/user/login", body);
+    const { response, result } = await callNewApi("/api/user/login", {
+      username,
+      password,
+    });
     if (!result.success || !result.data)
       return NextResponse.json(
         { message: result.message || "登录失败" },

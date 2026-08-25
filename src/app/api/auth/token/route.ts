@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { encodeSession, sessionCookie } from "@/lib/session";
 import { newApiBaseUrl } from "@/lib/newapi";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 type SelfResponse = {
   success: boolean;
@@ -14,8 +19,13 @@ type SelfResponse = {
 };
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as { token?: string };
-  const token = body.token?.trim() || "";
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const token = optionalString(raw.token)?.trim() || "";
   if (!token)
     return NextResponse.json({ message: "请输入访问令牌" }, { status: 400 });
   if (token.length > 200)

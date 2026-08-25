@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 export async function GET() {
   const session = await getSession();
@@ -51,12 +56,14 @@ export async function PUT(request: Request) {
       { message: "请先登录后修改个人资料" },
       { status: 401 },
     );
-  const body = (await request.json()) as {
-    displayName?: string;
-    username?: string;
-  };
-  const displayName = body.displayName?.trim() || "";
-  const username = body.username?.trim() || "";
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const displayName = optionalString(raw.displayName)?.trim() || "";
+  const username = optionalString(raw.username)?.trim() || "";
   if (displayName.length < 1 || displayName.length > 40)
     return NextResponse.json(
       { message: "显示名称需为 1–40 个字符" },

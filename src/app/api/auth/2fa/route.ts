@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getPendingSession, pendingCookie } from "@/lib/session";
 import { callNewApi, establishSession } from "@/lib/login";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 export async function POST(request: Request) {
   const pending = await getPendingSession();
@@ -10,9 +15,14 @@ export async function POST(request: Request) {
       { status: 401 },
     );
 
-  const body = (await request.json()) as { code?: string };
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
   // 备用码只在上游存哈希，格式未知，这里只做长度与字符集兜底。
-  const code = body.code?.trim().replace(/\s+/g, "") || "";
+  const code = optionalString(raw.code)?.trim().replace(/\s+/g, "") || "";
   if (!/^[A-Za-z0-9-]{6,32}$/.test(code))
     return NextResponse.json(
       { message: "请输入 6 位验证码或备用恢复码" },

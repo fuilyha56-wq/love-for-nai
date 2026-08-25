@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { newApiBaseUrl } from "@/lib/newapi";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 type UpstreamResult = { success: boolean; message?: string };
 
@@ -31,8 +36,13 @@ async function forward(
 
 // 发送邮箱验证码。
 export async function PUT(request: Request) {
-  const body = (await request.json()) as { email?: string };
-  const email = body.email?.trim() || "";
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const email = optionalString(raw.email)?.trim() || "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 120)
     return NextResponse.json({ message: "请输入有效的邮箱地址" }, { status: 400 });
   return forward(
@@ -43,17 +53,17 @@ export async function PUT(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as {
-    username?: string;
-    password?: string;
-    email?: string;
-    verificationCode?: string;
-    affCode?: string;
-  };
-  const username = body.username?.trim() || "";
-  const password = body.password || "";
-  const email = body.email?.trim() || "";
-  const code = body.verificationCode?.trim() || "";
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const username = optionalString(raw.username)?.trim() || "";
+  const password = optionalString(raw.password) || "";
+  const email = optionalString(raw.email)?.trim() || "";
+  const code = optionalString(raw.verificationCode)?.trim() || "";
+  const affCode = optionalString(raw.affCode)?.trim() || "";
 
   if (!/^[a-zA-Z0-9_\-.]{3,32}$/.test(username))
     return NextResponse.json(
@@ -81,7 +91,7 @@ export async function POST(request: Request) {
         password2: password,
         email,
         verification_code: code,
-        aff_code: body.affCode?.trim() || "",
+        aff_code: affCode,
       }),
     },
     "注册失败",

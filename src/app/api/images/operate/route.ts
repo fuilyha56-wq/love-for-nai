@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { saveHistory } from "@/lib/history";
+import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 
 const unifiedOperations = new Set([
   "generate",
@@ -19,6 +20,22 @@ const unifiedOperations = new Set([
   "director-emotion",
 ]);
 
+// NovelAI 上游对不支持的参数只回 500，需要据请求内容给出可操作的提示。
+function explainUpstreamFailure(
+  raw: string,
+  status: number,
+  body: Record<string, unknown>,
+): string {
+  if (status !== 500) return raw;
+  const suspects: string[] = [];
+  if (body.sampler === "ddim_v3") suspects.push("采样器 ddim_v3");
+  if (typeof body.cfg_rescale === "number" && body.cfg_rescale !== 0)
+    suspects.push("CFG 重缩放");
+  if (!suspects.length)
+    return `NovelAI 上游拒绝了本次请求（500）。请调整采样器、噪声调度或高级参数后重试。原始信息：${raw}`;
+  return `NovelAI 上游不支持当前${suspects.join("、")}，已返回 500。请更换后重试。`;
+}
+
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session)
@@ -26,12 +43,15 @@ export async function POST(request: Request) {
       { message: "请先登录后使用 NAI 工具" },
       { status: 401 },
     );
-  const body = (await request.json()) as Record<string, unknown> & {
-    operation?: string;
-    model?: string;
-  };
-  const operation = body.operation || "generate";
-  const model = body.model;
+  let body: Record<string, unknown> & { operation?: string; model?: string };
+  try {
+    body = await parseJsonBody(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const operation =
+    typeof body.operation === "string" ? body.operation : "generate";
+  const model = typeof body.model === "string" ? body.model : "";
   if (!model)
     return NextResponse.json({ message: "缺少模型参数" }, { status: 400 });
   if (["upscale", "annotate"].includes(operation)) {
@@ -66,6 +86,7 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify(payload),
       cache: "no-store",
+      signal: AbortSignal.timeout(180_000),
     });
     const contentType = upstream.headers.get("content-type") || "";
     if (!contentType.includes("application/json"))
@@ -74,17 +95,14 @@ export async function POST(request: Request) {
         { status: 502 },
       );
     const result = await upstream.json();
-    if (!upstream.ok || result.error || result.detail)
+    if (!upstream.ok || result.error || result.detail) {
+      const raw =
+        result.error?.message || result.detail || result.message || "上游操作失败";
       return NextResponse.json(
-        {
-          message:
-            result.error?.message ||
-            result.detail ||
-            result.message ||
-            "上游操作失败",
-        },
+        { message: explainUpstreamFailure(raw, upstream.status, body) },
         { status: upstream.status || 502 },
       );
+    }
     if (operation === "suggest-tags")
       return NextResponse.json({ tags: result.tags || result, raw: result });
     const images = imageFromResult(result);

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import {
+  invalidJsonResponse,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
 async function requireSession() {
   const session = await getSession();
@@ -46,8 +51,13 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requireSession();
   if (!auth) return NextResponse.json({ message: "请先登录" }, { status: 401 });
-  const body = (await request.json()) as { name?: string };
-  const name = body.name?.trim() || "";
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody<Record<string, unknown>>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const name = optionalString(raw.name)?.trim() || "";
   if (name.length < 2 || name.length > 40)
     return NextResponse.json(
       { message: "密钥名称需为 2–40 个字符" },
@@ -86,10 +96,13 @@ export async function POST(request: Request) {
 export async function PUT(request: Request) {
   const auth = await requireSession();
   if (!auth) return NextResponse.json({ message: "请先登录" }, { status: 401 });
-  const body = (await request.json()) as Record<string, unknown> & {
-    id?: number;
-  };
-  if (!body.id)
+  let body: Record<string, unknown> & { id?: number };
+  try {
+    body = await parseJsonBody(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  if (typeof body.id !== "number" || !Number.isInteger(body.id) || body.id <= 0)
     return NextResponse.json({ message: "缺少密钥 ID" }, { status: 400 });
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/token/`, {

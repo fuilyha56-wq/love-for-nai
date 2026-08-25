@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getChatToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
+import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 
 type AssistantPayload = {
   model?: string;
@@ -100,13 +101,22 @@ export async function POST(request: Request) {
       { message: "请先登录后使用智能标签助手" },
       { status: 401 },
     );
-  const body = (await request.json()) as AssistantPayload;
-  if (!body.model || isNaiImageModel(body.model))
+  let body: AssistantPayload;
+  try {
+    body = await parseJsonBody<AssistantPayload>(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  if (typeof body.model !== "string" || isNaiImageModel(body.model))
     return NextResponse.json(
       { message: "请选择一个文本对话模型" },
       { status: 400 },
     );
-  if (!body.request?.trim() || body.request.length > 1000)
+  if (
+    typeof body.request !== "string" ||
+    !body.request.trim() ||
+    body.request.length > 1000
+  )
     return NextResponse.json(
       { message: "请输入不超过 1000 字的创作需求" },
       { status: 400 },

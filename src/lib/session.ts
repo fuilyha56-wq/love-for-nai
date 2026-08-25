@@ -23,8 +23,22 @@ export type LfnPendingSession = {
 };
 const COOKIE_NAME = "lfn_session";
 const PENDING_COOKIE_NAME = "lfn_2fa";
-const secret = () =>
-  process.env.LFN_SESSION_SECRET || "lfn-development-secret-change-me";
+const DEVELOPMENT_SECRET = "lfn-development-secret-change-me";
+
+// 弱密钥会让攻击者伪造任意 userId 的会话，生产环境必须拒绝启动。
+function secret(): string {
+  const configured = process.env.LFN_SESSION_SECRET || "";
+  if (process.env.NODE_ENV === "production") {
+    if (!configured)
+      throw new Error("LFN_SESSION_SECRET is required in production");
+    if (Buffer.byteLength(configured, "utf8") < 32)
+      throw new Error("LFN_SESSION_SECRET must be at least 32 bytes");
+    if (configured === DEVELOPMENT_SECRET)
+      throw new Error("LFN_SESSION_SECRET must not use the development default");
+  }
+  return configured || DEVELOPMENT_SECRET;
+}
+
 const encryptionKey = () => createHash("sha256").update(secret()).digest();
 
 export function encodeSession(session: LfnSession): string {

@@ -34,6 +34,39 @@ const categoryNames: Record<number, string> = {
 };
 const cache = new Map<string, { expiresAt: number; data: unknown }>();
 const requests = new Map<string, number[]>();
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT = 30;
+const MAX_TRACKED_CLIENTS = 5_000;
+
+// X-Forwarded-For 可被客户端伪造，只有部署在受信代理后才允许采信。
+function clientKey(request: NextRequest): string {
+  if (process.env.LFN_TRUST_PROXY === "true") {
+    const forwarded = request.headers
+      .get("x-forwarded-for")
+      ?.split(",")[0]
+      ?.trim();
+    if (forwarded) return forwarded;
+  }
+  return "shared";
+}
+
+function overRateLimit(key: string, now: number): boolean {
+  for (const [tracked, times] of requests) {
+    if (times.every((time) => now - time >= RATE_WINDOW_MS))
+      requests.delete(tracked);
+  }
+  if (requests.size >= MAX_TRACKED_CLIENTS && !requests.has(key)) return true;
+  const recent = (requests.get(key) || []).filter(
+    (time) => now - time < RATE_WINDOW_MS,
+  );
+  if (recent.length >= RATE_LIMIT) {
+    requests.set(key, recent);
+    return true;
+  }
+  recent.push(now);
+  requests.set(key, recent);
+  return false;
+}
 
 export async function GET(request: NextRequest) {
   const rawQuery = request.nextUrl.searchParams.get("q")?.trim() || "";
@@ -43,19 +76,12 @@ export async function GET(request: NextRequest) {
       { status: 400 },
     );
 
-  const client =
-    request.headers.get("x-forwarded-for")?.split(",")[0] || "local";
   const now = Date.now();
-  const recent = (requests.get(client) || []).filter(
-    (time) => now - time < 60_000,
-  );
-  if (recent.length >= 30)
+  if (overRateLimit(clientKey(request), now))
     return NextResponse.json(
       { message: "标签搜索过于频繁，请稍后再试" },
       { status: 429 },
     );
-  recent.push(now);
-  requests.set(client, recent);
 
   const normalized = (chineseTerms[rawQuery] || rawQuery)
     .toLowerCase()
@@ -90,6 +116,10 @@ export async function GET(request: NextRequest) {
         postCount: tag.post_count,
       })),
     };
+    for (const [key, entry] of cache) {
+      if (entry.expiresAt <= now) cache.delete(key);
+    }
+    if (cache.size >= 1_000) cache.clear();
     cache.set(normalized, { expiresAt: now + 5 * 60_000, data });
     return NextResponse.json(data);
   } catch {

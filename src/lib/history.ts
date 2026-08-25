@@ -61,10 +61,12 @@ const userLocks = new Map<number, Promise<unknown>>();
 function withUserLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
   const previous = userLocks.get(userId) ?? Promise.resolve();
   const current = previous.then(task, task);
-  userLocks.set(
-    userId,
-    current.catch(() => undefined),
-  );
+  const tail = current.catch(() => undefined);
+  userLocks.set(userId, tail);
+  // 队列排空后移除条目，避免用户量增长导致 Map 无限累积。
+  void tail.then(() => {
+    if (userLocks.get(userId) === tail) userLocks.delete(userId);
+  });
   return current;
 }
 
