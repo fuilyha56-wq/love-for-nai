@@ -831,7 +831,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       sampler,
       noise_schedule: schedule,
       response_format: "b64_json",
-      quality_tags: true,
     };
     if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (seed) base.seed = Number(seed);

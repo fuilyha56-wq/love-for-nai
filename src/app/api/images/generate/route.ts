@@ -38,7 +38,6 @@ export async function POST(request: Request) {
     "noise_schedule",
     "cfg_rescale",
     "seed",
-    "quality_tags",
   ];
   const baseUrl = newApiBaseUrl();
   try {
