@@ -96,10 +96,13 @@ export async function POST(request: Request) {
       );
     // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
     const text = await upstream.text();
-    let result: Record<string, unknown> & {
+    let result: {
       error?: { message?: string };
       detail?: string;
       message?: string;
+      tags?: unknown;
+      usage?: unknown;
+      data?: Array<{ b64_json?: string; url?: string; vibe?: unknown }>;
     } = {};
     if (text.trim()) {
       try {
