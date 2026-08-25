@@ -1,7 +1,8 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --registry=${NPM_REGISTRY}
 
 FROM node:22-alpine AS builder
 WORKDIR /app

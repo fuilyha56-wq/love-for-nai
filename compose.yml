@@ -1,6 +1,9 @@
 services:
   lfn-web:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: love-for-nai
     restart: unless-stopped
     environment:
