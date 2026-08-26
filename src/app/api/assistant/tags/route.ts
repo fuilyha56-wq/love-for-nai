@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
+import { getChatToken, isNaiImageModel } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { outboundFetch } from "@/lib/outbound";
+import { runTagAgent } from "@/lib/tag-agent";
 
 type AssistantPayload = {
   model?: string;
@@ -23,10 +24,6 @@ type AssistantSuggestion = {
     noiseSchedule?: string;
     seed?: number;
   };
-};
-type ChatResult = {
-  choices?: Array<{ message?: { content?: string } }>;
-  error?: { message?: string };
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
 
@@ -124,42 +121,12 @@ export async function POST(request: Request) {
 
   try {
     const key = await getChatToken(session, body.model);
-    const upstream = await fetch(`${newApiBaseUrl()}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: body.model,
-        stream: false,
-        temperature: 0.3,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "你是 NovelAI 图像提示词助手。只输出 JSON，字段为 prompt、negativePrompt、tags、parameters。tags 必须是 Danbooru 风格英文标签数组；parameters 仅可包含 width、height、steps、scale、sampler、noiseSchedule、seed。不要输出 Markdown。",
-          },
-          {
-            role: "user",
-            content: JSON.stringify({
-              request: body.request,
-              currentPrompt: body.currentPrompt || "",
-              currentNegativePrompt: body.currentNegativePrompt || "",
-            }),
-          },
-        ],
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(60_000),
+    const { content, steps } = await runTagAgent(key, body.model, body.request, {
+      currentPrompt: body.currentPrompt,
+      currentNegativePrompt: body.currentNegativePrompt,
     });
-    const result = (await upstream.json()) as ChatResult;
-    if (!upstream.ok || result.error)
-      throw new Error(result.error?.message || "模型助手调用失败");
-    const content = result.choices?.[0]?.message?.content || "";
     const suggestion = parseSuggestion(content);
-    const candidates = [...new Set((suggestion.tags || []).slice(0, 16))];
+    const candidates = [...new Set((suggestion.tags || []).slice(0, 24))];
     const results = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -181,6 +148,7 @@ export async function POST(request: Request) {
       unverifiedTags: results
         .filter((item) => item.result.status === "unavailable")
         .map((item) => item.candidate),
+      steps,
     });
   } catch (error) {
     return NextResponse.json(

@@ -7,6 +7,7 @@ type DanbooruTag = {
   post_count: number;
 };
 
+// 常见中文词的直译捷径，未命中时回退到 Danbooru 自身的模糊匹配。
 const chineseTerms: Record<string, string> = {
   女孩: "girl",
   男孩: "boy",
@@ -25,6 +26,12 @@ const chineseTerms: Record<string, string> = {
   夜晚: "night",
   雨: "rain",
   花: "flower",
+};
+
+type AutocompleteItem = {
+  value?: string;
+  category?: number;
+  post_count?: number;
 };
 const categoryNames: Record<number, string> = {
   0: "通用",
@@ -69,6 +76,64 @@ function overRateLimit(key: string, now: number): boolean {
   return false;
 }
 
+type TagHit = {
+  name: string;
+  displayName: string;
+  category: number;
+  categoryName: string;
+  postCount: number;
+};
+
+function toHit(name: string, category: number, postCount: number): TagHit {
+  return {
+    name,
+    displayName: name.replaceAll("_", " "),
+    category,
+    categoryName: categoryNames[category] || "其他",
+    postCount,
+  };
+}
+
+async function danbooru(path: string, params: URLSearchParams): Promise<unknown> {
+  const response = await outboundFetch(
+    `https://danbooru.donmai.us/${path}?${params}`,
+    {
+      headers: { "User-Agent": "Love-for-NAI/0.1 (tag search)" },
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!response.ok) throw new Error("Danbooru 查询失败");
+  return response.json();
+}
+
+async function matchByName(keyword: string): Promise<TagHit[]> {
+  const tags = (await danbooru(
+    "tags.json",
+    new URLSearchParams({
+      "search[name_matches]": `*${keyword}*`,
+      "search[order]": "count",
+      limit: "16",
+    }),
+  )) as DanbooruTag[];
+  return tags.map((tag) => toHit(tag.name, tag.category, tag.post_count));
+}
+
+async function matchByWords(keyword: string): Promise<TagHit[]> {
+  const items = (await danbooru(
+    "autocomplete.json",
+    new URLSearchParams({
+      "search[query]": keyword.replaceAll("_", " "),
+      "search[type]": "tag_query",
+      limit: "16",
+    }),
+  )) as AutocompleteItem[];
+  return items
+    .filter((item) => typeof item.value === "string")
+    .map((item) =>
+      toHit(item.value as string, item.category ?? 0, item.post_count ?? 0),
+    );
+}
+
 export async function GET(request: NextRequest) {
   const rawQuery = request.nextUrl.searchParams.get("q")?.trim() || "";
   if (rawQuery.length < 2 || rawQuery.length > 80)
@@ -91,30 +156,13 @@ export async function GET(request: NextRequest) {
   if (cached && cached.expiresAt > now) return NextResponse.json(cached.data);
 
   try {
-    const params = new URLSearchParams({
-      "search[name_matches]": `*${normalized}*`,
-      "search[order]": "count",
-      limit: "16",
-    });
-    const upstream = await outboundFetch(
-      `https://danbooru.donmai.us/tags.json?${params}`,
-      {
-        headers: { "User-Agent": "Love-for-NAI/0.1 (tag search)" },
-        signal: AbortSignal.timeout(15_000),
-      },
-    );
-    if (!upstream.ok) throw new Error("Danbooru 查询失败");
-    const tags = (await upstream.json()) as DanbooruTag[];
+    let tags = await matchByName(normalized);
+    // name_matches 只做整串通配，多词或部分词需要 autocomplete 的词级匹配。
+    if (!tags.length) tags = await matchByWords(normalized);
     const data = {
       query: rawQuery,
       normalizedQuery: normalized,
-      tags: tags.map((tag) => ({
-        name: tag.name,
-        displayName: tag.name.replaceAll("_", " "),
-        category: tag.category,
-        categoryName: categoryNames[tag.category] || "其他",
-        postCount: tag.post_count,
-      })),
+      tags,
     };
     for (const [key, entry] of cache) {
       if (entry.expiresAt <= now) cache.delete(key);
