@@ -18,6 +18,14 @@ type ChatResponse = {
 
 export type AgentStep = { tool: string; query: string; ok: boolean };
 
+export const TAG_AGENT_LIMITS = {
+  maxRounds: 6,
+  maxCallsPerRound: 8,
+  maxTotalCalls: 24,
+  maxDurationMs: 150_000,
+  maxModelCallMs: 90_000,
+} as const;
+
 const SYSTEM_PROMPT = `你是 NovelAI 提示词 agent。目标是把用户需求转成经 Danbooru 验证的英文标签。
 
 工作方式：
@@ -37,7 +45,10 @@ async function callModel(
   model: string,
   messages: Message[],
   withTools: boolean,
+  deadline: number,
 ): Promise<Message> {
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new Error("标签助手执行超时，请缩短需求后重试");
   const response = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: {
@@ -52,7 +63,9 @@ async function callModel(
       ...(withTools ? { tools: toolSchemas, tool_choice: "auto" } : {}),
     }),
     cache: "no-store",
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(
+      Math.max(1, Math.min(TAG_AGENT_LIMITS.maxModelCallMs, remaining)),
+    ),
   });
   const result = (await response.json()) as ChatResponse;
   if (!response.ok || result.error)
@@ -62,11 +75,17 @@ async function callModel(
   return message;
 }
 
-function describeCall(call: ToolCall): { name: string; args: Record<string, unknown> } {
+function describeCall(call: ToolCall): {
+  name: string;
+  args: Record<string, unknown>;
+} {
   const name = call.function?.name || "";
   let args: Record<string, unknown> = {};
   try {
-    args = JSON.parse(call.function?.arguments || "{}") as Record<string, unknown>;
+    args = JSON.parse(call.function?.arguments || "{}") as Record<
+      string,
+      unknown
+    >;
   } catch {
     args = {};
   }
@@ -78,9 +97,9 @@ export async function runTagAgent(
   model: string,
   userRequest: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string },
-  maxRounds = 6,
 ): Promise<{ content: string; steps: AgentStep[] }> {
   const baseUrl = newApiBaseUrl();
+  const deadline = Date.now() + TAG_AGENT_LIMITS.maxDurationMs;
   const messages: Message[] = [
     { role: "system", content: SYSTEM_PROMPT },
     {
@@ -94,15 +113,35 @@ export async function runTagAgent(
   ];
   const steps: AgentStep[] = [];
 
-  for (let round = 0; round < maxRounds; round += 1) {
-    const message = await callModel(baseUrl, key, model, messages, true);
+  let totalCalls = 0;
+  for (let round = 0; round < TAG_AGENT_LIMITS.maxRounds; round += 1) {
+    const message = await callModel(
+      baseUrl,
+      key,
+      model,
+      messages,
+      true,
+      deadline,
+    );
     const calls = message.tool_calls ?? [];
     if (!calls.length) return { content: message.content || "", steps };
+    if (calls.length > TAG_AGENT_LIMITS.maxCallsPerRound)
+      throw new Error("模型一次请求了过多检索工具，请简化需求后重试");
+    if (totalCalls + calls.length > TAG_AGENT_LIMITS.maxTotalCalls)
+      throw new Error("标签助手检索次数已达上限，请简化需求后重试");
+    if (Date.now() >= deadline)
+      throw new Error("标签助手执行超时，请缩短需求后重试");
+    totalCalls += calls.length;
 
     messages.push(message);
-    for (const call of calls) {
-      const { name, args } = describeCall(call);
-      const result = await runTool(name, args);
+    const toolResults = await Promise.all(
+      calls.map(async (call) => {
+        const { name, args } = describeCall(call);
+        const result = await runTool(name, args);
+        return { call, name, args, result };
+      }),
+    );
+    for (const { call, name, args, result } of toolResults) {
       steps.push({
         tool: name,
         query: String(args.query ?? args.name ?? args.title ?? ""),
@@ -121,6 +160,6 @@ export async function runTagAgent(
     role: "user",
     content: "工具调用已达上限，请基于已确认的标签立即输出最终 JSON。",
   });
-  const final = await callModel(baseUrl, key, model, messages, false);
+  const final = await callModel(baseUrl, key, model, messages, false, deadline);
   return { content: final.content || "", steps };
 }

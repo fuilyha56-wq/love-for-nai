@@ -19,7 +19,10 @@ type AutocompleteItem = {
 type DanbooruTag = { name: string; category: number; post_count: number };
 type WikiPage = { title?: string; body?: string; other_names?: string[] };
 
-async function danbooru(path: string, params: URLSearchParams): Promise<unknown> {
+async function danbooru(
+  path: string,
+  params: URLSearchParams,
+): Promise<unknown> {
   const response = await outboundFetch(
     `https://danbooru.donmai.us/${path}?${params}`,
     {
@@ -52,7 +55,10 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
         postCount: item.post_count ?? 0,
       }));
     if (!tags.length)
-      return { ok: true, data: { query: keyword, tags: [], note: "无匹配标签" } };
+      return {
+        ok: true,
+        data: { query: keyword, tags: [], note: "无匹配标签" },
+      };
     return { ok: true, data: { query: keyword, tags } };
   } catch (error) {
     return {
@@ -192,7 +198,8 @@ export const toolSchemas = [
     type: "function" as const,
     function: {
       name: "verify_danbooru_tag",
-      description: "校验某个 Danbooru 标签是否真实存在，返回精确名称、分类与图片数。",
+      description:
+        "校验某个 Danbooru 标签是否真实存在，返回精确名称、分类与图片数。",
       parameters: {
         type: "object",
         properties: {
@@ -239,7 +246,7 @@ export async function runTool(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const text = (key: string) =>
-    typeof args[key] === "string" ? (args[key] as string) : "";
+    typeof args[key] === "string" ? (args[key] as string).slice(0, 200) : "";
   switch (name) {
     case "search_danbooru_tags":
       return searchDanbooruTags(text("query"));

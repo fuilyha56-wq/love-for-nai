@@ -5,8 +5,42 @@ import {
   optionalString,
   parseJsonBody,
 } from "@/lib/request";
+import {
+  privateKey,
+  SlidingWindowRateLimiter,
+  trustedClientKey,
+} from "@/lib/rate-limit";
 
 type UpstreamResult = { success: boolean; message?: string };
+
+const TEN_MINUTES = 10 * 60_000;
+const verificationEmailLimiter = new SlidingWindowRateLimiter({
+  limit: 3,
+  windowMs: TEN_MINUTES,
+});
+const verificationClientLimiter = new SlidingWindowRateLimiter({
+  limit: 10,
+  windowMs: TEN_MINUTES,
+});
+const verificationGlobalLimiter = new SlidingWindowRateLimiter({
+  limit: 100,
+  windowMs: TEN_MINUTES,
+  maxKeys: 1,
+});
+const registrationEmailLimiter = new SlidingWindowRateLimiter({
+  limit: 10,
+  windowMs: TEN_MINUTES,
+});
+
+function tooManyRequests(retryAfterSeconds: number, message: string) {
+  return NextResponse.json(
+    { message },
+    {
+      status: 429,
+      headers: { "Retry-After": String(retryAfterSeconds) },
+    },
+  );
+}
 
 async function forward(
   path: string,
@@ -44,7 +78,37 @@ export async function PUT(request: Request) {
   }
   const email = optionalString(raw.email)?.trim() || "";
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 120)
-    return NextResponse.json({ message: "请输入有效的邮箱地址" }, { status: 400 });
+    return NextResponse.json(
+      { message: "请输入有效的邮箱地址" },
+      { status: 400 },
+    );
+
+  const now = Date.now();
+  const globalRate = verificationGlobalLimiter.check("global", now);
+  if (!globalRate.allowed)
+    return tooManyRequests(
+      globalRate.retryAfterSeconds,
+      "验证码发送过于频繁，请稍后再试",
+    );
+  const client = trustedClientKey(request);
+  if (client) {
+    const clientRate = verificationClientLimiter.check(client, now);
+    if (!clientRate.allowed)
+      return tooManyRequests(
+        clientRate.retryAfterSeconds,
+        "验证码发送过于频繁，请稍后再试",
+      );
+  }
+  const emailRate = verificationEmailLimiter.check(
+    privateKey(email.toLowerCase()),
+    now,
+  );
+  if (!emailRate.allowed)
+    return tooManyRequests(
+      emailRate.retryAfterSeconds,
+      "该邮箱验证码发送过于频繁，请稍后再试",
+    );
+
   return forward(
     `/api/verification?email=${encodeURIComponent(email)}`,
     { method: "GET" },
@@ -76,9 +140,21 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email))
-    return NextResponse.json({ message: "请输入有效的邮箱地址" }, { status: 400 });
+    return NextResponse.json(
+      { message: "请输入有效的邮箱地址" },
+      { status: 400 },
+    );
   if (!code)
     return NextResponse.json({ message: "请输入邮箱验证码" }, { status: 400 });
+
+  const registrationRate = registrationEmailLimiter.check(
+    privateKey(email.toLowerCase()),
+  );
+  if (!registrationRate.allowed)
+    return tooManyRequests(
+      registrationRate.retryAfterSeconds,
+      "注册尝试过于频繁，请稍后再试",
+    );
 
   return forward(
     "/api/user/register",

@@ -1,6 +1,7 @@
 services:
   lfn-web:
-    image: love-for-nai:b3b2f21d-deploy1
+    # 生产机只运行预先构建并导入的镜像，通过 LFN_IMAGE 固定发布版本。
+    image: ${LFN_IMAGE:-love-for-nai:latest}
     pull_policy: never
     container_name: love-for-nai
     restart: unless-stopped
@@ -11,6 +12,8 @@ services:
       LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}
       LFN_DATA_DIR: /app/data
       SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+      LFN_OUTBOUND_PROXY: ${LFN_OUTBOUND_PROXY:-}
+      LFN_TRUST_PROXY: ${LFN_TRUST_PROXY:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

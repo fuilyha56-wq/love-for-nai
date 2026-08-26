@@ -26,16 +26,25 @@ const PENDING_COOKIE_NAME = "lfn_2fa";
 const DEVELOPMENT_SECRET = "lfn-development-secret-change-me";
 
 // 弱密钥会让攻击者伪造任意 userId 的会话，生产环境必须拒绝启动。
-function secret(): string {
-  const configured = process.env.LFN_SESSION_SECRET || "";
-  if (process.env.NODE_ENV === "production") {
+export function validateSessionConfiguration(
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const configured = environment.LFN_SESSION_SECRET || "";
+  if (environment.NODE_ENV === "production") {
     if (!configured)
       throw new Error("LFN_SESSION_SECRET is required in production");
     if (Buffer.byteLength(configured, "utf8") < 32)
       throw new Error("LFN_SESSION_SECRET must be at least 32 bytes");
     if (configured === DEVELOPMENT_SECRET)
-      throw new Error("LFN_SESSION_SECRET must not use the development default");
+      throw new Error(
+        "LFN_SESSION_SECRET must not use the development default",
+      );
   }
+}
+
+function secret(): string {
+  validateSessionConfiguration();
+  const configured = process.env.LFN_SESSION_SECRET || "";
   return configured || DEVELOPMENT_SECRET;
 }
 

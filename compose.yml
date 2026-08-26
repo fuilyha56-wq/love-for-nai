@@ -1,6 +1,7 @@
 services:
   lfn-web:
-    # 镜像在本地构建后经 docker save/load 分发，服务器内存不足以编译前端。
+    build:
+      context: .
     image: ${LFN_IMAGE:-love-for-nai:latest}
     pull_policy: never
     container_name: love-for-nai

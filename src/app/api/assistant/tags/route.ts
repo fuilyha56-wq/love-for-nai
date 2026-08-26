@@ -4,26 +4,13 @@ import { getChatToken, isNaiImageModel } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { outboundFetch } from "@/lib/outbound";
 import { runTagAgent } from "@/lib/tag-agent";
+import { parseTagSuggestion } from "@/lib/tag-suggestion";
 
 type AssistantPayload = {
   model?: string;
   request?: string;
   currentPrompt?: string;
   currentNegativePrompt?: string;
-};
-type AssistantSuggestion = {
-  prompt?: string;
-  negativePrompt?: string;
-  tags?: string[];
-  parameters?: {
-    width?: number;
-    height?: number;
-    steps?: number;
-    scale?: number;
-    sampler?: string;
-    noiseSchedule?: string;
-    seed?: number;
-  };
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
 
@@ -34,12 +21,6 @@ const categoryNames: Record<number, string> = {
   4: "角色",
   5: "元数据",
 };
-
-function parseSuggestion(content: string): AssistantSuggestion {
-  const match = content.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("模型未返回可读取的建议");
-  return JSON.parse(match[0]) as AssistantSuggestion;
-}
 
 function normalizeTag(name: string): string {
   return name.trim().toLowerCase().replaceAll(" ", "_");
@@ -121,12 +102,17 @@ export async function POST(request: Request) {
 
   try {
     const key = await getChatToken(session, body.model);
-    const { content, steps } = await runTagAgent(key, body.model, body.request, {
-      currentPrompt: body.currentPrompt,
-      currentNegativePrompt: body.currentNegativePrompt,
-    });
-    const suggestion = parseSuggestion(content);
-    const candidates = [...new Set((suggestion.tags || []).slice(0, 24))];
+    const { content, steps } = await runTagAgent(
+      key,
+      body.model,
+      body.request,
+      {
+        currentPrompt: body.currentPrompt,
+        currentNegativePrompt: body.currentNegativePrompt,
+      },
+    );
+    const suggestion = parseTagSuggestion(content);
+    const candidates = [...new Set(suggestion.tags)];
     const results = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { outboundFetch } from "@/lib/outbound";
+import { SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 
 type DanbooruTag = {
   name: string;
@@ -41,40 +42,17 @@ const categoryNames: Record<number, string> = {
   5: "元数据",
 };
 const cache = new Map<string, { expiresAt: number; data: unknown }>();
-const requests = new Map<string, number[]>();
 const RATE_WINDOW_MS = 60_000;
-const RATE_LIMIT = 30;
-const MAX_TRACKED_CLIENTS = 5_000;
-
-// X-Forwarded-For 可被客户端伪造，只有部署在受信代理后才允许采信。
-function clientKey(request: NextRequest): string {
-  if (process.env.LFN_TRUST_PROXY === "true") {
-    const forwarded = request.headers
-      .get("x-forwarded-for")
-      ?.split(",")[0]
-      ?.trim();
-    if (forwarded) return forwarded;
-  }
-  return "shared";
-}
-
-function overRateLimit(key: string, now: number): boolean {
-  for (const [tracked, times] of requests) {
-    if (times.every((time) => now - time >= RATE_WINDOW_MS))
-      requests.delete(tracked);
-  }
-  if (requests.size >= MAX_TRACKED_CLIENTS && !requests.has(key)) return true;
-  const recent = (requests.get(key) || []).filter(
-    (time) => now - time < RATE_WINDOW_MS,
-  );
-  if (recent.length >= RATE_LIMIT) {
-    requests.set(key, recent);
-    return true;
-  }
-  recent.push(now);
-  requests.set(key, recent);
-  return false;
-}
+const clientLimiter = new SlidingWindowRateLimiter({
+  limit: 30,
+  windowMs: RATE_WINDOW_MS,
+});
+// 无法可信识别客户端时使用更宽松的站点级保护，避免所有用户共享 30 次额度。
+const globalLimiter = new SlidingWindowRateLimiter({
+  limit: 600,
+  windowMs: RATE_WINDOW_MS,
+  maxKeys: 1,
+});
 
 type TagHit = {
   name: string;
@@ -94,7 +72,10 @@ function toHit(name: string, category: number, postCount: number): TagHit {
   };
 }
 
-async function danbooru(path: string, params: URLSearchParams): Promise<unknown> {
+async function danbooru(
+  path: string,
+  params: URLSearchParams,
+): Promise<unknown> {
   const response = await outboundFetch(
     `https://danbooru.donmai.us/${path}?${params}`,
     {
@@ -143,10 +124,21 @@ export async function GET(request: NextRequest) {
     );
 
   const now = Date.now();
-  if (overRateLimit(clientKey(request), now))
+  const globalRate = globalLimiter.check("global", now);
+  const client = trustedClientKey(request);
+  const clientRate = client ? clientLimiter.check(client, now) : null;
+  const rejectedRate = !globalRate.allowed
+    ? globalRate
+    : clientRate && !clientRate.allowed
+      ? clientRate
+      : null;
+  if (rejectedRate)
     return NextResponse.json(
       { message: "标签搜索过于频繁，请稍后再试" },
-      { status: 429 },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rejectedRate.retryAfterSeconds) },
+      },
     );
 
   const normalized = (chineseTerms[rawQuery] || rawQuery)
