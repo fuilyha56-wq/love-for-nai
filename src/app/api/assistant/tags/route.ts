@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getChatToken, isNaiImageModel, newApiBaseUrl } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { outboundFetch } from "@/lib/outbound";
 
 type AssistantPayload = {
   model?: string;
@@ -67,14 +68,13 @@ async function validateTag(name: string): Promise<ValidationResult> {
     limit: "1",
   });
   try {
-    const response = await fetch(
+    const response = await outboundFetch(
       `https://danbooru.donmai.us/tags.json?${params}`,
       {
         headers: {
           "User-Agent": "Love-for-NAI/0.1 (assistant tag validation)",
         },
-        next: { revalidate: 300 },
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!response.ok) return { status: "unavailable" };

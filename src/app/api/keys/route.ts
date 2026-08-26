@@ -104,23 +104,26 @@ export async function PUT(request: Request) {
   }
   if (typeof body.id !== "number" || !Number.isInteger(body.id) || body.id <= 0)
     return NextResponse.json({ message: "缺少密钥 ID" }, { status: 400 });
+  // NewAPI 只在带 status_only 时更新启停状态，否则会静默忽略 status 字段。
+  const statusOnly = body.statusOnly === true;
+  delete body.statusOnly;
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/token/`, {
-      method: "PUT",
-      headers: auth.headers,
-      body: JSON.stringify(body),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
+    const upstream = await fetch(
+      `${newApiBaseUrl()}/api/token/${statusOnly ? "?status_only=true" : ""}`,
+      {
+        method: "PUT",
+        headers: auth.headers,
+        body: JSON.stringify(body),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
     const result = await upstream.json();
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "更新 API 密钥失败");
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "更新 API 密钥失败" },
-      { status: 502 },
-    );
+    return failure(error, "更新 API 密钥失败");
   }
 }
 

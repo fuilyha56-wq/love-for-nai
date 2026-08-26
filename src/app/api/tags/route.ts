@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { outboundFetch } from "@/lib/outbound";
 
 type DanbooruTag = {
   name: string;
@@ -95,12 +96,11 @@ export async function GET(request: NextRequest) {
       "search[order]": "count",
       limit: "16",
     });
-    const upstream = await fetch(
+    const upstream = await outboundFetch(
       `https://danbooru.donmai.us/tags.json?${params}`,
       {
         headers: { "User-Agent": "Love-for-NAI/0.1 (tag search)" },
-        next: { revalidate: 300 },
-        signal: AbortSignal.timeout(8_000),
+        signal: AbortSignal.timeout(15_000),
       },
     );
     if (!upstream.ok) throw new Error("Danbooru 查询失败");

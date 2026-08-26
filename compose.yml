@@ -12,6 +12,9 @@ services:
       LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}
       LFN_DATA_DIR: /app/data
       SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+      # Danbooru 需经出站代理访问；留空则直连。
+      LFN_OUTBOUND_PROXY: ${LFN_OUTBOUND_PROXY:-}
+      LFN_TRUST_PROXY: ${LFN_TRUST_PROXY:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

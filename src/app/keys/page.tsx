@@ -1,6 +1,13 @@
 "use client";
 
-import { ArrowLeft, KeyRound, Plus, Power, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Copy,
+  KeyRound,
+  Plus,
+  Power,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
@@ -79,13 +86,34 @@ export default function KeysPage() {
       const response = await fetch("/api/keys", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...item, status: item.status === 1 ? 2 : 1 }),
+        body: JSON.stringify({
+          id: item.id,
+          status: item.status === 1 ? 2 : 1,
+          statusOnly: true,
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "更新失败");
       await load();
+      setMessage(item.status === 1 ? "密钥已停用。" : "密钥已启用。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "更新失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+  async function copyKey(item: TokenItem) {
+    setWorking(true);
+    try {
+      const response = await fetch(`/api/keys/${item.id}/key`, {
+        method: "POST",
+      });
+      const result = await readJson<{ key: string }>(response, "复制失败");
+      await navigator.clipboard.writeText(result.key);
+      setMessage(`已复制密钥“${item.name}”到剪贴板。`);
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      else setMessage(error instanceof Error ? error.message : "复制失败");
     } finally {
       setWorking(false);
     }
@@ -166,9 +194,18 @@ export default function KeysPage() {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => toggle(item)}
+                  onClick={() => copyKey(item)}
                   disabled={working}
                   className="key-action"
+                  title="复制密钥"
+                >
+                  <Copy size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggle(item)}
+                  disabled={working}
+                  className={`key-action ${item.status === 1 ? "" : "opacity-50"}`}
                   title={item.status === 1 ? "停用密钥" : "启用密钥"}
                 >
                   <Power size={15} />
