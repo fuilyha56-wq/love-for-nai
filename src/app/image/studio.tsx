@@ -27,7 +27,14 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 
 type Props = { userName: string; authenticated: boolean };
@@ -227,6 +234,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     useState<AssistantSuggestion | null>(null);
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const closeLightbox = useCallback(() => setLightboxIndex(null), []);
   const [leftWidth, setLeftWidth] = useState(310);
   const [rightWidth, setRightWidth] = useState(230);
 
@@ -1341,7 +1349,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         <Lightbox
           images={images}
           index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
+          onClose={closeLightbox}
           onNavigate={setLightboxIndex}
         />
       )}
@@ -1650,8 +1658,6 @@ function Lightbox({
   onNavigate: (next: number) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
 
   // showModal 才会渲染 ::backdrop 并阻止背后页面交互。
   useEffect(() => {
@@ -1660,14 +1666,15 @@ function Lightbox({
     if (!dialog.open) dialog.showModal();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    // React 的合成 onClose 在此不可靠，直接监听原生 close 事件。
-    dialog.addEventListener("close", onCloseRef.current);
+    // React 的合成 onClose 在 dialog 上不可靠，直接监听原生 close 事件。
+    const handleClose = () => onClose();
+    dialog.addEventListener("close", handleClose);
     return () => {
-      dialog.removeEventListener("close", onCloseRef.current);
+      dialog.removeEventListener("close", handleClose);
       document.body.style.overflow = previousOverflow;
       if (dialog.open) dialog.close();
     };
-  }, []);
+  }, [onClose]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
