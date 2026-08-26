@@ -11,7 +11,7 @@ import {
 
 type Wallet = {
   newApi: { balance: number; used: number; group: string };
-  aff: { enabled: boolean; balance: number };
+  aff: { enabled: boolean; balance: number; checkedInToday: boolean; checkInReward: number };
   rechargeEnabled: boolean;
 };
 
@@ -19,6 +19,7 @@ export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
+  const [checkingIn, setCheckingIn] = useState(false);
   useEffect(() => {
     fetch("/api/wallet", { cache: "no-store" })
       .then((response) => readJson<Wallet>(response, "读取钱包失败"))
@@ -28,6 +29,24 @@ export default function WalletPage() {
         else setMessage(error instanceof Error ? error.message : "读取钱包失败");
       });
   }, []);
+  async function checkIn() {
+    setCheckingIn(true);
+    try {
+      const response = await fetch("/api/aff/check-in", { method: "POST" });
+      const result = await readJson<{ balance: number; reward: number }>(response, "签到失败");
+      setWallet((current) =>
+        current
+          ? { ...current, aff: { ...current.aff, balance: result.balance, checkedInToday: true } }
+          : current,
+      );
+      setMessage(result.reward ? `签到成功，获得 ${result.reward} AFF。` : "今日已签到。");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      else setMessage(error instanceof Error ? error.message : "签到失败");
+    } finally {
+      setCheckingIn(false);
+    }
+  }
   return (
     <main className="min-h-screen bg-[var(--paper)]">
       <PageHeader title="余额钱包" />
@@ -51,10 +70,16 @@ export default function WalletPage() {
           </article>
           <article className="wallet-panel">
             <span>LFN AFF</span>
-            <strong>
-              {wallet?.aff.enabled ? wallet.aff.balance.toFixed(2) : "未启用"}
-            </strong>
-            <p>独立奖励账本尚未启用时，不会影响或代扣 NewAPI 钱包。</p>
+            <strong>{wallet?.aff.enabled ? wallet.aff.balance : "--"}</strong>
+            <p>每日签到获得 20 AFF。V4.5 limit 每张 1 AFF，V5 limit 每张 1.5 AFF，按订单向上取整。</p>
+            <button
+              type="button"
+              onClick={checkIn}
+              disabled={!wallet?.aff.enabled || wallet.aff.checkedInToday || checkingIn}
+              className="mt-4 h-9 rounded bg-[#292d2c] px-4 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {checkingIn ? "签到中…" : wallet?.aff.checkedInToday ? "今日已签到" : "每日签到 +20 AFF"}
+            </button>
           </article>
         </div>
         <p className="mt-5 text-xs leading-6 text-[var(--muted)]">

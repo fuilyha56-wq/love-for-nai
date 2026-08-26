@@ -19,10 +19,7 @@ type AutocompleteItem = {
 type DanbooruTag = { name: string; category: number; post_count: number };
 type WikiPage = { title?: string; body?: string; other_names?: string[] };
 
-async function danbooru(
-  path: string,
-  params: URLSearchParams,
-): Promise<unknown> {
+async function danbooru(path: string, params: URLSearchParams): Promise<unknown> {
   const response = await outboundFetch(
     `https://danbooru.donmai.us/${path}?${params}`,
     {
@@ -55,10 +52,7 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
         postCount: item.post_count ?? 0,
       }));
     if (!tags.length)
-      return {
-        ok: true,
-        data: { query: keyword, tags: [], note: "无匹配标签" },
-      };
+      return { ok: true, data: { query: keyword, tags: [], note: "无匹配标签" } };
     return { ok: true, data: { query: keyword, tags } };
   } catch (error) {
     return {
@@ -175,78 +169,22 @@ async function webSearch(query: string): Promise<ToolResult> {
   return { ok: true, data: { query: keyword, results: results.slice(0, 8) } };
 }
 
-export const toolSchemas = [
-  {
-    type: "function" as const,
-    function: {
-      name: "search_danbooru_tags",
-      description:
-        "在 Danbooru 检索标签。只接受英文或罗马字关键词；中文概念需先自行翻译或用 web_search 查证后再调用。返回匹配标签及其分类与图片数。",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "英文关键词，例如 rain、neon、white hair",
-          },
-        },
-        required: ["query"],
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "verify_danbooru_tag",
-      description:
-        "校验某个 Danbooru 标签是否真实存在，返回精确名称、分类与图片数。",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "待校验的完整标签名" },
-        },
-        required: ["name"],
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "read_danbooru_wiki",
-      description:
-        "读取 Danbooru 标签词条说明与别名，用于确认标签含义或找到更规范的同义标签。",
-      parameters: {
-        type: "object",
-        properties: {
-          title: { type: "string", description: "词条标题，通常等于标签名" },
-        },
-        required: ["title"],
-      },
-    },
-  },
-  {
-    type: "function" as const,
-    function: {
-      name: "web_search",
-      description:
-        "检索网络百科，用于把中文或小众概念转换成通用英文说法，再据此检索 Danbooru 标签。",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "检索词，可为中文" },
-        },
-        required: ["query"],
-      },
-    },
-  },
-];
+/** 返回给文本协议 agent 的可调用工具说明。 */
+export function toolCatalog(): string {
+  return [
+    "- search_danbooru_tags: 参数 {query: string}。按英文关键词检索 Danbooru 标签，返回标签名、分类和图片数。",
+    "- verify_danbooru_tag: 参数 {name: string}。精确校验一个 Danbooru 标签是否存在。",
+    "- read_danbooru_wiki: 参数 {title: string}。读取 Danbooru 词条说明和别名，用于确认含义。",
+    "- web_search: 参数 {query: string}。检索 Wikipedia 概念结果，用于把中文或小众概念转换为英文检索词。",
+  ].join("\n");
+}
 
 export async function runTool(
   name: string,
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const text = (key: string) =>
-    typeof args[key] === "string" ? (args[key] as string).slice(0, 200) : "";
+    typeof args[key] === "string" ? (args[key] as string) : "";
   switch (name) {
     case "search_danbooru_tags":
       return searchDanbooruTags(text("query"));

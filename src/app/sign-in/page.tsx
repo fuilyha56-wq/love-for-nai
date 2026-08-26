@@ -3,7 +3,7 @@
 import { ArrowRight, Brush, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 type Mode = "password" | "token" | "register";
 
@@ -20,6 +20,17 @@ export default function SignInPage() {
   const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get("invite") || "";
+    if (!code) return;
+    const timer = window.setTimeout(() => {
+      setInviteCode(code.slice(0, 32));
+      setMode("register");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -92,12 +103,13 @@ export default function SignInPage() {
         password: form.get("password"),
         email,
         verificationCode: emailCode,
+        inviteCode,
       }),
     });
     const result = await response.json();
     if (response.ok) {
       switchMode("password");
-      setInfo("注册成功，请使用新账号登录。");
+      setInfo(result.referralReward ? `注册成功，已获得 ${result.referralReward} AFF 邀请奖励，请使用新账号登录。` : "注册成功，请使用新账号登录。");
     } else setError(result.message || "注册失败");
     setLoading(false);
   }
@@ -324,6 +336,16 @@ export default function SignInPage() {
                   onChange={(event) => setEmailCode(event.target.value)}
                   autoComplete="one-time-code"
                   required
+                />
+              </label>
+              <label className="block text-sm font-medium">
+                邀请码
+                <input
+                  className="field mt-2 h-12 w-full px-4"
+                  value={inviteCode}
+                  onChange={(event) => setInviteCode(event.target.value.slice(0, 32))}
+                  placeholder="可选，通过邀请链接会自动填入"
+                  autoComplete="off"
                 />
               </label>
               {notices}

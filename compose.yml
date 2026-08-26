@@ -11,6 +11,7 @@ services:
       QUOTA_PER_UNIT: ${QUOTA_PER_UNIT:-500000}
       LFN_SESSION_SECRET: ${LFN_SESSION_SECRET:?LFN_SESSION_SECRET is required}
       LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}
+      LFN_PUBLIC_URL: ${LFN_PUBLIC_URL:-http://localhost:21142}
       LFN_DATA_DIR: /app/data
       SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
       # Danbooru 需经出站代理访问；留空则直连。

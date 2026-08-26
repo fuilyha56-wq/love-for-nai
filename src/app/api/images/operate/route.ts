@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { refundAff, spendAff } from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { saveHistory } from "@/lib/history";
@@ -35,6 +36,21 @@ function stripDataUrls<T>(value: T): T {
       ]),
     ) as T;
   return value;
+}
+
+function imageCount(value: unknown): number {
+  if (typeof value === "string") return value.trim() ? 1 : 0;
+  if (!Array.isArray(value)) return 0;
+  return value.filter((item) => typeof item === "string" && item.trim()).length;
+}
+
+function referenceImageCount(
+  body: Record<string, unknown>,
+  operation: string,
+): number {
+  if (operation === "precise-reference") return Array.isArray(body.references) ? body.references.length : 0;
+  if (operation === "character-reference") return Array.isArray(body.characters) ? body.characters.length : 0;
+  return imageCount(body.reference_images) || imageCount(body.reference_image);
 }
 
 // NovelAI 上游对不支持的参数只回 500，需要据请求内容给出可操作的提示。
@@ -91,7 +107,28 @@ export async function POST(request: Request) {
       { status: 400 },
     );
 
+  let affCost = 0;
+  let affBalance: number | null = null;
+  let affRefunded = false;
   try {
+    if (operation !== "suggest-tags") {
+      const width = typeof body.width === "number" ? body.width : 0;
+      const height = typeof body.height === "number" ? body.height : 0;
+      if (!width || !height)
+        return NextResponse.json({ message: "缺少图像尺寸" }, { status: 400 });
+      const aff = await spendAff(session.userId, {
+        model,
+        width,
+        height,
+        steps: typeof body.steps === "number" ? body.steps : 28,
+        samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
+        strength: typeof body.strength === "number" ? body.strength : undefined,
+        operation,
+        referenceImageCount: referenceImageCount(body, operation),
+      });
+      affCost = aff.cost;
+      affBalance = aff.balance;
+    }
     const key = await getImageToken(session, model);
     const baseUrl = newApiBaseUrl();
     const endpoint =
@@ -115,11 +152,14 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(180_000),
     });
     const contentType = upstream.headers.get("content-type") || "";
-    if (!contentType.includes("application/json"))
+    if (!contentType.includes("application/json")) {
+      affRefunded = true;
+      await refundAff(session.userId, affCost, "上游响应异常，自动返还");
       return NextResponse.json(
         { message: "上游返回了未支持的二进制响应" },
         { status: 502 },
       );
+    }
     // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
     const text = await upstream.text();
     let result: {
@@ -134,6 +174,8 @@ export async function POST(request: Request) {
       try {
         result = JSON.parse(text);
       } catch {
+        affRefunded = true;
+        await refundAff(session.userId, affCost, "上游响应异常，自动返还");
         return NextResponse.json(
           {
             message: explainUpstreamFailure(
@@ -152,6 +194,8 @@ export async function POST(request: Request) {
         result.detail ||
         result.message ||
         (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
+      affRefunded = true;
+      await refundAff(session.userId, affCost, "上游生成失败，自动返还");
       return NextResponse.json(
         { message: explainUpstreamFailure(raw, upstream.status, body) },
         { status: upstream.status || 502 },
@@ -160,8 +204,11 @@ export async function POST(request: Request) {
     if (operation === "suggest-tags")
       return NextResponse.json({ tags: result.tags || result, raw: result });
     const images = imageFromResult(result);
-    if (!images.length)
+    if (!images.length) {
+      affRefunded = true;
+      await refundAff(session.userId, affCost, "上游未返回图片，自动返还");
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
+    }
     const history = await saveHistory(
       session.userId,
       body,
@@ -174,8 +221,11 @@ export async function POST(request: Request) {
       usage: result.usage || null,
       vibe: result.data?.[0]?.vibe || null,
       historyIds: history.map((item) => item.id),
+      aff: affBalance == null ? null : { cost: affCost, balance: affBalance },
     });
   } catch (error) {
+    if (!affRefunded)
+      await refundAff(session.userId, affCost, "生成请求异常，自动返还");
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "NAI 操作失败" },
       { status: 502 },

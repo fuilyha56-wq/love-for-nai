@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { refundAff, spendAff } from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
@@ -40,7 +41,17 @@ export async function POST(request: Request) {
     "seed",
   ];
   const baseUrl = newApiBaseUrl();
+  let affCost = 0;
+  let affRefunded = false;
   try {
+    const aff = await spendAff(session.userId, {
+      model: body.model,
+      width: body.width,
+      height: body.height,
+      steps: typeof body.steps === "number" ? body.steps : 28,
+      samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
+    });
+    affCost = aff.cost;
     const key = await getImageToken(session, body.model);
     const upstream = await fetch(`${baseUrl}/v1/images/generations`, {
       method: "POST",
@@ -64,20 +75,29 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(120_000),
     });
     const result = await upstream.json();
-    if (!upstream.ok || result.error)
+    if (!upstream.ok || result.error) {
+      affRefunded = true;
+      await refundAff(session.userId, affCost, "上游生成失败，自动返还");
       return NextResponse.json(
         { message: result.error?.message || result.message || "上游生成失败" },
         { status: upstream.status || 502 },
       );
+    }
     const images = imageFromResult(result);
-    if (!images.length)
+    if (!images.length) {
+      affRefunded = true;
+      await refundAff(session.userId, affCost, "上游未返回图片，自动返还");
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
+    }
     return NextResponse.json({
       image: images[0],
       images,
       usage: result.usage || null,
+      aff,
     });
   } catch (error) {
+    if (!affRefunded)
+      await refundAff(session.userId, affCost, "生成请求异常，自动返还");
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "生成请求失败" },
       { status: 502 },

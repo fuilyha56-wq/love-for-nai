@@ -1,8 +1,8 @@
 "use client";
 
-import { ArrowLeft, Save, UserRound } from "lucide-react";
+import { ArrowLeft, CalendarCheck, Copy, Save, UserRound } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SessionExpiredNotice } from "@/app/session-notice";
 
 type Profile = {
@@ -13,6 +13,8 @@ type Profile = {
   group: string;
   balance: number | null;
 };
+type Aff = { balance: number; checkedInToday: boolean; checkInReward: number };
+type Referral = { link: string; invitedCount: number; registrationReward: number };
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -21,6 +23,11 @@ export default function ProfilePage() {
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [saving, setSaving] = useState(false);
+  const [aff, setAff] = useState<Aff | null>(null);
+  const [checkingIn, setCheckingIn] = useState(false);
+  const [referral, setReferral] = useState<Referral | null>(null);
+  const [copyingReferral, setCopyingReferral] = useState(false);
+  const referralInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch("/api/me", { cache: "no-store" })
@@ -37,7 +44,52 @@ export default function ProfilePage() {
       .catch((error) =>
         setMessage(error instanceof Error ? error.message : "读取个人资料失败"),
       );
+    fetch("/api/wallet", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => setAff(result.aff || null))
+      .catch(() => undefined);
+    fetch("/api/aff/referral", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        if (result.link) setReferral(result);
+      })
+      .catch(() => undefined);
   }, []);
+
+  async function checkIn() {
+    setCheckingIn(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/aff/check-in", { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "签到失败");
+      setAff((current) => ({
+        balance: result.balance,
+        checkedInToday: true,
+        checkInReward: current?.checkInReward || 20,
+      }));
+      setMessage(result.reward ? `签到成功，获得 ${result.reward} AFF。` : "今日已签到。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "签到失败");
+    } finally {
+      setCheckingIn(false);
+    }
+  }
+
+  async function copyReferral() {
+    if (!referral) return;
+    setCopyingReferral(true);
+    try {
+      await navigator.clipboard.writeText(referral.link);
+      setMessage("邀请链接已复制。");
+    } catch {
+      referralInput.current?.select();
+      const copied = document.execCommand("copy");
+      setMessage(copied ? "邀请链接已复制。" : "邀请链接已选中，请手动复制。");
+    } finally {
+      setCopyingReferral(false);
+    }
+  }
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
@@ -101,7 +153,42 @@ export default function ProfilePage() {
                 {profile?.balance == null ? "-" : profile.balance.toFixed(2)}
               </dd>
             </div>
+            <div>
+              <dt className="text-[var(--muted)]">LFN AFF</dt>
+              <dd className="mt-1 font-semibold">{aff?.balance ?? "-"}</dd>
+            </div>
           </dl>
+          <button
+            type="button"
+            onClick={checkIn}
+            disabled={!profile || !aff || aff.checkedInToday || checkingIn}
+            className="mt-6 flex h-10 w-full items-center justify-center gap-2 rounded bg-[#292d2c] px-3 text-xs font-semibold text-white disabled:opacity-50"
+          >
+            <CalendarCheck size={15} />
+            {checkingIn ? "签到中…" : aff?.checkedInToday ? "今日已签到" : "签到领取 20 AFF"}
+          </button>
+          <div className="mt-4 border-t border-[var(--line)] pt-4 text-xs">
+            <p className="font-semibold">邀请好友</p>
+            <p className="mt-1 leading-5 text-[var(--muted)]">
+              好友通过链接完成注册可获得 {referral?.registrationReward ?? 100} AFF。已注册 {referral?.invitedCount ?? 0} 人。
+            </p>
+            <input
+              ref={referralInput}
+              aria-label="邀请注册链接"
+              className="mt-3 h-9 w-full rounded border border-[var(--line)] bg-white px-2 text-[10px] text-[var(--muted)]"
+              value={referral?.link || "正在生成邀请链接…"}
+              readOnly
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <button
+              type="button"
+              onClick={copyReferral}
+              disabled={!referral || copyingReferral}
+              className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold disabled:opacity-50"
+            >
+              <Copy size={14} /> {copyingReferral ? "复制中…" : "复制邀请链接"}
+            </button>
+          </div>
         </aside>
         <form onSubmit={save} className="space-y-5">
           <div>

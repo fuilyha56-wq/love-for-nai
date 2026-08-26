@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { callNewApi } from "@/lib/login";
 import { newApiBaseUrl } from "@/lib/newapi";
+import { redeemReferral } from "@/lib/referral";
 import {
   invalidJsonResponse,
   optionalString,
@@ -128,6 +130,7 @@ export async function POST(request: Request) {
   const email = optionalString(raw.email)?.trim() || "";
   const code = optionalString(raw.verificationCode)?.trim() || "";
   const affCode = optionalString(raw.affCode)?.trim() || "";
+  const inviteCode = optionalString(raw.inviteCode)?.trim() || "";
 
   if (!/^[a-zA-Z0-9_\-.]{3,32}$/.test(username))
     return NextResponse.json(
@@ -156,7 +159,7 @@ export async function POST(request: Request) {
       "注册尝试过于频繁，请稍后再试",
     );
 
-  return forward(
+  const registered = await forward(
     "/api/user/register",
     {
       method: "POST",
@@ -172,4 +175,20 @@ export async function POST(request: Request) {
     },
     "注册失败",
   );
+  if (!registered.ok || !inviteCode) return registered;
+
+  try {
+    const { result } = await callNewApi("/api/user/login", {
+      username,
+      password,
+    });
+    const user = result.data?.user ?? result.data;
+    if (result.success && typeof user?.id === "number") {
+      const reward = await redeemReferral(inviteCode, user.id);
+      return NextResponse.json({ success: true, referralReward: reward.reward });
+    }
+  } catch {
+    // 注册已成功，但自动登录失败时不影响上游账号创建。
+  }
+  return registered;
 }

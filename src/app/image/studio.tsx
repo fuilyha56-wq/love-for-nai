@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronsUpDown,
   Code2,
+  ExternalLink,
   Download,
   Eraser,
   ImagePlus,
@@ -43,6 +44,7 @@ function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
 }
 type Me = { user?: { balance: number | null; group: string } };
+type Aff = { balance: number };
 type Operation =
   | "generate"
   | "img2img"
@@ -220,6 +222,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
+  const [aff, setAff] = useState<Aff | null>(null);
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
@@ -310,6 +313,16 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       })
       .catch(() => setMe(null));
   }, [authenticated]);
+
+  useEffect(() => {
+    if (!signedIn) return;
+    fetch("/api/wallet", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        if (result.aff?.enabled) setAff({ balance: result.aff.balance });
+      })
+      .catch(() => undefined);
+  }, [signedIn]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -425,7 +438,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
-  // 短关键词直接查 Danbooru，成句需求交给 LLM 整理，用户不必自己选入口。
+  // “让助手处理”是明确的 Agent 入口。仅在无可用模型时降级到直接检索。
   async function runAgent() {
     const input = agentInput.trim();
     if (!input) {
@@ -434,11 +447,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
     setTagResults([]);
     setAssistantSuggestion(null);
-    const looksLikeKeyword =
-      input.length <= 12 && !/[，。,.;；\s]/.test(input) && !/^\s*$/.test(input);
-    if (looksLikeKeyword || !signedIn || !assistantModel)
-      await searchDanbooru(input);
-    else await askTagAssistant(input);
+    if (signedIn && assistantModel) await askTagAssistant(input);
+    else await searchDanbooru(input);
   }
 
   function applySuggestedParameters(
@@ -905,6 +915,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         return;
       }
       setImages(result.images || (result.image ? [result.image] : []));
+      if (result.aff?.balance != null) setAff({ balance: result.aff.balance });
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : "操作失败，请稍后重试",
@@ -935,6 +946,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
           >
             <Code2 size={16} />
+          </a>
+          <a
+            title="打开 NewAPI 控制台"
+            href="http://47.108.250.118:3000/"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
+          >
+            <ExternalLink size={16} />
           </a>
           <span
             className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
@@ -1155,7 +1175,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               <b className="text-sm">标签助手</b>
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              输入关键词直接查 Danbooru，描述整段画面则由模型整理并校验。
+              模型会检索 Danbooru 与相关概念，并整理、校验生成标签。
             </p>
             {signedIn && assistantModels.length > 0 && (
               <div className="mt-3">
@@ -1317,6 +1337,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">分组</span>
                 <b>{me?.user?.group || "-"}</b>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--muted)]">LFN AFF</span>
+                <b>{signedIn ? (aff?.balance ?? "读取中") : "-"}</b>
               </div>
             </div>
             <Link

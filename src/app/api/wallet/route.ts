@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { affStatus } from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
@@ -20,13 +21,14 @@ export async function GET() {
       throw new Error(result.message || "无法读取钱包余额");
     const quotaPerUnit = Number(process.env.QUOTA_PER_UNIT || 500000);
     const user = result.data?.user ?? result.data;
+    const aff = await affStatus(session.userId);
     return NextResponse.json({
       newApi: {
         balance: Number(user?.quota || 0) / quotaPerUnit,
         used: Number(user?.used_quota || 0) / quotaPerUnit,
         group: user?.group || "未知",
       },
-      aff: { enabled: false, balance: 0 },
+      aff: { enabled: true, ...aff },
       rechargeEnabled: false,
     });
   } catch (error) {
