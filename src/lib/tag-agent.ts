@@ -10,6 +10,8 @@ type Message = {
   content?: string | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  // Gemini 经 NewAPI 转换时要求 tool 结果携带函数名，缺失会返回 400。
+  name?: string;
 };
 type ChatResponse = {
   choices?: Array<{ message?: Message; finish_reason?: string }>;
@@ -150,6 +152,7 @@ export async function runTagAgent(
       messages.push({
         role: "tool",
         tool_call_id: call.id,
+        name,
         content: JSON.stringify(result.data),
       });
     }
