@@ -1680,12 +1680,9 @@ function Lightbox({
       ref={dialogRef}
       className="lightbox"
       aria-label="图片预览"
-      onCancel={(event) => {
-        event.preventDefault();
-        onClose();
-      }}
+      onClose={onClose}
       onClick={(event) => {
-        if (event.target === dialogRef.current) onClose();
+        if (event.target === dialogRef.current) dialogRef.current.close();
       }}
     >
       <div className="lightbox-surface">
@@ -1705,7 +1702,11 @@ function Lightbox({
           <a href={images[index]} download={`lfn-${index + 1}.png`} title="下载">
             <Download size={16} />
           </a>
-          <button type="button" onClick={onClose} aria-label="关闭预览">
+          <button
+            type="button"
+            onClick={() => dialogRef.current?.close()}
+            aria-label="关闭预览"
+          >
             <X size={16} />
           </button>
         </div>
