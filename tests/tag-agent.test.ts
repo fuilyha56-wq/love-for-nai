@@ -6,7 +6,7 @@ const { runTool } = vi.hoisted(() => ({
 
 vi.mock("@/lib/agent-tools", () => ({
   runTool,
-  toolSchemas: [],
+  toolCatalog: () => "- search_danbooru_tags: 参数 {query: string}",
 }));
 vi.mock("@/lib/newapi", () => ({
   newApiBaseUrl: () => "http://newapi.test",
@@ -17,37 +17,7 @@ describe("runTagAgent budgets", () => {
     runTool.mockClear();
   });
 
-  it("rejects a model response with too many tool calls in one round", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({
-          choices: [
-            {
-              message: {
-                role: "assistant",
-                tool_calls: Array.from({ length: 9 }, (_, index) => ({
-                  id: String(index),
-                  function: {
-                    name: "search_danbooru_tags",
-                    arguments: '{"query":"hair"}',
-                  },
-                })),
-              },
-            },
-          ],
-        }),
-      ),
-    );
-    const { runTagAgent } = await import("@/lib/tag-agent");
-
-    await expect(runTagAgent("key", "model", "request", {})).rejects.toThrow(
-      "过多检索工具",
-    );
-    expect(runTool).not.toHaveBeenCalled();
-  });
-
-  it("executes an allowed tool batch and returns the next model answer", async () => {
+  it("stops tool calls at the configured round limit", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -55,16 +25,36 @@ describe("runTagAgent budgets", () => {
           choices: [
             {
               message: {
-                role: "assistant",
-                tool_calls: [
-                  {
-                    id: "one",
-                    function: {
-                      name: "search_danbooru_tags",
-                      arguments: '{"query":"hair"}',
-                    },
-                  },
-                ],
+                content: '{"action":"search_danbooru_tags","args":{"query":"hair"}}',
+              },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [{ message: { content: '{"tags":["white_hair"]}' } }],
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+
+    const result = await runTagAgent("key", "model", "request", {}, 1);
+
+    expect(result.content).toBe('{"tags":["white_hair"]}');
+    expect(runTool).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("executes a text-protocol tool action and returns the next model answer", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: '{"action":"search_danbooru_tags","args":{"query":"hair"}}',
               },
             },
           ],
