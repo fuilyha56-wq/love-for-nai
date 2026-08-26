@@ -81,6 +81,15 @@ export async function POST(request: Request) {
   }
   if (operation !== "suggest-tags" && !unifiedOperations.has(operation))
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
+  // 上游只允许 inpaint 模型执行 infill，否则会返回难以理解的英文报错。
+  if (
+    ["inpainting", "edits"].includes(operation) &&
+    !model.includes("inpaint")
+  )
+    return NextResponse.json(
+      { message: `局部重绘需要选择重绘专用模型，${model} 不支持该操作` },
+      { status: 400 },
+    );
 
   try {
     const key = await getImageToken(session, model);
