@@ -20,6 +20,23 @@ const unifiedOperations = new Set([
   "director-emotion",
 ]);
 
+const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
+
+// 浏览器上传得到的是 data URL，NovelAI 只接受裸 base64；参考图嵌在数组里需递归。
+function stripDataUrls<T>(value: T): T {
+  if (typeof value === "string")
+    return (DATA_URL.test(value) ? value.replace(DATA_URL, "") : value) as T;
+  if (Array.isArray(value)) return value.map(stripDataUrls) as T;
+  if (value && typeof value === "object")
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+        key,
+        stripDataUrls(item),
+      ]),
+    ) as T;
+  return value;
+}
+
 // NovelAI 上游对不支持的参数只回 500，需要据请求内容给出可操作的提示。
 function explainUpstreamFailure(
   raw: string,
@@ -72,7 +89,7 @@ export async function POST(request: Request) {
       operation === "suggest-tags"
         ? "/v1/images/suggest-tags"
         : "/v1/images/generations";
-    const payload = { ...body };
+    const payload = stripDataUrls({ ...body });
     delete payload.operation;
     if (operation !== "suggest-tags" && operation !== "generate")
       payload.novelai_operation = operation;
