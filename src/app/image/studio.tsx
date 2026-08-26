@@ -1650,15 +1650,20 @@ function Lightbox({
   onNavigate: (next: number) => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   // showModal 才会渲染 ::backdrop 并阻止背后页面交互。
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (!dialog || dialog.open) return;
-    dialog.showModal();
+    if (!dialog) return;
+    if (!dialog.open) dialog.showModal();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // React 的合成 onClose 在此不可靠，直接监听原生 close 事件。
+    dialog.addEventListener("close", onCloseRef.current);
     return () => {
+      dialog.removeEventListener("close", onCloseRef.current);
       document.body.style.overflow = previousOverflow;
       if (dialog.open) dialog.close();
     };
@@ -1680,7 +1685,6 @@ function Lightbox({
       ref={dialogRef}
       className="lightbox"
       aria-label="图片预览"
-      onClose={onClose}
       onClick={(event) => {
         if (event.target === dialogRef.current) dialogRef.current.close();
       }}
