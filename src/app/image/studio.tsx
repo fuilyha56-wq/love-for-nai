@@ -1666,18 +1666,20 @@ function Lightbox({
     if (!dialog.open) dialog.showModal();
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    // React 的合成 onClose 在 dialog 上不可靠，直接监听原生 close 事件。
-    const handleClose = () => onClose();
-    dialog.addEventListener("close", handleClose);
     return () => {
-      dialog.removeEventListener("close", handleClose);
       document.body.style.overflow = previousOverflow;
       if (dialog.open) dialog.close();
     };
-  }, [onClose]);
+  }, []);
 
+  // dialog 原生 Escape 依赖焦点落在浮层内，这里直接接管更可靠。
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
       const step = event.key === "ArrowRight" ? 1 : -1;
@@ -1685,7 +1687,7 @@ function Lightbox({
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [index, images.length, onNavigate]);
+  }, [index, images.length, onNavigate, onClose]);
 
   return (
     <dialog
@@ -1693,7 +1695,7 @@ function Lightbox({
       className="lightbox"
       aria-label="图片预览"
       onClick={(event) => {
-        if (event.target === dialogRef.current) dialogRef.current.close();
+        if (event.target === dialogRef.current) onClose();
       }}
     >
       <div className="lightbox-surface">
@@ -1713,11 +1715,7 @@ function Lightbox({
           <a href={images[index]} download={`lfn-${index + 1}.png`} title="下载">
             <Download size={16} />
           </a>
-          <button
-            type="button"
-            onClick={() => dialogRef.current?.close()}
-            aria-label="关闭预览"
-          >
+          <button type="button" onClick={onClose} aria-label="关闭预览">
             <X size={16} />
           </button>
         </div>
