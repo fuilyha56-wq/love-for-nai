@@ -24,12 +24,41 @@ type TokenItem = {
   used_quota?: number;
   unlimited_quota?: boolean;
 };
+
+// navigator.clipboard 仅在 HTTPS 或 localhost 下存在，需要逐级降级。
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 权限被拒时继续尝试兜底方案。
+  }
+  try {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(field);
+    return copied;
+  } catch {
+    return false;
+  }
+}
 export default function KeysPage() {
   const [items, setItems] = useState<TokenItem[]>([]);
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [working, setWorking] = useState(false);
+  const [revealed, setRevealed] = useState<{ id: number; key: string } | null>(
+    null,
+  );
   async function load() {
     const response = await fetch("/api/keys", { cache: "no-store" });
     const result = await readJson<{ items?: TokenItem[] }>(
@@ -109,8 +138,14 @@ export default function KeysPage() {
         method: "POST",
       });
       const result = await readJson<{ key: string }>(response, "复制失败");
-      await navigator.clipboard.writeText(result.key);
-      setMessage(`已复制密钥“${item.name}”到剪贴板。`);
+      if (await writeClipboard(result.key)) {
+        setRevealed(null);
+        setMessage(`已复制密钥“${item.name}”到剪贴板。`);
+      } else {
+        // 纯 HTTP 页面没有剪贴板权限，退化为展示明文供手动复制。
+        setRevealed({ id: item.id, key: result.key });
+        setMessage(`浏览器未授予剪贴板权限，请手动复制下方密钥。`);
+      }
     } catch (error) {
       if (error instanceof SessionExpiredError) setExpired(error.message);
       else setMessage(error instanceof Error ? error.message : "复制失败");
@@ -183,7 +218,7 @@ export default function KeysPage() {
           {items.map((item) => (
             <article
               key={item.id}
-              className="flex items-center justify-between rounded-md border border-[var(--line)] bg-white p-3"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--line)] bg-white p-3"
             >
               <div>
                 <b className="text-sm">{item.name}</b>
@@ -191,6 +226,15 @@ export default function KeysPage() {
                   ID {item.id} · {item.status === 1 ? "已启用" : "已停用"}
                 </p>
               </div>
+              {revealed?.id === item.id && (
+                <input
+                  className="field order-last w-full px-3 font-mono text-xs"
+                  value={revealed.key}
+                  readOnly
+                  aria-label="密钥明文"
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
