@@ -243,7 +243,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
-  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -1247,10 +1246,42 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onDoubleClick={() => setRightWidth(230)}
         />
         <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
-          {toolsPanel}
-        </aside>
-      </div>
-      {lightboxIndex !== null && images[lightboxIndex] && (
+          <div className="border-b border-[var(--line)] p-4">
+            <b className="text-sm">创作中心</b>
+            <nav className="mt-3 grid grid-cols-2 gap-2">
+              <FeatureLink
+                href="/history"
+                label="图片历史"
+                icon={<Images size={15} />}
+              />
+              <FeatureLink
+                href="/profile"
+                label="个人资料"
+                icon={<UserRound size={15} />}
+              />
+              <FeatureLink
+                href="/usage"
+                label="使用记录"
+                icon={<SlidersHorizontal size={15} />}
+              />
+              <FeatureLink
+                href="/wallet"
+                label="余额钱包"
+                icon={<Aperture size={15} />}
+              />
+              <FeatureLink
+                href="/models"
+                label="可用模型"
+                icon={<Sparkles size={15} />}
+              />
+              <FeatureLink
+                href="/keys"
+                label="API 密钥"
+                icon={<Code2 size={15} />}
+              />
+            </nav>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>

@@ -13,7 +13,7 @@ import {
   trustedClientKey,
 } from "@/lib/rate-limit";
 
-type UpstreamResult = { success: boolean; message?: string };
+type UpstreamResult = { success?: boolean; message?: string };
 
 const TEN_MINUTES = 10 * 60_000;
 const verificationEmailLimiter = new SlidingWindowRateLimiter({
@@ -48,6 +48,7 @@ async function forward(
   path: string,
   init: RequestInit,
   fallback: string,
+  rateLimitFallback: string,
 ): Promise<NextResponse> {
   try {
     const upstream = await fetch(`${newApiBaseUrl()}${path}`, {
@@ -55,12 +56,29 @@ async function forward(
       cache: "no-store",
       signal: AbortSignal.timeout(30_000),
     });
-    const result = (await upstream.json()) as UpstreamResult;
-    if (!upstream.ok || !result.success)
+    const body = await upstream.text();
+    let result: UpstreamResult | null = null;
+    try {
+      const parsed = JSON.parse(body) as unknown;
+      if (parsed && typeof parsed === "object")
+        result = parsed as UpstreamResult;
+    } catch {
+      // 上游在网关错误或限流时可能返回空内容/HTML，统一转换为 JSON 响应。
+    }
+
+    if (!upstream.ok || result?.success !== true) {
+      const status = upstream.ok ? (result ? 400 : 502) : upstream.status;
+      const retryAfter = upstream.headers.get("Retry-After");
+      const headers =
+        status === 429 ? { "Retry-After": retryAfter || "60" } : undefined;
       return NextResponse.json(
-        { message: result.message || fallback },
-        { status: upstream.status === 200 ? 400 : upstream.status },
+        {
+          message:
+            result?.message || (status === 429 ? rateLimitFallback : fallback),
+        },
+        { status, headers },
       );
+    }
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json(
@@ -115,6 +133,7 @@ export async function PUT(request: Request) {
     `/api/verification?email=${encodeURIComponent(email)}`,
     { method: "GET" },
     "验证码发送失败",
+    "验证码发送过于频繁，请稍后再试",
   );
 }
 
@@ -174,6 +193,7 @@ export async function POST(request: Request) {
       }),
     },
     "注册失败",
+    "注册请求过于频繁，请稍后再试",
   );
   if (!registered.ok || !inviteCode) return registered;
 
@@ -185,7 +205,10 @@ export async function POST(request: Request) {
     const user = result.data?.user ?? result.data;
     if (result.success && typeof user?.id === "number") {
       const reward = await redeemReferral(inviteCode, user.id);
-      return NextResponse.json({ success: true, referralReward: reward.reward });
+      return NextResponse.json({
+        success: true,
+        referralReward: reward.reward,
+      });
     }
   } catch {
     // 注册已成功，但自动登录失败时不影响上游账号创建。

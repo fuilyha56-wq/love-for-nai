@@ -7,6 +7,22 @@ import { FormEvent, useEffect, useState } from "react";
 
 type Mode = "password" | "token" | "register";
 type GalleryBackground = { imageUrl: string; title: string };
+type AuthResult = {
+  message?: string;
+  referralReward?: number;
+  success?: boolean;
+};
+
+async function readAuthResult(response: Response): Promise<AuthResult> {
+  const body = await response.text();
+  if (!body) return {};
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as AuthResult) : {};
+  } catch {
+    return {};
+  }
+}
 
 export default function SignInPage() {
   const router = useRouter();
@@ -22,7 +38,8 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
   const [inviteCode, setInviteCode] = useState("");
-  const [galleryBackground, setGalleryBackground] = useState<GalleryBackground | null>(null);
+  const [galleryBackground, setGalleryBackground] =
+    useState<GalleryBackground | null>(null);
   const [backgroundVisible, setBackgroundVisible] = useState(true);
 
   useEffect(() => {
@@ -50,7 +67,8 @@ export default function SignInPage() {
   }, []);
 
   useEffect(() => {
-    const code = new URLSearchParams(window.location.search).get("invite") || "";
+    const code =
+      new URLSearchParams(window.location.search).get("invite") || "";
     if (!code) return;
     const timer = window.setTimeout(() => {
       setInviteCode(code.slice(0, 32));
@@ -102,18 +120,24 @@ export default function SignInPage() {
   }
 
   async function sendCode() {
+    if (sendingCode) return;
     setSendingCode(true);
     setError("");
     setInfo("");
-    const response = await fetch("/api/auth/register", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email }),
-    });
-    const result = await response.json();
-    if (response.ok) setInfo("验证码已发送，请查收邮箱。");
-    else setError(result.message || "验证码发送失败");
-    setSendingCode(false);
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const result = await readAuthResult(response);
+      if (response.ok) setInfo("验证码已发送，请查收邮箱。");
+      else setError(result.message || "验证码发送失败，请稍后重试");
+    } catch {
+      setError("验证码发送失败，请检查网络后重试");
+    } finally {
+      setSendingCode(false);
+    }
   }
 
   async function submitRegister(event: FormEvent<HTMLFormElement>) {
@@ -122,23 +146,32 @@ export default function SignInPage() {
     setError("");
     setInfo("");
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/auth/register", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: form.get("username"),
-        password: form.get("password"),
-        email,
-        verificationCode: emailCode,
-        inviteCode,
-      }),
-    });
-    const result = await response.json();
-    if (response.ok) {
-      switchMode("password");
-      setInfo(result.referralReward ? `注册成功，已获得 ${result.referralReward} AFF 邀请奖励，请使用新账号登录。` : "注册成功，请使用新账号登录。");
-    } else setError(result.message || "注册失败");
-    setLoading(false);
+    try {
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: form.get("username"),
+          password: form.get("password"),
+          email,
+          verificationCode: emailCode,
+          inviteCode,
+        }),
+      });
+      const result = await readAuthResult(response);
+      if (response.ok) {
+        switchMode("password");
+        setInfo(
+          result.referralReward
+            ? `注册成功，已获得 ${result.referralReward} AFF 邀请奖励，请使用新账号登录。`
+            : "注册成功，请使用新账号登录。",
+        );
+      } else setError(result.message || "注册失败，请稍后重试");
+    } catch {
+      setError("注册失败，请检查网络后重试");
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function verify(event: FormEvent<HTMLFormElement>) {
@@ -371,7 +404,9 @@ export default function SignInPage() {
                 <input
                   className="field mt-2 h-12 w-full px-4"
                   value={inviteCode}
-                  onChange={(event) => setInviteCode(event.target.value.slice(0, 32))}
+                  onChange={(event) =>
+                    setInviteCode(event.target.value.slice(0, 32))
+                  }
                   placeholder="可选，通过邀请链接会自动填入"
                   autoComplete="off"
                 />
@@ -391,50 +426,50 @@ export default function SignInPage() {
               </button>
             </form>
           ) : (
-          <form className="mt-6 space-y-5" onSubmit={submit}>
-            <label className="block text-sm font-medium">
-              用户名
-              <input
-                className="field mt-2 h-12 px-4"
-                name="username"
-                autoComplete="username"
-                required
-              />
-            </label>
-            <label className="block text-sm font-medium">
-              密码
-              <span className="relative mt-2 block">
+            <form className="mt-6 space-y-5" onSubmit={submit}>
+              <label className="block text-sm font-medium">
+                用户名
                 <input
-                  className="field h-12 px-4 pr-12"
-                  name="password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
+                  className="field mt-2 h-12 px-4"
+                  name="username"
+                  autoComplete="username"
                   required
                 />
-                <button
-                  type="button"
-                  aria-label="切换密码可见性"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-3 text-[var(--muted)]"
-                >
-                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </span>
-            </label>
-            {notices}
-            <button
-              disabled={loading}
-              className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
-            >
-              {loading ? (
-                <LoaderCircle className="animate-spin" size={19} />
-              ) : (
-                <>
-                  登录 <ArrowRight size={18} />
-                </>
-              )}
-            </button>
-          </form>
+              </label>
+              <label className="block text-sm font-medium">
+                密码
+                <span className="relative mt-2 block">
+                  <input
+                    className="field h-12 px-4 pr-12"
+                    name="password"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    required
+                  />
+                  <button
+                    type="button"
+                    aria-label="切换密码可见性"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-3 text-[var(--muted)]"
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
+                </span>
+              </label>
+              {notices}
+              <button
+                disabled={loading}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
+              >
+                {loading ? (
+                  <LoaderCircle className="animate-spin" size={19} />
+                ) : (
+                  <>
+                    登录 <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
           )}
           <div className="my-7 flex items-center gap-4 text-xs text-[var(--muted)]">
             <span className="h-px flex-1 bg-[var(--line)]" />或
