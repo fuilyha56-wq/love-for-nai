@@ -243,6 +243,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -1017,235 +1018,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
-  return (
-    <main className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
-        <div className="flex items-center gap-3">
-          <Aperture className="text-[var(--rose)]" size={23} />
-          <span className="font-[var(--font-display)] text-lg font-bold">
-            Love for NAI
-          </span>
-          <span className="hidden text-[10px] text-[var(--muted)] sm:inline">
-            IMAGE STUDIO
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <a
-            title="源代码与 AGPL-3.0"
-            href="https://github.com/fuilyha56-wq/love-for-nai"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
-          >
-            <Code2 size={16} />
-          </a>
-          <a
-            title="打开 NewAPI 控制台"
-            href="http://47.108.250.118:3000/"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
-          >
-            <ExternalLink size={16} />
-          </a>
-          <span
-            className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
-          >
-            {signedIn
-              ? "NewAPI 已连接"
-              : authenticated
-                ? "登录已过期"
-                : "体验模式"}
-          </span>
-          {signedIn || !authenticated ? (
-            <Link
-              href="/account"
-              title="我的账号：资料、钱包、签到与邀请"
-              className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
-            >
-              <UserRound size={16} />
-              {userName}
-            </Link>
-          ) : (
-            <Link
-              href="/sign-in"
-              className="flex h-9 items-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-sm font-semibold text-[var(--rose)]"
-            >
-              <UserRound size={16} />
-              重新登录
-            </Link>
-          )}
-        </div>
-      </header>
-      <div
-        className="studio-layout grid min-h-0 flex-1"
-        style={
-          {
-            "--lfn-left": `${leftWidth}px`,
-            "--lfn-right": `${rightWidth}px`,
-          } as React.CSSProperties
-        }
-      >
-        <aside className="panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
-          {controls}
-        </aside>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整左侧面板宽度"
-          className="panel-resizer hidden lg:block"
-          onPointerDown={(event) => startResize("left", event)}
-          onDoubleClick={() => setLeftWidth(310)}
-        />
-        <section className="flex min-h-0 flex-col">
-          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
-            <button
-              onClick={() => setMobilePanel(true)}
-              className="flex items-center gap-2 text-sm"
-            >
-              <Menu size={18} />
-              图像设置
-            </button>
-            <span className="text-xs text-[var(--muted)]">
-              {width}×{height}
-            </span>
-          </div>
-          {(promptModes.has(operation) || operation === "suggest-tags") && (
-            <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
-              <Prompt
-                label={
-                  operation.startsWith("director-") ? "工具提示" : "描述画面"
-                }
-                value={prompt}
-                onChange={setPrompt}
-                accent
-              />
-              {operation !== "suggest-tags" && (
-                <Prompt
-                  label="排除内容"
-                  value={negative}
-                  onChange={setNegative}
-                />
-              )}
-            </div>
-          )}
-          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
-            <div className="absolute left-4 top-3 text-xs text-[var(--muted)]">
-              {modes.find((item) => item.id === operation)?.label} · {width}×
-              {height} · {count} 张
-            </div>
-            {operation === "suggest-tags" && suggestedTags.length ? (
-              <div className="flex max-w-3xl flex-wrap justify-center gap-2">
-                {suggestedTags.map((tag) => (
-                  <button
-                    key={tag}
-                    onClick={() =>
-                      setPrompt(
-                        (value) => `${value}${value.trim() ? ", " : ""}${tag}`,
-                      )
-                    }
-                    className="rounded border border-[var(--line)] bg-white px-3 py-2 text-xs"
-                  >
-                    {tag}
-                  </button>
-                ))}
-              </div>
-            ) : images.length ? (
-              <div className="grid max-h-full w-full max-w-5xl grid-cols-1 gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
-                {images.map((image, index) => (
-                  <div
-                    key={`${image.slice(-24)}-${index}`}
-                    className="relative overflow-hidden border border-[var(--line)] bg-white"
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setLightboxIndex(index)}
-                      className="block w-full cursor-zoom-in"
-                      title="点击放大查看"
-                    >
-                      <Image
-                        src={image}
-                        alt={`NAI 结果 ${index + 1}`}
-                        width={width}
-                        height={height}
-                        unoptimized
-                        className="h-auto w-full object-contain"
-                      />
-                    </button>
-                    <a
-                      href={image}
-                      download={`lfn-${index + 1}.png`}
-                      title="下载图片"
-                      className="absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded bg-black/70 text-white"
-                    >
-                      <Download size={17} />
-                    </a>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex aspect-[4/5] max-h-[calc(100dvh-330px)] w-full max-w-lg flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
-                <WandSparkles
-                  className="mb-5 text-[var(--rose)]"
-                  size={38}
-                  strokeWidth={1.5}
-                />
-                <h2 className="font-[var(--font-display)] text-2xl">
-                  画布等待你的想象
-                </h2>
-                <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                  选择工具、配置参数并提交。所有入口使用 LFN
-                  服务端代理，不向浏览器暴露密钥。
-                </p>
-              </div>
-            )}
-          </div>
-          {notice && (
-            <div className="mx-3 mb-2 flex items-start justify-between gap-2 rounded border border-[#e4c991] bg-[#fff8e8] px-3 py-2.5 text-sm text-[#77531e] sm:mx-4 sm:mb-3 sm:px-4 sm:py-3">
-              <span className="min-w-0 break-words">{notice}</span>
-              <button onClick={() => setNotice("")} aria-label="关闭提示" className="shrink-0">
-                <X size={16} />
-              </button>
-            </div>
-          )}
-          <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
-            {operation !== "suggest-tags" && signedIn && (
-              <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
-                {aff && aff.balance >= estimateAff(model, width, height, steps, count) ? (
-                  <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">{estimateAff(model, width, height, steps, count)} AFF</b></div>
-                    <div>AFF 余额 <b className="text-[var(--ink)]">{aff.balance} AFF</b></div>
-                    <div>扣费后约 <b className="text-[var(--ink)]">{aff.balance - estimateAff(model, width, height, steps, count)} AFF</b></div>
-                  </>
-                ) : (
-                  <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(model, width, height, steps, count)}</b></div>
-                    <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
-                  </>
-                )}
-              </div>
-            )}
-            <button
-              onClick={runOperation}
-              disabled={generating}
-              className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
-            >
-              <Sparkles size={18} />
-              {generating
-                ? "处理中，请稍候..."
-                : `执行${modes.find((item) => item.id === operation)?.label}`}
-            </button>
-          </div>
-        </section>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整右侧面板宽度"
-          className="panel-resizer hidden lg:block"
-          onPointerDown={(event) => startResize("right", event)}
-          onDoubleClick={() => setRightWidth(230)}
-        />
-        <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
+  // 右侧功能区：创作中心 + 标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
+  const toolsPanel = (
+    <>
           <div className="border-b border-[var(--line)] p-4">
             <b className="text-sm">创作中心</b>
             <nav className="mt-3 grid grid-cols-2 gap-2">
@@ -1255,9 +1030,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 icon={<Images size={15} />}
               />
               <FeatureLink
-                href="/profile"
-                label="个人资料"
-                icon={<UserRound size={15} />}
+                href="/gallery"
+                label="图片广场"
+                icon={<Images size={15} />}
               />
               <FeatureLink
                 href="/usage"
@@ -1265,19 +1040,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 icon={<SlidersHorizontal size={15} />}
               />
               <FeatureLink
-                href="/wallet"
-                label="余额钱包"
-                icon={<Aperture size={15} />}
+                href="/account"
+                label="我的账号"
+                icon={<UserRound size={15} />}
               />
               <FeatureLink
-                href="/models"
-                label="可用模型"
+                href="/resources"
+                label="模型密钥"
                 icon={<Sparkles size={15} />}
-              />
-              <FeatureLink
-                href="/keys"
-                label="API 密钥"
-                icon={<Code2 size={15} />}
               />
             </nav>
           </div>
@@ -1479,6 +1249,246 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             )}
           </div>
+    </>
+  );
+
+  return (
+    <main className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
+        <div className="flex items-center gap-3">
+          <Aperture className="text-[var(--rose)]" size={23} />
+          <span className="font-[var(--font-display)] text-lg font-bold">
+            Love for NAI
+          </span>
+          <span className="hidden text-[10px] text-[var(--muted)] sm:inline">
+            IMAGE STUDIO
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <a
+            title="源代码与 AGPL-3.0"
+            href="https://github.com/fuilyha56-wq/love-for-nai"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
+          >
+            <Code2 size={16} />
+          </a>
+          <a
+            title="打开 NewAPI 控制台"
+            href="http://47.108.250.118:3000/"
+            target="_blank"
+            rel="noreferrer"
+            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
+          >
+            <ExternalLink size={16} />
+          </a>
+          <span
+            className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
+          >
+            {signedIn
+              ? "NewAPI 已连接"
+              : authenticated
+                ? "登录已过期"
+                : "体验模式"}
+          </span>
+          {signedIn || !authenticated ? (
+            <Link
+              href="/account"
+              title="我的账号：资料、钱包、签到与邀请"
+              className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
+            >
+              <UserRound size={16} />
+              {userName}
+            </Link>
+          ) : (
+            <Link
+              href="/sign-in"
+              className="flex h-9 items-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-sm font-semibold text-[var(--rose)]"
+            >
+              <UserRound size={16} />
+              重新登录
+            </Link>
+          )}
+        </div>
+      </header>
+      <div
+        className="studio-layout grid min-h-0 flex-1"
+        style={
+          {
+            "--lfn-left": `${leftWidth}px`,
+            "--lfn-right": `${rightWidth}px`,
+          } as React.CSSProperties
+        }
+      >
+        <aside className="panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
+          {controls}
+        </aside>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整左侧面板宽度"
+          className="panel-resizer hidden lg:block"
+          onPointerDown={(event) => startResize("left", event)}
+          onDoubleClick={() => setLeftWidth(310)}
+        />
+        <section className="flex min-h-0 flex-col">
+          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
+            <button
+              onClick={() => setMobilePanel(true)}
+              className="flex items-center gap-2 text-sm"
+            >
+              <Menu size={18} />
+              图像设置
+            </button>
+            <span className="text-xs text-[var(--muted)]">
+              {width}×{height}
+            </span>
+            <button
+              onClick={() => setMobileToolsOpen(true)}
+              className="flex items-center gap-2 text-sm"
+            >
+              <Images size={18} />
+              功能区
+            </button>
+          </div>
+          {(promptModes.has(operation) || operation === "suggest-tags") && (
+            <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
+              <Prompt
+                label={
+                  operation.startsWith("director-") ? "工具提示" : "描述画面"
+                }
+                value={prompt}
+                onChange={setPrompt}
+                accent
+              />
+              {operation !== "suggest-tags" && (
+                <Prompt
+                  label="排除内容"
+                  value={negative}
+                  onChange={setNegative}
+                />
+              )}
+            </div>
+          )}
+          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
+            <div className="absolute left-4 top-3 text-xs text-[var(--muted)]">
+              {modes.find((item) => item.id === operation)?.label} · {width}×
+              {height} · {count} 张
+            </div>
+            {operation === "suggest-tags" && suggestedTags.length ? (
+              <div className="flex max-w-3xl flex-wrap justify-center gap-2">
+                {suggestedTags.map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() =>
+                      setPrompt(
+                        (value) => `${value}${value.trim() ? ", " : ""}${tag}`,
+                      )
+                    }
+                    className="rounded border border-[var(--line)] bg-white px-3 py-2 text-xs"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            ) : images.length ? (
+              <div className="grid max-h-full w-full max-w-5xl grid-cols-1 gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
+                {images.map((image, index) => (
+                  <div
+                    key={`${image.slice(-24)}-${index}`}
+                    className="relative overflow-hidden border border-[var(--line)] bg-white"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setLightboxIndex(index)}
+                      className="block w-full cursor-zoom-in"
+                      title="点击放大查看"
+                    >
+                      <Image
+                        src={image}
+                        alt={`NAI 结果 ${index + 1}`}
+                        width={width}
+                        height={height}
+                        unoptimized
+                        className="h-auto w-full object-contain"
+                      />
+                    </button>
+                    <a
+                      href={image}
+                      download={`lfn-${index + 1}.png`}
+                      title="下载图片"
+                      className="absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded bg-black/70 text-white"
+                    >
+                      <Download size={17} />
+                    </a>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex aspect-[4/5] max-h-[calc(100dvh-330px)] w-full max-w-lg flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
+                <WandSparkles
+                  className="mb-5 text-[var(--rose)]"
+                  size={38}
+                  strokeWidth={1.5}
+                />
+                <h2 className="font-[var(--font-display)] text-2xl">
+                  画布等待你的想象
+                </h2>
+                <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+                  选择工具、配置参数并提交。所有入口使用 LFN
+                  服务端代理，不向浏览器暴露密钥。
+                </p>
+              </div>
+            )}
+          </div>
+          {notice && (
+            <div className="mx-3 mb-2 flex items-start justify-between gap-2 rounded border border-[#e4c991] bg-[#fff8e8] px-3 py-2.5 text-sm text-[#77531e] sm:mx-4 sm:mb-3 sm:px-4 sm:py-3">
+              <span className="min-w-0 break-words">{notice}</span>
+              <button onClick={() => setNotice("")} aria-label="关闭提示" className="shrink-0">
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
+            {operation !== "suggest-tags" && signedIn && (
+              <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
+                {aff && aff.balance >= estimateAff(model, width, height, steps, count) ? (
+                  <>
+                    <div>预计消耗 <b className="text-[var(--ink)]">{estimateAff(model, width, height, steps, count)} AFF</b></div>
+                    <div>AFF 余额 <b className="text-[var(--ink)]">{aff.balance} AFF</b></div>
+                    <div>扣费后约 <b className="text-[var(--ink)]">{aff.balance - estimateAff(model, width, height, steps, count)} AFF</b></div>
+                  </>
+                ) : (
+                  <>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(model, width, height, steps, count)}</b></div>
+                    <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
+                  </>
+                )}
+              </div>
+            )}
+            <button
+              onClick={runOperation}
+              disabled={generating}
+              className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
+            >
+              <Sparkles size={18} />
+              {generating
+                ? "处理中，请稍候..."
+                : `执行${modes.find((item) => item.id === operation)?.label}`}
+            </button>
+          </div>
+        </section>
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整右侧面板宽度"
+          className="panel-resizer hidden lg:block"
+          onPointerDown={(event) => startResize("right", event)}
+          onDoubleClick={() => setRightWidth(230)}
+        />
+        <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
+          {toolsPanel}
         </aside>
       </div>
       {lightboxIndex !== null && images[lightboxIndex] && (
@@ -1499,6 +1509,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             onClick={(event) => event.stopPropagation()}
           >
             {controls}
+          </aside>
+        </div>
+      )}
+      {mobileToolsOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/35 lg:hidden"
+          onClick={() => setMobileToolsOpen(false)}
+        >
+          <aside
+            className="panel ml-auto flex h-full w-[min(90vw,350px)] flex-col"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--line)] px-4">
+              <b className="flex items-center gap-2 text-sm">
+                <Images size={15} className="text-[var(--rose)]" /> 功能区
+              </b>
+              <button
+                onClick={() => setMobileToolsOpen(false)}
+                aria-label="关闭功能区"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {toolsPanel}
           </aside>
         </div>
       )}
