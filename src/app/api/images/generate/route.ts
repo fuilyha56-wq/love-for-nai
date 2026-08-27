@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { refundAff, spendAff } from "@/lib/aff";
+import { refundAff, trySpendAff } from "@/lib/aff";
 import { getSession } from "@/lib/session";
-import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
+import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 
 export async function POST(request: Request) {
@@ -40,20 +40,33 @@ export async function POST(request: Request) {
     "cfg_rescale",
     "seed",
   ];
-  const baseUrl = newApiBaseUrl();
+  const gateway = affGateway();
+  const upstreamBase = gateway
+    ? { baseUrl: gateway.baseUrl }
+    : { baseUrl: newApiBaseUrl() };
   let affCost = 0;
   let affRefunded = false;
+  let payment: "aff" | "newapi" = "newapi";
   try {
-    const aff = await spendAff(session.userId, {
+    const generation = {
       model: body.model,
       width: body.width,
       height: body.height,
       steps: typeof body.steps === "number" ? body.steps : 28,
       samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
-    });
-    affCost = aff.cost;
-    const key = await getImageToken(session, body.model);
-    const upstream = await fetch(`${baseUrl}/v1/images/generations`, {
+    };
+    const aff = gateway
+      ? await trySpendAff(session.userId, generation)
+      : null;
+    let key: string;
+    if (aff && gateway) {
+      key = gateway.token;
+      payment = "aff";
+      affCost = aff.cost;
+    } else {
+      key = await getImageToken(session, body.model);
+    }
+    const upstream = await fetch(`${upstreamBase.baseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
@@ -94,6 +107,7 @@ export async function POST(request: Request) {
       images,
       usage: result.usage || null,
       aff,
+      payment,
     });
   } catch (error) {
     if (!affRefunded)

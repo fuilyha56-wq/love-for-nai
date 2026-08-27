@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Download, History, RotateCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, History, RotateCcw, Send, Trash2 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -9,6 +9,7 @@ import {
   SessionExpiredError,
   SessionExpiredNotice,
 } from "@/app/session-notice";
+import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
 
 type HistoryItem = {
   id: string;
@@ -29,6 +30,7 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
+  const [galleryForm, setGalleryForm] = useState<GallerySubmitForm | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -111,7 +113,7 @@ export default function HistoryPage() {
                       {new Date(item.createdAt).toLocaleString("zh-CN")}
                     </time>
                   </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
+                  <div className="mt-3 grid grid-cols-4 gap-2">
                     <Link
                       href={reuseHref(item)}
                       className="history-action"
@@ -127,6 +129,14 @@ export default function HistoryPage() {
                     >
                       <Download size={15} />
                     </a>
+                    <button
+                      type="button"
+                      onClick={() => setGalleryForm({ historyId: item.id, title: item.parameters.prompt?.toString().slice(0, 40) || "未命名作品", authorName: "", rating: "general", source: "lfn", tags: "", exposeParameters: true })}
+                      className="history-action"
+                      title="提交到图片广场"
+                    >
+                      <Send size={15} />
+                    </button>
                     <button
                       type="button"
                       onClick={() => remove(item.id)}
@@ -150,6 +160,15 @@ export default function HistoryPage() {
           </div>
         )}
       </section>
+      {galleryForm && (
+        <GallerySubmitDialog
+          form={galleryForm}
+          onChange={setGalleryForm}
+          onClose={() => setGalleryForm(null)}
+          onPublished={() => setMessage("作品已发布到图片广场。")}
+          onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}
+        />
+      )}
     </main>
   );
 }

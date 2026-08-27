@@ -1,0 +1,72 @@
+"use client";
+
+import { ArrowLeft, Heart, Images, RotateCcw, Send } from "lucide-react";
+import Image from "next/image";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
+
+type GalleryItem = {
+  id: string; title: string; ownerName: string; authorName?: string; rating: string; source: string; tags: string[];
+  parameters: Record<string, unknown>; imageUrl: string; likes: number;
+};
+
+function importHref(item: GalleryItem): string {
+  const params = new URLSearchParams({ reuse: "1" });
+  for (const [key, value] of Object.entries(item.parameters)) params.set(key, String(value));
+  return `/image?${params}`;
+}
+
+export default function GalleryPage() {
+  const [items, setItems] = useState<GalleryItem[]>([]);
+  const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
+  const [submitForm, setSubmitForm] = useState<GallerySubmitForm | null>(null);
+  useEffect(() => {
+    fetch("/api/gallery", { cache: "no-store" }).then((response) => response.json())
+      .then((result) => setItems(result.items || [])).catch(() => setMessage("图库读取失败，请稍后重试"));
+  }, []);
+  async function like(id: string) {
+    const response = await fetch(`/api/gallery/${id}/like`, { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) { setMessage(result.message || "请登录后点赞"); return; }
+    setItems((current) => current.map((item) => item.id === id ? { ...item, likes: result.likes } : item));
+  }
+  return (
+    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3"><Images size={20} className="shrink-0 text-[var(--rose)]" /><b className="truncate">图片广场</b><span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">禁止 R18</span></div>
+        <div className="flex shrink-0 items-center gap-3 sm:gap-4">
+          <button type="button" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })} className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-2.5 text-sm font-semibold text-[var(--rose)] sm:gap-2 sm:px-3"><Send size={15} /><span className="hidden sm:inline">投稿作品</span><span className="sm:hidden">投稿</span></button>
+          <Link href="/image" aria-label="返回工作台" className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:flex sm:h-9 sm:w-auto sm:items-center sm:gap-2 sm:px-3 sm:text-sm sm:font-semibold"><ArrowLeft size={16} /><span className="hidden sm:inline">返回工作台</span></Link>
+        </div>
+      </header>
+      <section className="mx-auto max-w-7xl p-4 sm:p-7">
+        {expired && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{expired}</p>}
+        {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
+        {items.length ? <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{items.map((item) => (
+          <article key={item.id} className="overflow-hidden rounded-md border border-[var(--line)] bg-white">
+            <div className="relative aspect-[4/5] bg-[#ebe9e2]"><Image src={item.imageUrl} alt={item.title} fill unoptimized className="object-contain" /></div>
+            <div className="p-3"><div className="flex items-start justify-between gap-2"><div><h2 className="font-semibold">{item.title}</h2><p className="mt-1 text-xs text-[var(--muted)]">作者：{item.authorName || item.ownerName}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">上传者：{item.ownerName} · {item.rating} · {item.source}</p></div><button type="button" onClick={() => like(item.id)} className="flex items-center gap-1 text-xs text-[var(--rose)]"><Heart size={15} />{item.likes}</button></div>
+              <div className="mt-3 flex flex-wrap gap-1">{item.tags.map((tag) => <span key={tag} className="rounded bg-[#f1eee7] px-2 py-1 text-[10px]">{tag}</span>)}</div>
+              {Object.keys(item.parameters).length > 0 ? <Link href={importHref(item)} className="mt-4 flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"><RotateCcw size={14} />导入全部参数</Link> : <p className="mt-4 text-xs text-[var(--muted)]">作者未公开详细参数</p>}
+            </div>
+          </article>
+        ))}</div> : <div className="py-24 text-center text-sm text-[var(--muted)]">{message || "广场暂时还没有作品"}</div>}
+      </section>
+      {submitForm && (
+        <GallerySubmitDialog
+          form={submitForm}
+          onChange={setSubmitForm}
+          onClose={() => setSubmitForm(null)}
+          onPublished={() => {
+            setMessage("作品已发布到图片广场。");
+            fetch("/api/gallery", { cache: "no-store" }).then((response) => response.json())
+              .then((result) => setItems(result.items || [])).catch(() => undefined);
+          }}
+          onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}
+        />
+      )}
+    </main>
+  );
+}

@@ -66,6 +66,77 @@ button {
   border-color: var(--rose);
   box-shadow: 0 0 0 3px rgba(168, 58, 76, 0.12);
 }
+.gallery-select-trigger {
+  display: flex;
+  width: 100%;
+  height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 0 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+.gallery-select-trigger:hover,
+.gallery-select-trigger[aria-expanded="true"] {
+  border-color: var(--rose);
+}
+.gallery-select-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(168, 58, 76, 0.12);
+}
+.gallery-select-menu {
+  position: absolute;
+  z-index: 60;
+  width: 100%;
+  margin-top: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fffefa;
+  box-shadow: 0 14px 30px rgba(32, 35, 40, 0.15);
+}
+.gallery-select-option {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  border-bottom: 1px solid #eeece6;
+  padding: 9px 11px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+}
+.gallery-select-option:last-child {
+  border-bottom: 0;
+}
+.gallery-select-option:hover,
+.gallery-select-option:focus-visible {
+  background: #f7f1ef;
+  color: var(--rose-dark);
+  outline: none;
+}
+.gallery-select-option > svg {
+  flex: 0 0 15px;
+  margin-top: 2px;
+}
+.gallery-select-option b,
+.gallery-select-option small {
+  display: block;
+}
+.gallery-select-option small {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .range {
   accent-color: var(--rose);
 }

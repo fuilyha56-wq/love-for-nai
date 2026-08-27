@@ -67,6 +67,8 @@ docker compose up -d --build
 
 如果服务器不适合现场构建，可在构建机执行 `docker build -t love-for-nai:<版本> .` 和 `docker save`，导入服务器后设置 `LFN_IMAGE=love-for-nai:<版本>`，再使用 `docker compose -f compose.prod.yml up -d`。
 
+AFF 与 NewAPI 余额是两种独立支付方式。同时配置 `LFN_AFF_GATEWAY_URL`（Gateway 的 `/v1` 入口）与 `LFN_AFF_GATEWAY_TOKEN`（Gateway 的 `GATEWAY_PASSWORD`）后，AFF 足够的图像生成会直连 Gateway，由平台 NovelAI 凭据承担上游成本，不再经过 NewAPI，也不会扣用户 NewAPI 余额；AFF 不足时会自动改用登录用户的 NewAPI 余额并按 NewAPI 计费。两者未配置时，所有生成只使用 NewAPI 余额且不扣 AFF。
+
 Danbooru 或 Wikipedia 无法直连时设置 `LFN_OUTBOUND_PROXY`。只有在受信反向代理会覆盖客户端传入的 `X-Forwarded-For` 时，才可设置 `LFN_TRUST_PROXY=true`；否则标签搜索使用站点级安全限流。
 
 必须将 `LFN_SESSION_SECRET` 替换为至少 32 字节的随机值。LFN 不保存用户密码，NewAPI 上游会话仅保存在 AES-GCM 加密的 `HttpOnly` Cookie 中。使用 HTTPS 域名后应将 `LFN_COOKIE_SECURE` 改为 `true`；纯 HTTP IP 预览保持为 `false`。

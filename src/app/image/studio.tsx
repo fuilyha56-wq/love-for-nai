@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Download,
   Eraser,
+  FileUp,
   ImagePlus,
   Images,
   Menu,
@@ -42,6 +43,27 @@ type Props = { userName: string; authenticated: boolean };
 
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
+}
+function estimateAff(model: string, width: number, height: number, steps: number, samples: number): number {
+  if (model.toLowerCase().includes("-limit"))
+    return model.toLowerCase().includes("nai-v5") ? Math.ceil(1.5 * samples) : samples;
+  const pixels = Math.max(width * height, 65_536);
+  let perSample = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * steps);
+  if (model.toLowerCase().includes("nai-v5")) perSample *= 2;
+  return Math.max(1, Math.ceil(perSample * samples));
+}
+// NewAPI 侧费用（实测校准，与生产计费配置一致）：
+// V5 非 limit: token 价 150000$/1M × Draw 分组 0.5 → Anlas(含×2) × $3.75
+// V4.5 非 limit: token 价 100000$/1M × 0.5 → Anlas × $2.5
+// V4.5-limit 免费实扣 $0；V5-limit 固定价 $10 × 0.5 = $5/张
+function estimateNewApiCost(model: string, width: number, height: number, steps: number, samples: number): number {
+  const name = model.toLowerCase();
+  if (name.includes("-limit")) {
+    if (name.includes("nai-v5")) return Number((5 * samples).toFixed(2));
+    return 0;
+  }
+  const anlas = estimateAff(model, width, height, steps, samples);
+  return Number((anlas * (name.includes("nai-v5") ? 3.75 : 2.5)).toFixed(2));
 }
 type Me = { user?: { balance: number | null; group: string } };
 type Aff = { balance: number };
@@ -221,6 +243,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -451,6 +474,52 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     else await searchDanbooru(input);
   }
 
+  // 从本地 NAI 图片提取生成参数并填充到工作台（浏览器端解析 PNG/JPEG 元数据）。
+  async function importParametersFromFile(file?: File) {
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 15 * 1024 * 1024) {
+      setNotice("仅支持 15MB 以内的 PNG/JPEG 图片。");
+      return;
+    }
+    try {
+      const { parseNaiImageMetadata } = await import("@/lib/nai-metadata");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const metadata = parseNaiImageMetadata(bytes);
+      if (!metadata) {
+        setNotice("未能从图片中解析出 NAI 生成参数。");
+        return;
+      }
+      const params = metadata.parameters;
+      if (typeof params.prompt === "string" && params.prompt)
+        setPrompt(params.prompt);
+      const negative = params.negative_prompt ?? params.uc;
+      if (typeof negative === "string" && negative) setNegative(negative);
+      const numeric: Array<[string, (value: number) => void, number, number]> = [
+        ["width", setWidth, 64, 1600],
+        ["height", setHeight, 64, 1600],
+        ["steps", setSteps, 1, 50],
+        ["scale", setScale, 0, 10],
+        ["cfg_rescale", setCfgRescale, 0, 1],
+      ];
+      numeric.forEach(([key, setter, min, max]) => {
+        const value = Number(params[key]);
+        if (Number.isFinite(value) && value >= min && value <= max)
+          setter(value);
+      });
+      if (typeof params.sampler === "string" &&
+        samplers.some(({ value }) => value === params.sampler))
+        setSampler(params.sampler);
+      if (typeof params.noise_schedule === "string" &&
+        schedules.some(({ value }) => value === params.noise_schedule))
+        setSchedule(params.noise_schedule);
+      if (params.seed != null && Number.isFinite(Number(params.seed)))
+        setSeed(String(params.seed));
+      setNotice(`已从 ${file.name} 导入生成参数。`);
+    } catch {
+      setNotice("读取图片失败，请重试。");
+    }
+  }
+
   function applySuggestedParameters(
     parameters: AssistantSuggestion["parameters"],
   ) {
@@ -521,6 +590,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         </button>
       </div>
       <div className="settings-scroll space-y-5 p-4">
+        <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
+          <FileUp size={15} />
+          <span className="truncate">从图片导入 NAI 参数</span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg"
+            className="hidden"
+            onChange={(event) => {
+              importParametersFromFile(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+        </label>
         <div className="nai-model-mode-row">
           <Control label="模型">
             <PopupSelect
@@ -900,7 +982,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         body: JSON.stringify(base),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "操作失败");
+      if (!response.ok && !result.images) throw new Error(result.message || "操作失败");
       if (operation === "suggest-tags") {
         const tags = Array.isArray(result.tags) ? result.tags : [];
         setSuggestedTags(
@@ -916,6 +998,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       }
       setImages(result.images || (result.image ? [result.image] : []));
       if (result.aff?.balance != null) setAff({ balance: result.aff.balance });
+      if (result.partial) setNotice(result.message || "部分批次生成失败。");
+      else if (result.payment === "newapi") {
+        setNotice("AFF 余额不足，本次已使用 NewAPI 余额支付。");
+        // NewAPI 余额已变动，拉取最新数值让底部余额区立即更新。
+        fetch("/api/me")
+          .then((response) => response.json())
+          .then((latest: Me & { authenticated?: boolean }) => {
+            if (latest?.authenticated !== false) setMe(latest);
+          })
+          .catch(() => undefined);
+      }
     } catch (error) {
       setNotice(
         error instanceof Error ? error.message : "操作失败，请稍后重试",
@@ -926,7 +1019,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   }
 
   return (
-    <main className="flex h-screen min-h-[700px] flex-col overflow-hidden bg-[var(--paper)]">
+    <main className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
         <div className="flex items-center gap-3">
           <Aperture className="text-[var(--rose)]" size={23} />
@@ -966,10 +1059,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 : "体验模式"}
           </span>
           {signedIn || !authenticated ? (
-            <button className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm">
+            <Link
+              href="/account"
+              title="我的账号：资料、钱包、签到与邀请"
+              className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
+            >
               <UserRound size={16} />
               {userName}
-            </button>
+            </Link>
           ) : (
             <Link
               href="/sign-in"
@@ -1033,7 +1130,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               )}
             </div>
           )}
-          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-5">
+          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
             <div className="absolute left-4 top-3 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
               {height} · {count} 张
@@ -1088,7 +1185,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ))}
               </div>
             ) : (
-              <div className="flex aspect-[4/5] max-h-[calc(100vh-330px)] w-full max-w-lg flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-8 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)]">
+              <div className="flex aspect-[4/5] max-h-[calc(100dvh-330px)] w-full max-w-lg flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
                 <WandSparkles
                   className="mb-5 text-[var(--rose)]"
                   size={38}
@@ -1105,18 +1202,34 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             )}
           </div>
           {notice && (
-            <div className="mx-4 mb-3 flex items-start justify-between rounded border border-[#e4c991] bg-[#fff8e8] px-4 py-3 text-sm text-[#77531e]">
-              <span>{notice}</span>
-              <button onClick={() => setNotice("")}>
+            <div className="mx-3 mb-2 flex items-start justify-between gap-2 rounded border border-[#e4c991] bg-[#fff8e8] px-3 py-2.5 text-sm text-[#77531e] sm:mx-4 sm:mb-3 sm:px-4 sm:py-3">
+              <span className="min-w-0 break-words">{notice}</span>
+              <button onClick={() => setNotice("")} aria-label="关闭提示" className="shrink-0">
                 <X size={16} />
               </button>
             </div>
           )}
           <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
+            {operation !== "suggest-tags" && signedIn && (
+              <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
+                {aff && aff.balance >= estimateAff(model, width, height, steps, count) ? (
+                  <>
+                    <div>预计消耗 <b className="text-[var(--ink)]">{estimateAff(model, width, height, steps, count)} AFF</b></div>
+                    <div>AFF 余额 <b className="text-[var(--ink)]">{aff.balance} AFF</b></div>
+                    <div>扣费后约 <b className="text-[var(--ink)]">{aff.balance - estimateAff(model, width, height, steps, count)} AFF</b></div>
+                  </>
+                ) : (
+                  <>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(model, width, height, steps, count)}</b></div>
+                    <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
+                  </>
+                )}
+              </div>
+            )}
             <button
               onClick={runOperation}
               disabled={generating}
-              className="flex h-12 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] font-semibold text-white disabled:opacity-60"
+              className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
             >
               <Sparkles size={18} />
               {generating
@@ -1134,42 +1247,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onDoubleClick={() => setRightWidth(230)}
         />
         <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
-          <div className="border-b border-[var(--line)] p-4">
-            <b className="text-sm">创作中心</b>
-            <nav className="mt-3 grid grid-cols-2 gap-2">
-              <FeatureLink
-                href="/history"
-                label="图片历史"
-                icon={<Images size={15} />}
-              />
-              <FeatureLink
-                href="/profile"
-                label="个人资料"
-                icon={<UserRound size={15} />}
-              />
-              <FeatureLink
-                href="/usage"
-                label="使用记录"
-                icon={<SlidersHorizontal size={15} />}
-              />
-              <FeatureLink
-                href="/wallet"
-                label="余额钱包"
-                icon={<Aperture size={15} />}
-              />
-              <FeatureLink
-                href="/models"
-                label="可用模型"
-                icon={<Sparkles size={15} />}
-              />
-              <FeatureLink
-                href="/keys"
-                label="API 密钥"
-                icon={<Code2 size={15} />}
-              />
-            </nav>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+          {toolsPanel}
+        </aside>
+      </div>
+      {lightboxIndex !== null && images[lightboxIndex] && (
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>
@@ -2020,7 +2101,7 @@ function Prompt({
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-16 w-full resize-none text-sm leading-6 outline-none"
+        className="h-14 w-full resize-none text-sm leading-6 outline-none sm:h-16"
       />
     </label>
   );

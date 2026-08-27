@@ -71,25 +71,18 @@ function withUserLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
 }
 
 function safeParameters(body: Record<string, unknown>): GenerationParameters {
-  const allowed = [
-    "operation",
-    "model",
-    "prompt",
-    "negative_prompt",
-    "width",
-    "height",
-    "steps",
-    "scale",
-    "n",
-    "sampler",
-    "noise_schedule",
-    "cfg_rescale",
-    "seed",
-    "strength",
-  ];
+  const excluded = new Set([
+    "image",
+    "mask",
+    "reference_image",
+    "reference_images",
+    "references",
+    "characters",
+    "source",
+  ]);
   return Object.fromEntries(
-    allowed
-      .filter((key) => body[key] !== undefined)
+    Object.keys(body)
+      .filter((key) => !excluded.has(key) && body[key] !== undefined)
       .map((key) => [key, body[key]]),
   ) as GenerationParameters;
 }

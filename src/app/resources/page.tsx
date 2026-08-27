@@ -1,0 +1,329 @@
+"use client";
+
+import {
+  ArrowLeft,
+  Code2,
+  Copy,
+  ImageIcon,
+  KeyRound,
+  Plus,
+  Power,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
+
+type ModelItem = { id: string; kind: string };
+type TokenItem = {
+  id: number;
+  name: string;
+  status: number;
+  created_time?: number;
+  used_quota?: number;
+  unlimited_quota?: boolean;
+};
+
+// navigator.clipboard 仅在 HTTPS 或 localhost 下存在，需要逐级降级。
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 权限被拒时继续尝试兜底方案。
+  }
+  try {
+    const field = document.createElement("textarea");
+    field.value = text;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.opacity = "0";
+    document.body.appendChild(field);
+    field.select();
+    const copied = document.execCommand("copy");
+    document.body.removeChild(field);
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+export default function ResourcesPage() {
+  const [models, setModels] = useState<ModelItem[]>([]);
+  const [tokens, setTokens] = useState<TokenItem[]>([]);
+  const [name, setName] = useState("");
+  const [message, setMessage] = useState("");
+  const [expired, setExpired] = useState("");
+  const [working, setWorking] = useState(false);
+  const [revealed, setRevealed] = useState<{ id: number; key: string } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    fetch("/api/models", { cache: "no-store" })
+      .then((response) =>
+        readJson<{ items?: ModelItem[] }>(response, "读取模型失败"),
+      )
+      .then((result) => setModels(result.items || []))
+      .catch((error) => {
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else setMessage(error instanceof Error ? error.message : "读取模型失败");
+      });
+    fetch("/api/keys", { cache: "no-store" })
+      .then((response) =>
+        readJson<{ items?: TokenItem[] }>(response, "读取密钥失败"),
+      )
+      .then((result) => setTokens(result.items || []))
+      .catch((error) => {
+        if (error instanceof SessionExpiredError) setExpired(error.message);
+        else setMessage(error instanceof Error ? error.message : "读取密钥失败");
+      });
+  }, []);
+
+  async function loadTokens() {
+    const response = await fetch("/api/keys", { cache: "no-store" });
+    const result = await readJson<{ items?: TokenItem[] }>(response, "读取密钥失败");
+    setTokens(result.items || []);
+  }
+
+  async function create(event: React.FormEvent) {
+    event.preventDefault();
+    setWorking(true);
+    try {
+      const response = await fetch("/api/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "创建失败");
+      setName("");
+      await loadTokens();
+      setMessage("API 密钥已创建。可在 NewAPI 中查看和复制完整密钥。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "创建失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function toggle(item: TokenItem) {
+    setWorking(true);
+    try {
+      const response = await fetch("/api/keys", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: item.id,
+          status: item.status === 1 ? 2 : 1,
+          statusOnly: true,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "更新失败");
+      await loadTokens();
+      setMessage(item.status === 1 ? "密钥已停用。" : "密钥已启用。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "更新失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function copyKey(item: TokenItem) {
+    setWorking(true);
+    try {
+      const response = await fetch(`/api/keys/${item.id}/key`, { method: "POST" });
+      const result = await readJson<{ key: string }>(response, "复制失败");
+      if (await writeClipboard(result.key)) {
+        setRevealed(null);
+        setMessage(`已复制密钥“${item.name}”到剪贴板。`);
+      } else {
+        setRevealed({ id: item.id, key: result.key });
+        setMessage("浏览器未授予剪贴板权限，请手动复制下方密钥。");
+      }
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      else setMessage(error instanceof Error ? error.message : "复制失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function remove(item: TokenItem) {
+    if (!window.confirm(`确认删除密钥“${item.name}”？`)) return;
+    setWorking(true);
+    try {
+      const response = await fetch(`/api/keys?id=${item.id}`, { method: "DELETE" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "删除失败");
+      await loadTokens();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  const imageModels = models.filter((item) => item.kind === "图像模型");
+  const assistantModels = models.filter((item) => item.kind !== "图像模型");
+
+  return (
+    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4 backdrop-blur sm:px-7">
+        <div className="flex items-center gap-3">
+          <Sparkles size={20} className="text-[var(--rose)]" />
+          <b>模型与密钥</b>
+        </div>
+        <Link href="/image" className="flex items-center gap-2 text-sm font-semibold">
+          <ArrowLeft size={16} /> 返回工作台
+        </Link>
+      </header>
+      <section className="mx-auto max-w-6xl space-y-6 p-4 sm:p-8">
+        {expired && <SessionExpiredNotice message={expired} />}
+        {message && (
+          <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
+            {message}
+          </div>
+        )}
+
+        {/* 模型总览 */}
+        <article className="panel rounded-md p-5">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
+              MODELS · 可用模型
+            </p>
+            <p className="text-xs text-[var(--muted)]">
+              图像 {imageModels.length} · 助手 {assistantModels.length}
+            </p>
+          </div>
+          {!models.length ? (
+            <p className="py-8 text-center text-sm text-[var(--muted)]">
+              正在读取当前分组可用模型…
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {models.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2.5 rounded-md border border-[var(--line)] bg-white px-3 py-2.5"
+                >
+                  {item.kind === "图像模型" ? (
+                    <ImageIcon size={16} className="shrink-0 text-[var(--rose)]" />
+                  ) : (
+                    <Sparkles size={16} className="shrink-0 text-emerald-700" />
+                  )}
+                  <div className="min-w-0">
+                    <b className="block truncate text-xs">{item.id}</b>
+                    <span className="text-[10px] text-[var(--muted)]">{item.kind}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
+
+        {/* API 密钥管理 */}
+        <article className="panel rounded-md p-5">
+          <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
+            API KEYS · 密钥管理
+          </p>
+          <form onSubmit={create} className="mt-4 flex gap-2">
+            <input
+              className="field min-w-0 flex-1 px-3"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="输入新密钥名称"
+              aria-label="新密钥名称"
+            />
+            <button
+              disabled={working}
+              className="flex h-10 shrink-0 items-center gap-2 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-50"
+            >
+              <Plus size={16} />
+              创建密钥
+            </button>
+          </form>
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            LFN 不保存或展示密钥明文。创建的密钥与 NewAPI 互通。
+          </p>
+          <div className="mt-4 space-y-2">
+            {tokens.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[var(--line)] bg-white p-3"
+              >
+                <div className="min-w-0">
+                  <b className="flex items-center gap-1.5 text-sm">
+                    <KeyRound size={13} className="text-[var(--muted)]" />
+                    {item.name}
+                  </b>
+                  <p className="mt-0.5 text-[10px] text-[var(--muted)]">
+                    ID {item.id} · {item.status === 1 ? "已启用" : "已停用"}
+                    {item.used_quota != null
+                      ? ` · 已用 $${(item.used_quota / 500000).toFixed(2)}`
+                      : ""}
+                  </p>
+                </div>
+                {revealed?.id === item.id && (
+                  <input
+                    className="field order-last w-full px-3 font-mono text-xs"
+                    value={revealed.key}
+                    readOnly
+                    aria-label="密钥明文"
+                    onFocus={(event) => event.currentTarget.select()}
+                  />
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => copyKey(item)}
+                    disabled={working}
+                    className="key-action"
+                    title="复制密钥"
+                  >
+                    <Copy size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => toggle(item)}
+                    disabled={working}
+                    className={`key-action ${item.status === 1 ? "" : "opacity-50"}`}
+                    title={item.status === 1 ? "停用密钥" : "启用密钥"}
+                  >
+                    <Power size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => remove(item)}
+                    disabled={working}
+                    className="key-action text-[var(--rose)]"
+                    title="删除密钥"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {!tokens.length && !expired && (
+            <p className="py-10 text-center text-sm text-[var(--muted)]">
+              {message ? "" : "正在读取 API 密钥…"}
+            </p>
+          )}
+        </article>
+
+        <p className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+          <Code2 size={13} /> 密钥按 NewAPI 配额计费，消耗 500000 配额 = $1。
+        </p>
+      </section>
+    </main>
+  );
+}

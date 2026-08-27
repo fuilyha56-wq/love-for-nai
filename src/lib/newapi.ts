@@ -14,6 +14,13 @@ export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 const LFN_TOKEN_PREFIX = "lfn-image-studio";
 const LFN_CHAT_TOKEN_PREFIX = "lfn-assistant";
 
+// AFF 支付直连 Gateway：返回 { baseUrl, token }；未配置时返回 null。
+export function affGateway(): { baseUrl: string; token: string } | null {
+  const baseUrl = process.env.LFN_AFF_GATEWAY_URL?.trim().replace(/\/+$/, "");
+  const token = process.env.LFN_AFF_GATEWAY_TOKEN?.trim();
+  return baseUrl && token ? { baseUrl, token } : null;
+}
+
 function tokenNameFor(prefix: string, group: string): string {
   return `${prefix}-${group.toLowerCase()}`;
 }

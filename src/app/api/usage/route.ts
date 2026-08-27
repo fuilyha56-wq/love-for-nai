@@ -14,11 +14,13 @@ export async function GET(request: NextRequest) {
     ? Math.min(Math.max(requested, 1), 1000)
     : 1;
   // NewAPI 各版本在 p/page 与 size/page_size 之间不统一，同时提供两套命名。
+  // 只拉取 nai-* 模型：后端按 model_name 过滤，总数也只统计 NAI 记录。
   const params = new URLSearchParams({
     p: String(page),
     page: String(page),
     size: "20",
     page_size: "20",
+    model_name: "nai-",
   });
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/log/self?${params}`, {

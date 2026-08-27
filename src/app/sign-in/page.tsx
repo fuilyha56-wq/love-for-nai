@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 
 type Mode = "password" | "token" | "register";
+type GalleryBackground = { imageUrl: string; title: string };
 
 export default function SignInPage() {
   const router = useRouter();
@@ -21,6 +22,32 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [galleryBackground, setGalleryBackground] = useState<GalleryBackground | null>(null);
+  const [backgroundVisible, setBackgroundVisible] = useState(true);
+
+  useEffect(() => {
+    let items: GalleryBackground[] = [];
+    const choose = () => {
+      if (!items.length) return;
+      setBackgroundVisible(false);
+      window.setTimeout(() => {
+        const next = items[Math.floor(Math.random() * items.length)];
+        setGalleryBackground(next);
+        setBackgroundVisible(true);
+      }, 450);
+    };
+    fetch("/api/gallery", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        items = Array.isArray(result.items)
+          ? result.items.filter((item: GalleryBackground) => item.imageUrl)
+          : [];
+        choose();
+      })
+      .catch(() => undefined);
+    const timer = window.setInterval(choose, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const code = new URLSearchParams(window.location.search).get("invite") || "";
@@ -147,10 +174,11 @@ export default function SignInPage() {
     <main className="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
       <section className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div
-          className="absolute inset-0 opacity-20"
+          className={`absolute inset-0 bg-cover bg-center opacity-20 transition-opacity duration-500 ${backgroundVisible ? "opacity-20" : "opacity-0"}`}
           style={{
-            backgroundImage:
-              "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
+            backgroundImage: galleryBackground
+              ? `linear-gradient(rgba(38,41,40,.72), rgba(38,41,40,.72)), url(${galleryBackground.imageUrl})`
+              : "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
           }}
         />
         <div className="relative flex items-center gap-3 text-sm font-semibold">

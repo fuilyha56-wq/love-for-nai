@@ -131,6 +131,19 @@ export function affCost(generation: AffGeneration): number {
   return Math.max(1, Math.ceil(total));
 }
 
+// 生产 NewAPI 实测校准（含 Draw 分组 0.5 倍率）：
+// V5 非 limit = Anlas(含×2) × $3.75；V4.5 非 limit = Anlas × $2.5；
+// V4.5-limit 实扣 $0；V5-limit = $10 × 0.5 = $5/张。
+export function newApiCost(generation: AffGeneration): number {
+  const model = generation.model.toLowerCase();
+  if (model.includes("-limit")) {
+    if (model.includes("nai-v5")) return Number((5 * generation.samples).toFixed(2));
+    return 0;
+  }
+  const anlas = affCost(generation);
+  return Number((anlas * (model.includes("nai-v5") ? 3.75 : 2.5)).toFixed(2));
+}
+
 export async function affStatus(userId: number): Promise<{
   balance: number;
   checkedInToday: boolean;
@@ -171,6 +184,26 @@ export async function spendAff(
     const cost = affCost(generation);
     if (account.balance < cost)
       throw new Error(`AFF 余额不足：本次需要 ${cost} AFF，当前余额 ${account.balance} AFF`);
+    account.balance -= cost;
+    addTransaction(
+      account,
+      -cost,
+      "generation",
+      `${generation.model} ${generation.width}x${generation.height}，${generation.samples} 张`,
+    );
+    await writeAccount(userId, account);
+    return { cost, balance: account.balance };
+  });
+}
+
+export async function trySpendAff(
+  userId: number,
+  generation: AffGeneration,
+): Promise<{ cost: number; balance: number } | null> {
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const cost = affCost(generation);
+    if (account.balance < cost) return null;
     account.balance -= cost;
     addTransaction(
       account,

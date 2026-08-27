@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { refundAff, spendAff } from "@/lib/aff";
+import { refundAff, trySpendAff } from "@/lib/aff";
 import { getSession } from "@/lib/session";
-import { getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
+import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { saveHistory } from "@/lib/history";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 
@@ -22,6 +22,11 @@ const unifiedOperations = new Set([
 ]);
 
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
+
+// NovelAI 按分辨率限制单次请求张数（如 832x1216 最多 4 张），超量整单 400。
+// 服务端先按保守值拆批，若上游报出更小上限再自适应重拆。
+const MAX_SAMPLES_PER_REQUEST = 4;
+const MAX_SAMPLES_TOTAL = 12;
 
 // 浏览器上传得到的是 data URL，NovelAI 只接受裸 base64；参考图嵌在数组里需递归。
 function stripDataUrls<T>(value: T): T {
@@ -69,6 +74,23 @@ function explainUpstreamFailure(
   return `NovelAI 上游不支持当前${suspects.join("、")}，已返回 500。请更换后重试。`;
 }
 
+// 从上游报错中解析分辨率张数上限（如 "Maximum number of images ... is 4"）。
+function parseSamplesLimit(raw: string): number | null {
+  const match = raw.match(/maximum number of images[^]*?is (\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+// 把总张数拆成不超过 perRequest 的批次（6 -> [4, 2]）。
+function splitBatches(total: number, perRequest: number): number[] {
+  const batches: number[] = [];
+  let remaining = total;
+  while (remaining > 0) {
+    batches.push(Math.min(perRequest, remaining));
+    remaining -= perRequest;
+  }
+  return batches;
+}
+
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session)
@@ -110,27 +132,50 @@ export async function POST(request: Request) {
   let affCost = 0;
   let affBalance: number | null = null;
   let affRefunded = false;
+  let payment: "aff" | "newapi" = "newapi";
+  let baseUrlOverride = "";
   try {
+    let token: string;
+    let totalSamples = 1;
     if (operation !== "suggest-tags") {
       const width = typeof body.width === "number" ? body.width : 0;
       const height = typeof body.height === "number" ? body.height : 0;
       if (!width || !height)
         return NextResponse.json({ message: "缺少图像尺寸" }, { status: 400 });
-      const aff = await spendAff(session.userId, {
+      totalSamples =
+        typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1;
+      if (!Number.isInteger(totalSamples) || totalSamples < 1 || totalSamples > MAX_SAMPLES_TOTAL)
+        return NextResponse.json(
+          { message: `生成张数必须在 1-${MAX_SAMPLES_TOTAL} 之间` },
+          { status: 400 },
+        );
+      const generation = {
         model,
         width,
         height,
         steps: typeof body.steps === "number" ? body.steps : 28,
-        samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
+        samples: totalSamples,
         strength: typeof body.strength === "number" ? body.strength : undefined,
         operation,
         referenceImageCount: referenceImageCount(body, operation),
-      });
-      affCost = aff.cost;
-      affBalance = aff.balance;
+      };
+      const gateway = affGateway();
+      const aff = gateway
+        ? await trySpendAff(session.userId, generation)
+        : null;
+      if (aff && gateway) {
+        token = gateway.token;
+        baseUrlOverride = gateway.baseUrl;
+        payment = "aff";
+        affCost = aff.cost;
+        affBalance = aff.balance;
+      } else {
+        token = await getImageToken(session, model);
+      }
+    } else {
+      token = await getImageToken(session, model);
     }
-    const key = await getImageToken(session, model);
-    const baseUrl = newApiBaseUrl();
+    const baseUrl = baseUrlOverride || newApiBaseUrl();
     const endpoint =
       operation === "suggest-tags"
         ? "/v1/images/suggest-tags"
@@ -141,86 +186,123 @@ export async function POST(request: Request) {
       payload.novelai_operation = operation;
     if (operation === "generate") delete payload.novelai_operation;
 
-    const upstream = await fetch(`${baseUrl}${endpoint}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-      cache: "no-store",
-      signal: AbortSignal.timeout(180_000),
-    });
-    const contentType = upstream.headers.get("content-type") || "";
-    if (!contentType.includes("application/json")) {
-      affRefunded = true;
-      await refundAff(session.userId, affCost, "上游响应异常，自动返还");
-      return NextResponse.json(
-        { message: "上游返回了未支持的二进制响应" },
-        { status: 502 },
-      );
-    }
-    // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
-    const text = await upstream.text();
-    let result: {
-      error?: { message?: string };
-      detail?: string;
-      message?: string;
-      tags?: unknown;
-      usage?: unknown;
-      data?: Array<{ b64_json?: string; url?: string; vibe?: unknown }>;
-    } = {};
-    if (text.trim()) {
-      try {
-        result = JSON.parse(text);
-      } catch {
-        affRefunded = true;
-        await refundAff(session.userId, affCost, "上游响应异常，自动返还");
-        return NextResponse.json(
-          {
-            message: explainUpstreamFailure(
-              text.slice(0, 200),
-              upstream.status,
-              body,
-            ),
-          },
-          { status: upstream.ok ? 502 : upstream.status },
-        );
+    // 按上游单请求张数上限拆批（如 6 张 -> 4+2），合并所有批次图片。
+    // 上游若报出更小上限（如 "is 2"），自适应重拆剩余批次。
+    let perRequest = Math.max(1, Math.min(MAX_SAMPLES_PER_REQUEST, totalSamples));
+    const remaining: number[] = splitBatches(totalSamples, perRequest);
+    const images: string[] = [];
+    let usage: unknown = null;
+    let vibe: unknown = null;
+    let generatedSamples = 0;
+    let lastStatus = 0;
+    let lastRaw = "";
+    let lastResult: Record<string, unknown> = {};
+    while (remaining.length) {
+      const batch = remaining.shift() as number;
+      const upstream = await fetch(`${baseUrl}${endpoint}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...payload, n: batch, n_samples: batch }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(180_000),
+      });
+      const contentType = upstream.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        lastStatus = 502;
+        lastRaw = "上游返回了未支持的二进制响应";
+        break;
       }
+      // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
+      const text = await upstream.text();
+      let result: {
+        error?: { message?: string };
+        detail?: string;
+        message?: string;
+        usage?: unknown;
+        data?: Array<{ b64_json?: string; url?: string; vibe?: unknown }>;
+      } = {};
+      if (text.trim()) {
+        try {
+          result = JSON.parse(text);
+        } catch {
+          lastStatus = upstream.ok ? 502 : upstream.status;
+          lastRaw = explainUpstreamFailure(text.slice(0, 200), upstream.status, body);
+          break;
+        }
+      }
+      if (!upstream.ok || result.error || result.detail) {
+        const raw =
+          result.error?.message ||
+          result.detail ||
+          result.message ||
+          (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
+        // 上游报出更小的单请求上限时，重拆当前批次后重试一次。
+        const limit = parseSamplesLimit(raw);
+        if (limit && limit >= 1 && limit < batch) {
+          remaining.unshift(...splitBatches(batch, limit));
+          perRequest = Math.min(perRequest, limit);
+          continue;
+        }
+        lastStatus = upstream.status || 502;
+        lastRaw = explainUpstreamFailure(raw, upstream.status, body);
+        break;
+      }
+      const batchImages = imageFromResult(result);
+      if (!batchImages.length) {
+        lastStatus = 502;
+        lastRaw = "上游未返回图片";
+        break;
+      }
+      images.push(...batchImages);
+      generatedSamples += batch;
+      lastResult = result;
+      if (result.usage) usage = result.usage;
+      if (result.data?.[0]?.vibe) vibe = result.data[0].vibe;
     }
-    if (!upstream.ok || result.error || result.detail) {
-      const raw =
-        result.error?.message ||
-        result.detail ||
-        result.message ||
-        (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
-      affRefunded = true;
-      await refundAff(session.userId, affCost, "上游生成失败，自动返还");
-      return NextResponse.json(
-        { message: explainUpstreamFailure(raw, upstream.status, body) },
-        { status: upstream.status || 502 },
-      );
+
+    if (lastRaw) {
+      // 部分成功时只对未生成批次按比例退款；全失败则全额退。
+      if (payment === "aff" && affCost > 0) {
+        const perSampleCost = affCost / totalSamples;
+        const refund = Math.max(0, Math.round(affCost - perSampleCost * generatedSamples));
+        if (refund > 0) {
+          affRefunded = true;
+          await refundAff(
+            session.userId,
+            refund,
+            generatedSamples
+              ? `部分批次失败，返还 ${refund} AFF`
+              : "上游生成失败，自动返还",
+          );
+        }
+      }
+      const message = generatedSamples
+        ? `已生成 ${generatedSamples}/${totalSamples} 张后中断：${lastRaw}`
+        : lastRaw;
+      const response: Record<string, unknown> = {
+        message,
+        ...(generatedSamples ? { images, image: images[0], partial: true } : {}),
+      };
+      return NextResponse.json(response, { status: generatedSamples ? 207 : lastStatus });
     }
     if (operation === "suggest-tags")
-      return NextResponse.json({ tags: result.tags || result, raw: result });
-    const images = imageFromResult(result);
-    if (!images.length) {
-      affRefunded = true;
-      await refundAff(session.userId, affCost, "上游未返回图片，自动返还");
-      return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
-    }
+      return NextResponse.json({ tags: lastResult.tags || lastResult, raw: lastResult });
     const history = await saveHistory(
       session.userId,
       body,
       images,
-      result.usage || null,
+      usage,
     );
     return NextResponse.json({
       images,
       image: images[0],
-      usage: result.usage || null,
-      vibe: result.data?.[0]?.vibe || null,
+      usage,
+      vibe,
       historyIds: history.map((item) => item.id),
+      payment,
       aff: affBalance == null ? null : { cost: affCost, balance: affBalance },
     });
   } catch (error) {
