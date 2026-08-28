@@ -82,6 +82,17 @@ async function readModelGroups(
   return entry?.enable_groups?.filter((item) => typeof item === "string") ?? [];
 }
 
+// 图像模型的渠道统一挂在 Draw 分组；UserUsableGroups 可能没收录它，
+// 所以密钥分组优先精确命中 Draw，而不是拿交集的第一个。
+const IMAGE_TOKEN_GROUP = "draw";
+
+function pickImageGroup(modelGroups: string[]): string | undefined {
+  const byLower = new Map(
+    modelGroups.map((group) => [group.toLowerCase(), group]),
+  );
+  return byLower.get(IMAGE_TOKEN_GROUP) ?? modelGroups[0];
+}
+
 async function resolveToken(
   session: Session,
   model: string,
@@ -109,13 +120,20 @@ async function resolveToken(
   const owned = new Set(
     [...(selfGroup ? [selfGroup] : []), ...usableGroups].filter(Boolean),
   );
-  // 模型分组与账号可用分组的交集才是真正能调用的分组。
-  const allowed = modelGroups.filter((group) => owned.has(group));
-  if (!allowed.length) {
+  // 图像模型：渠道分组就是密钥该用的分组（Draw），账号可用分组交集只用于校验。
+  const isImageKey = prefix === LFN_TOKEN_PREFIX;
+  const group = isImageKey
+    ? pickImageGroup(modelGroups)
+    : modelGroups.filter((item) => owned.has(item))[0];
+  if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
     throw new Error(
       `当前账号没有 ${modelGroups.join(" / ")} 分组权限，无法使用 ${model}`,
     );
+  }
+  if (isImageKey && !owned.has(group)) {
+    // Draw 不在 UserUsableGroups 时 NewAPI 仍会按渠道分组放行，这里只提示不打断。
+    console.warn(`[lfn] 分组 ${group} 不在账号可用分组列表，继续尝试`);
   }
 
   const listTokens = async (): Promise<Token[]> => {
@@ -131,19 +149,18 @@ async function resolveToken(
     return Array.isArray(result.data) ? result.data : result.data?.items || [];
   };
 
+  // 已有同分组可用密钥时直接复用，优先 LFN 自建的那把。
   const usable = (await listTokens()).filter(
     (item) =>
       item.status === 1 &&
       typeof item.group === "string" &&
-      allowed.includes(item.group) &&
+      item.group === group &&
       !item.model_limits_enabled,
   );
-  // 已有可用密钥时直接复用，优先 LFN 自建的那把。
   let token: Token | undefined =
     usable.find((item) => item.name.startsWith(prefix)) ?? usable[0];
 
   if (!token) {
-    const group = allowed[0];
     const name = tokenNameFor(prefix, group);
     const created = await fetch(`${baseUrl}/api/token/`, {
       method: "POST",
