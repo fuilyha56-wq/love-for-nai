@@ -267,7 +267,7 @@ function SettingsPageContent() {
         </Link>
       </header>
 
-      <section className="mx-auto max-w-5xl space-y-5 p-4 sm:p-7">
+      <section className="mx-auto max-w-5xl space-y-6 p-4 sm:p-7">
         {!ready && (
           <div className="rounded-md border border-[var(--line)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">
             正在恢复本机外观偏好…
@@ -331,12 +331,12 @@ function SettingsPageContent() {
               </ChoiceButton>
             ))}
           </div>
-          <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-[var(--line)] pt-4">
-            <label className="min-w-[220px] flex-1 text-xs font-semibold" htmlFor="custom-accent">
+          <div className="mt-4 grid gap-3 border-t border-[var(--line)] pt-4 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+            <label className="block text-xs font-semibold" htmlFor="custom-accent">
               自定义强调色
               <input
                 id="custom-accent"
-                className="field mt-2 h-10 w-full px-3 font-mono text-sm uppercase"
+                className="field mt-2 w-full px-3 font-mono text-sm uppercase"
                 value={customAccentInput}
                 onChange={(event) => setCustomAccent(event.target.value.trim())}
                 placeholder="#A83A4C"
@@ -344,7 +344,21 @@ function SettingsPageContent() {
                 spellCheck={false}
               />
             </label>
-            <label className="grid h-10 w-14 cursor-pointer place-items-center overflow-hidden rounded border border-[var(--line)] bg-white" title="选择颜色">
+            <span
+              className="block h-10 w-full rounded border border-[var(--line)] sm:w-14"
+              style={{
+                backgroundColor:
+                  customAccentInput && isSafeHexColor(customAccentInput)
+                    ? customAccentInput
+                    : (accentOptions.find((option) => option.value === preferences.accentPreset)?.color ?? "#a83a4c"),
+              }}
+              aria-hidden="true"
+            />
+            <label
+              className="grid h-10 w-full cursor-pointer place-items-center overflow-hidden rounded border border-[var(--line)] bg-white text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] sm:w-14"
+              title="打开取色器"
+            >
+              取色
               <input
                 type="color"
                 value={
@@ -353,7 +367,7 @@ function SettingsPageContent() {
                     : (accentOptions.find((option) => option.value === preferences.accentPreset)?.color ?? "#a83a4c")
                 }
                 onChange={(event) => setCustomAccent(event.target.value)}
-                className="h-14 w-14 cursor-pointer scale-150"
+                className="sr-only"
                 aria-label="选择自定义强调色"
               />
             </label>
@@ -465,7 +479,7 @@ function SettingsPageContent() {
             detail="图片会在浏览器中压缩后保存到 IndexedDB，绝不会上传到服务器。"
           />
           <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
-            <div>
+            <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="button"
@@ -499,38 +513,44 @@ function SettingsPageContent() {
                   </button>
                 )}
               </div>
-          <div className="mt-4 rounded-md border border-[var(--line)] bg-[#faf9f5] p-4">
-            <p className="mb-3 text-xs font-semibold">背景位置</p>
-            <div className="space-y-3">
-              <label className="block text-xs text-[var(--muted)]">
-                <span className="flex items-center justify-between"><span>左右（左 ← → 右）</span><output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionX}%</output></span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={preferences.backgroundPositionX}
-                  onChange={(event) => updatePreferences({ backgroundPositionX: Number(event.target.value) })}
-                  className="range mt-2 w-full"
-                  aria-label="背景水平位置"
-                />
-              </label>
-              <label className="block text-xs text-[var(--muted)]">
-                <span className="flex items-center justify-between"><span>高低（上 ↑ ↓ 下）</span><output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionY}%</output></span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  step="1"
-                  value={preferences.backgroundPositionY}
-                  onChange={(event) => updatePreferences({ backgroundPositionY: Number(event.target.value) })}
-                  className="range mt-2 w-full"
-                  aria-label="背景垂直位置"
-                />
-              </label>
-            </div>
-          </div>
-          <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">
+              <div className="mt-4 rounded-md border border-[var(--line)] bg-[#faf9f5] p-4">
+                <p className="mb-3 text-xs font-semibold">背景位置</p>
+                <div className="space-y-4">
+                  <label className="block text-xs text-[var(--muted)]">
+                    <span className="flex items-center justify-between">
+                      <span>左右（左 ← → 右）</span>
+                      <output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionX}%</output>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={preferences.backgroundPositionX}
+                      onChange={(event) => updatePreferences({ backgroundPositionX: Number(event.target.value) })}
+                      className="range mt-2 w-full"
+                      aria-label="背景水平位置"
+                    />
+                  </label>
+                  <label className="block text-xs text-[var(--muted)]">
+                    <span className="flex items-center justify-between">
+                      <span>高低（上 ↑ ↓ 下）</span>
+                      <output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionY}%</output>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={preferences.backgroundPositionY}
+                      onChange={(event) => updatePreferences({ backgroundPositionY: Number(event.target.value) })}
+                      className="range mt-2 w-full"
+                      aria-label="背景垂直位置"
+                    />
+                  </label>
+                </div>
+              </div>
+              <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">
                 <CircleHelp size={13} className="mt-0.5 shrink-0" /> 支持 JPG、PNG、WebP 等图片，最大 20 MB；保存前会缩放到最长边 2400px。
               </p>
             </div>

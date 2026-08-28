@@ -3,10 +3,8 @@
 import {
   Aperture,
   Brush,
-  Check,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   Code2,
   ExternalLink,
   Download,
@@ -32,11 +30,10 @@ import {
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
 import {
   useCallback,
   useEffect,
-  useId,
-  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -88,7 +85,6 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string };
-type SelectOption = { value: string; label: string };
 type DanbooruTag = {
   name: string;
   displayName: string;
@@ -2041,197 +2037,6 @@ function Lightbox({
         )}
       </div>
     </dialog>
-  );
-}
-
-function PopupSelect({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-  searchable,
-}: {
-  value: string;
-  options: SelectOption[];
-  onChange: (value: string) => void;
-  ariaLabel: string;
-  searchable?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const rootRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const listboxId = useId();
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({
-    position: "fixed",
-    visibility: "hidden",
-  });
-  const visible =
-    searchable && query.trim()
-      ? options.filter((option) =>
-          `${option.label} ${option.value}`
-            .toLowerCase()
-            .includes(query.trim().toLowerCase()),
-        )
-      : options;
-
-  function positionMenu() {
-    const trigger = rootRef.current?.getBoundingClientRect();
-    if (!trigger) return;
-    const gap = 6;
-    const availableBelow = window.innerHeight - trigger.bottom - gap - 8;
-    const availableAbove = trigger.top - gap - 8;
-    const openAbove = availableBelow < 180 && availableAbove > availableBelow;
-    setMenuStyle({
-      position: "fixed",
-      visibility: "visible",
-      left: trigger.left,
-      top: openAbove ? undefined : trigger.bottom + gap,
-      bottom: openAbove ? window.innerHeight - trigger.top + gap : undefined,
-      width: trigger.width,
-      maxHeight: Math.max(
-        120,
-        Math.min(360, openAbove ? availableAbove : availableBelow),
-      ),
-    });
-  }
-
-  useLayoutEffect(() => {
-    if (open) positionMenu();
-  }, [open]);
-
-  // 首次点击时按钮宽度可能与菜单渲染时不同（字体加载、面板布局），
-  // 用 ResizeObserver 持续对齐菜单与触发按钮。
-  useEffect(() => {
-    if (!open) return;
-    const trigger = rootRef.current;
-    if (!trigger || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => positionMenu());
-    observer.observe(trigger);
-    return () => observer.disconnect();
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    // 不能用 overflow:hidden 锁滚动：切换 overflow 会触发重排，
-    // Chromium 会把容器 scrollTop 重置为 0，面板内容跳回顶部。
-    // 改为记录滚动位置，关闭时恢复；打开期间让菜单跟随滚动定位。
-    const scrollContainer = rootRef.current?.closest(
-      ".settings-scroll",
-    ) as HTMLElement | null;
-    const previousScrollTop = scrollContainer?.scrollTop ?? 0;
-    function close(event: PointerEvent) {
-      const target = event.target as Node;
-      if (
-        !rootRef.current?.contains(target) &&
-        !menuRef.current?.contains(target)
-      )
-        setOpen(false);
-    }
-    function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    window.addEventListener("resize", positionMenu);
-    window.addEventListener("scroll", positionMenu, true);
-    return () => {
-      if (scrollContainer) scrollContainer.scrollTop = previousScrollTop;
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", escape);
-      window.removeEventListener("resize", positionMenu);
-      window.removeEventListener("scroll", positionMenu, true);
-    };
-  }, [open]);
-
-  function select(option: SelectOption) {
-    onChange(option.value);
-    setOpen(false);
-    setQuery("");
-  }
-
-  const selected = options.find((option) => option.value === value);
-
-  return (
-    <div className="popup-select" ref={rootRef}>
-      <button
-        type="button"
-        className="popup-select-trigger"
-        aria-label={ariaLabel}
-        aria-haspopup="listbox"
-        aria-controls={listboxId}
-        aria-expanded={open}
-        onClick={() => {
-          if (!open) positionMenu();
-          setOpen((current) => !current);
-          setQuery("");
-        }}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-          event.preventDefault();
-          const current = options.findIndex((option) => option.value === value);
-          const direction = event.key === "ArrowDown" ? 1 : -1;
-          select(
-            options[(current + direction + options.length) % options.length],
-          );
-        }}
-      >
-        <span>{selected?.label || value}</span>
-        <span className="popup-select-chevrons" aria-hidden="true">
-          <ChevronsUpDown size={12} />
-        </span>
-      </button>
-      {open &&
-        createPortal(
-          <div
-            id={listboxId}
-            ref={menuRef}
-            className="popup-select-menu"
-            role="listbox"
-            aria-label={ariaLabel}
-            style={menuStyle}
-            onWheel={(event) => event.stopPropagation()}
-          >
-            {searchable && (
-              <div className="popup-select-search">
-                <Search size={12} />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索模型"
-                  aria-label="搜索模型"
-                  autoFocus
-                />
-              </div>
-            )}
-            <div className="popup-select-options">
-              {visible.length === 0 ? (
-                <p className="popup-select-empty">没有匹配的模型</p>
-              ) : (
-                visible.map((option) => (
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={option.value === value}
-                    className="popup-select-option"
-                    key={option.value}
-                    onClick={() => select(option)}
-                  >
-                    <Check
-                      size={13}
-                      className={
-                        option.value === value ? "opacity-100" : "opacity-0"
-                      }
-                    />
-                    <span>{option.label}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
-    </div>
   );
 }
 function NumberField({

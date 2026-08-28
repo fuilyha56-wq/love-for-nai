@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { PopupSelect } from "@/app/ui/popup-select";
 import {
   readJson,
   SessionExpiredError,
@@ -317,44 +318,40 @@ export default function ResourcesPage() {
                     aria-label="新密钥名称"
                   />
                 </label>
-                <label className="block">
+                <div>
                   <span className="mb-1 block text-xs font-semibold">分组</span>
-                  <select
-                    className="field w-full px-3"
+                  <PopupSelect
                     value={group}
-                    onChange={(event) => setGroup(event.target.value)}
-                    aria-label="密钥分组"
-                  >
-                    {groups.length ? (
-                      groups.map((item) => (
-                        <option key={item.name} value={item.name}>
-                          {item.name}
-                          {item.desc ? ` · ${item.desc}` : ""}
-                          {item.ratio ? ` · ${item.ratio}x 倍率` : ""}
-                        </option>
-                      ))
-                    ) : (
-                      <option value="default">default</option>
-                    )}
-                  </select>
-                </label>
+                    ariaLabel="密钥分组"
+                    searchable
+                    searchPlaceholder="搜索分组"
+                    emptyText="没有匹配的分组"
+                    options={
+                      groups.length
+                        ? groups.map((item) => ({
+                            value: item.name,
+                            label: item.name,
+                            description: `${item.desc || "无描述"}${item.ratio ? ` · ${item.ratio}x 倍率` : ""}`,
+                          }))
+                        : [{ value: "default", label: "default" }]
+                    }
+                    onChange={setGroup}
+                  />
+                </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block">
+                <div>
                   <span className="mb-1 block text-xs font-semibold">有效期</span>
-                  <select
-                    className="field w-full px-3"
+                  <PopupSelect
                     value={expireDays}
-                    onChange={(event) => setExpireDays(event.target.value)}
-                    aria-label="有效期"
-                  >
-                    {EXPIRE_PRESETS.map((preset) => (
-                      <option key={preset.value} value={preset.value}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    ariaLabel="有效期"
+                    options={EXPIRE_PRESETS.map((preset) => ({
+                      value: preset.value,
+                      label: preset.label,
+                    }))}
+                    onChange={setExpireDays}
+                  />
+                </div>
                 <div>
                   <span className="mb-1 block text-xs font-semibold">额度</span>
                   <label className="flex items-center gap-2 text-xs">

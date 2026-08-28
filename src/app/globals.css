@@ -78,6 +78,9 @@ html[data-theme="night"] .bg-\[\#fffefa\]\/95 {
   background-color: rgba(43, 47, 51, 0.95);
   color: var(--ink);
 }
+html[data-theme="night"] .bg-\[\#faf9f5\] {
+  background-color: #26292c;
+}
 html[data-theme="night"] .bg-\[\#fff8e8\].text-\[\#77531e\],
 html[data-theme="night"] .bg-amber-50 {
   color: #f0d9a8;
@@ -169,10 +172,31 @@ button {
   border-radius: 6px;
   background: #fff;
   color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 0 10px;
+  height: 40px;
   outline: none;
   transition:
     border-color 160ms ease,
     box-shadow 160ms ease;
+}
+textarea.field {
+  height: auto;
+  padding: 8px 10px;
+  line-height: 1.55;
+}
+select.field {
+  appearance: none;
+  cursor: pointer;
+}
+html[data-theme="night"] .field {
+  background-color: #2b2f33;
+  color: var(--ink);
+}
+html[data-theme="night"] .field::placeholder {
+  color: var(--muted);
 }
 .field:focus {
   border-color: var(--rose);
@@ -753,6 +777,23 @@ button {
   background: var(--rose);
   color: #fff;
   outline: none;
+}
+.popup-select-option > span:last-child {
+  min-width: 0;
+  flex: 1;
+}
+.popup-select-description {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.72;
+}
+.popup-select-option:hover .popup-select-description,
+.popup-select-option:focus-visible .popup-select-description {
+  opacity: 0.9;
 }
 .feature-link {
   display: flex;
