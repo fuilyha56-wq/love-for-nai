@@ -4,6 +4,7 @@ import { ArrowRight, Brush, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useAppearance } from "@/app/appearance";
 
 type Mode = "password" | "token" | "register";
 type GalleryBackground = { imageUrl: string; title: string };
@@ -56,6 +57,7 @@ function useScrambleText(target: string): string {
 
 export default function SignInPage() {
   const router = useRouter();
+  const { preferences: appearancePreferences, backgroundUrl } = useAppearance();
   const [mode, setMode] = useState<Mode>("password");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -73,10 +75,13 @@ export default function SignInPage() {
   const [backgroundVisible, setBackgroundVisible] = useState(true);
   const headline = useScrambleText("让每一次想象，都有清晰的落点。");
   const sectionRef = useRef<HTMLElement>(null);
+  const localBackgroundActive = appearancePreferences.backgroundEnabled && Boolean(backgroundUrl);
 
   useEffect(() => {
     let items: GalleryBackground[] = [];
     const choose = () => {
+      // 本地背景启用时不再轮换图库背景，避免每分钟闪烁。
+      if (localBackgroundActive) return;
       if (!items.length) return;
       setBackgroundVisible(false);
       window.setTimeout(() => {
@@ -100,7 +105,7 @@ export default function SignInPage() {
       .catch(() => undefined);
     const timer = window.setInterval(choose, 60_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [localBackgroundActive]);
 
   useEffect(() => {
     const code =
@@ -243,15 +248,17 @@ export default function SignInPage() {
     <main className="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
       <section ref={sectionRef} className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div
-          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ease-out ${backgroundVisible && galleryBackground ? "opacity-55" : "opacity-0"}`}
+          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ease-out ${backgroundVisible && (localBackgroundActive || galleryBackground) ? "opacity-55" : "opacity-0"}`}
           style={{
-            backgroundImage: galleryBackground
-              ? `linear-gradient(rgba(38,41,40,.45), rgba(38,41,40,.45)), url(${galleryBackground.imageUrl})`
-              : "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
+            backgroundImage: localBackgroundActive
+              ? `linear-gradient(rgba(38,41,40,.35), rgba(38,41,40,.35)), url("${backgroundUrl}")`
+              : galleryBackground
+                ? `linear-gradient(rgba(38,41,40,.45), rgba(38,41,40,.45)), url(${galleryBackground.imageUrl})`
+                : "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
           }}
         />
         {/* 文字只靠左下局部渐变衬托，背景图其余区域保持清晰 */}
-        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-2/3 transition-opacity duration-1000 ease-out ${galleryBackground ? "opacity-100" : "opacity-0"}`} style={{ background: "linear-gradient(to top, rgba(38,41,40,.92) 0%, rgba(38,41,40,.55) 45%, transparent 100%)" }} />
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-2/3 transition-opacity duration-1000 ease-out ${localBackgroundActive || galleryBackground ? "opacity-100" : "opacity-0"}`} style={{ background: "linear-gradient(to top, rgba(38,41,40,.92) 0%, rgba(38,41,40,.55) 45%, transparent 100%)" }} />
         <div className="relative flex items-center gap-3 text-sm font-semibold">
           <Brush size={20} /> LOVE FOR NAI
         </div>
@@ -269,7 +276,7 @@ export default function SignInPage() {
             专注提示词、角色构图与细节控制。你的 NewAPI
             账号、余额和模型权限在这里继续使用。
           </p>
-          {galleryBackground?.title && (
+          {!localBackgroundActive && galleryBackground?.title && (
             <p className="mt-5 text-xs text-white/45">
               背景作品：{galleryBackground.title}
             </p>
@@ -279,7 +286,7 @@ export default function SignInPage() {
           Love for NAI · AGPL-3.0
         </p>
       </section>
-      <section className="flex min-h-screen items-center justify-center px-6 py-12">
+      <section className="flex min-h-screen items-center justify-center bg-[var(--paper)] px-6 py-12">
         <div className="w-full max-w-md enter">
           <div className="mb-10 flex items-center gap-3 lg:hidden">
             <Brush color="var(--rose)" />

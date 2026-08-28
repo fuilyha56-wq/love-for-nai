@@ -23,13 +23,22 @@ export async function PUT(request: Request) {
   }
   const userId = optionalNumber(raw.id);
   if (!userId) return NextResponse.json({ message: "缺少用户 id" }, { status: 400 });
+  const username = optionalString(raw.username)?.trim() || "";
+  if (!username) return NextResponse.json({ message: "缺少用户名" }, { status: 400 });
 
   const password = optionalString(raw.password)?.trim() || "";
   const displayName = optionalString(raw.displayName);
   const remark = optionalString(raw.remark);
   const group = optionalString(raw.group)?.trim() || "";
-  const balanceUsd = optionalNumber(raw.balanceUsd);
+  const balanceUsdRaw = raw.balanceUsd;
+  const balanceUsd = optionalNumber(balanceUsdRaw);
   const affDelta = optionalNumber(raw.affDelta);
+  if (balanceUsdRaw !== undefined && balanceUsd === undefined)
+    return NextResponse.json({ message: "NewAPI 余额必须是有效数字" }, { status: 400 });
+  if (typeof affDelta === "undefined" && raw.affDelta !== undefined)
+    return NextResponse.json({ message: "AFF 调整必须是有效数字" }, { status: 400 });
+  if (typeof affDelta === "number" && !Number.isInteger(affDelta))
+    return NextResponse.json({ message: "AFF 调整必须是整数" }, { status: 400 });
 
   if (password && (password.length < 8 || password.length > 64))
     return NextResponse.json({ message: "密码需为 8–64 个字符" }, { status: 400 });

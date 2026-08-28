@@ -40,7 +40,11 @@ export async function GET(request: Request) {
         aff: await affStatus(Number(user.id)).catch(() => null),
       })),
     );
-    return NextResponse.json({ items: enriched, total });
+    return NextResponse.json({
+      items: enriched,
+      total,
+      quotaPerUnit: Number(process.env.QUOTA_PER_UNIT || 500000),
+    });
   } catch {
     return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
   }

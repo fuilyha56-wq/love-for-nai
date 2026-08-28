@@ -96,7 +96,14 @@ export function AnnouncementDialog({
           <MarkdownView content={current.content} />
         </div>
         <div className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--line)] bg-[#f5f3ed] px-5 py-3.5">
-          <button type="button" onClick={onOpenList} className="text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--rose)]">
+          <button
+            type="button"
+            onClick={() => {
+              setVisible(false);
+              onOpenList?.();
+            }}
+            className="text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--rose)]"
+          >
             查看全部公告
           </button>
           <button type="button" onClick={confirm} className="flex h-9 items-center gap-2 rounded bg-[var(--rose)] px-5 text-sm font-semibold text-white hover:bg-[var(--rose-dark)]">

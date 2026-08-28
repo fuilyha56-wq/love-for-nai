@@ -6,6 +6,7 @@ import {
   listAnnouncements,
   updateAnnouncement,
 } from "@/lib/announcements";
+import { deleteCommentsForAnnouncement } from "@/lib/announcement-comments";
 import { optionalString } from "@/lib/request";
 
 export async function GET() {
@@ -22,7 +23,7 @@ export async function POST(request: Request) {
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const title = optionalString(body.title)?.trim() || "";
-  const content = optionalString(body.content) || "";
+  const content = optionalString(body.content)?.trim() || "";
   if (!title || !content)
     return NextResponse.json({ message: "标题和内容不能为空" }, { status: 400 });
   const item = await createAnnouncement({
@@ -41,9 +42,15 @@ export async function PUT(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const id = optionalString(body.id) || "";
   if (!id) return NextResponse.json({ message: "缺少公告 id" }, { status: 400 });
+  const titleInput = optionalString(body.title);
+  const contentInput = optionalString(body.content);
+  if (titleInput !== undefined && !titleInput.trim())
+    return NextResponse.json({ message: "标题不能为空" }, { status: 400 });
+  if (contentInput !== undefined && !contentInput.trim())
+    return NextResponse.json({ message: "内容不能为空" }, { status: 400 });
   const item = await updateAnnouncement(id, {
-    ...(optionalString(body.title) ? { title: optionalString(body.title)!.trim().slice(0, 120) } : {}),
-    ...(optionalString(body.content) ? { content: optionalString(body.content)! } : {}),
+    ...(titleInput !== undefined ? { title: titleInput.trim().slice(0, 120) } : {}),
+    ...(contentInput !== undefined ? { content: contentInput.trim() } : {}),
     ...(body.level ? { level: parseLevel(body.level) } : {}),
     ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
   });
@@ -58,5 +65,6 @@ export async function DELETE(request: Request) {
   if (!id) return NextResponse.json({ message: "缺少公告 id" }, { status: 400 });
   const ok = await deleteAnnouncement(id);
   if (!ok) return NextResponse.json({ message: "公告不存在" }, { status: 404 });
+  await deleteCommentsForAnnouncement(id).catch(() => undefined);
   return NextResponse.json({ success: true });
 }

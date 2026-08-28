@@ -23,7 +23,8 @@ export async function readUserRole(
     const result = (await upstream.json()) as SelfResult;
     if (!upstream.ok || !result.success) return null;
     const data = result.data;
-    return data?.user?.role ?? data?.role ?? null;
+    const role = data?.user?.role ?? data?.role;
+    return typeof role === "number" && Number.isFinite(role) ? role : null;
   } catch {
     return null;
   }

@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { TUTORIAL_ANNOUNCEMENT } from "@/lib/announcements";
 
 // 公告存取走 LFN_DATA_DIR，测试用临时目录隔离。
 let dataDir: string;
@@ -23,6 +24,33 @@ describe("公告库", () => {
     expect(items.length).toBeGreaterThan(0);
     expect(items[0].pinned).toBe(true);
     expect(items[0].content).toContain("/ai/generate-image");
+  });
+
+  it("缺失种子时分别补齐，且不覆盖已有公告内容", async () => {
+    await mkdir(path.join(dataDir, "announcements"), { recursive: true });
+    await writeFile(
+      path.join(dataDir, "announcements", "index.json"),
+      JSON.stringify({
+        items: [
+          {
+            ...TUTORIAL_ANNOUNCEMENT,
+            content: "管理员已经编辑过的教程",
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const { ensureSeed, listAnnouncements } =
+      await import("@/lib/announcements");
+    await ensureSeed();
+    await ensureSeed();
+    const items = await listAnnouncements();
+    expect(items.filter((item) => item.id === TUTORIAL_ANNOUNCEMENT.id)).toHaveLength(1);
+    expect(items.find((item) => item.id === TUTORIAL_ANNOUNCEMENT.id)?.content).toBe(
+      "管理员已经编辑过的教程",
+    );
+    expect(items.filter((item) => item.id === "community-feedback")).toHaveLength(1);
   });
 
   it("创建、更新、删除公告", async () => {

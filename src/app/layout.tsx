@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { AppearanceProvider } from "./appearance";
 import { LayoutAnnouncements } from "./layout-announcements";
 
 export const metadata: Metadata = {
@@ -18,8 +19,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh-CN">
       <body>
-        {children}
-        <LayoutAnnouncements />
+        <AppearanceProvider>
+          {children}
+          <LayoutAnnouncements />
+        </AppearanceProvider>
       </body>
     </html>
   );

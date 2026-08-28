@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Megaphone,
+  MessageCircle,
   Pin,
   Plus,
   Save,
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
+import CommentsDialog from "./comments-dialog";
 
 type AdminUser = {
   id: number;
@@ -32,7 +34,7 @@ type AdminUser = {
 
 type Tab = "users" | "announcements";
 
-const QUOTA_PER_UNIT = Number(process.env.NEXT_PUBLIC_QUOTA_PER_UNIT || 500000);
+const DEFAULT_QUOTA_PER_UNIT = 500000;
 const ROLE_LABELS: Record<number, string> = { 1: "用户", 10: "管理员", 100: "Root" };
 
 export default function AdminPage() {
@@ -109,6 +111,7 @@ export default function AdminPage() {
 function UsersPanel({ setMessage }: { setMessage: (text: string) => void }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
+  const [quotaPerUnit, setQuotaPerUnit] = useState(DEFAULT_QUOTA_PER_UNIT);
   const [page, setPage] = useState(1);
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState<AdminUser | null>(null);
@@ -127,6 +130,8 @@ function UsersPanel({ setMessage }: { setMessage: (text: string) => void }) {
         }
         setUsers(result.items || []);
         setTotal(result.total || 0);
+        if (Number.isFinite(result.quotaPerUnit) && result.quotaPerUnit > 0)
+          setQuotaPerUnit(result.quotaPerUnit);
       } catch {
         setMessage("用户列表读取失败");
       }
@@ -192,7 +197,7 @@ function UsersPanel({ setMessage }: { setMessage: (text: string) => void }) {
                   <span className="rounded-full bg-[#f1eee7] px-2 py-0.5 text-xs">{user.group || "default"}</span>
                 </td>
                 <td className="px-3 py-2.5 text-xs">{ROLE_LABELS[user.role ?? 1] || user.role}</td>
-                <td className="px-3 py-2.5 tabular-nums">${((user.quota || 0) / QUOTA_PER_UNIT).toFixed(2)}</td>
+                <td className="px-3 py-2.5 tabular-nums">${((user.quota || 0) / quotaPerUnit).toFixed(2)}</td>
                 <td className="px-3 py-2.5 tabular-nums">{user.aff?.balance ?? "-"}</td>
                 <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[var(--muted)]">{user.email || "-"}</td>
                 <td className="px-3 py-2.5">
@@ -224,6 +229,7 @@ function UsersPanel({ setMessage }: { setMessage: (text: string) => void }) {
       {editing && (
         <EditUserDialog
           user={editing}
+          quotaPerUnit={quotaPerUnit}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -238,11 +244,13 @@ function UsersPanel({ setMessage }: { setMessage: (text: string) => void }) {
 
 function EditUserDialog({
   user,
+  quotaPerUnit,
   onClose,
   onSaved,
   setMessage,
 }: {
   user: AdminUser;
+  quotaPerUnit: number;
   onClose: () => void;
   onSaved: () => void;
   setMessage: (text: string) => void;
@@ -252,12 +260,22 @@ function EditUserDialog({
   const [remark, setRemark] = useState(user.remark || "");
   const [group, setGroup] = useState(user.group || "default");
   const [balanceUsd, setBalanceUsd] = useState(
-    ((user.quota || 0) / QUOTA_PER_UNIT).toFixed(2),
+    ((user.quota || 0) / quotaPerUnit).toFixed(2),
   );
   const [affDelta, setAffDelta] = useState("0");
   const [saving, setSaving] = useState(false);
 
   async function save() {
+    const balance = Number(balanceUsd);
+    const affChange = Number(affDelta);
+    if (!Number.isFinite(balance) || balance < 0) {
+      setMessage("NewAPI 余额必须是有效的非负数字");
+      return;
+    }
+    if (!Number.isFinite(affChange) || !Number.isInteger(affChange)) {
+      setMessage("AFF 调整必须是整数");
+      return;
+    }
     setSaving(true);
     setMessage("");
     try {
@@ -266,12 +284,13 @@ function EditUserDialog({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: user.id,
+          username: user.username,
           displayName,
           ...(password ? { password } : {}),
           remark,
           group,
-          balanceUsd: Number(balanceUsd),
-          affDelta: Number(affDelta) || 0,
+          balanceUsd: balance,
+          affDelta: affChange,
         }),
       });
       const result = await response.json();
@@ -337,6 +356,7 @@ function EditUserDialog({
 function AnnouncementsPanel({ setMessage }: { setMessage: (text: string) => void }) {
   const [items, setItems] = useState<AnnouncementItem[]>([]);
   const [editing, setEditing] = useState<Partial<AnnouncementItem> | null>(null);
+  const [commentsFor, setCommentsFor] = useState<AnnouncementItem | null>(null);
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -423,6 +443,7 @@ function AnnouncementsPanel({ setMessage }: { setMessage: (text: string) => void
               </p>
             </div>
             <div className="flex shrink-0 gap-3 text-xs font-semibold">
+              <button type="button" onClick={() => setCommentsFor(item)} className="flex items-center gap-1 text-[var(--muted)] hover:text-[var(--rose)]"><MessageCircle size={13} />评论</button>
               <button type="button" onClick={() => setEditing(item)} className="text-[var(--rose)] hover:underline">编辑</button>
               <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
             </div>
@@ -430,6 +451,14 @@ function AnnouncementsPanel({ setMessage }: { setMessage: (text: string) => void
         ))}
         {!items.length && <p className="py-10 text-center text-sm text-[var(--muted)]">暂无公告</p>}
       </div>
+
+      {commentsFor && (
+        <CommentsDialog
+          announcement={commentsFor}
+          onClose={() => setCommentsFor(null)}
+          setMessage={setMessage}
+        />
+      )}
 
       {editing && (
         <div className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4" onClick={() => setEditing(null)}>

@@ -16,6 +16,7 @@ import {
   Images,
   Megaphone,
   Menu,
+  Paintbrush,
   PawPrint,
   Search,
   RotateCcw,
@@ -1060,6 +1061,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 href="/announcements"
                 label="公告"
                 icon={<Megaphone size={15} />}
+              />
+              <FeatureLink
+                href="/settings"
+                label="外观设置"
+                icon={<Paintbrush size={15} />}
               />
               {isAdmin && (
                 <FeatureLink

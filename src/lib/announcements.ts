@@ -13,7 +13,7 @@ export type Announcement = {
   pinned: boolean;
 };
 
-type Store = { items: Announcement[] };
+type Store = { items: Announcement[]; removedIds?: string[] };
 const root = () =>
   path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "announcements");
 const storePath = () => path.join(root(), "index.json");
@@ -28,7 +28,12 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
 async function readStore(): Promise<Store> {
   try {
     const value = JSON.parse(await readFile(storePath(), "utf8")) as Store;
-    return { items: Array.isArray(value.items) ? value.items : [] };
+    return {
+      items: Array.isArray(value.items) ? value.items : [],
+      removedIds: Array.isArray(value.removedIds)
+        ? value.removedIds.filter((id): id is string => typeof id === "string")
+        : [],
+    };
   } catch {
     return { items: [] };
   }
@@ -119,12 +124,39 @@ curl -X POST http://你的NewAPI地址/v1/images/generations \\
   pinned: true,
 };
 
+export const COMMUNITY_FEEDBACK_ANNOUNCEMENT: Announcement = {
+  id: "community-feedback",
+  title: "社区反馈征集",
+  content: `欢迎在本公告下方评论区反馈 UI 优化、功能需求、颜色/主题、自定义背景、液态玻璃等建议。
+
+液态玻璃默认关闭，视觉偏好尽量在本地计算，不上传用户背景图片。`,
+  level: "info",
+  createdAt: "2026-08-29T00:00:00.000Z",
+  updatedAt: "2026-08-29T00:00:00.000Z",
+  author: "LFN",
+  pinned: false,
+};
+
 export async function ensureSeed(): Promise<void> {
   return withLock(async () => {
     const store = await readStore();
-    if (store.items.length) return;
-    store.items.push(TUTORIAL_ANNOUNCEMENT);
-    await writeStore(store);
+    let changed = false;
+    const removed = new Set(store.removedIds || []);
+    if (
+      !removed.has(TUTORIAL_ANNOUNCEMENT.id) &&
+      !store.items.some((item) => item.id === TUTORIAL_ANNOUNCEMENT.id)
+    ) {
+      store.items.push(TUTORIAL_ANNOUNCEMENT);
+      changed = true;
+    }
+    if (
+      !removed.has(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id) &&
+      !store.items.some((item) => item.id === COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)
+    ) {
+      store.items.push(COMMUNITY_FEEDBACK_ANNOUNCEMENT);
+      changed = true;
+    }
+    if (changed) await writeStore(store);
   });
 }
 
@@ -155,6 +187,7 @@ export async function createAnnouncement(
     };
     const store = await readStore();
     store.items.unshift(item);
+    store.removedIds = (store.removedIds || []).filter((removedId) => removedId !== item.id);
     await writeStore(store);
     return item;
   });
@@ -176,6 +209,7 @@ export async function updateAnnouncement(
       updatedAt: new Date().toISOString(),
     };
     store.items[index] = next;
+    store.removedIds = (store.removedIds || []).filter((removedId) => removedId !== id);
     await writeStore(store);
     return next;
   });
@@ -187,6 +221,7 @@ export async function deleteAnnouncement(id: string): Promise<boolean> {
     const before = store.items.length;
     store.items = store.items.filter((item) => item.id !== id);
     if (store.items.length === before) return false;
+    store.removedIds = Array.from(new Set([...(store.removedIds || []), id]));
     await writeStore(store);
     return true;
   });

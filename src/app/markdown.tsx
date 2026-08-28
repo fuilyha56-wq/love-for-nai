@@ -2,6 +2,17 @@
 
 import React from "react";
 
+function isSafeHref(value: string): boolean {
+  const href = value.trim();
+  if (href.startsWith("/") || href.startsWith("#") || href.startsWith("?")) return true;
+  try {
+    const protocol = new URL(href).protocol;
+    return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
 // 轻量 Markdown 渲染：标题 / 段落 / 表格 / 代码块 / 行内代码 /
 // 列表 / 粗体 / 链接。内容全部经 React 转义，无 dangerouslySetInnerHTML。
 function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
@@ -33,7 +44,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
         );
       } else {
         const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-        if (link) {
+        if (link && isSafeHref(link[2])) {
           nodes.push(
             <a
               key={key}

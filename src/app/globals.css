@@ -13,6 +13,13 @@
   --rose-dark: #7f2637;
   --mint: #2d7567;
   --gold: #c5913d;
+  --surface: #fffefa;
+  --surface-muted: #f5f3ed;
+  --canvas: #ebe9e2;
+  --glass-alpha: 0.78;
+  --glass-blur: 14px;
+  --glass-saturation: 1.15;
+  --glass-border: rgba(255, 255, 255, 0.62);
 }
 
 * {
@@ -32,6 +39,111 @@ body {
   background-size: 24px 24px;
   font-family: var(--font-sans), sans-serif;
   letter-spacing: 0;
+}
+html[data-grid="off"] body {
+  background: var(--paper);
+}
+html[data-theme="night"] {
+  --ink: #f4f1eb;
+  --muted: #b8b2a7;
+  --paper: #1d2022;
+  --panel: #272b2d;
+  --line: #454b4c;
+}
+html[data-theme="night"] .bg-white,
+html[data-theme="night"] .field,
+html[data-theme="night"] .gallery-select-menu,
+html[data-theme="night"] .gallery-select-trigger,
+html[data-theme="night"] .popup-select-menu,
+html[data-theme="night"] .popup-select-trigger,
+html[data-theme="night"] .nai-mode-button,
+html[data-theme="night"] .feature-link,
+html[data-theme="night"] .danbooru-result,
+html[data-theme="night"] .assistant-preview,
+html[data-theme="night"] .history-action,
+html[data-theme="night"] .page-button,
+html[data-theme="night"] .key-action,
+html[data-theme="night"] .wallet-panel,
+html[data-theme="night"] .assistant-actions button,
+html[data-theme="night"] .bg-\[\#f1eee7\],
+html[data-theme="night"] .bg-\[\#f2f0ea\],
+html[data-theme="night"] .bg-\[\#e9e6de\],
+html[data-theme="night"] .bg-\[\#f5f3ed\],
+html[data-theme="night"] .bg-\[\#fff8e8\],
+html[data-theme="night"] .bg-\[\#fffefa\] {
+  background-color: #2b2f33;
+  color: var(--ink);
+}
+html[data-theme="night"] .bg-\[\#fffefa\]\/95 {
+  background-color: rgba(43, 47, 51, 0.95);
+  color: var(--ink);
+}
+html[data-theme="night"] .bg-\[\#fff8e8\].text-\[\#77531e\],
+html[data-theme="night"] .bg-amber-50 {
+  color: #f0d9a8;
+}
+html[data-theme="night"] .text-\[var\(--muted\)\] {
+  color: var(--muted);
+}
+html[data-theme="rose"] {
+  --paper: #fbf2f1;
+  --panel: #fffaf9;
+  --line: #ead6d5;
+}
+html[data-theme="mint"] {
+  --paper: #f0f7f4;
+  --panel: #fbfffd;
+  --line: #d0e4dc;
+}
+html[data-theme="ocean"] {
+  --paper: #eff5f9;
+  --panel: #fbfdff;
+  --line: #d2e0ea;
+}
+html[data-glass="on"] .panel,
+html[data-glass="on"] header,
+html[data-glass="on"] .popup-select-menu,
+html[data-glass="on"] .glass-surface {
+  background: color-mix(in srgb, var(--panel) var(--glass-alpha), transparent);
+  border-color: var(--glass-border);
+  box-shadow: 0 18px 50px rgba(35, 40, 42, 0.14), inset 0 1px rgba(255, 255, 255, 0.45);
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-glass="on"] .panel,
+  html[data-glass="on"] header,
+  html[data-glass="on"] .popup-select-menu,
+  html[data-glass="on"] .glass-surface {
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  }
+}
+html[data-density="compact"] .panel {
+  box-shadow: 0 8px 24px rgba(54, 47, 39, 0.05);
+}
+html[data-density="compact"] .panel,
+html[data-density="compact"] .feature-link,
+html[data-density="compact"] .assistant-preview,
+html[data-density="compact"] .wallet-panel {
+  padding: 0.75rem;
+}
+html[data-density="compact"] .studio-layout .panel {
+  gap: 0.75rem;
+}
+html[data-density="compact"] .feature-link {
+  height: 34px;
+}
+html[data-density="compact"] .nai-reference-card {
+  min-height: 46px;
+  padding-top: 0.5rem;
+  padding-bottom: 0.5rem;
+}
+html[data-motion="reduced"] *,
+html[data-motion="reduced"] *::before,
+html[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }
 button,
 input,

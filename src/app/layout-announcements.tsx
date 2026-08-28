@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   AnnouncementDialog,
@@ -11,17 +11,11 @@ import {
 // 弹窗仅在登录页之外出现，避免挡住登录表单。
 export function LayoutAnnouncements() {
   const router = useRouter();
+  const pathname = usePathname();
   const [items, setItems] = useState<AnnouncementItem[]>([]);
-  const [path, setPath] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    Promise.resolve()
-      .then(() => {
-        if (cancelled) return;
-        setPath(window.location.pathname);
-      })
-      .catch(() => undefined);
     fetch("/api/announcements", { cache: "no-store" })
       .then((response) => response.json())
       .then((result) => {
@@ -33,7 +27,7 @@ export function LayoutAnnouncements() {
     };
   }, []);
 
-  if (!items.length || path.startsWith("/sign-in")) return null;
+  if (!items.length || pathname.startsWith("/sign-in")) return null;
 
   return (
     <AnnouncementDialog

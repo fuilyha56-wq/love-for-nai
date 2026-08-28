@@ -17,6 +17,9 @@ services:
       # Danbooru 需经出站代理访问；留空则直连。
       LFN_OUTBOUND_PROXY: ${LFN_OUTBOUND_PROXY:-}
       LFN_TRUST_PROXY: ${LFN_TRUST_PROXY:-false}
+      LFN_ADMIN_TOKEN: ${LFN_ADMIN_TOKEN:-}
+      LFN_ADMIN_USER_ID: ${LFN_ADMIN_USER_ID:-1}
+      LFN_REGISTER_GROUP: ${LFN_REGISTER_GROUP:-Draw}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
