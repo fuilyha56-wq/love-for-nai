@@ -21,6 +21,8 @@ export type AppearancePreferences = {
   glass: boolean;
   glassStrength: number;
   backgroundEnabled: boolean;
+  backgroundPositionX: number; // 0–100，0 居左 100 居右
+  backgroundPositionY: number; // 0–100，0 居上 100 居下
 };
 
 export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
@@ -34,6 +36,8 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
   glass: false,
   glassStrength: 42,
   backgroundEnabled: false,
+  backgroundPositionX: 50,
+  backgroundPositionY: 50,
 };
 
 // Short aliases make the store convenient to consume from small client components.
@@ -62,6 +66,11 @@ function clampStrength(value: unknown): number {
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
+function clampPercent(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
 /**
  * Parse untrusted local data. A bad version falls back to the complete default,
  * while malformed individual fields are repaired independently.
@@ -76,7 +85,9 @@ export function parseAppearancePreferences(input: unknown): AppearancePreference
     record.version !== undefined &&
     record.version !== APPEARANCE_PREFERENCES_VERSION
   ) {
-    return { ...DEFAULT_APPEARANCE_PREFERENCES };
+    // 旧版本数据（v1 无背景位置字段）逐字段修复而不是整体丢弃，
+    // parseAppearancePreferences 的字段级 fallback 会补上新增默认值。
+    if (record.version !== 1) return { ...DEFAULT_APPEARANCE_PREFERENCES };
   }
 
   return {
@@ -109,6 +120,14 @@ export function parseAppearancePreferences(input: unknown): AppearancePreference
       typeof record.backgroundEnabled === "boolean"
         ? record.backgroundEnabled
         : DEFAULT_APPEARANCE_PREFERENCES.backgroundEnabled,
+    backgroundPositionX: clampPercent(
+      record.backgroundPositionX,
+      DEFAULT_APPEARANCE_PREFERENCES.backgroundPositionX,
+    ),
+    backgroundPositionY: clampPercent(
+      record.backgroundPositionY,
+      DEFAULT_APPEARANCE_PREFERENCES.backgroundPositionY,
+    ),
   };
 }
 

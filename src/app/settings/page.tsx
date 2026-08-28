@@ -442,6 +442,7 @@ function SettingsPageContent() {
               <label htmlFor="glass-strength" className="font-semibold">玻璃强度</label>
               <output htmlFor="glass-strength" className="font-mono text-[var(--rose)]">{preferences.glassStrength}%</output>
             </div>
+            <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">0% 起就有液态玻璃感（模糊 + 半透明 + 高光），强度继续增强模糊与通透度。</p>
             <input
               id="glass-strength"
               type="range"
@@ -498,7 +499,38 @@ function SettingsPageContent() {
                   </button>
                 )}
               </div>
-              <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">
+          <div className="mt-4 rounded-md border border-[var(--line)] bg-[#faf9f5] p-4">
+            <p className="mb-3 text-xs font-semibold">背景位置</p>
+            <div className="space-y-3">
+              <label className="block text-xs text-[var(--muted)]">
+                <span className="flex items-center justify-between"><span>左右（左 ← → 右）</span><output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionX}%</output></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={preferences.backgroundPositionX}
+                  onChange={(event) => updatePreferences({ backgroundPositionX: Number(event.target.value) })}
+                  className="range mt-2 w-full"
+                  aria-label="背景水平位置"
+                />
+              </label>
+              <label className="block text-xs text-[var(--muted)]">
+                <span className="flex items-center justify-between"><span>高低（上 ↑ ↓ 下）</span><output className="font-mono text-[var(--rose)]">{preferences.backgroundPositionY}%</output></span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={preferences.backgroundPositionY}
+                  onChange={(event) => updatePreferences({ backgroundPositionY: Number(event.target.value) })}
+                  className="range mt-2 w-full"
+                  aria-label="背景垂直位置"
+                />
+              </label>
+            </div>
+          </div>
+          <p className="mt-3 flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">
                 <CircleHelp size={13} className="mt-0.5 shrink-0" /> 支持 JPG、PNG、WebP 等图片，最大 20 MB；保存前会缩放到最长边 2400px。
               </p>
             </div>

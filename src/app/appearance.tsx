@@ -174,8 +174,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     );
     root.style.setProperty("--mint", ACCENT_TOKENS.mint.base);
     root.style.setProperty("--gold", ACCENT_TOKENS.gold.base);
-    const glassAlpha = Math.round(55 + preferences.glassStrength * 0.35);
-    const glassBlur = Math.round(4 + preferences.glassStrength / 5);
+    // 玻璃曲线：0% 也要有明显的液态玻璃感（模糊 12px 起 + 饱和度提升 +
+    // 半透明 + 边缘高光），强度只在此基础上继续增强。
+    const glassAlpha = Math.round(46 - preferences.glassStrength * 0.26);
+    const glassBlur = Math.round(12 + preferences.glassStrength * 0.28);
     root.style.setProperty(
       "--lfn-glass-opacity",
       preferences.glass ? String(0.5 + preferences.glassStrength / 200) : "0",
@@ -184,13 +186,16 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       "--lfn-glass-blur",
       preferences.glass ? `${glassBlur}px` : "0px",
     );
-    // Keep the variable names used by the existing glass surface rules in sync.
     root.style.setProperty("--glass-alpha", preferences.glass ? `${glassAlpha}%` : "100%");
     root.style.setProperty("--glass-blur", preferences.glass ? `${glassBlur}px` : "0px");
-    root.style.setProperty("--glass-saturation", preferences.glass ? String(1 + preferences.glassStrength / 500) : "1");
     root.style.setProperty(
-      "--lfn-local-background",
-      backgroundUrl ? `url("${backgroundUrl}")` : "none",
+      "--glass-saturation",
+      preferences.glass ? String(1.3 + preferences.glassStrength / 250) : "1",
+    );
+    root.style.setProperty("--lfn-local-background", backgroundUrl ? `url("${backgroundUrl}")` : "none");
+    root.style.setProperty(
+      "--lfn-bg-pos",
+      `${preferences.backgroundPositionX}% ${preferences.backgroundPositionY}%`,
     );
 
     // globals.css owns the default paper grid. Inline layers let this module
@@ -204,6 +209,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     const imageLayer = preferences.backgroundEnabled && backgroundUrl
       ? [`url("${backgroundUrl}")`]
       : [];
+    const imagePosition = `${preferences.backgroundPositionX}% ${preferences.backgroundPositionY}%`;
     document.body.style.backgroundImage = [...gridLayers, ...imageLayer].join(", ") || "none";
     document.body.style.backgroundSize = [
       ...gridLayers.map(() => "24px 24px"),
@@ -211,7 +217,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     ].join(", ") || "auto";
     document.body.style.backgroundPosition = [
       ...gridLayers.map(() => "0 0"),
-      ...imageLayer.map(() => "center"),
+      ...imageLayer.map(() => imagePosition),
     ].join(", ") || "0 0";
     document.body.style.backgroundAttachment = [
       ...gridLayers.map(() => "scroll"),

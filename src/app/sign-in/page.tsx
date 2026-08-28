@@ -248,13 +248,14 @@ export default function SignInPage() {
     <main className="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
       <section ref={sectionRef} className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div
-          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ease-out ${backgroundVisible && (localBackgroundActive || galleryBackground) ? "opacity-55" : "opacity-0"}`}
+          className={`absolute inset-0 bg-cover transition-opacity duration-1000 ease-out ${backgroundVisible && (localBackgroundActive || galleryBackground) ? "opacity-55" : "opacity-0"}`}
           style={{
             backgroundImage: localBackgroundActive
               ? `linear-gradient(rgba(38,41,40,.35), rgba(38,41,40,.35)), url("${backgroundUrl}")`
               : galleryBackground
                 ? `linear-gradient(rgba(38,41,40,.45), rgba(38,41,40,.45)), url(${galleryBackground.imageUrl})`
                 : "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
+            backgroundPosition: "var(--lfn-bg-pos, center)",
           }}
         />
         {/* 文字只靠左下局部渐变衬托，背景图其余区域保持清晰 */}

@@ -19,7 +19,10 @@ const READ_KEY = "lfn-announcements-read";
 
 function readSeen(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(READ_KEY) || "[]") as string[];
+    const parsed = JSON.parse(localStorage.getItem(READ_KEY) || "[]") as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
   } catch {
     return [];
   }
