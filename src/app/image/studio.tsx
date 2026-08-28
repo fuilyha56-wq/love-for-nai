@@ -1372,7 +1372,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </div>
           )}
           <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
-            <div className="absolute left-4 top-3 text-xs text-[var(--muted)]">
+            <div className="pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
               {height} · {count} 张
             </div>
@@ -1444,7 +1444,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ))}
               </div>
             ) : (
-              <div className="flex aspect-[4/5] max-h-[calc(100dvh-330px)] w-full max-w-lg flex-col items-center justify-center border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
+              <div className="flex aspect-[4/5] max-h-full w-full max-w-lg flex-col items-center justify-center overflow-hidden border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
                 <WandSparkles
                   className="mb-5 text-[var(--rose)]"
                   size={38}

@@ -101,14 +101,6 @@ export default function GalleryItemPage({
     );
   }
 
-  async function copyImageLink() {
-    if (!item) return;
-    const url = `${window.location.origin}${item.imageUrl}`;
-    setMessage(
-      (await writeClipboard(url)) ? `图片直链已复制：${url}` : `图片直链：${url}`,
-    );
-  }
-
   async function downloadImage() {
     if (!item) return;
     try {
@@ -227,15 +219,6 @@ export default function GalleryItemPage({
                 </button>
               </div>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={copyImageLink}
-                  className="flex h-10 flex-1 items-center justify-center gap-2 rounded border border-[var(--line)] bg-white text-sm font-semibold"
-                  title="复制可直接嵌入的图片直链"
-                >
-                  <Link2 size={15} />
-                  图片直链
-                </button>
                 <button
                   type="button"
                   onClick={downloadImage}

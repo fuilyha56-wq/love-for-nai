@@ -3,7 +3,7 @@
 import { ArrowRight, Brush, Eye, EyeOff, LoaderCircle } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type Mode = "password" | "token" | "register";
 type GalleryBackground = { imageUrl: string; title: string };
@@ -24,6 +24,36 @@ async function readAuthResult(response: Response): Promise<AuthResult> {
   }
 }
 
+// 标题乱序入场：150ms 内闪过随机字符后立即归位。
+const SCRAMBLE_CHARS = "让每次想象都有清晰落点ABCDEF0123456789";
+function useScrambleText(target: string): string {
+  const [display, setDisplay] = useState(target);
+  useEffect(() => {
+    const frames = 5; // 5 帧 × 30ms = 150ms
+    let frame = 0;
+    const timer = window.setInterval(() => {
+      frame += 1;
+      if (frame >= frames) {
+        setDisplay(target);
+        window.clearInterval(timer);
+        return;
+      }
+      setDisplay(
+        target
+          .split("")
+          .map((char) =>
+            char === " " || char === "，"
+              ? char
+              : SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)],
+          )
+          .join(""),
+      );
+    }, 30);
+    return () => window.clearInterval(timer);
+  }, [target]);
+  return display;
+}
+
 export default function SignInPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("password");
@@ -41,6 +71,8 @@ export default function SignInPage() {
   const [galleryBackground, setGalleryBackground] =
     useState<GalleryBackground | null>(null);
   const [backgroundVisible, setBackgroundVisible] = useState(true);
+  const headline = useScrambleText("让每一次想象，都有清晰的落点。");
+  const sectionRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     let items: GalleryBackground[] = [];
@@ -56,8 +88,12 @@ export default function SignInPage() {
     fetch("/api/gallery", { cache: "no-store" })
       .then((response) => response.json())
       .then((result) => {
+        // R18 作品不出现在登录页背景里，避免未登录用户在不知情时看到。
         items = Array.isArray(result.items)
-          ? result.items.filter((item: GalleryBackground) => item.imageUrl)
+          ? result.items.filter(
+              (item: GalleryBackground & { rating?: string }) =>
+                item.imageUrl && item.rating !== "r18",
+            )
           : [];
         choose();
       })
@@ -205,29 +241,39 @@ export default function SignInPage() {
   );
   return (
     <main className="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
-      <section className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
+      <section ref={sectionRef} className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div
-          className={`absolute inset-0 bg-cover bg-center opacity-20 transition-opacity duration-500 ${backgroundVisible ? "opacity-20" : "opacity-0"}`}
+          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-1000 ease-out ${backgroundVisible && galleryBackground ? "opacity-55" : "opacity-0"}`}
           style={{
             backgroundImage: galleryBackground
-              ? `linear-gradient(rgba(38,41,40,.72), rgba(38,41,40,.72)), url(${galleryBackground.imageUrl})`
+              ? `linear-gradient(rgba(38,41,40,.45), rgba(38,41,40,.45)), url(${galleryBackground.imageUrl})`
               : "radial-gradient(circle at 30% 20%, #d5b263 0, transparent 28%), radial-gradient(circle at 75% 70%, #a83a4c 0, transparent 34%)",
           }}
         />
+        {/* 文字只靠左下局部渐变衬托，背景图其余区域保持清晰 */}
+        <div className={`pointer-events-none absolute inset-x-0 bottom-0 h-2/3 transition-opacity duration-1000 ease-out ${galleryBackground ? "opacity-100" : "opacity-0"}`} style={{ background: "linear-gradient(to top, rgba(38,41,40,.92) 0%, rgba(38,41,40,.55) 45%, transparent 100%)" }} />
         <div className="relative flex items-center gap-3 text-sm font-semibold">
           <Brush size={20} /> LOVE FOR NAI
         </div>
-        <div className="relative max-w-xl enter">
+        <div className="hero-text relative max-w-xl">
           <p className="mb-5 text-sm text-[#d9c9a5]">中文 NovelAI 创作空间</p>
           <h1 className="font-[var(--font-display)] text-6xl leading-[1.08]">
-            让每一次想象，
-            <br />
-            都有清晰的落点。
+            {headline.split("，").map((line, index, all) => (
+              <span key={index} className="block">
+                {line}
+                {index < all.length - 1 ? "，" : ""}
+              </span>
+            ))}
           </h1>
           <p className="mt-7 max-w-md leading-8 text-white/65">
             专注提示词、角色构图与细节控制。你的 NewAPI
             账号、余额和模型权限在这里继续使用。
           </p>
+          {galleryBackground?.title && (
+            <p className="mt-5 text-xs text-white/45">
+              背景作品：{galleryBackground.title}
+            </p>
+          )}
         </div>
         <p className="relative text-xs text-white/35">
           Love for NAI · AGPL-3.0
