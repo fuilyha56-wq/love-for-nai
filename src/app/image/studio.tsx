@@ -14,11 +14,13 @@ import {
   FileUp,
   ImagePlus,
   Images,
+  Megaphone,
   Menu,
   PawPrint,
   Search,
   RotateCcw,
   Save,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -246,6 +248,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
@@ -335,6 +338,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         setMe(result);
       })
       .catch(() => setMe(null));
+    fetch("/api/admin")
+      .then((response) => response.json())
+      .then((result: { admin?: boolean }) => setIsAdmin(Boolean(result.admin)))
+      .catch(() => setIsAdmin(false));
   }, [authenticated]);
 
   useEffect(() => {
@@ -1049,6 +1056,18 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 label="模型密钥"
                 icon={<Sparkles size={15} />}
               />
+              <FeatureLink
+                href="/announcements"
+                label="公告"
+                icon={<Megaphone size={15} />}
+              />
+              {isAdmin && (
+                <FeatureLink
+                  href="/admin"
+                  label="管理"
+                  icon={<ShieldCheck size={15} />}
+                />
+              )}
             </nav>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">

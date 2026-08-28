@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { LayoutAnnouncements } from "./layout-announcements";
 
 export const metadata: Metadata = {
   title: "Love for NAI",
@@ -16,7 +17,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <body>
+        {children}
+        <LayoutAnnouncements />
+      </body>
     </html>
   );
 }

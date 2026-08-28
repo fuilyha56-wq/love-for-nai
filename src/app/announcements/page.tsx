@@ -1,0 +1,94 @@
+"use client";
+
+import { ArrowLeft, Megaphone, Pin } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { MarkdownView } from "@/app/markdown";
+import type { AnnouncementItem } from "@/app/announcement-dialog";
+
+export default function AnnouncementsPage() {
+  const [items, setItems] = useState<AnnouncementItem[]>([]);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    fetch("/api/announcements", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => setItems(result.items || []))
+      .catch(() => setMessage("公告读取失败，请稍后重试"));
+  }, []);
+
+  const latest = items[0];
+
+  return (
+    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <Megaphone size={20} className="shrink-0 text-[var(--rose)]" />
+          <b className="truncate">公告</b>
+          {latest && (
+            <span className="hidden truncate text-xs text-[var(--muted)] sm:inline">
+              最新：{latest.title}
+            </span>
+          )}
+        </div>
+        <Link href="/" className="flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
+          <ArrowLeft size={16} />
+          返回主页
+        </Link>
+      </header>
+      <section className="mx-auto max-w-3xl p-4 sm:p-7">
+        {message && (
+          <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>
+        )}
+        {!items.length && !message && (
+          <p className="py-24 text-center text-sm text-[var(--muted)]">暂无公告</p>
+        )}
+        {items.length > 0 && (
+          <ol className="relative space-y-5 border-l-2 border-[var(--line)] pl-6">
+            {items.map((item) => {
+              const open = expanded === null ? item.id === latest?.id : expanded === item.id;
+              return (
+                <li key={item.id} className="relative">
+                  <span
+                    className={`absolute -left-[31px] top-1.5 grid h-4 w-4 place-items-center rounded-full border-2 ${
+                      item.pinned
+                        ? "border-[var(--rose)] bg-[var(--rose)]"
+                        : "border-[var(--line)] bg-white"
+                    }`}
+                  />
+                  <article className={`overflow-hidden rounded-lg border bg-white ${item.level === "warning" ? "border-amber-300" : "border-[var(--line)]"}`}>
+                    <button
+                      type="button"
+                      onClick={() => setExpanded(open ? "" : item.id)}
+                      className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        {item.pinned && <Pin size={13} className="shrink-0 text-[var(--rose)]" />}
+                        <b className="truncate">{item.title}</b>
+                        {item.level === "warning" && (
+                          <span className="shrink-0 rounded-full bg-[#fff3d6] px-2 py-0.5 text-[10px] font-semibold text-[#8a6116]">重要</span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-[var(--muted)]">
+                        {new Date(item.createdAt).toLocaleDateString("zh-CN")}
+                      </span>
+                    </button>
+                    {open && (
+                      <div className="border-t border-[var(--line)] px-4 py-4">
+                        <MarkdownView content={item.content} />
+                        <p className="mt-3 text-[10px] text-[var(--muted)]">
+                          发布：{item.author} · 更新于 {new Date(item.updatedAt || item.createdAt).toLocaleString("zh-CN")}
+                        </p>
+                      </div>
+                    )}
+                  </article>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </section>
+    </main>
+  );
+}

@@ -195,7 +195,36 @@ export async function POST(request: Request) {
     "注册失败",
     "注册请求过于频繁，请稍后再试",
   );
-  if (!registered.ok || !inviteCode) return registered;
+  if (!registered.ok) return registered;
+
+  // new-api 的注册接口会丢弃 group 字段（服务端白名单），新用户一律落到
+  // default 分组而无法调用 Draw 渠道。注册成功后用 LFN 管理令牌把用户
+  // 划入 Draw 分组，这是目前唯一的可靠途径。
+  try {
+    const { adminToken, adminHeaders } = await import("@/lib/admin-auth");
+    const token = adminToken();
+    if (token) {
+      const loginResult = await callNewApi("/api/user/login", {
+        username,
+        password,
+      });
+      const user = loginResult.result.data?.user ?? loginResult.result.data;
+      if (loginResult.result.success && typeof user?.id === "number") {
+        const groupId = process.env.LFN_REGISTER_GROUP || "Draw";
+        await fetch(`${newApiBaseUrl()}/api/user/`, {
+          method: "PUT",
+          headers: adminHeaders(),
+          body: JSON.stringify({ id: user.id, group: groupId }),
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        });
+      }
+    }
+  } catch {
+    // 分组调整失败不影响注册本身。
+  }
+
+  if (!inviteCode) return registered;
 
   try {
     const { result } = await callNewApi("/api/user/login", {

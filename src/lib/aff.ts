@@ -248,3 +248,23 @@ export async function grantAffOnce(
     return { balance: account.balance, granted: true };
   });
 }
+
+// 管理员直接调整 AFF：正数发放、负数回收；返回新余额，不足时抛错。
+export async function adjustAff(
+  userId: number,
+  delta: number,
+  description: string,
+): Promise<number> {
+  if (!Number.isInteger(delta) || delta === 0)
+    throw new Error("AFF 调整金额必须为非零整数");
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const next = account.balance + delta;
+    if (next < 0)
+      throw new Error(`AFF 余额不足：当前 ${account.balance}，无法扣减 ${Math.abs(delta)}`);
+    account.balance = next;
+    addTransaction(account, delta, delta > 0 ? "referral" : "refund", description);
+    await writeAccount(userId, account);
+    return next;
+  });
+}
