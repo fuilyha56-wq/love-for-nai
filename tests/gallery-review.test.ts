@@ -1,24 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { findBlockedTerm } from "@/lib/gallery";
+import {
+  assertGalleryRating,
+  isRestrictedRating,
+} from "@/lib/gallery";
 
-describe("findBlockedTerm", () => {
-  it("allows common negative prompts with reverse words", () => {
-    expect(
-      findBlockedTerm(
-        "1girl, white dress, garden",
-        "lowres, nsfw, nude, bad anatomy",
-        "blue hair",
-      ),
-    ).toBeNull();
+describe("assertGalleryRating", () => {
+  it("accepts the three supported ratings", () => {
+    expect(assertGalleryRating("general")).toBe("general");
+    expect(assertGalleryRating("r13")).toBe("r13");
+    expect(assertGalleryRating("r18")).toBe("r18");
   });
 
-  it("blocks explicit terms in positive prompt", () => {
-    expect(
-      findBlockedTerm("1girl, nude, beach", "lowres", ""),
-    ).toMatch(/nude/i);
+  it("rejects unknown or legacy ratings", () => {
+    expect(() => assertGalleryRating("sensitive")).toThrow();
+    expect(() => assertGalleryRating("explicit")).toThrow();
+    expect(() => assertGalleryRating(undefined)).toThrow();
   });
+});
 
-  it("blocks r18 in tags", () => {
-    expect(findBlockedTerm("1girl", "lowres", "r18")).toMatch(/r18/i);
+describe("isRestrictedRating", () => {
+  it("only treats r18 as restricted", () => {
+    expect(isRestrictedRating("r18")).toBe(true);
+    expect(isRestrictedRating("r13")).toBe(false);
+    expect(isRestrictedRating("general")).toBe(false);
   });
 });

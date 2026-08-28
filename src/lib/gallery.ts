@@ -5,8 +5,25 @@ import { findHistory, historyImagePath } from "@/lib/history";
 import { grantAffOnce } from "@/lib/aff";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 
-export type GalleryRating = "general" | "sensitive";
+export type GalleryRating = "general" | "r13" | "r18";
 export type GallerySource = "other" | "lfn" | "local";
+
+export const ratingLabels: Record<GalleryRating, string> = {
+  general: "全年龄",
+  r13: "R13",
+  r18: "R18",
+};
+
+// 旧数据里的 sensitive 评级等价于 R13。
+function normalizeRating(value: unknown): GalleryRating {
+  if (value === "r13" || value === "r18") return value;
+  if (value === "sensitive") return "r13";
+  return "general";
+}
+
+export function isRestrictedRating(rating: GalleryRating): boolean {
+  return rating === "r18";
+}
 export type GalleryItem = {
   id: string;
   ownerId: number;
@@ -41,7 +58,12 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
 async function readStore(): Promise<GalleryStore> {
   try {
     const value = JSON.parse(await readFile(storePath(), "utf8")) as GalleryStore;
-    return { items: Array.isArray(value.items) ? value.items : [] };
+    return {
+      items: (Array.isArray(value.items) ? value.items : []).map((item) => ({
+        ...item,
+        rating: normalizeRating(item.rating),
+      })),
+    };
   } catch { return { items: [] }; }
 }
 async function writeStore(store: GalleryStore): Promise<void> {
@@ -61,28 +83,13 @@ function weekKey(date = new Date()): string {
 function previousWeekKey(): string {
   return weekKey(new Date(Date.now() - 7 * 24 * 3600_000));
 }
-const blockedTag = /(?:^|[^a-z])(?:r18|rating[_ -]?explicit|explicit|nsfw|porn|nude|naked|乳头|裸体|色情)(?![a-z])/gi;
-
 /**
- * 审核生成参数文本（prompt/negative/tags）。
- * 负面提示词里常出现 "nsfw, nude" 这类反向词——仅当出现在
- * 负面提示词中时不拦截（那是"禁止出现"的意思）；正面提示词
- * 与标签仍然全量检查。返回触发词或 null。
+ * 校验投稿评级是否为受支持的三级年龄评级。
  */
-export function findBlockedTerm(
-  prompt: string,
-  negativePrompt: string,
-  tags: string,
-): string | null {
-  const positive = `${prompt} ${tags}`;
-  const match = positive.match(blockedTag);
-  if (match) return match[0].trim();
-  // 负面提示词只拦截明确表述"生成了什么"的强特征词，容忍反向词。
-  const negativeMatch = negativePrompt.match(
-    /(?:^|[^a-z])(?:r18|porn|色情|乳头|裸体)(?![a-z])/i,
-  );
-  if (negativeMatch) return negativeMatch[0].trim();
-  return null;
+export function assertGalleryRating(rating: unknown): GalleryRating {
+  if (rating === "general" || rating === "r13" || rating === "r18")
+    return rating;
+  throw new Error("内容评级不合法");
 }
 
 export function assertNaiImage(buffer: Buffer, fileName: string): { extension: string; parameters: Record<string, unknown> } {
@@ -109,21 +116,11 @@ export async function publishFromHistory(
     if (!history) throw new Error("历史图片不存在");
     const authorName = input.authorName.trim().slice(0, 80);
     if (!authorName) throw new Error("请填写作品作者或画师署名");
-    if (input.rating !== "general" && input.rating !== "sensitive")
-      throw new Error("图库禁止发布 R18 内容");
+    const rating = assertGalleryRating(input.rating);
     if (!["other", "lfn", "local"].includes(input.source))
       throw new Error("图片来源不合法");
     const sourcePrompt = String(history.parameters.prompt || "");
     const sourceNegative = String(history.parameters.negative_prompt || "");
-    const blockedTerm = findBlockedTerm(
-      sourcePrompt,
-      sourceNegative,
-      input.tags.join(" "),
-    );
-    if (blockedTerm)
-      throw new Error(
-        `提示词或标签包含不允许的内容（触发词：${blockedTerm}），无法发布到图片广场`,
-      );
     const id = randomUUID();
     const file = `${id}.${path.extname(history.imagePath).replace(/^\./, "") || "png"}`;
     await mkdir(root(), { recursive: true });
@@ -131,7 +128,7 @@ export async function publishFromHistory(
     await writeFile(imagePath(file), source);
     const item: GalleryItem = {
       id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
-      rating: input.rating, source: input.source,
+      rating, source: input.source,
       tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
       prompt: sourcePrompt, negativePrompt: sourceNegative,
       parameters: input.exposeParameters ? history.parameters : {}, imageFile: file,
@@ -198,30 +195,15 @@ export async function publishLocalImage(
     if (input.source !== "local" && input.source !== "other") throw new Error("本地上传来源不合法");
     const authorName = input.authorName.trim().slice(0, 80);
     if (!authorName) throw new Error("请填写作品作者或画师署名");
-    if (input.rating !== "general" && input.rating !== "sensitive") throw new Error("图库禁止发布 R18 内容");
+    const rating = assertGalleryRating(input.rating);
     const metadata = assertNaiImage(buffer, fileName);
-    // 只审核解析出的 prompt/负面/标签，不再对整个图片二进制做正则扫描
-    // （元数据 JSON 里的反向词如 "nsfw, nude" 是常见负面提示词，会误伤）。
-    const blockedTerm = findBlockedTerm(
-      String(metadata.parameters.prompt || input.prompt),
-      String(
-        metadata.parameters.negative_prompt ??
-          metadata.parameters.negativePrompt ??
-          input.negativePrompt,
-      ),
-      input.tags.join(" "),
-    );
-    if (blockedTerm)
-      throw new Error(
-        `提示词或标签包含不允许的内容（触发词：${blockedTerm}），无法发布到图片广场`,
-      );
     const id = randomUUID();
     const imageFile = `${id}.${metadata.extension}`;
     await mkdir(root(), { recursive: true });
     await writeFile(imagePath(imageFile), buffer);
     const item: GalleryItem = {
       id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
-      rating: input.rating, source: input.source, tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
+      rating, source: input.source, tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
       prompt: String(metadata.parameters.prompt || input.prompt),
       negativePrompt: String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt),
       parameters: metadata.parameters,

@@ -1393,16 +1393,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ))}
               </div>
             ) : images.length ? (
-              <div className="grid max-h-full w-full max-w-5xl grid-cols-1 gap-3 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
+              <div
+                className={`grid w-full gap-3 overflow-auto ${
+                  images.length === 1
+                    ? "h-full max-w-none grid-cols-1 place-content-center place-items-center"
+                    : "max-h-full max-w-5xl grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
+                }`}
+              >
                 {images.map((image, index) => (
                   <div
                     key={`${image.slice(-24)}-${index}`}
-                    className="relative overflow-hidden border border-[var(--line)] bg-white"
+                    className={`relative overflow-hidden border border-[var(--line)] bg-white ${
+                      images.length === 1
+                        ? "flex h-full max-h-full w-full max-w-full items-center justify-center"
+                        : ""
+                    }`}
                   >
                     <button
                       type="button"
                       onClick={() => setLightboxIndex(index)}
-                      className="block w-full cursor-zoom-in"
+                      className={`block w-full cursor-zoom-in ${
+                        images.length === 1
+                          ? "flex h-full max-h-full items-center justify-center"
+                          : ""
+                      }`}
                       title="点击放大查看"
                     >
                       <Image
@@ -1411,7 +1425,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                         width={width}
                         height={height}
                         unoptimized
-                        className="h-auto w-full object-contain"
+                        className={
+                          images.length === 1
+                            ? "h-full max-h-full w-auto max-w-full object-contain"
+                            : "h-auto w-full object-contain"
+                        }
                       />
                     </button>
                     <a
@@ -1934,7 +1952,10 @@ function PopupSelect({
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
-  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({
+    position: "fixed",
+    visibility: "hidden",
+  });
   const visible =
     searchable && query.trim()
       ? options.filter((option) =>
@@ -1953,6 +1974,7 @@ function PopupSelect({
     const openAbove = availableBelow < 180 && availableAbove > availableBelow;
     setMenuStyle({
       position: "fixed",
+      visibility: "visible",
       left: trigger.left,
       top: openAbove ? undefined : trigger.bottom + gap,
       bottom: openAbove ? window.innerHeight - trigger.top + gap : undefined,
@@ -1968,13 +1990,26 @@ function PopupSelect({
     if (open) positionMenu();
   }, [open]);
 
+  // 首次点击时按钮宽度可能与菜单渲染时不同（字体加载、面板布局），
+  // 用 ResizeObserver 持续对齐菜单与触发按钮。
   useEffect(() => {
     if (!open) return;
+    const trigger = rootRef.current;
+    if (!trigger || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => positionMenu());
+    observer.observe(trigger);
+    return () => observer.disconnect();
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    // 不能用 overflow:hidden 锁滚动：切换 overflow 会触发重排，
+    // Chromium 会把容器 scrollTop 重置为 0，面板内容跳回顶部。
+    // 改为记录滚动位置，关闭时恢复；打开期间让菜单跟随滚动定位。
     const scrollContainer = rootRef.current?.closest(
       ".settings-scroll",
     ) as HTMLElement | null;
-    const previousOverflow = scrollContainer?.style.overflowY || "";
-    if (scrollContainer) scrollContainer.style.overflowY = "hidden";
+    const previousScrollTop = scrollContainer?.scrollTop ?? 0;
     function close(event: PointerEvent) {
       const target = event.target as Node;
       if (
@@ -1989,11 +2024,13 @@ function PopupSelect({
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", escape);
     window.addEventListener("resize", positionMenu);
+    window.addEventListener("scroll", positionMenu, true);
     return () => {
-      if (scrollContainer) scrollContainer.style.overflowY = previousOverflow;
+      if (scrollContainer) scrollContainer.scrollTop = previousScrollTop;
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("resize", positionMenu);
+      window.removeEventListener("scroll", positionMenu, true);
     };
   }, [open]);
 
@@ -2015,6 +2052,7 @@ function PopupSelect({
         aria-controls={listboxId}
         aria-expanded={open}
         onClick={() => {
+          if (!open) positionMenu();
           setOpen((current) => !current);
           setQuery("");
         }}
