@@ -5,6 +5,11 @@ import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { outboundFetch } from "@/lib/outbound";
 import { runTagAgent } from "@/lib/tag-agent";
 import { parseTagSuggestion } from "@/lib/tag-suggestion";
+import {
+  createAssistantJob,
+  findAssistantJob,
+  type AssistantJob,
+} from "@/lib/assistant-jobs";
 
 type AssistantPayload = {
   model?: string;
@@ -72,6 +77,70 @@ async function validateTag(name: string): Promise<ValidationResult> {
   }
 }
 
+// 校验过的标签必须可靠进入正向提示词：模型漏写时按序追加。
+function mergeTagsIntoPrompt(
+  prompt: string,
+  tags: ValidatedTag[],
+): string {
+  if (!tags.length) return prompt;
+  const base = prompt.trim();
+  const present = new Set(
+    base
+      .split(",")
+      .map((part) => normalizeTag(part))
+      .filter(Boolean),
+  );
+  const missing = tags
+    .map((tag) => tag.name)
+    .filter((name) => !present.has(normalizeTag(name)));
+  if (!missing.length) return base;
+  return base ? `${base}, ${missing.join(", ")}` : missing.join(", ");
+}
+
+// 后台执行：结果写入任务对象，客户端通过 GET 轮询取步骤与最终建议。
+async function runJob(
+  job: AssistantJob,
+  key: string,
+  model: string,
+  request: string,
+  context: { currentPrompt?: string; currentNegativePrompt?: string },
+) {
+  try {
+    const { content, steps } = await runTagAgent(key, model, request, context);
+    job.steps = steps;
+    const suggestion = parseTagSuggestion(content);
+    const candidates = [...new Set(suggestion.tags)];
+    const results = await Promise.all(
+      candidates.map(async (candidate) => ({
+        candidate,
+        result: await validateTag(candidate),
+      })),
+    );
+    const validTags = results.flatMap((item) =>
+      item.result.status === "valid" ? [item.result.tag] : [],
+    );
+    job.result = {
+      suggestion: {
+        prompt: mergeTagsIntoPrompt(suggestion.prompt, validTags),
+        negativePrompt: suggestion.negativePrompt,
+        parameters: suggestion.parameters,
+        tags: validTags,
+      },
+      rejectedTags: results
+        .filter((item) => item.result.status === "rejected")
+        .map((item) => item.candidate),
+      unverifiedTags: results
+        .filter((item) => item.result.status === "unavailable")
+        .map((item) => item.candidate),
+    };
+    job.status = "done";
+  } catch (error) {
+    job.message =
+      error instanceof Error ? error.message : "智能标签助手调用失败";
+    job.status = "error";
+  }
+}
+
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session)
@@ -102,40 +171,12 @@ export async function POST(request: Request) {
 
   try {
     const key = await getChatToken(session, body.model);
-    const { content, steps } = await runTagAgent(
-      key,
-      body.model,
-      body.request,
-      {
-        currentPrompt: body.currentPrompt,
-        currentNegativePrompt: body.currentNegativePrompt,
-      },
-    );
-    const suggestion = parseTagSuggestion(content);
-    const candidates = [...new Set(suggestion.tags)];
-    const results = await Promise.all(
-      candidates.map(async (candidate) => ({
-        candidate,
-        result: await validateTag(candidate),
-      })),
-    );
-    return NextResponse.json({
-      suggestion: {
-        prompt: suggestion.prompt || "",
-        negativePrompt: suggestion.negativePrompt || "",
-        parameters: suggestion.parameters || {},
-        tags: results.flatMap((item) =>
-          item.result.status === "valid" ? [item.result.tag] : [],
-        ),
-      },
-      rejectedTags: results
-        .filter((item) => item.result.status === "rejected")
-        .map((item) => item.candidate),
-      unverifiedTags: results
-        .filter((item) => item.result.status === "unavailable")
-        .map((item) => item.candidate),
-      steps,
+    const job = createAssistantJob(session.userId);
+    void runJob(job, key, body.model, body.request, {
+      currentPrompt: body.currentPrompt,
+      currentNegativePrompt: body.currentNegativePrompt,
     });
+    return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(
       {
@@ -145,4 +186,28 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+}
+
+export async function GET(request: Request) {
+  const session = await getSession();
+  if (!session)
+    return NextResponse.json(
+      { message: "请先登录后使用智能标签助手", sessionExpired: true },
+      { status: 401 },
+    );
+  const url = new URL(request.url);
+  const job = findAssistantJob(session.userId, url.searchParams.get("job") || "");
+  if (!job)
+    return NextResponse.json(
+      { message: "任务不存在或已过期，请重新发起" },
+      { status: 404 },
+    );
+  if (job.status === "running")
+    return NextResponse.json({ status: "running", steps: job.steps });
+  if (job.status === "error")
+    return NextResponse.json(
+      { status: "error", message: job.message, steps: job.steps },
+      { status: 200 },
+    );
+  return NextResponse.json({ status: "done", steps: job.steps, ...job.result });
 }

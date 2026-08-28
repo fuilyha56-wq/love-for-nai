@@ -109,6 +109,15 @@ type AssistantSuggestion = {
     seed?: number;
   };
 };
+type AgentStep = { tool: string; query: string; ok: boolean; summary?: string };
+
+// 检索过程里展示用的工具中文名。
+const agentToolLabels: Record<string, string> = {
+  search_danbooru_tags: "检索 Danbooru",
+  verify_danbooru_tag: "校验标签",
+  read_danbooru_wiki: "读取词条",
+  web_search: "概念检索",
+};
 
 const models: SelectOption[] = [
   { value: "nai-v5-full", label: "V5 完整版" },
@@ -259,6 +268,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
   const [assistantModel, setAssistantModel] = useState("");
   const [agentInput, setAgentInput] = useState("");
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
@@ -448,7 +458,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
     setAssistantLoading(true);
     setAssistantSuggestion(null);
+    setAgentSteps([]);
     try {
+      // 任务化轮询：避免长连接被移动端 WebView 掐断，同时让检索步骤实时可见。
       const response = await fetch("/api/assistant/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -461,7 +473,25 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "智能助手调用失败");
-      setAssistantSuggestion(result.suggestion);
+      const jobId = String(result.jobId || "");
+      if (!jobId) throw new Error("智能助手未返回任务编号");
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const poll = await fetch(
+          `/api/assistant/tags?job=${encodeURIComponent(jobId)}`,
+          { cache: "no-store" },
+        );
+        const progress = await poll.json();
+        if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
+        if (Array.isArray(progress.steps) && progress.steps.length)
+          setAgentSteps(progress.steps);
+        if (progress.status === "done") {
+          setAssistantSuggestion(progress.suggestion);
+          break;
+        }
+        if (progress.status === "error")
+          throw new Error(progress.message || "智能助手调用失败");
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "智能助手调用失败");
     } finally {
@@ -560,21 +590,31 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       setSchedule(parameters.noiseSchedule);
   }
 
+  // 应用全部：替换为建议提示词并补齐缺失标签。
+  // 不用 window.confirm——部分内置浏览器会静默吞掉确认框导致无法应用。
   function applyAllSuggestions() {
     if (!assistantSuggestion) return;
-    const changes = [
-      assistantSuggestion.prompt && "正向提示词",
-      assistantSuggestion.negativePrompt && "负向提示词",
-      assistantSuggestion.tags.length && "Danbooru 标签",
-      Object.keys(assistantSuggestion.parameters).length && "生成参数",
-    ].filter(Boolean);
-    if (!window.confirm(`确认应用以下变化：${changes.join("、")}？`)) return;
-    if (assistantSuggestion.prompt) setPrompt(assistantSuggestion.prompt);
+    const tagNames = assistantSuggestion.tags.map((tag) => tag.name);
+    setPrompt((value) => {
+      const base = (assistantSuggestion.prompt || value).trim();
+      const present = new Set(
+        base
+          .split(",")
+          .map((part) => part.trim().toLowerCase().replaceAll(" ", "_"))
+          .filter(Boolean),
+      );
+      const missing = tagNames.filter(
+        (name) => !present.has(name.trim().toLowerCase()),
+      );
+      return missing.length
+        ? `${base}${base ? ", " : ""}${missing.join(", ")}`
+        : base;
+    });
     if (assistantSuggestion.negativePrompt)
       setNegative(assistantSuggestion.negativePrompt);
-    assistantSuggestion.tags.forEach((tag) => appendTag(tag.name));
     applySuggestedParameters(assistantSuggestion.parameters);
     setAssistantSuggestion(null);
+    setNotice("已应用助手的全部建议。");
   }
 
   const controls = (
@@ -1127,6 +1167,51 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                     : "让助手处理"}
               </button>
             </form>
+            {(assistantLoading || agentSteps.length > 0) && (
+              <div className="mt-3 rounded border border-[var(--line)] bg-white p-2.5">
+                <b className="text-[11px]">
+                  检索过程
+                  {assistantLoading && ` · 已 ${agentSteps.length} 步`}
+                </b>
+                <ul className="mt-1.5 space-y-1">
+                  {agentSteps.map((step, index) => (
+                    <li
+                      key={`${step.tool}-${index}`}
+                      className="flex items-start gap-1.5 text-[11px] leading-4"
+                    >
+                      <span
+                        className={
+                          step.ok
+                            ? "font-semibold text-emerald-600"
+                            : "font-semibold text-red-600"
+                        }
+                      >
+                        {step.ok ? "✓" : "✕"}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <b>{agentToolLabels[step.tool] || step.tool}</b>
+                        {step.query && (
+                          <span className="text-[var(--muted)]">
+                            {" "}
+                            · {step.query}
+                          </span>
+                        )}
+                        {step.summary && (
+                          <span className="block text-[10px] text-[var(--muted)]">
+                            {step.summary}
+                          </span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                  {assistantLoading && (
+                    <li className="text-[11px] text-[var(--muted)]">
+                      模型思考中…
+                    </li>
+                  )}
+                </ul>
+              </div>
+            )}
             <div className="mt-3 space-y-1.5">
               {tagResults.map((tag) => (
                 <button

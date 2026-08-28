@@ -1,4 +1,4 @@
-import { runTool, toolCatalog } from "@/lib/agent-tools";
+import { runTool, summarizeToolResult, toolCatalog } from "@/lib/agent-tools";
 import { newApiBaseUrl } from "@/lib/newapi";
 
 type Message = {
@@ -10,7 +10,12 @@ type ChatResponse = {
   error?: { message?: string };
 };
 
-export type AgentStep = { tool: string; query: string; ok: boolean };
+export type AgentStep = {
+  tool: string;
+  query: string;
+  ok: boolean;
+  summary?: string;
+};
 
 // 文本协议避免 NewAPI 将 OpenAI tool 消息转换为 Gemini function_response 时的兼容性错误。
 const SYSTEM_PROMPT = `你是 NovelAI 提示词 agent。目标是把用户需求转成经 Danbooru 验证的英文标签。
@@ -135,6 +140,7 @@ export async function runTagAgent(
         decision.args.query ?? decision.args.name ?? decision.args.title ?? "",
       ),
       ok: result.ok,
+      summary: summarizeToolResult(decision.name, result.data),
     });
     messages.push({
       role: "user",

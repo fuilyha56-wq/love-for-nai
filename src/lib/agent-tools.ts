@@ -169,6 +169,35 @@ async function webSearch(query: string): Promise<ToolResult> {
   return { ok: true, data: { query: keyword, results: results.slice(0, 8) } };
 }
 
+// 把工具结果压成一句中文摘要，供检索过程展示。
+export function summarizeToolResult(name: string, data: unknown): string {
+  const payload = (data && typeof data === "object" ? data : {}) as Record<
+    string,
+    unknown
+  >;
+  const count = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+  switch (name) {
+    case "search_danbooru_tags": {
+      const total = count(payload.tags);
+      return total
+        ? `检索到 ${total} 个候选标签`
+        : String(payload.note || "无匹配标签");
+    }
+    case "verify_danbooru_tag":
+      return payload.exists
+        ? `存在 · ${Number(payload.postCount || 0).toLocaleString("zh-CN")} 图`
+        : "标签不存在";
+    case "read_danbooru_wiki":
+      return payload.found ? `词条：${String(payload.title)}` : "无词条";
+    case "web_search": {
+      const total = count(payload.results);
+      return total ? `${total} 条概念结果` : "无网络结果";
+    }
+    default:
+      return "完成";
+  }
+}
+
 /** 返回给文本协议 agent 的可调用工具说明。 */
 export function toolCatalog(): string {
   return [

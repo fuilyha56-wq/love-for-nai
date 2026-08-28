@@ -76,7 +76,7 @@ export default function UsagePage() {
         ) : loading ? (
           <Empty text="正在读取使用记录…" />
         ) : items.length ? (
-          items.map((item, index) => {
+          items.filter(isNaiItem).map((item, index) => {
             const rowId = String(item.id || index);
             const expanded = expandedId === rowId;
             return (
@@ -177,12 +177,11 @@ function formatTime(value: unknown) {
 }
 
 // NAI 生成的记录：模型名以 nai- 开头（图生图等操作的模型名一致）。
-// 后端已按 model_name=nai- 过滤，此处仅作兜底。
+// 后端已按 model_name=nai-% 过滤，此处仅作兜底。
 function isNaiItem(item: LogItem): boolean {
   const model = String(item.model_name || item.model || item.name || "");
   return model.toLowerCase().startsWith("nai-");
 }
-void isNaiItem;
 
 // NewAPI 返回原始 quota，除以 QUOTA_PER_UNIT(500000) 才是美元消耗。
 function formatQuota(value: unknown): string {
@@ -194,6 +193,10 @@ function formatQuota(value: unknown): string {
 // 展开区：聚合日志行与 other 里的计费参数，分组呈现。
 function LogDetail({ item }: { item: LogItem }) {
   const other = parseOther(item.other);
+  const generation =
+    item.generation && typeof item.generation === "object"
+      ? (item.generation as Record<string, unknown>)
+      : null;
   const sections: Array<{ title: string; rows: [string, string][] }> = [];
 
   const base: [string, string][] = [
@@ -235,6 +238,7 @@ function LogDetail({ item }: { item: LogItem }) {
   return (
     <div className="border-t border-[var(--line)] bg-[#f7f5ef] px-4 py-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {generation && <GenerationCard generation={generation} />}
         {sections.map((section) => (
           <div
             key={section.title}
@@ -268,6 +272,65 @@ function parseOther(value: unknown): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+// LFN 工作台留档的完整生成参数：NewAPI 日志只有计费信息，
+// 由 /api/usage 按「同模型 + 时间相近」从生成历史关联而来。
+function GenerationCard({
+  generation,
+}: {
+  generation: Record<string, unknown>;
+}) {
+  const text = (key: string) =>
+    typeof generation[key] === "string" ? (generation[key] as string) : "";
+  const num = (key: string) =>
+    generation[key] == null ? "-" : String(generation[key]);
+  const rows: [string, string][] = [
+    ["模式", text("operation") || "-"],
+    [
+      "尺寸",
+      generation.width ? `${num("width")}×${num("height")}` : "-",
+    ],
+    ["步数", num("steps")],
+    ["提示词相关性", num("scale")],
+    ["采样器", text("sampler") || "-"],
+    ["噪声调度", text("noise_schedule") || "-"],
+    ["种子", num("seed")],
+  ];
+  if (generation.n != null) rows.push(["张数", num("n")]);
+  if (generation.strength != null) rows.push(["重绘强度", num("strength")]);
+  if (generation.cfg_rescale != null)
+    rows.push(["CFG 重缩放", num("cfg_rescale")]);
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-white p-3 sm:col-span-2 lg:col-span-1">
+      <p className="text-[10px] font-semibold tracking-[0.12em] text-[var(--rose)]">
+        生成参数 · LFN 工作台记录
+      </p>
+      {text("prompt") && (
+        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5">
+          {text("prompt")}
+        </p>
+      )}
+      {text("negative_prompt") && (
+        <p className="mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--muted)]">
+          负向：{text("negative_prompt")}
+        </p>
+      )}
+      <dl className="mt-2 space-y-1.5">
+        {rows.map(([key, value]) => (
+          <div
+            key={key}
+            className="flex items-baseline justify-between gap-3 text-xs"
+          >
+            <dt className="shrink-0 text-[var(--muted)]">{key}</dt>
+            <dd className="min-w-0 truncate font-medium" title={value}>
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 function ProductPage({

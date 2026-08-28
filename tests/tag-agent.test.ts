@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { runTool } = vi.hoisted(() => ({
+const { runTool, summarizeToolResult } = vi.hoisted(() => ({
   runTool: vi.fn(async () => ({ ok: true, data: {} })),
+  summarizeToolResult: vi.fn(() => "完成"),
 }));
 
 vi.mock("@/lib/agent-tools", () => ({
   runTool,
+  summarizeToolResult,
   toolCatalog: () => "- search_danbooru_tags: 参数 {query: string}",
 }));
 vi.mock("@/lib/newapi", () => ({
@@ -15,6 +17,7 @@ vi.mock("@/lib/newapi", () => ({
 describe("runTagAgent budgets", () => {
   beforeEach(() => {
     runTool.mockClear();
+    summarizeToolResult.mockClear();
   });
 
   it("stops tool calls at the configured round limit", async () => {
@@ -79,7 +82,12 @@ describe("runTagAgent budgets", () => {
 
     expect(result.content).toBe('{"tags":["white_hair"]}');
     expect(result.steps).toEqual([
-      { tool: "search_danbooru_tags", query: "hair", ok: true },
+      {
+        tool: "search_danbooru_tags",
+        query: "hair",
+        ok: true,
+        summary: "完成",
+      },
     ]);
     expect(runTool).toHaveBeenCalledTimes(1);
   });
