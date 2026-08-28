@@ -77,7 +77,10 @@ export default function UsagePage() {
           <Empty text="正在读取使用记录…" />
         ) : items.length ? (
           items.filter(isNaiItem).map((item, index) => {
-            const rowId = String(item.id || index);
+            // new-api 返回的日志 id 是每页从 1 重排的假序号，会撞车；
+            // request_id 才是全局唯一，没有时退到「页索引+序号」。
+            const rowId =
+              String(item.request_id || "") || `${page}-${index}`;
             const expanded = expandedId === rowId;
             return (
               <div

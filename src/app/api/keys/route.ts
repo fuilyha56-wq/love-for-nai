@@ -40,8 +40,37 @@ export async function GET() {
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "无法读取 API 密钥");
     const source = result.data || {};
+    // 同时取用户可选分组，创建密钥时用；失败不影响密钥列表。
+    let groups: Array<{ name: string; desc: string; ratio: number }> = [];
+    try {
+      const groupResponse = await fetch(
+        `${newApiBaseUrl()}/api/user/self/groups`,
+        {
+          headers: auth.headers,
+          cache: "no-store",
+          signal: AbortSignal.timeout(8_000),
+        },
+      );
+      const groupResult = await groupResponse.json();
+      const data = groupResult?.data;
+      if (groupResponse.ok && groupResult.success && data && typeof data === "object") {
+        groups = Object.entries(data as Record<string, unknown>)
+          .filter(([, value]) => value && typeof value === "object")
+          .map(([name, value]) => {
+            const info = value as { desc?: unknown; ratio?: unknown };
+            return {
+              name,
+              desc: typeof info.desc === "string" ? info.desc : "",
+              ratio: Number(info.ratio) || 0,
+            };
+          });
+      }
+    } catch {
+      // 分组读取失败时仅省略，前端隐藏分组选择即可。
+    }
     return NextResponse.json({
       items: Array.isArray(source) ? source : source.items || [],
+      groups,
     });
   } catch (error) {
     return failure(error, "无法读取 API 密钥");
@@ -63,19 +92,66 @@ export async function POST(request: Request) {
       { message: "密钥名称需为 2–40 个字符" },
       { status: 400 },
     );
+  const group = optionalString(raw.group)?.trim() || "";
+  if (group.length > 50)
+    return NextResponse.json({ message: "分组名不合法" }, { status: 400 });
+  const unlimitedQuota = raw.unlimitedQuota !== false;
+  // NewAPI 以配额整数计（500000 = $1）；无限额度时忽略额度值。
+  let remainQuota = 0;
+  if (!unlimitedQuota) {
+    const dollars = Number(raw.remainDollars);
+    if (!Number.isFinite(dollars) || dollars < 0 || dollars > 1_000_000_000)
+      return NextResponse.json(
+        { message: "额度需为 0–1000000000 的美元数" },
+        { status: 400 },
+      );
+    remainQuota = Math.round(dollars * 500_000);
+  }
+  // 过期时间：-1 永不过期；否则为 epoch 秒。
+  let expiredTime = -1;
+  if (raw.expireDays != null) {
+    const days = Number(raw.expireDays);
+    if (!Number.isFinite(days) || days < 0 || days > 3650)
+      return NextResponse.json(
+        { message: "有效期需为 0–3650 天（0 表示永不过期）" },
+        { status: 400 },
+      );
+    expiredTime = days > 0 ? Math.floor(Date.now() / 1000) + days * 86400 : -1;
+  }
+  // 模型限制：逗号分隔的模型名列表；空串表示不限制。
+  const modelLimitsRaw = optionalString(raw.modelLimits) ?? "";
+  const modelLimitsEnabled = modelLimitsRaw.trim().length > 0;
+  const modelLimits = modelLimitsRaw
+    .split(/[,，\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 100)
+    .join(",");
+  const allowIps = (optionalString(raw.allowIps) ?? "")
+    .split(/[,，\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 20)
+    .join(",");
+  if (allowIps && allowIps.split(",").some((ip) => !/^[\w.:/-]+$/.test(ip)))
+    return NextResponse.json(
+      { message: "IP 限制格式不正确（仅支持 IP/CIDR，逗号分隔）" },
+      { status: 400 },
+    );
+
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/token/`, {
       method: "POST",
       headers: auth.headers,
       body: JSON.stringify({
         name,
-        expired_time: -1,
-        remain_quota: 0,
-        unlimited_quota: true,
-        model_limits_enabled: false,
-        model_limits: "",
-        allow_ips: "",
-        group: "default",
+        expired_time: expiredTime,
+        remain_quota: remainQuota,
+        unlimited_quota: unlimitedQuota,
+        model_limits_enabled: modelLimitsEnabled,
+        model_limits: modelLimits,
+        allow_ips: allowIps,
+        group,
         cross_group_retry: false,
       }),
       cache: "no-store",
