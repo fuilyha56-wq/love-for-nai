@@ -2180,18 +2180,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ))}
               </div>
             ) : (
-              <div className="flex aspect-[4/5] max-h-full w-full max-w-lg flex-col items-center justify-center overflow-hidden border border-[var(--line)] bg-[#ebe9e2] px-4 text-center shadow-[0_20px_70px_rgba(50,45,40,.12)] sm:px-8">
-                <WandSparkles
-                  className="mb-5 text-[var(--rose)]"
-                  size={38}
-                  strokeWidth={1.5}
-                />
-                <h2 className="font-[var(--font-display)] text-2xl">
+              <div className="absolute right-4 top-3 max-w-[60%] text-right">
+                <p className="font-[var(--font-display)] text-lg leading-6">
                   画布等待你的想象
-                </h2>
-                <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-                  选择工具、配置参数并提交。所有入口使用 LFN
-                  服务端代理，不向浏览器暴露密钥。
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                  选择工具、配置参数并提交。
                 </p>
               </div>
             )}
