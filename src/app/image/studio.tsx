@@ -52,18 +52,43 @@ function estimateAff(model: string, width: number, height: number, steps: number
   if (model.toLowerCase().includes("nai-v5")) perSample *= 2;
   return Math.max(1, Math.ceil(perSample * samples));
 }
-// NewAPI 侧费用（实测校准，与生产计费配置一致）：
-// V5 非 limit: token 价 150000$/1M × Draw 分组 0.5 → Anlas(含×2) × $3.75
-// V4.5 非 limit: token 价 100000$/1M × 0.5 → Anlas × $2.5
-// V4.5-limit 免费实扣 $0；V5-limit 固定价 $10 × 0.5 = $5/张
-function estimateNewApiCost(model: string, width: number, height: number, steps: number, samples: number): number {
-  const name = model.toLowerCase();
-  if (name.includes("-limit")) {
-    if (name.includes("nai-v5")) return Number((5 * samples).toFixed(2));
-    return 0;
+// NewAPI 实时计价信息：由 /api/pricing 返回，登录后拉取。
+// quotaType=0 按倍率（tokens × ratio × 2e-6 × groupRatio），
+// quotaType=1 按次（modelPrice × groupRatio）。
+type ModelPricing = {
+  model: string;
+  modelRatio: number;
+  modelPrice: number;
+  quotaType: number;
+  effectiveGroup: string;
+  groupRatio: number;
+};
+
+// NAI 图像模型经 OpenAI 转换后的 tokens ≈ 像素/500（实测校准：
+// 832×1216 → 2000 tokens，与 NewAPI 日志一致）。
+function estimateTokens(width: number, height: number, samples: number): number {
+  return Math.max(1, Math.round((width * height) / 500) * samples);
+}
+
+// 有实时计价时按 NewAPI 公式精确计算；无计价数据时退回经验估算。
+function estimateNewApiCost(
+  pricing: ModelPricing | null,
+  width: number,
+  height: number,
+  samples: number,
+): number {
+  if (pricing) {
+    if (pricing.quotaType === 1)
+      return Number(
+        (pricing.modelPrice * pricing.groupRatio * samples).toFixed(2),
+      );
+    const tokens = estimateTokens(width, height, samples);
+    return Number(
+      (tokens * pricing.modelRatio * 2e-6 * pricing.groupRatio).toFixed(2),
+    );
   }
-  const anlas = estimateAff(model, width, height, steps, samples);
-  return Number((anlas * (name.includes("nai-v5") ? 3.75 : 2.5)).toFixed(2));
+  // 兜底：未登录或计价拉取失败，按 V5 全量倍率近似。
+  return Number((estimateTokens(width, height, samples) * 0.13).toFixed(2));
 }
 type Me = { user?: { balance: number | null; group: string } };
 type Aff = { balance: number };
@@ -405,6 +430,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     tagPool: [],
   });
   const [conversationOpen, setConversationOpen] = useState(false);
+  const [modelPricing, setModelPricing] = useState<ModelPricing | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantTimeoutRef = useRef<number | null>(null);
   const mobilePanelRef = useRef<HTMLElement>(null);
@@ -722,6 +748,33 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       // 刷新失败保留现有会话。
     }
   }
+
+  // 模型或登录态变化时拉取实时计价（ratio/price/分组倍率），
+  // 供预计消耗按 NewAPI 实际公式计算。
+  useEffect(() => {
+    let cancelled = false;
+    // 登出态清空计价交给微任务，避免 effect 内同步 setState。
+    if (!signedIn) {
+      void Promise.resolve().then(() => {
+        if (!cancelled) setModelPricing(null);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    fetch(`/api/pricing?model=${encodeURIComponent(model)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message);
+        if (!cancelled) setModelPricing(result);
+      })
+      .catch(() => {
+        if (!cancelled) setModelPricing(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [signedIn, model]);
 
   async function clearConversationHistory() {
     const response = await fetch("/api/assistant/tags", { method: "DELETE" });
@@ -2162,7 +2215,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </>
                 ) : (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(model, width, height, steps, count)}</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, width, height, count)}</b></div>
+                    {modelPricing && (
+                      <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
+                    )}
                     <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
                   </>
                 )}
