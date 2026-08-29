@@ -16,6 +16,8 @@ type AssistantPayload = {
   request?: string;
   currentPrompt?: string;
   currentNegativePrompt?: string;
+  // data URL（png/jpeg/webp），随需求一起发给视觉模型识图。
+  image?: string;
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
 
@@ -104,10 +106,16 @@ async function runJob(
   model: string,
   request: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string },
+  image: string,
 ) {
   try {
-    const { content, steps } = await runTagAgent(key, model, request, context);
-    job.steps = steps;
+    const { content } = await runTagAgent(key, model, request, context, 8, {
+      // 每步实时写入 job，客户端轮询立即能看到检索轨迹。
+      onStep: (step) => {
+        job.steps.push(step);
+      },
+      image: image || undefined,
+    });
     const suggestion = parseTagSuggestion(content);
     const candidates = [...new Set(suggestion.tags)];
     const results = await Promise.all(
@@ -171,11 +179,18 @@ export async function POST(request: Request) {
 
   try {
     const key = await getChatToken(session, body.model);
+    // 仅接受 data URL 图片，限制 8MB base64（≈6MB 原图）。
+    const image =
+      typeof body.image === "string" &&
+      /^data:image\/(png|jpeg|webp);base64,/.test(body.image) &&
+      body.image.length <= 8_000_000
+        ? body.image
+        : "";
     const job = createAssistantJob(session.userId);
     void runJob(job, key, body.model, body.request, {
       currentPrompt: body.currentPrompt,
       currentNegativePrompt: body.currentNegativePrompt,
-    });
+    }, image);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(

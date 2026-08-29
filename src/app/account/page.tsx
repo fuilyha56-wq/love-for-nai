@@ -282,7 +282,7 @@ export default function AccountPage() {
               REFERRAL · 邀请好友
             </p>
             <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
-              好友通过链接注册可获得 {referral?.registrationReward ?? 100} AFF。
+              好友通过链接注册，双方各得 {referral?.registrationReward ?? 100} AFF。
               已邀请 {referral?.invitedCount ?? 0} 人。
             </p>
             <input

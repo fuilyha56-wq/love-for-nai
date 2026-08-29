@@ -231,6 +231,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [steps, setSteps] = useState(28);
   const [scale, setScale] = useState(5);
   const [count, setCount] = useState(1);
+  // 生成张数提交方式：分批次（默认，每 0.5s 发一张 n=1）或一次性（单请求 n 张）。
+  const [batchMode, setBatchMode] = useState<"once" | "sequential">("sequential");
+  const [batchProgress, setBatchProgress] = useState("");
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [schedule, setSchedule] = useState("native");
   // 0 表示关闭重缩放；非 0 会被 NovelAI 部分模型拒绝，因此默认不启用。
@@ -265,6 +268,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [assistantModel, setAssistantModel] = useState("");
   const [agentInput, setAgentInput] = useState("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  // 随需求发给视觉模型的参考图（data URL）。
+  const [agentImage, setAgentImage] = useState<string | null>(null);
+  const [agentImageZoom, setAgentImageZoom] = useState(false);
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
@@ -447,6 +453,45 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
+  // 压缩为最长边 1024px 的 JPEG：控制请求体积与视觉 token 消耗。
+  async function compressAgentImage(file: File): Promise<string> {
+    if (file.size > 20 * 1024 * 1024) throw new Error("图片不能超过 20 MB。");
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("无法读取这张图片"));
+      reader.readAsDataURL(file);
+    });
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new window.Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("无法解析这张图片"));
+      element.src = dataUrl;
+    });
+    const scale = Math.min(1, 1024 / Math.max(image.naturalWidth, image.naturalHeight));
+    if (scale >= 1 && dataUrl.length < 900_000) return dataUrl;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器无法创建图片画布");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.85);
+  }
+
+  async function handleAgentImageFile(file?: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setNotice("请选择图片文件。");
+      return;
+    }
+    try {
+      setAgentImage(await compressAgentImage(file));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "图片处理失败");
+    }
+  }
+
   async function askTagAssistant(request: string) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
@@ -465,6 +510,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           request,
           currentPrompt: prompt,
           currentNegativePrompt: negative,
+          image: agentImage || undefined,
         }),
       });
       const result = await response.json();
@@ -573,7 +619,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       parameters.scale <= 10
     )
       setScale(parameters.scale);
-    if (parameters.seed != null) setSeed(String(parameters.seed));
+    // seed 0 = 随机，不填入种子框（保持为空即随机）。
+    if (parameters.seed != null && parameters.seed > 0)
+      setSeed(String(parameters.seed));
     if (
       parameters.sampler &&
       samplers.some(({ value }) => value === parameters.sampler)
@@ -840,6 +888,37 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   max={6}
                   step={1}
                 />
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={batchMode === "once"}
+                    onClick={() => setBatchMode("once")}
+                    className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                      batchMode === "once"
+                        ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
+                        : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
+                    }`}
+                  >
+                    一次性
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={batchMode === "sequential"}
+                    onClick={() => setBatchMode("sequential")}
+                    className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                      batchMode === "sequential"
+                        ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
+                        : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
+                    }`}
+                  >
+                    分批次
+                  </button>
+                </div>
+                {batchMode === "sequential" && (
+                  <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
+                    每 0.5 秒发送一张（n=1），逐张出图。
+                  </p>
+                )}
               </Control>
             </div>
           </>
@@ -1020,30 +1099,63 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       base.defry = 1;
     }
     try {
-      const response = await fetch("/api/images/operate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(base),
-      });
-      const result = await response.json();
-      if (!response.ok && !result.images) throw new Error(result.message || "操作失败");
-      if (operation === "suggest-tags") {
-        const tags = Array.isArray(result.tags) ? result.tags : [];
-        setSuggestedTags(
-          tags
-            .map((item: unknown) =>
-              typeof item === "string"
-                ? item
-                : (item as { tag?: string }).tag || "",
-            )
-            .filter(Boolean),
-        );
-        return;
+      // 分批次：每 0.5 秒发送一张（n=1），逐张出图；一次性保持单请求 n 张。
+      const sequential = batchMode === "sequential" && count > 1;
+      const total = sequential ? count : 1;
+      const collected: string[] = [];
+      let affBalance: number | null = null;
+      let usedNewApi = false;
+      let failures = 0;
+      let lastError = "";
+      let partialMessage = "";
+      for (let index = 0; index < total; index += 1) {
+        if (index > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        if (total > 1) setBatchProgress(`${index + 1}/${total}`);
+        const response = await fetch("/api/images/operate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sequential ? { ...base, n: 1 } : base),
+        });
+        const result = await response.json();
+        if (!response.ok && !result.images) throw new Error(result.message || "操作失败");
+        if (operation === "suggest-tags") {
+          const tags = Array.isArray(result.tags) ? result.tags : [];
+          setSuggestedTags(
+            tags
+              .map((item: unknown) =>
+                typeof item === "string"
+                  ? item
+                  : (item as { tag?: string }).tag || "",
+              )
+              .filter(Boolean),
+          );
+          return;
+        }
+        const newImages: string[] = result.images || (result.image ? [result.image] : []);
+        if (sequential) {
+          collected.push(...newImages);
+          // 逐批上屏，先出先显示。
+          setImages([...collected]);
+        } else {
+          setImages(newImages);
+        }
+        if (result.aff?.balance != null) affBalance = result.aff.balance;
+        if (result.payment === "newapi") usedNewApi = true;
+        if (result.partial) partialMessage = result.message || "部分批次生成失败。";
+        if (sequential && !newImages.length) {
+          failures += 1;
+          lastError = result.message || "生成失败";
+        }
       }
-      setImages(result.images || (result.image ? [result.image] : []));
-      if (result.aff?.balance != null) setAff({ balance: result.aff.balance });
-      if (result.partial) setNotice(result.message || "部分批次生成失败。");
-      else if (result.payment === "newapi") {
+      if (affBalance != null) setAff({ balance: affBalance });
+      if (sequential && failures) {
+        if (!collected.length) throw new Error(lastError || "分批生成全部失败");
+        setNotice(`分批生成完成 ${collected.length}/${total} 张${lastError ? `：${lastError}` : ""}。`);
+      } else if (partialMessage) {
+        setNotice(partialMessage);
+      } else if (usedNewApi) {
         setNotice("AFF 余额不足，本次已使用 NewAPI 余额支付。");
         // NewAPI 余额已变动，拉取最新数值让底部余额区立即更新。
         fetch("/api/me")
@@ -1058,6 +1170,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         error instanceof Error ? error.message : "操作失败，请稍后重试",
       );
     } finally {
+      setBatchProgress("");
       setGenerating(false);
     }
   }
@@ -1147,9 +1260,66 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   event.preventDefault();
                   runAgent();
                 }}
-                placeholder="白发　或　雨夜里的白发少女，霓虹灯和电影感构图"
+                onPaste={(event) => {
+                  const file = [...event.clipboardData.items]
+                    .find((item) => item.type.startsWith("image/"))
+                    ?.getAsFile();
+                  if (!file) return;
+                  event.preventDefault();
+                  void handleAgentImageFile(file);
+                }}
+                placeholder="白发　或　雨夜里的白发少女…（可粘贴/上传图片让助手识图）"
                 aria-label="标签助手输入"
               />
+              <div className="flex items-center gap-2">
+                <label
+                  className="key-action shrink-0 cursor-pointer"
+                  title="上传图片让助手识图"
+                >
+                  <ImagePlus size={15} />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    aria-label="上传识图图片"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      void handleAgentImageFile(file);
+                    }}
+                  />
+                </label>
+                <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--muted)]">
+                  可粘贴（Ctrl+V）或上传图片，助手按图检索 Danbooru 标签
+                </p>
+              </div>
+              {agentImage && (
+                <div className="flex items-center gap-2 rounded border border-[var(--line)] bg-white p-2">
+                  <button
+                    type="button"
+                    onClick={() => setAgentImageZoom(true)}
+                    className="shrink-0"
+                    title="点击放大查看"
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={agentImage}
+                      alt="待识图图片缩略图"
+                      className="h-16 w-16 rounded border border-[var(--line)] object-cover"
+                    />
+                  </button>
+                  <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--muted)]">
+                    已附图，提交后随需求一起发给模型。
+                    <button
+                      type="button"
+                      onClick={() => setAgentImage(null)}
+                      className="ml-1 font-semibold text-[var(--rose)]"
+                    >
+                      移除
+                    </button>
+                  </p>
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={tagSearching || assistantLoading}
@@ -1598,7 +1768,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             >
               <Sparkles size={18} />
               {generating
-                ? "处理中，请稍候..."
+                ? batchProgress
+                  ? `生成中 ${batchProgress}…`
+                  : "处理中，请稍候..."
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
             </button>
           </div>
@@ -1621,6 +1793,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           index={lightboxIndex}
           onClose={closeLightbox}
           onNavigate={setLightboxIndex}
+        />
+      )}
+      {agentImageZoom && agentImage && (
+        <Lightbox
+          images={[agentImage]}
+          index={0}
+          onClose={() => setAgentImageZoom(false)}
+          onNavigate={() => {}}
         />
       )}
       {mobilePanel && (

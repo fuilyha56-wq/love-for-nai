@@ -29,6 +29,17 @@ describe("parseTagSuggestion", () => {
     expect(result.tags).toHaveLength(24);
   });
 
+  it("treats seed 0 as not provided so the seed box stays empty", () => {
+    const result = parseTagSuggestion(
+      JSON.stringify({ parameters: { seed: 0, steps: 28 } }),
+    );
+    expect(result.parameters.seed).toBeUndefined();
+    const positive = parseTagSuggestion(
+      JSON.stringify({ parameters: { seed: 12345 } }),
+    );
+    expect(positive.parameters.seed).toBe(12345);
+  });
+
   it("rejects missing or malformed JSON", () => {
     expect(() => parseTagSuggestion("no json")).toThrow(
       "模型未返回可读取的建议",

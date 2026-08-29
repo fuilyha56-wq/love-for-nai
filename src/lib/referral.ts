@@ -85,6 +85,13 @@ export async function redeemReferral(
       "邀请注册奖励",
       referenceId,
     );
+    // 邀请人与被邀请人各得一份，各自独立幂等。
+    await grantAffOnce(
+      referral.inviterUserId,
+      REFERRAL_REWARD,
+      "邀请新用户注册奖励",
+      `referral-invite:${registeredUserId}`,
+    );
     if (!referral.registeredUserIds.includes(registeredUserId)) {
       referral.registeredUserIds.push(registeredUserId);
       await writeStore(store);

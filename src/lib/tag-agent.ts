@@ -1,9 +1,16 @@
 import { runTool, summarizeToolResult, toolCatalog } from "@/lib/agent-tools";
 import { newApiBaseUrl } from "@/lib/newapi";
 
+type MessageContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+
 type Message = {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: MessageContent;
 };
 type ChatResponse = {
   choices?: Array<{ message?: { content?: string | null } }>;
@@ -25,9 +32,10 @@ ${toolCatalog()}
 
 工作方式：
 1. 拆解需求为若干视觉概念（人物、发色、服饰、场景、光照、构图等）。
-2. 中文或小众概念先用 web_search 查证通用英文说法，再用 search_danbooru_tags 检索。
-3. 用 search_danbooru_tags 找候选标签；不确定含义时用 read_danbooru_wiki 确认；最终标签用 verify_danbooru_tag 校验存在性。
-4. 优先选图片数较多的通用标签，避免生僻或已废弃标签。
+2. 用户消息附带参考图片时，先仔细读图：人物特征、发型发色、服饰配饰、表情动作、场景构图、画风质感，再把这些转成候选英文标签检索。
+3. 中文或小众概念先用 web_search 查证通用英文说法，再用 search_danbooru_tags 检索。
+4. 用 search_danbooru_tags 找候选标签；不确定含义时用 read_danbooru_wiki 确认；最终标签用 verify_danbooru_tag 校验存在性。
+5. 优先选图片数较多的通用标签，避免生僻或已废弃标签。
 
 每次回复只能输出一个 JSON 对象，不要 Markdown 或解释文字。
 调用工具时输出：
@@ -104,18 +112,27 @@ export async function runTagAgent(
   userRequest: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string },
   maxRounds = 8,
+  options?: { onStep?: (step: AgentStep) => void; image?: string },
 ): Promise<{ content: string; steps: AgentStep[] }> {
   const baseUrl = newApiBaseUrl();
+  const requestText = JSON.stringify({
+    request: userRequest,
+    currentPrompt: context.currentPrompt || "",
+    currentNegativePrompt: context.currentNegativePrompt || "",
+    hasImage: Boolean(options?.image),
+  });
   const messages: Message[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    {
-      role: "user",
-      content: JSON.stringify({
-        request: userRequest,
-        currentPrompt: context.currentPrompt || "",
-        currentNegativePrompt: context.currentNegativePrompt || "",
-      }),
-    },
+    // 附图时首条消息用多模态内容；OpenAI 兼容格式由 NewAPI 转换。
+    options?.image
+      ? {
+          role: "user",
+          content: [
+            { type: "text", text: requestText },
+            { type: "image_url", image_url: { url: options.image } },
+          ],
+        }
+      : { role: "user", content: requestText },
   ];
   const steps: AgentStep[] = [];
 
@@ -134,14 +151,17 @@ export async function runTagAgent(
     }
 
     const result = await runTool(decision.name, decision.args);
-    steps.push({
+    const step: AgentStep = {
       tool: decision.name,
       query: String(
         decision.args.query ?? decision.args.name ?? decision.args.title ?? "",
       ),
       ok: result.ok,
       summary: summarizeToolResult(decision.name, result.data),
-    });
+    };
+    steps.push(step);
+    // 每步实时上报，轮询方能立即看到检索过程。
+    options?.onStep?.(step);
     messages.push({
       role: "user",
       content: JSON.stringify({

@@ -48,6 +48,10 @@ export function parseTagSuggestion(content: string): TagSuggestion {
         .slice(0, 24)
     : [];
 
+  // NAI 约定 seed 0 = 随机；模型经常显式回 seed:0，
+  // 归一为未提供，避免把种子框填成 0。
+  const rawSeed = finiteNumber(rawParameters.seed);
+
   return {
     prompt: limitedString(raw.prompt, 10_000),
     negativePrompt: limitedString(raw.negativePrompt, 10_000),
@@ -60,7 +64,7 @@ export function parseTagSuggestion(content: string): TagSuggestion {
       sampler: limitedString(rawParameters.sampler, 80) || undefined,
       noiseSchedule:
         limitedString(rawParameters.noiseSchedule, 80) || undefined,
-      seed: finiteNumber(rawParameters.seed),
+      seed: rawSeed != null && rawSeed > 0 ? rawSeed : undefined,
     },
   };
 }
