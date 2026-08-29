@@ -41,3 +41,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# SSH 凭据脚本（含密码，绝不入库）
+.rsh.py
+.rsh2.py
+.rsh*.py
