@@ -11,8 +11,12 @@ import {
   WalletCards,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { SessionExpiredNotice } from "@/app/session-notice";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type Profile = {
   id: number;
@@ -29,6 +33,8 @@ type Referral = {
   invitedCount: number;
   registrationReward: number;
 };
+const formatDollars = (value: number): string =>
+  `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
 
 export default function AccountPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -42,37 +48,87 @@ export default function AccountPage() {
   const [checkingIn, setCheckingIn] = useState(false);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [copyingReferral, setCopyingReferral] = useState(false);
+  const [profileState, setProfileState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [profileError, setProfileError] = useState("");
+  const [walletState, setWalletState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [walletError, setWalletError] = useState("");
+  const [referralState, setReferralState] = useState<
+    "loading" | "loaded" | "error"
+  >("loading");
+  const [referralError, setReferralError] = useState("");
   const referralInput = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetch("/api/me", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok || !result.authenticated) {
-          setExpired("登录状态已过期，请重新登录后查看账号信息");
-          return;
-        }
-        setProfile(result.user);
-        setUsername(result.user.username || "");
-        setDisplayName(result.user.displayName || "");
-      })
-      .catch((error) =>
-        setMessage(error instanceof Error ? error.message : "读取账号信息失败"),
-      );
-    fetch("/api/wallet", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.aff) setAff(result.aff);
-        if (result.newApi) setNewApi(result.newApi);
-      })
-      .catch(() => undefined);
-    fetch("/api/aff/referral", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.link) setReferral(result);
-      })
-      .catch(() => undefined);
+  const loadProfile = useCallback(async () => {
+    setProfileState("loading");
+    setProfileError("");
+    try {
+      const response = await fetch("/api/me", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || !result.authenticated) {
+        setExpired("登录状态已过期，请重新登录后查看账号信息");
+        setProfileError("登录状态已过期，请重新登录后查看账号信息");
+        setProfileState("error");
+        return;
+      }
+      setProfile(result.user);
+      setUsername(result.user.username || "");
+      setDisplayName(result.user.displayName || "");
+      setProfileState("loaded");
+    } catch (error) {
+      const nextError = error instanceof Error ? error.message : "读取账号信息失败";
+      setProfileError(nextError);
+      setMessage(nextError);
+      setProfileState("error");
+    }
   }, []);
+  const loadWallet = useCallback(async () => {
+    setWalletState("loading");
+    setWalletError("");
+    try {
+      const response = await fetch("/api/wallet", { cache: "no-store" });
+      const result = await readJson<{
+        aff?: Aff;
+        newApi?: NewApiWallet;
+      }>(response, "读取钱包失败");
+      setAff(result.aff || null);
+      setNewApi(result.newApi || null);
+      setWalletState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取钱包失败";
+      setWalletError(nextError);
+      setMessage(nextError);
+      setWalletState("error");
+    }
+  }, []);
+  const loadReferral = useCallback(async () => {
+    setReferralState("loading");
+    setReferralError("");
+    try {
+      const response = await fetch("/api/aff/referral", { cache: "no-store" });
+      const result = await readJson<Referral>(response, "读取邀请链接失败");
+      if (!result.link) throw new Error("邀请链接暂不可用");
+      setReferral(result);
+      setReferralState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取邀请链接失败";
+      setReferralError(nextError);
+      setReferralState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      loadProfile();
+      loadWallet();
+      loadReferral();
+    });
+  }, [loadProfile, loadReferral, loadWallet]);
 
   async function checkIn() {
     setCheckingIn(true);
@@ -156,6 +212,18 @@ export default function AccountPage() {
             {message}
           </div>
         )}
+        {profileState === "error" && !expired && (
+          <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
+            <p>{profileError || "读取账号信息失败"}</p>
+            <button
+              type="button"
+              onClick={() => void loadProfile()}
+              className="mt-2 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+            >
+              重试
+            </button>
+          </div>
+        )}
 
         {/* 概览：身份 + 双余额卡片 */}
         <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
@@ -166,7 +234,9 @@ export default function AccountPage() {
               </div>
               <div className="min-w-0">
                 <h1 className="truncate text-lg font-semibold">
-                  {profile?.displayName || "读取中…"}
+                  {profileState === "loading"
+                    ? "读取中…"
+                    : profile?.displayName || "个人资料暂不可用"}
                 </h1>
                 <p className="mt-0.5 text-xs text-[var(--muted)]">
                   @{profile?.username || "-"} · 分组 {profile?.group || "-"} · ID{" "}
@@ -195,14 +265,21 @@ export default function AccountPage() {
               <div className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">
                 <Coins size={14} className="text-[var(--rose)]" /> NewAPI 余额
               </div>
+              {walletState === "error" && (
+                <p className="mt-3 text-xs text-[#77531e]">{walletError || "读取钱包失败"}</p>
+              )}
               <strong
                 className="mt-3 block max-w-full break-all text-xl leading-tight tabular-nums sm:text-2xl"
-                title={newApi ? `$${newApi.balance.toFixed(2)}` : undefined}
+                title={newApi ? formatDollars(newApi.balance) : undefined}
               >
-                {newApi ? `$${newApi.balance.toFixed(2)}` : "--"}
+                {walletState === "loading"
+                  ? "读取中…"
+                  : newApi
+                    ? formatDollars(newApi.balance)
+                    : "暂无余额数据"}
               </strong>
               <p className="mt-2 max-w-full break-words text-[11px] leading-4 text-[var(--muted)]">
-                累计使用 {newApi ? `$${newApi.used.toFixed(2)}` : "--"}
+                累计使用 {walletState === "loading" ? "读取中…" : newApi ? formatDollars(newApi.used) : "暂无数据"}
                 <br />
                 AFF 不足时生成从此余额扣费
               </p>
@@ -212,8 +289,21 @@ export default function AccountPage() {
                 <CalendarCheck size={14} className="text-[var(--rose)]" /> LFN AFF
               </div>
               <strong className="mt-3 block text-2xl tabular-nums">
-                {aff ? aff.balance : "--"}
+                {walletState === "loading"
+                  ? "读取中…"
+                  : aff
+                    ? aff.balance
+                    : "暂无 AFF 数据"}
               </strong>
+              {walletState === "error" && (
+                <button
+                  type="button"
+                  onClick={() => void loadWallet()}
+                  className="mt-3 h-8 w-full rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold"
+                >
+                  重试钱包
+                </button>
+              )}
               <button
                 type="button"
                 onClick={checkIn}
@@ -289,10 +379,26 @@ export default function AccountPage() {
               ref={referralInput}
               aria-label="邀请注册链接"
               className="field mt-3 h-9 w-full px-2 text-[10px] text-[var(--muted)]"
-              value={referral?.link || "正在生成邀请链接…"}
+              value={
+                referralState === "loading"
+                  ? "正在生成邀请链接…"
+                  : referral?.link || "邀请链接暂不可用"
+              }
               readOnly
               onFocus={(event) => event.currentTarget.select()}
             />
+            {referralState === "error" && (
+              <div className="mt-2 rounded border border-[#e4c991] bg-[#fff8e8] p-2 text-xs text-[#77531e]">
+                <p>{referralError || "读取邀请链接失败"}</p>
+                <button
+                  type="button"
+                  onClick={() => void loadReferral()}
+                  className="mt-2 h-7 rounded bg-[var(--rose)] px-2.5 text-[11px] font-semibold text-white"
+                >
+                  重试
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={copyReferral}

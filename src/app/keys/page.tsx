@@ -9,7 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   readJson,
   SessionExpiredError,
@@ -55,40 +55,35 @@ export default function KeysPage() {
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [loadError, setLoadError] = useState("");
   const [working, setWorking] = useState(false);
   const [revealed, setRevealed] = useState<{ id: number; key: string } | null>(
     null,
   );
-  async function load() {
-    const response = await fetch("/api/keys", { cache: "no-store" });
-    const result = await readJson<{ items?: TokenItem[] }>(
-      response,
-      "读取密钥失败",
-    );
-    setItems(result.items || []);
-  }
-  useEffect(() => {
-    let active = true;
-    async function loadInitial() {
-      try {
-        const response = await fetch("/api/keys", { cache: "no-store" });
-        const result = await readJson<{ items?: TokenItem[] }>(
-          response,
-          "读取密钥失败",
-        );
-        if (active) setItems(result.items || []);
-      } catch (error) {
-        if (!active) return;
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else
-          setMessage(error instanceof Error ? error.message : "读取密钥失败");
-      }
+  const load = useCallback(async () => {
+    setLoadState("loading");
+    setLoadError("");
+    try {
+      const response = await fetch("/api/keys", { cache: "no-store" });
+      const result = await readJson<{ items?: TokenItem[] }>(
+        response,
+        "读取密钥失败",
+      );
+      setItems(result.items || []);
+      setLoadState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取密钥失败";
+      setLoadError(nextError);
+      setLoadState("error");
     }
-    void loadInitial();
-    return () => {
-      active = false;
-    };
   }, []);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
   async function create(event: React.FormEvent) {
     event.preventDefault();
     setWorking(true);
@@ -242,6 +237,7 @@ export default function KeysPage() {
                   disabled={working}
                   className="key-action"
                   title="复制密钥"
+                  aria-label="复制密钥"
                 >
                   <Copy size={15} />
                 </button>
@@ -251,6 +247,7 @@ export default function KeysPage() {
                   disabled={working}
                   className={`key-action ${item.status === 1 ? "" : "opacity-50"}`}
                   title={item.status === 1 ? "停用密钥" : "启用密钥"}
+                  aria-label={item.status === 1 ? "停用密钥" : "启用密钥"}
                 >
                   <Power size={15} />
                 </button>
@@ -260,6 +257,7 @@ export default function KeysPage() {
                   disabled={working}
                   className="key-action text-[var(--rose)]"
                   title="删除密钥"
+                  aria-label="删除密钥"
                 >
                   <Trash2 size={15} />
                 </button>
@@ -267,9 +265,26 @@ export default function KeysPage() {
             </article>
           ))}
         </div>
-        {!items.length && !message && !expired && (
+        {!items.length && loadState === "loading" && (
           <p className="py-16 text-center text-sm text-[var(--muted)]">
             正在读取 API 密钥…
+          </p>
+        )}
+        {!items.length && loadState === "error" && (
+          <div className="my-5 rounded border border-[#e4c991] bg-[#fff8e8] p-4 text-center text-sm text-[#77531e]">
+            <p>{loadError || "读取密钥失败"}</p>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="mt-3 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {!items.length && loadState === "loaded" && !message && !expired && (
+          <p className="py-16 text-center text-sm text-[var(--muted)]">
+            暂无 API 密钥。创建一个密钥即可开始使用。
           </p>
         )}
       </section>

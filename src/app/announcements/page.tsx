@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, LoaderCircle, Megaphone, Pin, Send } from "lucide-react";
+import { ArrowLeft, LoaderCircle, Megaphone, Pin, RotateCcw, Send } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
@@ -13,9 +13,12 @@ type Comment = {
   content: string;
   createdAt: string;
 };
+type LoadState = "loading" | "loaded" | "error";
 
 export default function AnnouncementsPage() {
   const [items, setItems] = useState<AnnouncementItem[]>([]);
+  const [loadState, setLoadState] = useState<LoadState>("loading");
+  const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   const [comments, setComments] = useState<Record<string, Comment[]>>({});
@@ -24,16 +27,33 @@ export default function AnnouncementsPage() {
   const [authenticated, setAuthenticated] = useState(false);
   const commentRequestIds = useRef<Record<string, number>>({});
 
+  const loadAnnouncements = useCallback(async () => {
+    setLoadState("loading");
+    setError("");
+    try {
+      const response = await fetch("/api/announcements", { cache: "no-store" });
+      let result: { items?: AnnouncementItem[]; message?: string };
+      try {
+        result = (await response.json()) as { items?: AnnouncementItem[]; message?: string };
+      } catch {
+        throw new Error("公告返回了无效数据");
+      }
+      if (!response.ok) throw new Error(result.message || "公告读取失败");
+      setItems(Array.isArray(result.items) ? result.items : []);
+      setLoadState("loaded");
+    } catch (loadError) {
+      setError(loadError instanceof TypeError ? "公告读取失败，请检查网络后重试" : loadError instanceof Error ? loadError.message : "公告读取失败，请稍后重试");
+      setLoadState("error");
+    }
+  }, []);
+
   useEffect(() => {
-    fetch("/api/announcements", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => setItems(result.items || []))
-      .catch(() => setMessage("公告读取失败，请稍后重试"));
+    void Promise.resolve().then(loadAnnouncements);
     fetch("/api/me", { cache: "no-store" })
       .then((response) => response.json())
       .then((result) => setAuthenticated(Boolean(result.authenticated)))
       .catch(() => setAuthenticated(false));
-  }, []);
+  }, [loadAnnouncements]);
 
   const loadComments = useCallback(async (id: string) => {
     const requestId = (commentRequestIds.current[id] || 0) + 1;
@@ -100,8 +120,19 @@ export default function AnnouncementsPage() {
       </header>
       <section className="mx-auto max-w-3xl p-4 sm:p-7">
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
-        {!items.length && !message && <p className="py-24 text-center text-sm text-[var(--muted)]">暂无公告</p>}
-        {items.length > 0 && (
+        {loadState === "error" ? (
+          <div className="py-24 text-center">
+            <p className="text-sm text-red-700">{error}</p>
+            <button type="button" onClick={() => void loadAnnouncements()} className="mt-4 inline-flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
+              <RotateCcw size={15} />重试
+            </button>
+          </div>
+        ) : loadState === "loading" ? (
+          <p className="py-24 text-center text-sm text-[var(--muted)]">正在加载公告…</p>
+        ) : !items.length ? (
+          <p className="py-24 text-center text-sm text-[var(--muted)]">暂无公告</p>
+        ) : (
+
           <ol className="relative space-y-5 border-l-2 border-[var(--line)] pl-6">
             {items.map((item) => {
               const open = expanded === null ? item.id === latest?.id : expanded === item.id;

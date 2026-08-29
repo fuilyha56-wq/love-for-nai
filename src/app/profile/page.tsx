@@ -2,8 +2,12 @@
 
 import { ArrowLeft, CalendarCheck, Copy, Save, UserRound } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { SessionExpiredNotice } from "@/app/session-notice";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  readJson,
+  SessionExpiredError,
+  SessionExpiredNotice,
+} from "@/app/session-notice";
 
 type Profile = {
   id: number;
@@ -15,6 +19,8 @@ type Profile = {
 };
 type Aff = { balance: number; checkedInToday: boolean; checkInReward: number };
 type Referral = { link: string; invitedCount: number; registrationReward: number };
+const formatDollars = (value: number): string =>
+  `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -27,34 +33,82 @@ export default function ProfilePage() {
   const [checkingIn, setCheckingIn] = useState(false);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [copyingReferral, setCopyingReferral] = useState(false);
+  const [profileState, setProfileState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [profileError, setProfileError] = useState("");
+  const [walletState, setWalletState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [walletError, setWalletError] = useState("");
+  const [referralState, setReferralState] = useState<
+    "loading" | "loaded" | "error"
+  >("loading");
+  const [referralError, setReferralError] = useState("");
   const referralInput = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    fetch("/api/me", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok || !result.authenticated) {
-          setExpired("登录状态已过期，请重新登录后查看个人资料");
-          return;
-        }
-        setProfile(result.user);
-        setUsername(result.user.username || "");
-        setDisplayName(result.user.displayName || "");
-      })
-      .catch((error) =>
-        setMessage(error instanceof Error ? error.message : "读取个人资料失败"),
-      );
-    fetch("/api/wallet", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => setAff(result.aff || null))
-      .catch(() => undefined);
-    fetch("/api/aff/referral", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.link) setReferral(result);
-      })
-      .catch(() => undefined);
+  const loadProfile = useCallback(async () => {
+    setProfileState("loading");
+    setProfileError("");
+    try {
+      const response = await fetch("/api/me", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || !result.authenticated) {
+        setExpired("登录状态已过期，请重新登录后查看个人资料");
+        setProfileState("error");
+        return;
+      }
+      setProfile(result.user);
+      setUsername(result.user.username || "");
+      setDisplayName(result.user.displayName || "");
+      setProfileState("loaded");
+    } catch (error) {
+      const nextError = error instanceof Error ? error.message : "读取个人资料失败";
+      setProfileError(nextError);
+      setMessage(nextError);
+      setProfileState("error");
+    }
   }, []);
+  const loadWallet = useCallback(async () => {
+    setWalletState("loading");
+    setWalletError("");
+    try {
+      const response = await fetch("/api/wallet", { cache: "no-store" });
+      const result = await readJson<{ aff?: Aff }>(response, "读取钱包失败");
+      setAff(result.aff || null);
+      setWalletState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取钱包失败";
+      setWalletError(nextError);
+      setMessage(nextError);
+      setWalletState("error");
+    }
+  }, []);
+  const loadReferral = useCallback(async () => {
+    setReferralState("loading");
+    setReferralError("");
+    try {
+      const response = await fetch("/api/aff/referral", { cache: "no-store" });
+      const result = await readJson<Referral>(response, "读取邀请链接失败");
+      if (!result.link) throw new Error("邀请链接暂不可用");
+      setReferral(result);
+      setReferralState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取邀请链接失败";
+      setReferralError(nextError);
+      setReferralState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      loadProfile();
+      loadWallet();
+      loadReferral();
+    });
+  }, [loadProfile, loadReferral, loadWallet]);
 
   async function checkIn() {
     setCheckingIn(true);
@@ -136,8 +190,22 @@ export default function ProfilePage() {
             <UserRound size={27} />
           </div>
           <h1 className="mt-4 text-xl font-semibold">
-            {profile?.displayName || "读取中…"}
+            {profileState === "loading"
+              ? "读取中…"
+              : profile?.displayName || "个人资料暂不可用"}
           </h1>
+          {profileState === "error" && !expired && (
+            <div className="mt-3 rounded border border-[#e4c991] bg-[#fff8e8] p-2 text-xs text-[#77531e]">
+              <p>{profileError || "读取个人资料失败"}</p>
+              <button
+                type="button"
+                onClick={() => void loadProfile()}
+                className="mt-2 h-7 rounded bg-[var(--rose)] px-2.5 text-[11px] font-semibold text-white"
+              >
+                重试
+              </button>
+            </div>
+          )}
           <dl className="mt-5 space-y-3 text-xs">
             <div>
               <dt className="text-[var(--muted)]">用户 ID</dt>
@@ -150,14 +218,32 @@ export default function ProfilePage() {
             <div>
               <dt className="text-[var(--muted)]">NewAPI 余额</dt>
               <dd className="mt-1 font-semibold">
-                {profile?.balance == null ? "-" : profile.balance.toFixed(2)}
+                {profile?.balance == null ? "-" : formatDollars(profile.balance)}
               </dd>
             </div>
             <div>
               <dt className="text-[var(--muted)]">LFN AFF</dt>
-              <dd className="mt-1 font-semibold">{aff?.balance ?? "-"}</dd>
+              <dd className="mt-1 font-semibold">
+                {walletState === "loading"
+                  ? "读取中…"
+                  : aff
+                    ? aff.balance
+                    : "暂无 AFF 数据"}
+              </dd>
             </div>
           </dl>
+          {walletState === "error" && (
+            <div className="mt-3 rounded border border-[#e4c991] bg-[#fff8e8] p-2 text-xs text-[#77531e]">
+              <p>{walletError || "读取钱包失败"}</p>
+              <button
+                type="button"
+                onClick={() => void loadWallet()}
+                className="mt-2 h-7 rounded bg-[var(--rose)] px-2.5 text-[11px] font-semibold text-white"
+              >
+                重试
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={checkIn}
@@ -176,10 +262,26 @@ export default function ProfilePage() {
               ref={referralInput}
               aria-label="邀请注册链接"
               className="mt-3 h-9 w-full rounded border border-[var(--line)] bg-white px-2 text-[10px] text-[var(--muted)]"
-              value={referral?.link || "正在生成邀请链接…"}
+              value={
+                referralState === "loading"
+                  ? "正在生成邀请链接…"
+                  : referral?.link || "邀请链接暂不可用"
+              }
               readOnly
               onFocus={(event) => event.currentTarget.select()}
             />
+            {referralState === "error" && (
+              <div className="mt-2 rounded border border-[#e4c991] bg-[#fff8e8] p-2 text-xs text-[#77531e]">
+                <p>{referralError || "读取邀请链接失败"}</p>
+                <button
+                  type="button"
+                  onClick={() => void loadReferral()}
+                  className="mt-2 h-7 rounded bg-[var(--rose)] px-2.5 text-[11px] font-semibold text-white"
+                >
+                  重试
+                </button>
+              </div>
+            )}
             <button
               type="button"
               onClick={copyReferral}

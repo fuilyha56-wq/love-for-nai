@@ -41,6 +41,7 @@ export function PopupSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
@@ -56,6 +57,10 @@ export function PopupSelect({
             .includes(query.trim().toLowerCase()),
         )
       : options;
+  const selectedIndex = Math.max(
+    0,
+    visible.findIndex((option) => option.value === value),
+  );
 
   function positionMenu() {
     const trigger = rootRef.current?.getBoundingClientRect();
@@ -79,8 +84,11 @@ export function PopupSelect({
   }
 
   useLayoutEffect(() => {
-    if (open) positionMenu();
-  }, [open]);
+    if (open) {
+      positionMenu();
+      if (!searchable) menuRef.current?.focus();
+    }
+  }, [open, searchable]);
 
   // 首次点击时按钮宽度可能与菜单渲染时不同（字体加载、面板布局），
   // 用 ResizeObserver 持续对齐菜单与触发按钮。
@@ -100,11 +108,16 @@ export function PopupSelect({
       if (
         !rootRef.current?.contains(target) &&
         !menuRef.current?.contains(target)
-      )
+      ) {
         setOpen(false);
+        setQuery("");
+      }
     }
     function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        setQuery("");
+      }
     }
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", escape);
@@ -124,6 +137,36 @@ export function PopupSelect({
     setQuery("");
   }
 
+  function resetActiveIndex() {
+    setActiveIndex(selectedIndex);
+  }
+
+  function moveActive(direction: number) {
+    if (!visible.length) return;
+    setActiveIndex((current) =>
+      (current + direction + visible.length) % visible.length,
+    );
+  }
+
+  function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveActive(1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveActive(-1);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(Math.max(0, visible.length - 1));
+    } else if (event.key === "Enter" && visible[activeIndex]) {
+      event.preventDefault();
+      select(visible[activeIndex]);
+    }
+  }
+
   const selected = options.find((option) => option.value === value);
 
   return (
@@ -140,6 +183,7 @@ export function PopupSelect({
           if (!open) positionMenu();
           setOpen((current) => !current);
           setQuery("");
+          resetActiveIndex();
         }}
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -164,7 +208,9 @@ export function PopupSelect({
             className="popup-select-menu"
             role="listbox"
             aria-label={ariaLabel}
+            tabIndex={-1}
             style={menuStyle}
+            onKeyDown={handleMenuKeyDown}
             onWheel={(event) => event.stopPropagation()}
           >
             {searchable && (
@@ -172,7 +218,10 @@ export function PopupSelect({
                 <Search size={12} />
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+          setQuery(event.target.value);
+          setActiveIndex(0);
+        }}
                   placeholder={searchPlaceholder}
                   aria-label={searchPlaceholder}
                   autoFocus
@@ -188,8 +237,9 @@ export function PopupSelect({
                     type="button"
                     role="option"
                     aria-selected={option.value === value}
-                    className="popup-select-option"
+                    className={`popup-select-option ${option.value === visible[activeIndex]?.value ? "is-active" : ""}`}
                     key={option.value}
+                    onMouseEnter={() => setActiveIndex(visible.findIndex((item) => item.value === option.value))}
                     onClick={() => select(option)}
                   >
                     <Check

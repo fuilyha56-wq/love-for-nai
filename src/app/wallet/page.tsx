@@ -2,7 +2,7 @@
 
 import { ArrowLeft, WalletCards } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   readJson,
   SessionExpiredError,
@@ -15,20 +15,36 @@ type Wallet = {
   rechargeEnabled: boolean;
 };
 
+const formatDollars = (value: number): string =>
+  `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
+
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [checkingIn, setCheckingIn] = useState(false);
-  useEffect(() => {
-    fetch("/api/wallet", { cache: "no-store" })
-      .then((response) => readJson<Wallet>(response, "读取钱包失败"))
-      .then(setWallet)
-      .catch((error) => {
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else setMessage(error instanceof Error ? error.message : "读取钱包失败");
-      });
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [loadError, setLoadError] = useState("");
+  const load = useCallback(async () => {
+    setLoadState("loading");
+    setLoadError("");
+    try {
+      const response = await fetch("/api/wallet", { cache: "no-store" });
+      const result = await readJson<Wallet>(response, "读取钱包失败");
+      setWallet(result);
+      setLoadState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取钱包失败";
+      setLoadError(nextError);
+      setLoadState("error");
+    }
   }, []);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
   async function checkIn() {
     setCheckingIn(true);
     try {
@@ -53,24 +69,48 @@ export default function WalletPage() {
       <section className="mx-auto max-w-5xl p-4 sm:p-8">
         {expired && <SessionExpiredNotice message={expired} />}
         {message && <Message text={message} />}
+        {loadState === "error" && (
+          <div className="mb-4 rounded border border-[#e4c991] bg-[#fff8e8] p-4 text-sm text-[#77531e]">
+            <p>{loadError || "读取钱包失败"}</p>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="mt-3 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+            >
+              重试
+            </button>
+          </div>
+        )}
         <div className="grid gap-4 md:grid-cols-2">
           <article className="wallet-panel">
             <span>NewAPI 钱包</span>
-            <strong>{wallet ? wallet.newApi.balance.toFixed(2) : "--"}</strong>
+            <strong>
+              {loadState === "loading"
+                ? "读取中…"
+                : wallet
+                  ? formatDollars(wallet.newApi.balance)
+                  : "暂无余额数据"}
+            </strong>
             <dl>
               <div>
                 <dt>累计使用</dt>
-                <dd>{wallet ? wallet.newApi.used.toFixed(2) : "--"}</dd>
+                <dd>{wallet ? formatDollars(wallet.newApi.used) : loadState === "loading" ? "读取中…" : "暂无数据"}</dd>
               </div>
               <div>
                 <dt>当前分组</dt>
-                <dd>{wallet?.newApi.group || "--"}</dd>
+                <dd>{wallet?.newApi.group || (loadState === "loading" ? "读取中…" : "暂无数据")}</dd>
               </div>
             </dl>
           </article>
           <article className="wallet-panel">
             <span>LFN AFF</span>
-            <strong>{wallet?.aff.enabled ? wallet.aff.balance : "--"}</strong>
+            <strong>
+              {loadState === "loading"
+                ? "读取中…"
+                : wallet?.aff.enabled
+                  ? wallet.aff.balance
+                  : "暂无 AFF 数据"}
+            </strong>
             <p>每日签到获得 20 AFF。V4.5 limit 每张 1 AFF，V5 limit 每张 1.5 AFF，按订单向上取整。</p>
             <button
               type="button"

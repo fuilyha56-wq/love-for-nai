@@ -240,6 +240,118 @@ const generationModes = new Set<Operation>([
   "precise-reference",
 ]);
 
+const unsupportedOperations = new Set<Operation>(["upscale", "annotate"]);
+const acceptedUploadTypes = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
+const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
+const ASSISTANT_POLL_INTERVAL_MS = 2_000;
+const ASSISTANT_MAX_POLLS = 60;
+const ASSISTANT_TIMEOUT_MS = 2 * 60 * 1_000;
+const defaultPrompt =
+  "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light";
+const defaultNegative = "lowres, bad anatomy, blurry, text, watermark";
+
+type GenerationValidationInput = {
+  operation: Operation;
+  width: number;
+  height: number;
+  steps: number;
+  scale: number;
+  count: number;
+  cfgRescale: number;
+  seed: string;
+  strength: number;
+  source: Upload | null;
+  mask: Upload | null;
+};
+
+export function validateGenerationParameters({
+  operation,
+  width,
+  height,
+  steps,
+  scale,
+  count,
+  cfgRescale,
+  seed,
+  strength,
+  source,
+  mask,
+}: GenerationValidationInput): string | null {
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 64 ||
+    height < 64 ||
+    width > 1600 ||
+    height > 1600 ||
+    width % 64 !== 0 ||
+    height % 64 !== 0
+  )
+    return "宽高必须是 64–1600 之间的整数，并且是 64 的倍数。";
+  if (!Number.isInteger(steps) || steps < 1 || steps > 50)
+    return "采样步数必须是 1–50 之间的整数。";
+  if (!Number.isFinite(scale) || scale < 0 || scale > 10)
+    return "提示词相关性必须是 0–10 之间的有效数字。";
+  if (!Number.isInteger(count) || count < 1 || count > 6)
+    return "生成张数必须是 1–6 之间的整数。";
+  if (!Number.isFinite(cfgRescale) || cfgRescale < 0 || cfgRescale > 1)
+    return "CFG 重缩放必须是 0–1 之间的有效数字。";
+  if (!Number.isFinite(strength) || strength < 0 || strength > 1)
+    return "变化强度必须是 0–1 之间的有效数字。";
+  const seedValue = seed.trim();
+  if (
+    seedValue &&
+    (!/^[+-]?\d+$/.test(seedValue) || !Number.isSafeInteger(Number(seedValue)))
+  )
+    return "种子必须为空或有效的整数。";
+  if (unsupportedOperations.has(operation))
+    return `${modes.find((item) => item.id === operation)?.label || "该操作"}当前暂不支持提交，暂无可审计的计费映射。`;
+  if (imageInputModes.has(operation) && operation !== "suggest-tags" && !source)
+    return "请先上传操作所需的图片。";
+  if (["inpainting", "edits"].includes(operation) && !mask)
+    return "该模式需要源图片和蒙版图片。";
+  return null;
+}
+
+export function validateUploadFile(
+  file?: { type?: string; size?: number } | null,
+): string | null {
+  if (!file || !acceptedUploadTypes.has(file.type || ""))
+    return "仅支持 PNG、JPEG 或 WEBP 图片。";
+  if (file.size == null || !Number.isFinite(file.size) || file.size > MAX_UPLOAD_SIZE)
+    return "图片不能超过 15 MB。";
+  return null;
+}
+
+function createAbortError(): Error {
+  const error = new Error("智能助手任务已取消");
+  error.name = "AbortError";
+  return error;
+}
+
+function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(createAbortError());
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      reject(createAbortError());
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export default function ImageStudio({ userName, authenticated }: Props) {
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
@@ -259,12 +371,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [seed, setSeed] = useState("");
   const [strength, setStrength] = useState(0.7);
-  const [prompt, setPrompt] = useState(
-    "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light",
-  );
-  const [negative, setNegative] = useState(
-    "lowres, bad anatomy, blurry, text, watermark",
-  );
+  const [prompt, setPrompt] = useState(defaultPrompt);
+  const [negative, setNegative] = useState(defaultNegative);
   const [source, setSource] = useState<Upload | null>(null);
   const [mask, setMask] = useState<Upload | null>(null);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
@@ -297,11 +405,53 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     tagPool: [],
   });
   const [conversationOpen, setConversationOpen] = useState(false);
+  const assistantAbortRef = useRef<AbortController | null>(null);
+  const assistantTimeoutRef = useRef<number | null>(null);
+  const mobilePanelRef = useRef<HTMLElement>(null);
+  const mobileToolsRef = useRef<HTMLElement>(null);
+  const mobilePanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
+  const previousMobilePanelRef = useRef(false);
+  const previousMobileToolsRef = useRef(false);
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
   const [leftWidth, setLeftWidth] = useState(310);
   const [rightWidth, setRightWidth] = useState(230);
+
+  useEffect(() => {
+    return () => {
+      const controller = assistantAbortRef.current;
+      assistantAbortRef.current = null;
+      controller?.abort("unmount");
+      if (assistantTimeoutRef.current !== null)
+        window.clearTimeout(assistantTimeoutRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mobilePanel && !mobileToolsOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setMobilePanel(false);
+      setMobileToolsOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobilePanel, mobileToolsOpen]);
+
+  useEffect(() => {
+    if (mobilePanel) mobilePanelRef.current?.focus();
+    else if (previousMobilePanelRef.current) mobilePanelTriggerRef.current?.focus();
+    previousMobilePanelRef.current = mobilePanel;
+  }, [mobilePanel]);
+
+  useEffect(() => {
+    if (mobileToolsOpen) mobileToolsRef.current?.focus();
+    else if (previousMobileToolsRef.current) mobileToolsTriggerRef.current?.focus();
+    previousMobileToolsRef.current = mobileToolsOpen;
+  }, [mobileToolsOpen]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("lfn-layout");
@@ -354,6 +504,29 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     document.body.style.userSelect = "none";
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", end);
+  }
+
+  function resizePanelWithKeyboard(
+    side: "left" | "right",
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ) {
+    const current = side === "left" ? leftWidth : rightWidth;
+    const min = side === "left" ? 240 : 200;
+    const max = side === "left" ? 520 : 460;
+    let next = current;
+    if (event.key === "ArrowLeft") next = current - 16;
+    if (event.key === "ArrowRight") next = current + 16;
+    if (event.key === "Home") next = min;
+    if (event.key === "End") next = max;
+    if (next === current) return;
+    event.preventDefault();
+    next = clampPanel(next, min, max);
+    if (side === "left") setLeftWidth(next);
+    else setRightWidth(next);
+    window.localStorage.setItem(
+      "lfn-layout",
+      JSON.stringify({ left: side === "left" ? next : leftWidth, right: side === "right" ? next : rightWidth }),
+    );
   }
 
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
@@ -563,11 +736,25 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     setNotice("助手对话记录已清空。");
   }
 
+  function cancelAssistantTask() {
+    const controller = assistantAbortRef.current;
+    if (!controller) return;
+    controller.abort("cancel");
+  }
+
   async function askTagAssistant(request: string) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
       return;
     }
+    assistantAbortRef.current?.abort("cancel");
+    const controller = new AbortController();
+    assistantAbortRef.current = controller;
+    const timeoutId = window.setTimeout(
+      () => controller.abort("timeout"),
+      ASSISTANT_TIMEOUT_MS,
+    );
+    assistantTimeoutRef.current = timeoutId;
     setAssistantLoading(true);
     setAssistantSuggestion(null);
     setAgentSteps([]);
@@ -583,16 +770,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           currentNegativePrompt: negative,
           image: agentImage || undefined,
         }),
+        signal: controller.signal,
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "智能助手调用失败");
       const jobId = String(result.jobId || "");
       if (!jobId) throw new Error("智能助手未返回任务编号");
-      for (;;) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+      for (let pollCount = 0; pollCount < ASSISTANT_MAX_POLLS; pollCount += 1) {
+        await waitForAssistantPoll(ASSISTANT_POLL_INTERVAL_MS, controller.signal);
         const poll = await fetch(
           `/api/assistant/tags?job=${encodeURIComponent(jobId)}`,
-          { cache: "no-store" },
+          { cache: "no-store", signal: controller.signal },
         );
         const progress = await poll.json();
         if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
@@ -602,15 +790,32 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           setAssistantSuggestion(progress.suggestion);
           // 本轮已落盘，刷新历史与标签池。
           void refreshConversation();
-          break;
+          return;
         }
         if (progress.status === "error")
           throw new Error(progress.message || "智能助手调用失败");
       }
+      throw new Error("助手任务轮询已达到 60 次上限，任务仍可能在后台运行，请重试。");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "智能助手调用失败");
+      if (assistantAbortRef.current !== controller) return;
+      if (controller.signal.aborted) {
+        setNotice(
+          controller.signal.reason === "timeout"
+            ? "助手任务超时，任务仍可能在后台运行，请稍后重试。"
+            : "已取消助手任务。",
+        );
+      } else {
+        setNotice(error instanceof Error ? error.message : "智能助手调用失败");
+      }
     } finally {
-      setAssistantLoading(false);
+      if (assistantTimeoutRef.current === timeoutId) {
+        window.clearTimeout(timeoutId);
+        assistantTimeoutRef.current = null;
+      }
+      if (assistantAbortRef.current === controller) {
+        assistantAbortRef.current = null;
+        setAssistantLoading(false);
+      }
     }
   }
 
@@ -741,15 +946,39 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           <SlidersHorizontal size={16} /> 图像设置
         </b>
         <button
+          type="button"
           title="重置参数"
-          onClick={() => {
-            setWidth(832);
-            setHeight(1216);
-            setSteps(28);
-            setScale(5);
-            setCount(1);
-            setSchedule("native");
-          }}
+          aria-label="重置所有生成参数"
+          disabled={generating}
+          className="disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => {
+                setWidth(832);
+                setHeight(1216);
+                setSteps(28);
+                setScale(5);
+                setCount(1);
+                setBatchMode("sequential");
+                setBatchProgress("");
+                setSampler("k_euler_ancestral");
+                setSchedule("native");
+                setModel(models[0].value);
+                setCfgRescale(0);
+                setSeed("");
+                setStrength(0.7);
+                setPrompt(defaultPrompt);
+                setNegative(defaultNegative);
+                setOperation("generate");
+                setContentMode("anime");
+                setSource(null);
+                setMask(null);
+                setMaskEditorOpen(false);
+                setReferenceType("character&style");
+                setControlModel("hed");
+                setAdvancedOpen(false);
+                setSuggestedTags([]);
+                setImages([]);
+                setNotice("");
+              }}
         >
           <RotateCcw size={16} />
         </button>
@@ -1050,6 +1279,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             }
             value={source}
             onChange={setSource}
+            onError={setNotice}
           />
         )}
         {["inpainting", "edits"].includes(operation) && (
@@ -1067,6 +1297,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               label={mask ? "蒙版已绘制，也可重新上传" : "或上传蒙版图片"}
               value={mask}
               onChange={setMask}
+              onError={setNotice}
             />
           </div>
         )}
@@ -1089,30 +1320,26 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       );
       return;
     }
-    if (
-      imageInputModes.has(operation) &&
-      operation !== "suggest-tags" &&
-      !source
-    ) {
-      setNotice("请先上传操作所需的图片。");
-      return;
-    }
-    if (["inpainting", "edits"].includes(operation) && !mask) {
-      setNotice("该模式需要源图片和蒙版图片。");
-      return;
-    }
-    if (
-      width % 64 ||
-      height % 64 ||
-      width < 64 ||
-      height < 64 ||
-      width > 1600 ||
-      height > 1600
-    ) {
-      setNotice("宽高必须在 64–1600 之间，并且是 64 的倍数。");
+    const validationError = validateGenerationParameters({
+      operation,
+      width,
+      height,
+      steps,
+      scale,
+      count,
+      cfgRescale,
+      seed,
+      strength,
+      source,
+      mask,
+    });
+    if (validationError) {
+      setNotice(validationError);
       return;
     }
     setGenerating(true);
+    setImages([]);
+    setSuggestedTags([]);
     setNotice("");
     const base: Record<string, unknown> = {
       operation,
@@ -1484,10 +1711,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </p>
                 </div>
               )}
+            <div className="flex items-center gap-2">
               <button
                 type="submit"
                 disabled={tagSearching || assistantLoading}
-                className="flex h-9 w-full items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
+                className="flex h-9 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
               >
                 <Search size={15} />
                 {tagSearching
@@ -1496,7 +1724,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                     ? "模型分析中…"
                     : "让助手处理"}
               </button>
-            </form>
+              {assistantLoading && (
+                <button
+                  type="button"
+                  onClick={cancelAssistantTask}
+                  className="h-9 shrink-0 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+                >
+                  取消
+                </button>
+              )}
+            </div>
+          </form>
             {(assistantLoading || agentSteps.length > 0) && (
               <div className="mt-3 rounded border border-[var(--line)] bg-white p-2.5">
                 <b className="text-[11px]">
@@ -1768,8 +2006,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           role="separator"
           aria-orientation="vertical"
           aria-label="调整左侧面板宽度"
+          aria-valuenow={leftWidth}
+          aria-valuemin={240}
+          aria-valuemax={520}
+          tabIndex={0}
           className="panel-resizer hidden lg:block"
           onPointerDown={(event) => startResize("left", event)}
+          onKeyDown={(event) => resizePanelWithKeyboard("left", event)}
           onDoubleClick={() => setLeftWidth(310)}
         />
         <section className="flex min-h-0 flex-col">
@@ -1943,8 +2186,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           role="separator"
           aria-orientation="vertical"
           aria-label="调整右侧面板宽度"
+          aria-valuenow={rightWidth}
+          aria-valuemin={200}
+          aria-valuemax={460}
+          tabIndex={0}
           className="panel-resizer hidden lg:block"
           onPointerDown={(event) => startResize("right", event)}
+          onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
           onDoubleClick={() => setRightWidth(230)}
         />
         <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
@@ -1973,9 +2221,24 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onClick={() => setMobilePanel(false)}
         >
           <aside
+            ref={mobilePanelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="图像设置"
             className="panel flex h-full w-[min(90vw,350px)] flex-col"
             onClick={(event) => event.stopPropagation()}
           >
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--line)] px-4">
+              <b className="flex items-center gap-2 text-sm">
+                <SlidersHorizontal size={15} className="text-[var(--rose)]" /> 图像设置
+              </b>
+              <button
+                onClick={() => setMobilePanel(false)}
+                aria-label="关闭图像设置"
+              >
+                <X size={18} />
+              </button>
+            </div>
             {controls}
           </aside>
         </div>
@@ -1986,6 +2249,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onClick={() => setMobileToolsOpen(false)}
         >
           <aside
+            ref={mobileToolsRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="功能区"
             className="panel ml-auto flex h-full w-[min(90vw,350px)] flex-col"
             onClick={(event) => event.stopPropagation()}
           >
@@ -2412,21 +2679,35 @@ function UploadField({
   label,
   value,
   onChange,
+  onError,
 }: {
   label: string;
   value: Upload | null;
   onChange: (value: Upload | null) => void;
+  onError?: (message: string) => void;
 }) {
   async function read(file?: File) {
     if (!file) return;
-    if (!file.type.startsWith("image/") || file.size > 15 * 1024 * 1024) return;
-    const data = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
-    });
-    onChange({ data, name: file.name });
+    if (!file.type.startsWith("image/")) {
+      onError?.("仅支持 PNG/JPEG/WebP 图片");
+      return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      onError?.("图片不能超过 15MB");
+      return;
+    }
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      onChange({ data, name: file.name });
+      onError?.("");
+    } catch {
+      onError?.("图片读取失败，请重试");
+    }
   }
   return (
     <label className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs">

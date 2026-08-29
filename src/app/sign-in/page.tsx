@@ -12,17 +12,25 @@ type AuthResult = {
   message?: string;
   referralReward?: number;
   success?: boolean;
+  twoFactorRequired?: boolean;
 };
 
 async function readAuthResult(response: Response): Promise<AuthResult> {
   const body = await response.text();
-  if (!body) return {};
+  if (!body) throw new Error("服务器返回了空响应");
   try {
     const parsed = JSON.parse(body) as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as AuthResult) : {};
+    if (parsed && typeof parsed === "object") return parsed as AuthResult;
   } catch {
-    return {};
+    // 让调用方统一显示可理解的请求错误。
   }
+  throw new Error("服务器返回了无效响应");
+}
+
+function authRequestError(error: unknown, fallback: string): string {
+  if (error instanceof TypeError) return `${fallback}，请检查网络后重试`;
+  if (error instanceof Error) return error.message;
+  return `${fallback}，请稍后重试`;
 }
 
 // 标题乱序入场：150ms 内闪过随机字符后立即归位。
@@ -130,34 +138,44 @@ export default function SignInPage() {
     setLoading(true);
     setError("");
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: form.get("username"),
-        password: form.get("password"),
-      }),
-    });
-    const result = await response.json();
-    if (result.twoFactorRequired) setTwoFactor(true);
-    else if (response.ok) router.push("/image");
-    else setError(result.message || "登录失败");
-    setLoading(false);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: form.get("username"),
+          password: form.get("password"),
+        }),
+      });
+      const result = await readAuthResult(response);
+      if (result.twoFactorRequired) setTwoFactor(true);
+      else if (response.ok) router.push("/image");
+      else setError(result.message || "登录失败");
+    } catch (submitError) {
+      setError(authRequestError(submitError, "登录失败"));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError("");
-    const response = await fetch("/api/auth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    const result = await response.json();
-    if (response.ok) router.push("/image");
-    else setError(result.message || "令牌登录失败");
-    setLoading(false);
+    try {
+      const response = await fetch("/api/auth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const result = await readAuthResult(response);
+      if (response.ok) router.push("/image");
+      else setError(result.message || "令牌登录失败");
+    } catch (submitError) {
+      setError(authRequestError(submitError, "令牌登录失败"));
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function sendCode() {
@@ -219,15 +237,20 @@ export default function SignInPage() {
     event.preventDefault();
     setLoading(true);
     setError("");
-    const response = await fetch("/api/auth/2fa", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    const result = await response.json();
-    if (response.ok) router.push("/image");
-    else setError(result.message || "验证失败");
-    setLoading(false);
+    try {
+      const response = await fetch("/api/auth/2fa", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const result = await readAuthResult(response);
+      if (response.ok) router.push("/image");
+      else setError(result.message || "验证失败");
+    } catch (verifyError) {
+      setError(authRequestError(verifyError, "验证失败"));
+    } finally {
+      setLoading(false);
+    }
   }
 
   const notices = (

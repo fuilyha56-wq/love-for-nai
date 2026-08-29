@@ -82,8 +82,30 @@ html[data-theme="night"] .bg-\[\#faf9f5\] {
   background-color: #26292c;
 }
 html[data-theme="night"] .bg-\[\#fff8e8\].text-\[\#77531e\],
-html[data-theme="night"] .bg-amber-50 {
+html[data-theme="night"] .bg-amber-50,
+html[data-theme="night"] .bg-emerald-50,
+html[data-theme="night"] .bg-red-50 {
   color: #f0d9a8;
+}
+html[data-theme="night"] .bg-emerald-50.text-emerald-700,
+html[data-theme="night"] .bg-red-50.text-red-700 {
+  color: #a7d7c5;
+}
+html[data-theme="night"] .bg-\[\#f7f5ef\],
+html[data-theme="night"] .bg-\[\#fff3d6\],
+html[data-theme="night"] .nai-control-label {
+  background-color: #2b2f33;
+  color: var(--ink);
+}
+html[data-theme="night"] .bg-\[\#fff3d6\].text-\[\#8a6116\],
+html[data-theme="night"] .text-\[\#8a6116\] {
+  color: #f0d9a8;
+}
+html[data-theme="night"] .text-emerald-600 {
+  color: #6cc49f;
+}
+html[data-theme="night"] .text-red-600 {
+  color: #ef8a8a;
 }
 html[data-theme="night"] .text-\[var\(--muted\)\] {
   color: var(--muted);
@@ -387,6 +409,15 @@ html[data-theme="night"] .field::placeholder {
   font-size: 12px;
   font-weight: 700;
 }
+html[data-theme="night"] .mask-editor-topbar,
+html[data-theme="night"] .mask-editor-bottombar,
+html[data-theme="night"] .mask-editor button {
+  background-color: #24282c;
+}
+html[data-theme="night"] .mask-editor button:hover,
+html[data-theme="night"] .mask-editor button.is-active {
+  background-color: #2b2f33;
+}
 
 .mask-editor-tools input {
   width: 130px;
@@ -434,10 +465,18 @@ html[data-theme="night"] .field::placeholder {
     grid-template-rows: auto minmax(0, 1fr) 52px;
   }
   .mask-editor-topbar {
+    flex-wrap: wrap;
     align-items: stretch;
+  }
+  .mask-editor-tools {
+    flex-wrap: wrap;
   }
   .mask-editor-tools label {
     min-width: 0;
+    flex: 1;
+  }
+  .mask-editor-tools input {
+    width: 100%;
   }
   .mask-editor-tools label span {
     display: none;
@@ -773,7 +812,8 @@ html[data-theme="night"] .field::placeholder {
   white-space: nowrap;
 }
 .popup-select-option:hover,
-.popup-select-option:focus-visible {
+.popup-select-option:focus-visible,
+.popup-select-option.is-active {
   background: var(--rose);
   color: #fff;
   outline: none;
@@ -792,7 +832,8 @@ html[data-theme="night"] .field::placeholder {
   opacity: 0.72;
 }
 .popup-select-option:hover .popup-select-description,
-.popup-select-option:focus-visible .popup-select-description {
+.popup-select-option:focus-visible .popup-select-description,
+.popup-select-option.is-active .popup-select-description {
   opacity: 0.9;
 }
 .feature-link {
@@ -1020,5 +1061,6 @@ html[data-theme="night"] .field::placeholder {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }

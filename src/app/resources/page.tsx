@@ -12,7 +12,7 @@ import {
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PopupSelect } from "@/app/ui/popup-select";
 import {
   readJson,
@@ -50,6 +50,10 @@ const EXPIRE_PRESETS = [
 function formatStamp(seconds?: number): string {
   if (!seconds) return "-";
   return new Date(seconds * 1000).toLocaleString("zh-CN");
+}
+
+function formatDollars(value?: number | null): string {
+  return `$${(Number(value ?? 0) / 500000).toFixed(2)}`;
 }
 
 // new-api 约定：-1 表示永不过期。
@@ -101,46 +105,66 @@ export default function ResourcesPage() {
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [working, setWorking] = useState(false);
+  const [modelLoadState, setModelLoadState] = useState<
+    "loading" | "loaded" | "error"
+  >("loading");
+  const [modelLoadError, setModelLoadError] = useState("");
+  const [tokenLoadState, setTokenLoadState] = useState<
+    "loading" | "loaded" | "error"
+  >("loading");
+  const [tokenLoadError, setTokenLoadError] = useState("");
   const [revealed, setRevealed] = useState<{ id: number; key: string } | null>(
     null,
   );
 
-  useEffect(() => {
-    fetch("/api/models", { cache: "no-store" })
-      .then((response) =>
-        readJson<{ items?: ModelItem[] }>(response, "读取模型失败"),
-      )
-      .then((result) => setModels(result.items || []))
-      .catch((error) => {
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else setMessage(error instanceof Error ? error.message : "读取模型失败");
-      });
-    fetch("/api/keys", { cache: "no-store" })
-      .then((response) =>
-        readJson<{ items?: TokenItem[]; groups?: GroupItem[] }>(
-          response,
-          "读取密钥失败",
-        ),
-      )
-      .then((result) => {
-        setTokens(result.items || []);
-        const list = result.groups || [];
-        setGroups(list);
-        if (list.length && !list.some((item) => item.name === "default"))
-          setGroup(list[0].name);
-        else setGroup("default");
-      })
-      .catch((error) => {
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else setMessage(error instanceof Error ? error.message : "读取密钥失败");
-      });
+  const loadModels = useCallback(async () => {
+    setModelLoadState("loading");
+    setModelLoadError("");
+    try {
+      const response = await fetch("/api/models", { cache: "no-store" });
+      const result = await readJson<{ items?: ModelItem[] }>(
+        response,
+        "读取模型失败",
+      );
+      setModels(result.items || []);
+      setModelLoadState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取模型失败";
+      setModelLoadError(nextError);
+      setModelLoadState("error");
+    }
+  }, []);
+  const loadTokens = useCallback(async () => {
+    setTokenLoadState("loading");
+    setTokenLoadError("");
+    try {
+      const response = await fetch("/api/keys", { cache: "no-store" });
+      const result = await readJson<{ items?: TokenItem[]; groups?: GroupItem[] }>(
+        response,
+        "读取密钥失败",
+      );
+      setTokens(result.items || []);
+      const list = result.groups || [];
+      setGroups(list);
+      if (list.length && !list.some((item) => item.name === "default"))
+        setGroup(list[0].name);
+      else setGroup("default");
+      setTokenLoadState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取密钥失败";
+      setTokenLoadError(nextError);
+      setTokenLoadState("error");
+    }
   }, []);
 
-  async function loadTokens() {
-    const response = await fetch("/api/keys", { cache: "no-store" });
-    const result = await readJson<{ items?: TokenItem[] }>(response, "读取密钥失败");
-    setTokens(result.items || []);
-  }
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      loadModels();
+      loadTokens();
+    });
+  }, [loadModels, loadTokens]);
 
   async function create(event: React.FormEvent) {
     event.preventDefault();
@@ -264,11 +288,29 @@ export default function ResourcesPage() {
               图像 {imageModels.length} · 助手 {assistantModels.length}
             </p>
           </div>
-          {!models.length ? (
+          {!models.length && modelLoadState === "loading" && (
             <p className="py-8 text-center text-sm text-[var(--muted)]">
               正在读取当前分组可用模型…
             </p>
-          ) : (
+          )}
+          {!models.length && modelLoadState === "error" && (
+            <div className="my-4 rounded border border-[#e4c991] bg-[#fff8e8] p-4 text-center text-sm text-[#77531e]">
+              <p>{modelLoadError || "读取模型失败"}</p>
+              <button
+                type="button"
+                onClick={() => void loadModels()}
+                className="mt-3 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {!models.length && modelLoadState === "loaded" && (
+            <p className="py-8 text-center text-sm text-[var(--muted)]">
+              当前分组暂无可用模型。
+            </p>
+          )}
+          {models.length > 0 && (
             <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {models.map((item) => (
                 <div
@@ -442,9 +484,9 @@ export default function ResourcesPage() {
                       {item.group ? ` · 分组 ${item.group}` : ""}
                       {item.unlimited_quota
                         ? " · 无限额度"
-                        : ` · 剩余 $${((item.remain_quota ?? 0) / 500000).toFixed(2)}`}
+                        : ` · 剩余 ${formatDollars(item.remain_quota)}`}
                       {item.used_quota != null
-                        ? ` · 已用 $${(item.used_quota / 500000).toFixed(2)}`
+                        ? ` · 已用 ${formatDollars(item.used_quota)}`
                         : ""}
                     </p>
                     <p className="mt-0.5 text-[10px] text-[var(--muted)]">
@@ -466,6 +508,7 @@ export default function ResourcesPage() {
                       disabled={working}
                       className="key-action"
                       title="复制密钥"
+                      aria-label="复制密钥"
                     >
                       <Copy size={15} />
                     </button>
@@ -475,6 +518,7 @@ export default function ResourcesPage() {
                       disabled={working}
                       className={`key-action ${item.status === 1 ? "" : "opacity-50"}`}
                       title={item.status === 1 ? "停用密钥" : "启用密钥"}
+                      aria-label={item.status === 1 ? "停用密钥" : "启用密钥"}
                     >
                       <Power size={15} />
                     </button>
@@ -484,6 +528,7 @@ export default function ResourcesPage() {
                       disabled={working}
                       className="key-action text-[var(--rose)]"
                       title="删除密钥"
+                      aria-label="删除密钥"
                     >
                       <Trash2 size={15} />
                     </button>
@@ -509,9 +554,26 @@ export default function ResourcesPage() {
               </div>
             ))}
           </div>
-          {!tokens.length && !expired && (
+          {!tokens.length && tokenLoadState === "loading" && (
             <p className="py-10 text-center text-sm text-[var(--muted)]">
-              {message ? "" : "正在读取 API 密钥…"}
+              正在读取 API 密钥…
+            </p>
+          )}
+          {!tokens.length && tokenLoadState === "error" && (
+            <div className="my-5 rounded border border-[#e4c991] bg-[#fff8e8] p-4 text-center text-sm text-[#77531e]">
+              <p>{tokenLoadError || "读取密钥失败"}</p>
+              <button
+                type="button"
+                onClick={() => void loadTokens()}
+                className="mt-3 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {!tokens.length && tokenLoadState === "loaded" && (
+            <p className="py-10 text-center text-sm text-[var(--muted)]">
+              暂无 API 密钥。创建一个密钥即可开始使用。
             </p>
           )}
         </article>

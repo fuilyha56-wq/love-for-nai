@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ImageIcon, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   readJson,
   SessionExpiredError,
@@ -12,19 +12,32 @@ import {
 type ModelItem = { id: string; kind: string };
 export default function ModelsPage() {
   const [items, setItems] = useState<ModelItem[]>([]);
-  const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
-  useEffect(() => {
-    fetch("/api/models", { cache: "no-store" })
-      .then((response) =>
-        readJson<{ items?: ModelItem[] }>(response, "读取模型失败"),
-      )
-      .then((result) => setItems(result.items || []))
-      .catch((error) => {
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else setMessage(error instanceof Error ? error.message : "读取模型失败");
-      });
+  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">(
+    "loading",
+  );
+  const [loadError, setLoadError] = useState("");
+  const load = useCallback(async () => {
+    setLoadState("loading");
+    setLoadError("");
+    try {
+      const response = await fetch("/api/models", { cache: "no-store" });
+      const result = await readJson<{ items?: ModelItem[] }>(
+        response,
+        "读取模型失败",
+      );
+      setItems(result.items || []);
+      setLoadState("loaded");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      const nextError = error instanceof Error ? error.message : "读取模型失败";
+      setLoadError(nextError);
+      setLoadState("error");
+    }
   }, []);
+  useEffect(() => {
+    void Promise.resolve().then(load);
+  }, [load]);
   return (
     <main className="min-h-screen bg-[var(--paper)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
@@ -42,11 +55,6 @@ export default function ModelsPage() {
       </header>
       <section className="mx-auto max-w-6xl p-4 sm:p-8">
         {expired && <SessionExpiredNotice message={expired} />}
-        {message && (
-          <div className="mb-4 rounded border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
-            {message}
-          </div>
-        )}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <article
@@ -67,9 +75,26 @@ export default function ModelsPage() {
             </article>
           ))}
         </div>
-        {!items.length && !message && !expired && (
+        {!items.length && loadState === "loading" && (
           <p className="py-20 text-center text-sm text-[var(--muted)]">
             正在读取当前分组可用模型…
+          </p>
+        )}
+        {!items.length && loadState === "error" && (
+          <div className="my-5 rounded border border-[#e4c991] bg-[#fff8e8] p-4 text-center text-sm text-[#77531e]">
+            <p>{loadError || "读取模型失败"}</p>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="mt-3 h-8 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
+            >
+              重试
+            </button>
+          </div>
+        )}
+        {!items.length && loadState === "loaded" && !expired && (
+          <p className="py-20 text-center text-sm text-[var(--muted)]">
+            当前分组暂无可用模型。
           </p>
         )}
       </section>
