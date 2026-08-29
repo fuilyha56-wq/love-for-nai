@@ -32,9 +32,9 @@ export type AssistantConversation = {
   tagPool: ConversationTag[];
 };
 
-// 轮次与标签池上限：防止单用户文件无限增长。
+// 轮次上限：防止单用户文件无限增长。标签池不做限制——
+// 模型能从对话历史里掌握已有标签数量，无需人为截断。
 const MAX_TURNS = 40;
-const MAX_POOL = 200;
 // 发给模型的历史轮次上限：控制 token 预算。
 export const MODEL_HISTORY_TURNS = 8;
 
@@ -126,7 +126,7 @@ export async function appendConversationTurn(
       conversation.tagPool.map((tag) => [tag.name, tag]),
     );
     for (const tag of turn.tags) byName.set(tag.name, tag);
-    conversation.tagPool = [...byName.values()].slice(-MAX_POOL);
+    conversation.tagPool = [...byName.values()];
     await writeConversationFile(userId, conversation);
     return conversation;
   });
