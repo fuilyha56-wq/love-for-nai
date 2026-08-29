@@ -2180,11 +2180,16 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ))}
               </div>
             ) : (
-              <div className="absolute right-4 top-3 max-w-[60%] text-right">
-                <p className="font-[var(--font-display)] text-lg leading-6">
+              <div className="pointer-events-none flex max-w-md flex-col items-center px-5 text-center">
+                <WandSparkles
+                  className="mb-4 text-[var(--rose)]"
+                  size={36}
+                  strokeWidth={1.5}
+                />
+                <h2 className="font-[var(--font-display)] text-xl leading-7">
                   画布等待你的想象
-                </p>
-                <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                </h2>
+                <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
                   选择工具、配置参数并提交。
                 </p>
               </div>
