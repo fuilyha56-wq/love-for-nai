@@ -5,6 +5,8 @@ import {
   Check,
   CircleHelp,
   Grid3X3,
+  History,
+  Image as ImageIcon,
   ImagePlus,
   Palette,
   RotateCcw,
@@ -15,7 +17,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
 import {
   isSafeHexColor,
@@ -77,6 +79,149 @@ function compressImage(file: File): Promise<Blob> {
     };
     image.src = sourceUrl;
   });
+}
+
+type HistoryImage = {
+  id: string;
+  createdAt: string;
+  imageUrl: string;
+  parameters: Record<string, string | number>;
+};
+
+// 从历史接口把图片拉成本地 Blob，再走同一套压缩+IndexedDB 落盘。
+async function importHistoryBackground(
+  item: HistoryImage,
+  onProgress: (text: string) => void,
+): Promise<Blob> {
+  onProgress("正在读取历史图片…");
+  const response = await fetch(item.imageUrl, { cache: "no-store" });
+  if (!response.ok) throw new Error("历史图片读取失败，请重新登录后重试");
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) throw new Error("历史记录不是有效的图片");
+  onProgress("正在压缩并保存…");
+  return compressImage(new File([blob], "history.png", { type: blob.type }));
+}
+
+function HistoryPickerDialog({
+  onClose,
+  onPick,
+  setMessage,
+}: {
+  onClose: () => void;
+  onPick: (item: HistoryImage) => void;
+  setMessage: (text: string) => void;
+}) {
+  const [items, setItems] = useState<HistoryImage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [picked, setPicked] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/history", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const result = (await response.json()) as {
+          items?: HistoryImage[];
+          message?: string;
+        };
+        if (!response.ok) throw new Error(result.message || "读取历史失败");
+        setItems(result.items || []);
+      })
+      .catch((cause) => {
+        if (cause instanceof Error && cause.name === "AbortError") return;
+        setError(cause instanceof Error ? cause.message : "读取历史失败");
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, []);
+
+  return (
+    <div
+      className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-[var(--line)] bg-[#fffefa] shadow-[0_24px_80px_rgba(50,45,40,.25)]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[var(--line)] bg-[#f5f3ed] px-5 py-4">
+          <div className="flex items-center gap-2">
+            <History size={17} className="text-[var(--rose)]" />
+            <b>从历史导入背景</b>
+          </div>
+          <button type="button" onClick={onClose} className="text-sm text-[var(--muted)] hover:text-[var(--ink)]">
+            关闭
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {loading ? (
+            <p className="py-10 text-center text-sm text-[var(--muted)]">正在读取历史…</p>
+          ) : error ? (
+            <div className="py-10 text-center">
+              <p className="text-sm text-[var(--rose)]">{error}</p>
+              <p className="mt-2 text-xs text-[var(--muted)]">需要登录后才能读取生成历史。</p>
+            </div>
+          ) : items.length ? (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setPicked(item.id)}
+                  className={`group relative overflow-hidden rounded-md border transition-colors ${
+                    picked === item.id
+                      ? "border-[var(--rose)] ring-2 ring-[var(--rose)]/30"
+                      : "border-[var(--line)] hover:border-[var(--rose)]"
+                  }`}
+                  aria-pressed={picked === item.id}
+                >
+                  <span className="block aspect-[4/5] bg-[#ebe9e2]">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={item.imageUrl}
+                      alt={item.parameters.prompt ? String(item.parameters.prompt).slice(0, 40) : "历史生成图片"}
+                      className="h-full w-full object-cover"
+                      loading="lazy"
+                    />
+                  </span>
+                  {picked === item.id && (
+                    <span className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full bg-[var(--rose)] text-white" aria-hidden="true">
+                      <Check size={13} strokeWidth={3} />
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="py-10 text-center">
+              <ImageIcon size={30} className="mx-auto text-[var(--muted)]" />
+              <p className="mt-3 text-sm text-[var(--muted)]">还没有生成历史，先去工作台生成几张图吧。</p>
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-[var(--line)] bg-[#f5f3ed] px-5 py-3.5">
+          <button type="button" onClick={onClose} className="h-9 rounded border border-[var(--line)] bg-white px-4 text-sm font-semibold">
+            取消
+          </button>
+          <button
+            type="button"
+            disabled={!picked}
+            onClick={() => {
+              const item = items.find((entry) => entry.id === picked);
+              if (!item) {
+                setMessage("请先选择一张历史图片");
+                return;
+              }
+              onPick(item);
+            }}
+            className="flex h-9 items-center gap-2 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            使用这张
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function SettingHeading({
@@ -183,6 +328,7 @@ function SettingsPageContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const [customAccentInput, setCustomAccentInput] = useState(
     preferences.customAccent || "",
   );
@@ -238,6 +384,22 @@ function SettingsPageContent() {
       setMessage("本地背景已清除。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "背景清除失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importFromHistory(item: HistoryImage) {
+    setShowHistoryPicker(false);
+    setBusy(true);
+    setMessage("");
+    try {
+      const blob = await importHistoryBackground(item, setMessage);
+      await saveBackground(blob);
+      updatePreferences({ backgroundEnabled: true });
+      setMessage("已从历史导入背景，保存在本机浏览器中，不会上传服务器。");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "历史背景导入失败");
     } finally {
       setBusy(false);
     }
@@ -489,6 +651,14 @@ function SettingsPageContent() {
                 >
                   <Upload size={15} /> {busy ? "处理中…" : "上传背景"}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setShowHistoryPicker(true)}
+                  disabled={busy}
+                  className="flex h-10 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:border-[var(--rose)] disabled:opacity-50"
+                >
+                  <History size={15} /> 从历史导入
+                </button>
                 <input
                   ref={inputRef}
                   type="file"
@@ -580,6 +750,13 @@ function SettingsPageContent() {
           </button>
         </div>
       </section>
+      {showHistoryPicker && (
+        <HistoryPickerDialog
+          onClose={() => setShowHistoryPicker(false)}
+          onPick={importFromHistory}
+          setMessage={setMessage}
+        />
+      )}
     </main>
   );
 }
