@@ -10,6 +10,14 @@ import {
   findAssistantJob,
   type AssistantJob,
 } from "@/lib/assistant-jobs";
+import {
+  appendConversationTurn,
+  clearConversation,
+  MODEL_HISTORY_TURNS,
+  readConversation,
+  type ConversationTag,
+  type ConversationTurn,
+} from "@/lib/assistant-conversations";
 
 type AssistantPayload = {
   model?: string;
@@ -99,9 +107,11 @@ function mergeTagsIntoPrompt(
   return base ? `${base}, ${missing.join(", ")}` : missing.join(", ");
 }
 
-// 后台执行：结果写入任务对象，客户端通过 GET 轮询取步骤与最终建议。
+// 后台执行：结果写入任务对象，客户端通过 GET 轮询取步骤与最终建议；
+// 成功后把本轮（含校验过的标签）落盘到用户会话，供下一次对话延续。
 async function runJob(
   job: AssistantJob,
+  userId: number,
   key: string,
   model: string,
   request: string,
@@ -109,12 +119,18 @@ async function runJob(
   image: string,
 ) {
   try {
+    // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
+    const conversation = await readConversation(userId);
+    const history = conversation.turns
+      .slice(-MODEL_HISTORY_TURNS)
+      .map((turn) => ({ request: turn.request, answer: turn.answer }));
     const { content } = await runTagAgent(key, model, request, context, 8, {
       // 每步实时写入 job，客户端轮询立即能看到检索轨迹。
       onStep: (step) => {
         job.steps.push(step);
       },
       image: image || undefined,
+      history,
     });
     const suggestion = parseTagSuggestion(content);
     const candidates = [...new Set(suggestion.tags)];
@@ -142,6 +158,26 @@ async function runJob(
         .map((item) => item.candidate),
     };
     job.status = "done";
+
+    // 落盘本轮对话；失败不影响返回结果（下次对话少一段历史而已）。
+    try {
+      const turn: ConversationTurn = {
+        id: job.id,
+        request,
+        answer: content,
+        createdAt: new Date().toISOString(),
+        prompt: job.result.suggestion.prompt,
+        negativePrompt: job.result.suggestion.negativePrompt,
+        parameters: job.result.suggestion.parameters,
+        tags: job.result.suggestion.tags as ConversationTag[],
+        rejectedTags: job.result.rejectedTags,
+        unverifiedTags: job.result.unverifiedTags,
+        steps: job.steps,
+      };
+      await appendConversationTurn(userId, turn);
+    } catch {
+      // 持久化失败静默处理。
+    }
   } catch (error) {
     job.message =
       error instanceof Error ? error.message : "智能标签助手调用失败";
@@ -187,7 +223,7 @@ export async function POST(request: Request) {
         ? body.image
         : "";
     const job = createAssistantJob(session.userId);
-    void runJob(job, key, body.model, body.request, {
+    void runJob(job, session.userId, key, body.model, body.request, {
       currentPrompt: body.currentPrompt,
       currentNegativePrompt: body.currentNegativePrompt,
     }, image);
@@ -211,7 +247,16 @@ export async function GET(request: Request) {
       { status: 401 },
     );
   const url = new URL(request.url);
-  const job = findAssistantJob(session.userId, url.searchParams.get("job") || "");
+  const jobId = url.searchParams.get("job");
+  // 无 job 参数：返回持久化对话（历史轮次 + 累积标签池）。
+  if (!jobId) {
+    const conversation = await readConversation(session.userId);
+    return NextResponse.json({
+      turns: [...conversation.turns].reverse(),
+      tagPool: conversation.tagPool,
+    });
+  }
+  const job = findAssistantJob(session.userId, jobId);
   if (!job)
     return NextResponse.json(
       { message: "任务不存在或已过期，请重新发起" },
@@ -225,4 +270,20 @@ export async function GET(request: Request) {
       { status: 200 },
     );
   return NextResponse.json({ status: "done", steps: job.steps, ...job.result });
+}
+
+// 清空当前用户的助手对话记录（历史轮次 + 累积标签池）。
+export async function DELETE() {
+  const session = await getSession();
+  if (!session)
+    return NextResponse.json(
+      { message: "请先登录后使用智能标签助手", sessionExpired: true },
+      { status: 401 },
+    );
+  try {
+    await clearConversation(session.userId);
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ message: "对话记录清空失败" }, { status: 500 });
+  }
 }

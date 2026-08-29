@@ -37,6 +37,9 @@ ${toolCatalog()}
 4. 用 search_danbooru_tags 找候选标签；不确定含义时用 read_danbooru_wiki 确认；最终标签用 verify_danbooru_tag 校验存在性。
 5. 优先选图片数较多的通用标签，避免生僻或已废弃标签。
 
+这是一次延续对话：消息历史中包含此前轮次的需求与最终 JSON 结论。
+延续对话时参考已确认的标签，不要重复检索相同的标签，除非用户要求重新验证。
+
 每次回复只能输出一个 JSON 对象，不要 Markdown 或解释文字。
 调用工具时输出：
 {"action":"工具名","args":{"参数名":"参数值"}}
@@ -112,7 +115,13 @@ export async function runTagAgent(
   userRequest: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string },
   maxRounds = 8,
-  options?: { onStep?: (step: AgentStep) => void; image?: string },
+  options?: {
+    onStep?: (step: AgentStep) => void;
+    image?: string;
+    // 之前轮次的 {需求, 最终 JSON}，注入为 user/assistant 消息对，
+    // 让模型带着历史上下文延续对话。
+    history?: Array<{ request: string; answer: string }>;
+  },
 ): Promise<{ content: string; steps: AgentStep[] }> {
   const baseUrl = newApiBaseUrl();
   const requestText = JSON.stringify({
@@ -134,6 +143,24 @@ export async function runTagAgent(
         }
       : { role: "user", content: requestText },
   ];
+  // 历史对话插在系统提示之后、本轮请求之前，模型可查看之前的上下文并延续结论。
+  const historyBase = 1;
+  for (const turn of options?.history ?? []) {
+    if (!turn.request || !turn.answer) continue;
+    messages.splice(historyBase, 0, {
+      role: "user",
+      content: JSON.stringify({
+        request: turn.request,
+        currentPrompt: "",
+        currentNegativePrompt: "",
+        hasImage: false,
+      }),
+    });
+    messages.splice(historyBase + 1, 0, {
+      role: "assistant",
+      content: turn.answer,
+    });
+  }
   const steps: AgentStep[] = [];
 
   for (let round = 0; round < maxRounds; round += 1) {

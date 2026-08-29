@@ -107,6 +107,24 @@ type AssistantSuggestion = {
 };
 type AgentStep = { tool: string; query: string; ok: boolean; summary?: string };
 
+// 持久化对话：历史轮次（新→旧）与跨轮次累积的标签池。
+type ConversationTurnUi = {
+  id: string;
+  request: string;
+  createdAt: string;
+  prompt: string;
+  negativePrompt: string;
+  parameters: Record<string, unknown>;
+  tags: DanbooruTag[];
+  rejectedTags: string[];
+  unverifiedTags: string[];
+  steps: AgentStep[];
+};
+type ConversationUi = {
+  turns: ConversationTurnUi[];
+  tagPool: DanbooruTag[];
+};
+
 // 检索过程里展示用的工具中文名。
 const agentToolLabels: Record<string, string> = {
   search_danbooru_tags: "检索 Danbooru",
@@ -274,6 +292,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
+  const [conversation, setConversation] = useState<ConversationUi>({
+    turns: [],
+    tagPool: [],
+  });
+  const [conversationOpen, setConversationOpen] = useState(false);
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
@@ -492,6 +515,54 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
+  useEffect(() => {
+    // 登出态清空对话交给微任务，避免 effect 内同步 setState。
+    if (!signedIn) {
+      void Promise.resolve().then(() =>
+        setConversation({ turns: [], tagPool: [] }),
+      );
+      return;
+    }
+    // 恢复服务端持久化的对话：历史轮次 + 跨轮次标签池。
+    fetch("/api/assistant/tags", { cache: "no-store" })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message);
+        setConversation({
+          turns: Array.isArray(result.turns) ? result.turns : [],
+          tagPool: Array.isArray(result.tagPool) ? result.tagPool : [],
+        });
+      })
+      .catch(() => undefined);
+  }, [signedIn]);
+
+  async function refreshConversation() {
+    try {
+      const response = await fetch("/api/assistant/tags", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) return;
+      setConversation({
+        turns: Array.isArray(result.turns) ? result.turns : [],
+        tagPool: Array.isArray(result.tagPool) ? result.tagPool : [],
+      });
+    } catch {
+      // 刷新失败保留现有会话。
+    }
+  }
+
+  async function clearConversationHistory() {
+    const response = await fetch("/api/assistant/tags", { method: "DELETE" });
+    const result = await response.json();
+    if (!response.ok) {
+      setNotice(result.message || "对话记录清空失败");
+      return;
+    }
+    setConversation({ turns: [], tagPool: [] });
+    setAssistantSuggestion(null);
+    setAgentSteps([]);
+    setNotice("助手对话记录已清空。");
+  }
+
   async function askTagAssistant(request: string) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
@@ -529,6 +600,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           setAgentSteps(progress.steps);
         if (progress.status === "done") {
           setAssistantSuggestion(progress.suggestion);
+          // 本轮已落盘，刷新历史与标签池。
+          void refreshConversation();
           break;
         }
         if (progress.status === "error")
@@ -1229,9 +1302,36 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>
+              {signedIn && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
+                <span className="ml-auto flex items-center gap-2 text-[10px]">
+                  <button
+                    type="button"
+                    onClick={() => setConversationOpen((open) => !open)}
+                    className="font-semibold text-[var(--muted)] hover:text-[var(--rose)]"
+                  >
+                    {conversationOpen ? "收起对话" : `对话 ${conversation.turns.length} 轮`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "确定清空助手对话记录？历史轮次与累积标签都会删除。",
+                        )
+                      )
+                        void clearConversationHistory();
+                    }}
+                    className="font-semibold text-[var(--muted)] hover:text-red-600"
+                    title="删除全部对话记录"
+                  >
+                    清空
+                  </button>
+                </span>
+              )}
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
               模型会检索 Danbooru 与相关概念，并整理、校验生成标签。
+              {signedIn && " 多轮对话共享上下文，已校验标签会持续保留。"}
             </p>
             {signedIn && assistantModels.length > 0 && (
               <div className="mt-3">
@@ -1242,6 +1342,70 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   ariaLabel="智能助手模型"
                   searchable
                 />
+              </div>
+            )}
+            {conversationOpen && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
+              <div className="mt-3 space-y-3">
+                {!!conversation.tagPool.length && (
+                  <div className="rounded border border-[var(--line)] bg-white p-2.5">
+                    <b className="text-[11px]">已保留标签 · {conversation.tagPool.length}</b>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {conversation.tagPool.map((tag) => (
+                        <button
+                          key={tag.name}
+                          type="button"
+                          onClick={() => appendTag(tag.name)}
+                          className="rounded bg-[#f1eee7] px-2 py-1 text-[10px] hover:bg-[#e8ddda]"
+                          title={`${tag.categoryName} · ${tag.postCount.toLocaleString("zh-CN")} 张 · 点击追加到提示词`}
+                        >
+                          {tag.displayName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="max-h-80 space-y-2 overflow-y-auto">
+                  {conversation.turns.map((turn) => (
+                    <div
+                      key={turn.id}
+                      className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="min-w-0 break-words text-[11px] font-semibold">
+                          {turn.request}
+                        </p>
+                        <time className="shrink-0 text-[10px] text-[var(--muted)]">
+                          {new Date(turn.createdAt).toLocaleString("zh-CN", {
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </time>
+                      </div>
+                      {!!turn.tags.length && (
+                        <div className="mt-1.5 flex flex-wrap gap-1">
+                          {turn.tags.map((tag) => (
+                            <button
+                              key={tag.name}
+                              type="button"
+                              onClick={() => appendTag(tag.name)}
+                              className="rounded bg-white px-1.5 py-0.5 text-[10px] hover:bg-[#f1eee7]"
+                              title="点击追加到提示词"
+                            >
+                              {tag.displayName}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {turn.prompt && (
+                        <p className="mt-1.5 line-clamp-2 break-words text-[10px] leading-4 text-[var(--muted)]">
+                          {turn.prompt}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             <form

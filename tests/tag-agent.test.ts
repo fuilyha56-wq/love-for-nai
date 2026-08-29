@@ -91,4 +91,42 @@ describe("runTagAgent budgets", () => {
     ]);
     expect(runTool).toHaveBeenCalledTimes(1);
   });
+
+  it("injects conversation history before the current request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        choices: [
+          {
+            message: {
+              content: '{"tags":["white_hair","blue_dress"]}',
+            },
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+
+    await runTagAgent("key", "model", "加上蓝色裙子", {}, 1, {
+      history: [
+        { request: "白发少女", answer: '{"tags":["white_hair"]}' },
+        // 空轮次应被跳过。
+        { request: "", answer: "" },
+      ],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    ) as { messages: Array<{ role: string; content: string }> };
+    // system → 历史 user/assistant 对（空轮次跳过）→ 本轮 user。
+    expect(body.messages).toHaveLength(4);
+    expect(body.messages[0].role).toBe("system");
+    expect(body.messages[1].role).toBe("user");
+    expect(body.messages[1].content).toContain("白发少女");
+    expect(body.messages[2].role).toBe("assistant");
+    expect(body.messages[2].content).toBe('{"tags":["white_hair"]}');
+    expect(body.messages[3].role).toBe("user");
+    expect(body.messages[3].content).toContain("加上蓝色裙子");
+  });
 });
