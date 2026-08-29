@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  deleteRemoteHistoryImage,
+  putRemoteHistoryImage,
+} from "@/lib/remote-history";
 
 export type GenerationParameters = {
   operation: string;
@@ -25,6 +29,8 @@ export type HistoryItem = {
   saved: boolean;
   parameters: GenerationParameters;
   usage: unknown;
+  // 图片实体存放在远程二级存储（本地已无文件），读取时走远程接口。
+  remote?: boolean;
 };
 
 const historyRoot = () =>
@@ -87,6 +93,12 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
   ) as GenerationParameters;
 }
 
+// 历史分层保留：最新 LOCAL_HISTORY_LIMIT 张留在主服务器磁盘；
+// 更旧的最多 REMOTE_HISTORY_LIMIT 张转存远程二级存储；超过两层总量
+// 的最旧条目连同远程文件一起删除。
+const LOCAL_HISTORY_LIMIT = 40;
+const REMOTE_HISTORY_LIMIT = 60;
+
 export async function saveHistory(
   userId: number,
   body: Record<string, unknown>,
@@ -104,10 +116,8 @@ export async function saveHistory(
       const extension = match[1] === "jpeg" ? "jpg" : match[1];
       const id = randomUUID();
       const fileName = `${id}.${extension}`;
-      await writeFile(
-        path.join(userDirectory(userId), fileName),
-        Buffer.from(match[2], "base64"),
-      );
+      const buffer = Buffer.from(match[2], "base64");
+      await writeFile(path.join(userDirectory(userId), fileName), buffer);
       created.push({
         id,
         createdAt: new Date().toISOString(),
@@ -120,6 +130,7 @@ export async function saveHistory(
     const merged = [...created, ...(await readIndex(userId))];
     let unsavedSeen = 0;
     const retained: HistoryItem[] = [];
+    const toRemote: HistoryItem[] = [];
     const expired: HistoryItem[] = [];
     for (const item of merged) {
       if (item.saved) {
@@ -127,17 +138,46 @@ export async function saveHistory(
         continue;
       }
       unsavedSeen += 1;
-      if (unsavedSeen <= 10) retained.push(item);
-      else expired.push(item);
+      if (unsavedSeen <= LOCAL_HISTORY_LIMIT && !item.remote) {
+        retained.push(item);
+      } else if (
+        unsavedSeen <= LOCAL_HISTORY_LIMIT + REMOTE_HISTORY_LIMIT &&
+        !item.remote
+      ) {
+        // 本地层留不下但仍在远程层配额内：文件转存远程，索引保留。
+        const localFile = path.join(userDirectory(userId), item.imagePath);
+        const data = await readFile(localFile).catch(() => null);
+        const uploadOk = data
+          ? await putRemoteHistoryImage(userId, item.imagePath, data)
+          : false;
+        if (uploadOk) {
+          await unlink(localFile).catch(() => undefined);
+          toRemote.push({ ...item, remote: true });
+        } else {
+          // 远程不可用时退回旧行为：直接过期删除，不阻塞生成流程。
+          expired.push(item);
+        }
+      } else if (unsavedSeen <= LOCAL_HISTORY_LIMIT + REMOTE_HISTORY_LIMIT) {
+        // 已在远程层的条目直接沿用（文件早已在远程）。
+        toRemote.push(item);
+      } else {
+        expired.push(item);
+      }
     }
-    const referenced = new Set(retained.map((item) => item.imagePath));
+    // 已在远程层、但被新一轮挤出总量配额的旧条目：删远程文件。
+    const remoteRetained = new Set(toRemote.map((item) => item.imagePath));
     for (const item of expired) {
-      if (referenced.has(item.imagePath)) continue;
+      if (item.remote && !remoteRetained.has(item.imagePath)) {
+        await deleteRemoteHistoryImage(userId, item.imagePath);
+        continue;
+      }
       await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
         () => undefined,
       );
     }
-    await writeIndex(userId, retained);
+    // 本地索引：保留 + 新转远程的条目，顺序保持最新在前。
+    const remoteIndex = toRemote.map((item) => item);
+    await writeIndex(userId, [...retained, ...remoteIndex]);
     return created;
   });
 }
@@ -156,10 +196,14 @@ export async function deleteHistory(userId: number, id: string) {
     const item = items.find((entry) => entry.id === id);
     if (!item) return false;
     const remaining = items.filter((entry) => entry.id !== id);
-    if (!remaining.some((entry) => entry.imagePath === item.imagePath))
-      await unlink(path.join(userDirectory(userId), item.imagePath)).catch(
-        () => undefined,
-      );
+    if (!remaining.some((entry) => entry.imagePath === item.imagePath)) {
+      if (item.remote)
+        await deleteRemoteHistoryImage(userId, item.imagePath);
+      else
+        await unlink(
+          path.join(userDirectory(userId), item.imagePath),
+        ).catch(() => undefined);
+    }
     await writeIndex(userId, remaining);
     return true;
   });
