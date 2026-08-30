@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { refundAff, trySpendAff } from "@/lib/aff";
+import {
+  refundImageCredits,
+  trySpendImageCredits,
+  type ImageCreditCharge,
+} from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
@@ -41,12 +45,11 @@ export async function POST(request: Request) {
     "seed",
   ];
   const gateway = affGateway();
-  const upstreamBase = gateway
-    ? { baseUrl: gateway.baseUrl }
-    : { baseUrl: newApiBaseUrl() };
-  let affCost = 0;
+  let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";
+  let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
+  let upstreamBaseUrl = newApiBaseUrl();
   try {
     const generation = {
       model: body.model,
@@ -56,17 +59,24 @@ export async function POST(request: Request) {
       samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
     };
     const aff = gateway
-      ? await trySpendAff(session.userId, generation)
+      ? await trySpendImageCredits(session.userId, generation)
       : null;
     let key: string;
     if (aff && gateway) {
       key = gateway.token;
+      upstreamBaseUrl = gateway.baseUrl;
       payment = "aff";
-      affCost = aff.cost;
+      creditCharge = aff;
+      paymentSource =
+        aff.packageCost > 0 && aff.personalCost > 0
+          ? "mixed"
+          : aff.packageCost > 0
+            ? "package"
+            : "personal";
     } else {
       key = await getImageToken(session, body.model);
     }
-    const upstream = await fetch(`${upstreamBase.baseUrl}/v1/images/generations`, {
+    const upstream = await fetch(`${upstreamBaseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,
@@ -89,8 +99,10 @@ export async function POST(request: Request) {
     });
     const result = await upstream.json();
     if (!upstream.ok || result.error) {
-      affRefunded = true;
-      await refundAff(session.userId, affCost, "上游生成失败，自动返还");
+      if (creditCharge) {
+        affRefunded = true;
+        await refundImageCredits(session.userId, creditCharge, 0);
+      }
       return NextResponse.json(
         { message: result.error?.message || result.message || "上游生成失败" },
         { status: upstream.status || 502 },
@@ -98,8 +110,10 @@ export async function POST(request: Request) {
     }
     const images = imageFromResult(result);
     if (!images.length) {
-      affRefunded = true;
-      await refundAff(session.userId, affCost, "上游未返回图片，自动返还");
+      if (creditCharge) {
+        affRefunded = true;
+        await refundImageCredits(session.userId, creditCharge, 0);
+      }
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
     }
     return NextResponse.json({
@@ -108,10 +122,23 @@ export async function POST(request: Request) {
       usage: result.usage || null,
       aff,
       payment,
+      paymentSource,
+      affCredits: creditCharge
+        ? {
+            cost: creditCharge.cost,
+            packageCost: creditCharge.packageCost,
+            personalCost: creditCharge.personalCost,
+            balance: creditCharge.balance,
+            packageBalance: creditCharge.packageBalance,
+            totalBalance: creditCharge.totalBalance,
+          }
+        : null,
     });
   } catch (error) {
-    if (!affRefunded)
-      await refundAff(session.userId, affCost, "生成请求异常，自动返还");
+    if (!affRefunded && creditCharge) {
+      affRefunded = true;
+      await refundImageCredits(session.userId, creditCharge, 0);
+    }
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "生成请求失败" },
       { status: 502 },
