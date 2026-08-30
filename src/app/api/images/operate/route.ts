@@ -163,6 +163,10 @@ export async function POST(request: Request) {
         strength: typeof body.strength === "number" ? body.strength : undefined,
         operation,
         referenceImageCount: referenceImageCount(body, operation),
+        // 多角色（characterPrompts）会掉出 Opus 免费档，计费需按档外。
+        characterPromptCount: Array.isArray(body.characterPrompts)
+          ? body.characterPrompts.length
+          : 0,
       };
       const gateway = affGateway();
       const credits = gateway

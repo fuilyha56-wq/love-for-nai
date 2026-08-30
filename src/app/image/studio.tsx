@@ -16,6 +16,7 @@ import {
   Menu,
   Paintbrush,
   PawPrint,
+  Plus,
   Search,
   RotateCcw,
   Save,
@@ -24,6 +25,7 @@ import {
   Sparkles,
   Trash2,
   UserRound,
+  Users,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -53,12 +55,14 @@ function isInFreeEnvelope(
   height: number,
   steps: number,
   samples: number,
+  characterCount = 0,
 ): boolean {
   return (
     operation === "generate" &&
     samples <= 1 &&
     steps <= 28 &&
-    width * height <= 1024 * 1024
+    width * height <= 1024 * 1024 &&
+    characterCount === 0
   );
 }
 
@@ -69,9 +73,13 @@ function estimateAff(
   height: number,
   steps: number,
   samples: number,
+  characterCount = 0,
 ): number {
   const lower = model.toLowerCase();
-  if (lower.includes("-limit") || isInFreeEnvelope(operation, width, height, steps, samples)) {
+  if (
+    lower.includes("-limit") ||
+    isInFreeEnvelope(operation, width, height, steps, samples, characterCount)
+  ) {
     if (lower.includes("nai-v5")) return Math.ceil(1.5 * samples);
     return samples;
   }
@@ -111,9 +119,10 @@ function estimateNewApiCost(
   height: number,
   steps: number,
   samples: number,
+  characterCount = 0,
 ): number {
   if (pricing?.tiered && pricing.inEnvelopeUsd != null && pricing.outOfEnvelopeUsdPerMillion != null) {
-    if (isInFreeEnvelope(operation, width, height, steps, samples))
+    if (isInFreeEnvelope(operation, width, height, steps, samples, characterCount))
       return Number((pricing.inEnvelopeUsd * samples).toFixed(2));
     const tokens = estimateTokens(width, height, samples);
     return Number(
@@ -171,6 +180,13 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string };
+// 多角色：每角色独立 prompt + 画面中心坐标（对齐 NAI Character Prompts）。
+type CharacterPromptUi = {
+  id: string;
+  prompt: string;
+  centerX: number;
+  centerY: number;
+};
 type DanbooruTag = {
   name: string;
   displayName: string;
@@ -461,6 +477,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [negative, setNegative] = useState(defaultNegative);
   const [source, setSource] = useState<Upload | null>(null);
   const [mask, setMask] = useState<Upload | null>(null);
+  const [charactersEnabled, setCharactersEnabled] = useState(false);
+  const [characters, setCharacters] = useState<CharacterPromptUi[]>([
+    { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
+  ]);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
@@ -1102,6 +1122,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 setSource(null);
                 setMask(null);
                 setMaskEditorOpen(false);
+                setCharactersEnabled(false);
+                setCharacters([
+                  { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
+                ]);
                 setReferenceType("character&style");
                 setControlModel("hed");
                 setAdvancedOpen(false);
@@ -1353,6 +1377,124 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 )}
               </Control>
             </div>
+            {operation === "generate" && (
+              <section className="rounded-md border border-[var(--line)] bg-white p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Users size={14} className="text-[var(--rose)]" />
+                    <b className="text-xs">多角色</b>
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)]">
+                    <input
+                      type="checkbox"
+                      checked={charactersEnabled}
+                      onChange={(event) => setCharactersEnabled(event.target.checked)}
+                      className="h-3.5 w-3.5 accent-[var(--rose)]"
+                    />
+                    启用
+                  </label>
+                </div>
+                {charactersEnabled && (
+                  <div className="mt-3 space-y-3">
+                    <p className="text-[10px] leading-4 text-[var(--muted)]">
+                      为画面中的每个角色编写独立提示词，并用滑块摆放角色位置（0–1 归一化坐标）。主提示词描述整体场景。
+                    </p>
+                    {characters.map((character, index) => (
+                      <div
+                        key={character.id}
+                        className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <b className="text-[11px] text-[var(--rose)]">角色 {index + 1}</b>
+                          {characters.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCharacters((current) =>
+                                  current.filter((item) => item.id !== character.id),
+                                )
+                              }
+                              className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--rose)]"
+                              aria-label={`删除角色 ${index + 1}`}
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
+                        <textarea
+                          className="field mt-2 min-h-16 w-full p-2 text-xs"
+                          placeholder="该角色的提示词，如 1girl, white hair, blue eyes"
+                          value={character.prompt}
+                          onChange={(event) =>
+                            setCharacters((current) =>
+                              current.map((item) =>
+                                item.id === character.id
+                                  ? { ...item, prompt: event.target.value }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                        <div className="mt-2 space-y-1.5">
+                          {(
+                            [
+                              ["水平位置", "centerX"],
+                              ["垂直位置", "centerY"],
+                            ] as const
+                          ).map(([label, axis]) => (
+                            <label key={axis} className="block text-[10px] text-[var(--muted)]">
+                              <span className="flex items-center justify-between">
+                                <span>{label}</span>
+                                <output className="font-mono text-[var(--rose)]">
+                                  {character[axis].toFixed(2)}
+                                </output>
+                              </span>
+                              <input
+                                type="range"
+                                min="0"
+                                max="1"
+                                step="0.05"
+                                value={character[axis]}
+                                onChange={(event) =>
+                                  setCharacters((current) =>
+                                    current.map((item) =>
+                                      item.id === character.id
+                                        ? { ...item, [axis]: Number(event.target.value) }
+                                        : item,
+                                    ),
+                                  )
+                                }
+                                className="range mt-1 w-full"
+                                aria-label={`角色 ${index + 1} ${label}`}
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {characters.length < 6 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCharacters((current) => [
+                            ...current,
+                            {
+                              id: `char-${Date.now()}`,
+                              prompt: "",
+                              centerX: 0.5,
+                              centerY: 0.5,
+                            },
+                          ])
+                        }
+                        className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-dashed border-[var(--line)] bg-white text-[11px] font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+                      >
+                        <Plus size={13} /> 添加角色
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
           </>
         )}
         {["img2img", "inpainting", "edits"].includes(operation) && (
@@ -1487,6 +1629,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     };
     if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (seed) base.seed = Number(seed);
+    // 多角色（仅文生图）：映射为 NAI characterPrompts，网关自动构造 v4_prompt.char_captions。
+    if (
+      operation === "generate" &&
+      charactersEnabled &&
+      characters.some((character) => character.prompt.trim())
+    ) {
+      base.characterPrompts = characters
+        .filter((character) => character.prompt.trim())
+        .map((character) => ({
+          prompt: character.prompt.trim(),
+          center: { x: character.centerX, y: character.centerY },
+        }));
+    }
     if (["img2img", "inpainting", "edits"].includes(operation)) {
       base.image = source?.data;
       base.strength = strength;
@@ -1603,7 +1758,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
-  const estimatedAffCost = estimateAff(model, operation, width, height, steps, count);
+  const activeCharacterCount =
+    operation === "generate" && charactersEnabled
+      ? characters.filter((character) => character.prompt.trim()).length
+      : 0;
+  const estimatedAffCost = estimateAff(
+    model,
+    operation,
+    width,
+    height,
+    steps,
+    count,
+    activeCharacterCount,
+  );
   const packageRateImages = Math.min(
     count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
@@ -2325,7 +2492,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </>
                 ) : (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, operation, width, height, steps, count)}</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, operation, width, height, steps, count, activeCharacterCount)}</b></div>
                     {modelPricing && (
                       <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
                     )}
