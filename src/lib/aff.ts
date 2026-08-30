@@ -53,6 +53,7 @@ export type AffGeneration = {
   operation?: string;
   referenceImageCount?: number;
   encodedVibeCount?: number;
+  characterPromptCount?: number;
 };
 
 export type ImageCreditCharge = {
@@ -214,7 +215,8 @@ export function isInFreeEnvelope(generation: AffGeneration): boolean {
     generation.samples <= 1 &&
     generation.steps <= 28 &&
     generation.width * generation.height <= 1024 * 1024 &&
-    !(generation.referenceImageCount ?? 0)
+    !(generation.referenceImageCount ?? 0) &&
+    !(generation.characterPromptCount ?? 0)
   );
 }
 

@@ -84,6 +84,7 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
     "reference_images",
     "references",
     "characters",
+    "characterPrompts",
     "source",
   ]);
   return Object.fromEntries(
