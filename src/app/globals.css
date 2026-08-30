@@ -347,8 +347,8 @@ html[data-theme="night"] .field::placeholder {
   z-index: 20000;
   display: grid;
   grid-template-rows: 58px minmax(0, 1fr) 52px;
-  background: #0d0f20;
-  color: #f7f7f2;
+  background: var(--paper);
+  color: var(--ink);
 }
 
 .mask-editor-topbar,
@@ -358,16 +358,15 @@ html[data-theme="night"] .field::placeholder {
   justify-content: space-between;
   gap: 12px;
   padding: 8px;
-  background: #111426;
-  border-color: #252943;
+  background: var(--panel);
 }
 
 .mask-editor-topbar {
-  border-bottom: 1px solid #252943;
+  border-bottom: 1px solid var(--line);
 }
 .mask-editor-bottombar {
   justify-content: center;
-  border-top: 1px solid #252943;
+  border-top: 1px solid var(--line);
 }
 
 .mask-editor-tools,
@@ -384,20 +383,21 @@ html[data-theme="night"] .field::placeholder {
   justify-content: center;
   gap: 7px;
   padding: 0 12px;
-  border: 1px solid #292e4d;
+  border: 1px solid var(--line);
   border-radius: 2px;
-  background: #15182c;
-  color: #f7f7f2;
+  background: var(--surface);
+  color: var(--ink);
 }
 
 .mask-editor button:hover,
 .mask-editor button.is-active {
-  background: #242945;
+  background: color-mix(in srgb, var(--rose) 10%, transparent);
+  border-color: var(--rose);
 }
 .mask-editor button.primary {
-  border-color: #f5efba;
-  background: #f5efba;
-  color: #1b1d29;
+  border-color: var(--rose);
+  background: var(--rose);
+  color: #fff;
 }
 
 .mask-editor-tools label {
@@ -408,20 +408,12 @@ html[data-theme="night"] .field::placeholder {
   padding: 0 10px;
   font-size: 12px;
   font-weight: 700;
-}
-html[data-theme="night"] .mask-editor-topbar,
-html[data-theme="night"] .mask-editor-bottombar,
-html[data-theme="night"] .mask-editor button {
-  background-color: #24282c;
-}
-html[data-theme="night"] .mask-editor button:hover,
-html[data-theme="night"] .mask-editor button.is-active {
-  background-color: #2b2f33;
+  color: var(--muted);
 }
 
 .mask-editor-tools input {
   width: 130px;
-  accent-color: #f5efba;
+  accent-color: var(--rose);
 }
 .mask-editor-stage {
   display: flex;
