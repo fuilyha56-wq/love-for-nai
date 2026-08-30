@@ -32,8 +32,8 @@ afterEach(async () => {
   delete process.env.LFN_AFF_GATEWAY_TOKEN;
 });
 
-describe("图包与个人 AFF 混合扣费", () => {
-  it("图包 12 + 个人 5，full 模型 20 AFF 时按 图包 12 + 个人 5 + 余额不足回退", async () => {
+describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
+  it("图包 12 + 个人 5，档内 V5 只需 2 AFF：图包扣 2，个人不动", async () => {
     await seedAccount(900, {
       balance: 5,
       packageBalance: 12,
@@ -43,33 +43,7 @@ describe("图包与个人 AFF 混合扣费", () => {
     });
 
     const charge = await trySpendImageCredits(900, {
-      model: "nai-v4.5-full",
-      width: 832,
-      height: 1216,
-      steps: 28,
-      samples: 1,
-    });
-
-    // 个人 5 + 图包 12 = 17 < 20，两种本地余额都不够，应整体回退 NewAPI。
-    expect(charge).toBeNull();
-    await expect(affStatus(900)).resolves.toMatchObject({
-      balance: 5,
-      packageBalance: 12,
-      totalBalance: 17,
-    });
-  });
-
-  it("图包 12 + 个人 10，full 模型 20 AFF 时混合扣 图包 12 + 个人 8", async () => {
-    await seedAccount(901, {
-      balance: 10,
-      packageBalance: 12,
-      transactions: [],
-      packageUsage: [],
-      packageOrders: [],
-    });
-
-    const charge = await trySpendImageCredits(901, {
-      model: "nai-v4.5-full",
+      model: "nai-v5-full",
       width: 832,
       height: 1216,
       steps: 28,
@@ -77,12 +51,89 @@ describe("图包与个人 AFF 混合扣费", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 20,
-      packageCost: 12,
-      personalCost: 8,
+      cost: 2,
+      packageCost: 2,
+      personalCost: 0,
       packageImages: 1,
-      balance: 2,
+      balance: 5,
+      packageBalance: 10,
+    });
+  });
+
+  it("图包 1 + 个人 10，档外（steps29）V5 40 AFF 不足时整体回退", async () => {
+    await seedAccount(901, {
+      balance: 10,
+      packageBalance: 1,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+
+    const charge = await trySpendImageCredits(901, {
+      model: "nai-v5-full",
+      width: 832,
+      height: 1216,
+      steps: 29,
+      samples: 1,
+    });
+
+    expect(charge).toBeNull();
+    await expect(affStatus(901)).resolves.toMatchObject({
+      balance: 10,
+      packageBalance: 1,
+      totalBalance: 11,
+    });
+  });
+
+  it("图包 5 + 个人 40，档外（steps29）V5 40 AFF：混合扣 图包 5 + 个人 35", async () => {
+    await seedAccount(903, {
+      balance: 40,
+      packageBalance: 5,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+
+    const charge = await trySpendImageCredits(903, {
+      model: "nai-v5-full",
+      width: 832,
+      height: 1216,
+      steps: 29,
+      samples: 1,
+    });
+
+    expect(charge).toMatchObject({
+      cost: 40,
+      packageCost: 5,
+      personalCost: 35,
+      packageImages: 1,
+      balance: 5,
       packageBalance: 0,
+    });
+  });
+
+  it("图包 1 + 个人 5，档外 40 AFF 不足时整体回退不动本地余额", async () => {
+    await seedAccount(902, {
+      balance: 5,
+      packageBalance: 1,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+
+    await expect(
+      trySpendImageCredits(902, {
+        model: "nai-v5-full",
+        width: 832,
+        height: 1216,
+        steps: 29,
+        samples: 1,
+      }),
+    ).resolves.toBeNull();
+    await expect(affStatus(902)).resolves.toMatchObject({
+      balance: 5,
+      packageBalance: 1,
+      totalBalance: 6,
     });
   });
 });
