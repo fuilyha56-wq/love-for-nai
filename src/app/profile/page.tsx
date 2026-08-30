@@ -17,7 +17,14 @@ type Profile = {
   group: string;
   balance: number | null;
 };
-type Aff = { balance: number; checkedInToday: boolean; checkInReward: number };
+type Aff = {
+  balance: number;
+  packageBalance: number;
+  totalBalance: number;
+  packageRateLimitRemaining: number;
+  checkedInToday: boolean;
+  checkInReward: number;
+};
 type Referral = { link: string; invitedCount: number; registrationReward: number };
 const formatDollars = (value: number): string =>
   `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
@@ -119,7 +126,12 @@ export default function ProfilePage() {
       if (!response.ok) throw new Error(result.message || "签到失败");
       setAff((current) => ({
         balance: result.balance,
-        checkedInToday: true,
+        packageBalance: result.packageBalance ?? current?.packageBalance ?? 0,
+        totalBalance:
+          result.totalBalance ??
+          result.balance + (result.packageBalance ?? current?.packageBalance ?? 0),
+        packageRateLimitRemaining: current?.packageRateLimitRemaining ?? 10,
+        checkedInToday: result.checkedInToday ?? true,
         checkInReward: current?.checkInReward || 20,
       }));
       setMessage(result.reward ? `签到成功，获得 ${result.reward} AFF。` : "今日已签到。");
@@ -227,7 +239,7 @@ export default function ProfilePage() {
                 {walletState === "loading"
                   ? "读取中…"
                   : aff
-                    ? aff.balance
+                    ? `${aff.balance} + ${aff.packageBalance}`
                     : "暂无 AFF 数据"}
               </dd>
             </div>

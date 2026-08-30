@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { adminHeaders, adminToken } from "@/lib/admin-auth";
 import {
   beginImagePackageOrder,
@@ -46,10 +45,12 @@ export function imagePackageProduct(): ImagePackageProduct {
 export function normalizePackageRequest(
   raw: Record<string, unknown>,
 ): { requestId: string; packageCount: number } {
-  const requestId =
-    typeof raw.requestId === "string" && /^[A-Za-z0-9_-]{8,100}$/.test(raw.requestId)
-      ? raw.requestId
-      : randomUUID();
+  if (
+    typeof raw.requestId !== "string" ||
+    !/^[A-Za-z0-9_-]{8,100}$/.test(raw.requestId)
+  )
+    throw new Error("缺少合法的购买请求编号，请重试");
+  const requestId = raw.requestId;
   const packageCountValue =
     raw.packageCount === undefined ? 1 : raw.packageCount;
   if (
@@ -63,6 +64,12 @@ export function normalizePackageRequest(
 }
 
 export function quotaForPackages(packageCount: number): number {
+  if (
+    !Number.isSafeInteger(packageCount) ||
+    packageCount < 1 ||
+    packageCount > IMAGE_PACKAGE_MAX_COUNT
+  )
+    throw new Error(`一次最多购买 ${IMAGE_PACKAGE_MAX_COUNT} 包图包`);
   const quotaPerUnit = Number(process.env.QUOTA_PER_UNIT || 500000);
   if (!Number.isSafeInteger(quotaPerUnit) || quotaPerUnit <= 0)
     throw new Error("QUOTA_PER_UNIT 配置无效");

@@ -120,7 +120,16 @@ export async function POST(request: Request) {
       image: images[0],
       images,
       usage: result.usage || null,
-      aff,
+      aff: creditCharge
+        ? {
+            cost: creditCharge.cost,
+            balance: creditCharge.balance,
+            packageCost: creditCharge.packageCost,
+            personalCost: creditCharge.personalCost,
+            packageBalance: creditCharge.packageBalance,
+            totalBalance: creditCharge.totalBalance,
+          }
+        : null,
       payment,
       paymentSource,
       affCredits: creditCharge

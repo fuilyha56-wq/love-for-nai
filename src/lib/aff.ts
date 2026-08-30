@@ -145,8 +145,10 @@ async function readAccount(userId: number): Promise<AffAccount> {
           )
         : [],
     };
-  } catch {
-    return emptyAccount();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      return emptyAccount();
+    throw new Error("AFF 账本读取失败");
   }
 }
 
@@ -366,18 +368,22 @@ export async function trySpendImageCredits(
     if (account.balance < personalCost) return null;
 
     // 把整单整数费用分摊到每张图，保证部分批次退款时来源和金额都精确。
+    // 分摊时图包额度可能不够一张图的完整费用，此时该图仍算占用一个图包名额，
+    // 否则用户可以反复用残余额度绕过 10 张/分钟限制。
     const baseCost = Math.floor(cost / samples);
     let remainder = cost - baseCost * samples;
     const packageChargesBySample: number[] = [];
     const personalChargesBySample: number[] = [];
     let remainingPackage = packageCost;
+    let packageQuotaLeft = availablePackageImages;
     for (let index = 0; index < samples; index += 1) {
       const sampleCost = baseCost + (remainder > 0 ? 1 : 0);
       if (remainder > 0) remainder -= 1;
       const packageCharge =
-        index < availablePackageImages
+        packageQuotaLeft > 0
           ? Math.min(remainingPackage, sampleCost)
           : 0;
+      if (packageCharge > 0) packageQuotaLeft -= 1;
       remainingPackage -= packageCharge;
       packageChargesBySample.push(packageCharge);
       personalChargesBySample.push(sampleCost - packageCharge);

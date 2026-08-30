@@ -64,7 +64,7 @@ export default function WalletPage() {
     void Promise.resolve().then(load);
   }, [load]);
   async function checkIn() {
-    if (!wallet?.aff.enabled || checkingIn) return;
+    if (!wallet?.aff || checkingIn) return;
     setCheckingIn(true);
     setMessage("");
     try {
@@ -106,6 +106,10 @@ export default function WalletPage() {
 
   async function purchasePackages() {
     if (!wallet?.imagePackage.purchaseEnabled || purchasing) return;
+    const price = wallet.imagePackage.priceUsd * packageCount;
+    const affAmount = wallet.imagePackage.affPerPackage * packageCount;
+    if (!window.confirm(`确认使用 $${price.toFixed(2)} NewAPI 余额购买 ${packageCount} 包图包，获得 ${affAmount} 图包 AFF？`))
+      return;
     setPurchasing(true);
     setMessage("");
     try {

@@ -621,7 +621,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   useEffect(() => {
     if (!signedIn) return;
-    void refreshWallet();
+    void Promise.resolve().then(() => refreshWallet());
   }, [refreshWallet, signedIn]);
 
   useEffect(() => {
@@ -1561,6 +1561,26 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
+  const estimatedAffCost = estimateAff(model, width, height, steps, count);
+  const packageRateImages = Math.min(
+    count,
+    wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
+      ? wallet.aff.packageRateLimitRemaining
+      : 0,
+  );
+  const estimatedPackageCost = wallet?.aff?.enabled
+    ? Math.min(
+        wallet.aff.packageBalance,
+        Math.ceil((estimatedAffCost * packageRateImages) / Math.max(1, count)),
+      )
+    : 0;
+  const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
+  const canUseAffEstimate = Boolean(
+    wallet?.aff?.enabled &&
+      wallet.aff.balance >= estimatedPersonalCost &&
+      wallet.aff.packageBalance >= estimatedPackageCost,
+  );
+
   // 右侧功能区：创作中心 + 标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   const toolsPanel = (
     <>
@@ -1586,6 +1606,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 href="/account"
                 label="我的账号"
                 icon={<UserRound size={15} />}
+              />
+              <FeatureLink
+                href="/wallet"
+                label="余额与图包"
+                icon={<WalletCards size={15} />}
               />
               <FeatureLink
                 href="/resources"
@@ -1986,12 +2011,29 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </div>
               <div className="flex justify-between">
                 <span className="text-[var(--muted)]">LFN AFF</span>
-                <b>{signedIn ? (aff?.balance ?? "读取中") : "-"}</b>
+                <b>
+                  {signedIn
+                    ? aff
+                      ? `${aff.balance} + ${aff.packageBalance}`
+                      : "读取中"
+                    : "-"}
+                </b>
               </div>
+              {signedIn && aff && (
+                <div className="text-right text-[10px] text-[var(--muted)]">
+                  个人 AFF + 图包额度
+                </div>
+              )}
             </div>
             <Link
+              href="/wallet"
+              className="mt-3 flex h-9 items-center justify-center gap-2 rounded border border-[var(--line)] bg-white text-xs font-semibold hover:border-[var(--rose)]"
+            >
+              <WalletCards size={14} /> 余额与图包
+            </Link>
+            <Link
               href="/sign-in"
-              className="mt-5 flex h-9 items-center justify-center rounded bg-[#292d2c] text-xs font-semibold text-white"
+              className="mt-2 flex h-9 items-center justify-center rounded bg-[#292d2c] text-xs font-semibold text-white"
             >
               {signedIn
                 ? "切换账户"
@@ -2239,11 +2281,16 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
             {operation !== "suggest-tags" && signedIn && (
               <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
-                {aff && aff.balance >= estimateAff(model, width, height, steps, count) ? (
+                {canUseAffEstimate ? (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">{estimateAff(model, width, height, steps, count)} AFF</b></div>
-                    <div>AFF 余额 <b className="text-[var(--ink)]">{aff.balance} AFF</b></div>
-                    <div>扣费后约 <b className="text-[var(--ink)]">{aff.balance - estimateAff(model, width, height, steps, count)} AFF</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">{estimatedAffCost} AFF</b></div>
+                    {estimatedPackageCost > 0 && (
+                      <div>图包额度 <b className="text-[var(--ink)]">-{estimatedPackageCost} AFF</b></div>
+                    )}
+                    {estimatedPersonalCost > 0 && (
+                      <div>个人 AFF <b className="text-[var(--ink)]">-{estimatedPersonalCost} AFF</b></div>
+                    )}
+                    <div>图包 / 个人余量 <b className="text-[var(--ink)]">{wallet?.aff?.packageBalance ?? 0} / {wallet?.aff?.balance ?? 0}</b></div>
                   </>
                 ) : (
                   <>
@@ -2251,6 +2298,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                     {modelPricing && (
                       <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
                     )}
+                    <div>图包/个人 AFF 不足或服务未启用，将使用 NewAPI 余额</div>
                     <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
                   </>
                 )}
