@@ -148,6 +148,7 @@ async function runJob(
         prompt: mergeTagsIntoPrompt(suggestion.prompt, validTags),
         negativePrompt: suggestion.negativePrompt,
         parameters: suggestion.parameters,
+        ...(suggestion.characters ? { characters: suggestion.characters } : {}),
         tags: validTags,
       },
       rejectedTags: results

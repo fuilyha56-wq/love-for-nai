@@ -8,6 +8,12 @@ export type AssistantJobResult = {
     prompt: string;
     negativePrompt: string;
     parameters: Record<string, unknown>;
+    // 多角色建议：每角色独立提示词 + 画面中心坐标（无多角色时缺省）。
+    characters?: Array<{
+      prompt: string;
+      centerX: number;
+      centerY: number;
+    }>;
     tags: Array<{
       name: string;
       displayName: string;

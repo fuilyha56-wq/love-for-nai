@@ -197,6 +197,11 @@ type AssistantSuggestion = {
   prompt: string;
   negativePrompt: string;
   tags: DanbooruTag[];
+  characters?: Array<{
+    prompt: string;
+    centerX: number;
+    centerY: number;
+  }>;
   parameters: {
     width?: number;
     height?: number;
@@ -1085,8 +1090,26 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     if (assistantSuggestion.negativePrompt)
       setNegative(assistantSuggestion.negativePrompt);
     applySuggestedParameters(assistantSuggestion.parameters);
+    // 多角色建议：切换到文生图并启用多角色，填入各角色提示词与坐标。
+    const suggestedCharacters = assistantSuggestion.characters ?? [];
+    if (suggestedCharacters.length) {
+      setOperation("generate");
+      setCharactersEnabled(true);
+      setCharacters(
+        suggestedCharacters.map((character, index) => ({
+          id: `char-${index}-${Date.now()}`,
+          prompt: character.prompt,
+          centerX: character.centerX,
+          centerY: character.centerY,
+        })),
+      );
+    }
     setAssistantSuggestion(null);
-    setNotice("已应用助手的全部建议。");
+    setNotice(
+      suggestedCharacters.length
+        ? `已应用建议，并填充 ${suggestedCharacters.length} 个角色提示词。`
+        : "已应用助手的全部建议。",
+    );
   }
 
   const controls = (
@@ -2139,6 +2162,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       value={assistantSuggestion.tags
                         .map((tag) => tag.name)
                         .join(", ")}
+                    />
+                  )}
+                  {!!assistantSuggestion.characters?.length && (
+                    <PreviewRow
+                      label={`多角色 · ${assistantSuggestion.characters.length} 个`}
+                      value={assistantSuggestion.characters
+                        .map(
+                          (character, index) =>
+                            `角色${index + 1}: ${character.prompt}（x ${character.centerX.toFixed(2)} / y ${character.centerY.toFixed(2)}）`,
+                        )
+                        .join("\n")}
                     />
                   )}
                   {!!Object.keys(assistantSuggestion.parameters).length && (
