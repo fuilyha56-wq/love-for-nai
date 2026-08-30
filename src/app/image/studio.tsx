@@ -24,7 +24,6 @@ import {
   Sparkles,
   Trash2,
   UserRound,
-  WalletCards,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -45,16 +44,45 @@ type Props = { userName: string; authenticated: boolean };
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
 }
-function estimateAff(model: string, width: number, height: number, steps: number, samples: number): number {
-  if (model.toLowerCase().includes("-limit"))
-    return model.toLowerCase().includes("nai-v5") ? Math.ceil(1.5 * samples) : samples;
+// Opus 免费档判定（与服务端 isInFreeEnvelope 同口径）：
+// n=1、steps≤28、总像素小于等于 1024×1024（含等于）、纯文生图。
+// 档内完整版与 -limit 同价；档外按 Anlas 动态公式。
+function isInFreeEnvelope(
+  operation: string,
+  width: number,
+  height: number,
+  steps: number,
+  samples: number,
+): boolean {
+  return (
+    operation === "generate" &&
+    samples <= 1 &&
+    steps <= 28 &&
+    width * height <= 1024 * 1024
+  );
+}
+
+function estimateAff(
+  model: string,
+  operation: string,
+  width: number,
+  height: number,
+  steps: number,
+  samples: number,
+): number {
+  const lower = model.toLowerCase();
+  if (lower.includes("-limit") || isInFreeEnvelope(operation, width, height, steps, samples)) {
+    if (lower.includes("nai-v5")) return Math.ceil(1.5 * samples);
+    return samples;
+  }
   const pixels = Math.max(width * height, 65_536);
   let perSample = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * steps);
-  if (model.toLowerCase().includes("nai-v5")) perSample *= 2;
+  if (lower.includes("nai-v5")) perSample *= 2;
   return Math.max(1, Math.ceil(perSample * samples));
 }
 // NewAPI 实时计价信息：由 /api/pricing 返回，登录后拉取。
-// quotaType=0 按倍率（tokens × ratio × 2e-6 × groupRatio），
+// tiered 模型（V5/V4.5 完整版）分两档：档内固定价、档外按 token 动态；
+// 其余模型 quotaType=0 按倍率（tokens × ratio × 2e-6 × groupRatio），
 // quotaType=1 按次（modelPrice × groupRatio）。
 type ModelPricing = {
   model: string;
@@ -63,6 +91,9 @@ type ModelPricing = {
   quotaType: number;
   effectiveGroup: string;
   groupRatio: number;
+  tiered?: boolean;
+  inEnvelopeUsd?: number;
+  outOfEnvelopeUsdPerMillion?: number;
 };
 
 // NAI 图像模型经 OpenAI 转换后的 tokens ≈ 像素/500（实测校准：
@@ -72,12 +103,23 @@ function estimateTokens(width: number, height: number, samples: number): number 
 }
 
 // 有实时计价时按 NewAPI 公式精确计算；无计价数据时退回经验估算。
+// tiered 模型分两档：档内固定价，档外 tokens × 档外系数。
 function estimateNewApiCost(
   pricing: ModelPricing | null,
+  operation: string,
   width: number,
   height: number,
+  steps: number,
   samples: number,
 ): number {
+  if (pricing?.tiered && pricing.inEnvelopeUsd != null && pricing.outOfEnvelopeUsdPerMillion != null) {
+    if (isInFreeEnvelope(operation, width, height, steps, samples))
+      return Number((pricing.inEnvelopeUsd * samples).toFixed(2));
+    const tokens = estimateTokens(width, height, samples);
+    return Number(
+      ((tokens / 1_000_000) * pricing.outOfEnvelopeUsdPerMillion).toFixed(2),
+    );
+  }
   if (pricing) {
     if (pricing.quotaType === 1)
       return Number(
@@ -1561,7 +1603,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
   }
 
-  const estimatedAffCost = estimateAff(model, width, height, steps, count);
+  const estimatedAffCost = estimateAff(model, operation, width, height, steps, count);
   const packageRateImages = Math.min(
     count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
@@ -1606,11 +1648,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 href="/account"
                 label="我的账号"
                 icon={<UserRound size={15} />}
-              />
-              <FeatureLink
-                href="/wallet"
-                label="余额与图包"
-                icon={<WalletCards size={15} />}
               />
               <FeatureLink
                 href="/resources"
@@ -2026,12 +2063,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               )}
             </div>
             <Link
-              href="/wallet"
-              className="mt-3 flex h-9 items-center justify-center gap-2 rounded border border-[var(--line)] bg-white text-xs font-semibold hover:border-[var(--rose)]"
-            >
-              <WalletCards size={14} /> 余额与图包
-            </Link>
-            <Link
               href="/sign-in"
               className="mt-2 flex h-9 items-center justify-center rounded bg-[#292d2c] text-xs font-semibold text-white"
             >
@@ -2294,7 +2325,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </>
                 ) : (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, width, height, count)}</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, operation, width, height, steps, count)}</b></div>
                     {modelPricing && (
                       <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
                     )}

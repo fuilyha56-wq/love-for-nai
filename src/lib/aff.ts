@@ -205,9 +205,23 @@ function packageRateLimitRemaining(account: AffAccount, now = Date.now()): numbe
   );
 }
 
+// Opus 免费档判定（与网关 _in_opus_free_envelope 对齐，线上实测校准）：
+// n=1、steps≤28、总像素小于等于 1024×1024（含等于）、
+// 纯文生图（img2img/参考图/Director 都会掉出档外）。
+export function isInFreeEnvelope(generation: AffGeneration): boolean {
+  return (
+    (generation.operation ?? "generate") === "generate" &&
+    generation.samples <= 1 &&
+    generation.steps <= 28 &&
+    generation.width * generation.height <= 1024 * 1024 &&
+    !(generation.referenceImageCount ?? 0)
+  );
+}
+
 export function affCost(generation: AffGeneration): number {
   const model = generation.model.toLowerCase();
-  if (model.includes("-limit")) {
+  // 档内完整版与 -limit 同价（V5 档内 $8、V4.5 档内 $0），AFF 沿用 limit 档口径。
+  if (model.includes("-limit") || isInFreeEnvelope(generation)) {
     if (model.includes("nai-v5")) return Math.ceil(1.5 * generation.samples);
     return generation.samples;
   }
