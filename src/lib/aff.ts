@@ -6,15 +6,41 @@ export type AffTransaction = {
   id: string;
   createdAt: string;
   amount: number;
-  type: "check-in" | "generation" | "refund" | "referral";
+  type:
+    | "check-in"
+    | "generation"
+    | "refund"
+    | "referral"
+    | "package-purchase"
+    | "package-generation";
   description: string;
   referenceId?: string;
+  source?: "personal" | "package";
 };
 
+export type ImagePackageOrder = {
+  requestId: string;
+  status: "pending" | "completed" | "failed";
+  packageCount: number;
+  priceUsd: number;
+  affAmount: number;
+  quotaValue: number;
+  createdAt: string;
+  completedAt?: string;
+  failureMessage?: string;
+};
+
+type PackageUsage = { id: string; at: number };
+
 type AffAccount = {
+  // 个人 AFF：签到、邀请、管理员发放都进入这里。
   balance: number;
+  // 图包 AFF：购买后进入这里，不能被签到/邀请奖励混入。
+  packageBalance: number;
   lastCheckInDay?: string;
   transactions: AffTransaction[];
+  packageUsage: PackageUsage[];
+  packageOrders: ImagePackageOrder[];
 };
 
 export type AffGeneration = {
@@ -29,8 +55,29 @@ export type AffGeneration = {
   encodedVibeCount?: number;
 };
 
-const CHECK_IN_REWARD = 20;
+export type ImageCreditCharge = {
+  cost: number;
+  samples: number;
+  packageCost: number;
+  personalCost: number;
+  packageImages: number;
+  packageImageIndexes: number[];
+  packageChargesBySample: number[];
+  personalChargesBySample: number[];
+  packageUsageIds: string[];
+  packageRateLimited: boolean;
+  balance: number;
+  packageBalance: number;
+  totalBalance: number;
+};
+
+export const CHECK_IN_REWARD = 20;
+export const IMAGE_PACKAGE_PRICE_USD = 200;
+export const IMAGE_PACKAGE_AFF = 400;
+export const IMAGE_PACKAGE_RATE_LIMIT = 10;
+export const IMAGE_PACKAGE_RATE_WINDOW_MS = 60_000;
 const MAX_TRANSACTIONS = 100;
+const MAX_PACKAGE_USAGE = 200;
 const affRoot = () =>
   path.resolve(
     process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"),
@@ -47,16 +94,56 @@ function chinaDay(now = new Date()): string {
 }
 
 function emptyAccount(): AffAccount {
-  return { balance: 0, transactions: [] };
+  return {
+    balance: 0,
+    packageBalance: 0,
+    transactions: [],
+    packageUsage: [],
+    packageOrders: [],
+  };
+}
+
+function validNonNegativeInteger(value: unknown): number {
+  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : 0;
 }
 
 async function readAccount(userId: number): Promise<AffAccount> {
   try {
-    const parsed = JSON.parse(await readFile(accountPath(userId), "utf8")) as AffAccount;
+    const parsed = JSON.parse(await readFile(accountPath(userId), "utf8")) as
+      | Partial<AffAccount>
+      | undefined;
     return {
-      balance: Number.isInteger(parsed.balance) && parsed.balance >= 0 ? parsed.balance : 0,
-      lastCheckInDay: typeof parsed.lastCheckInDay === "string" ? parsed.lastCheckInDay : undefined,
-      transactions: Array.isArray(parsed.transactions) ? parsed.transactions.slice(0, MAX_TRANSACTIONS) : [],
+      balance: validNonNegativeInteger(parsed?.balance),
+      packageBalance: validNonNegativeInteger(parsed?.packageBalance),
+      lastCheckInDay:
+        typeof parsed?.lastCheckInDay === "string"
+          ? parsed.lastCheckInDay
+          : undefined,
+      transactions: Array.isArray(parsed?.transactions)
+        ? (parsed.transactions.slice(0, MAX_TRANSACTIONS) as AffTransaction[])
+        : [],
+      packageUsage: Array.isArray(parsed?.packageUsage)
+        ? parsed.packageUsage
+            .filter(
+              (item): item is PackageUsage =>
+                Boolean(item) &&
+                typeof item.id === "string" &&
+                Number.isFinite(item.at),
+            )
+            .slice(-MAX_PACKAGE_USAGE)
+        : [],
+      packageOrders: Array.isArray(parsed?.packageOrders)
+        ? parsed.packageOrders.filter(
+            (item): item is ImagePackageOrder =>
+              Boolean(item) &&
+              typeof item.requestId === "string" &&
+              ["pending", "completed", "failed"].includes(item.status) &&
+              Number.isInteger(item.packageCount) &&
+              Number.isFinite(item.priceUsd) &&
+              Number.isInteger(item.affAmount) &&
+              Number.isInteger(item.quotaValue),
+          )
+        : [],
     };
   } catch {
     return emptyAccount();
@@ -88,6 +175,7 @@ function addTransaction(
   type: AffTransaction["type"],
   description: string,
   referenceId?: string,
+  source?: AffTransaction["source"],
 ): void {
   account.transactions.unshift({
     id: randomUUID(),
@@ -96,8 +184,23 @@ function addTransaction(
     type,
     description,
     ...(referenceId ? { referenceId } : {}),
+    ...(source ? { source } : {}),
   });
   account.transactions = account.transactions.slice(0, MAX_TRANSACTIONS);
+}
+
+function prunePackageUsage(account: AffAccount, now = Date.now()): PackageUsage[] {
+  account.packageUsage = account.packageUsage
+    .filter((item) => now - item.at < IMAGE_PACKAGE_RATE_WINDOW_MS)
+    .slice(-MAX_PACKAGE_USAGE);
+  return account.packageUsage;
+}
+
+function packageRateLimitRemaining(account: AffAccount, now = Date.now()): number {
+  return Math.max(
+    0,
+    IMAGE_PACKAGE_RATE_LIMIT - prunePackageUsage(account, now).length,
+  );
 }
 
 export function affCost(generation: AffGeneration): number {
@@ -131,9 +234,7 @@ export function affCost(generation: AffGeneration): number {
   return Math.max(1, Math.ceil(total));
 }
 
-// 生产 NewAPI 实测校准（含 Draw 分组 0.5 倍率）：
-// V5 非 limit = Anlas(含×2) × $3.75；V4.5 非 limit = Anlas × $2.5；
-// V4.5-limit 实扣 $0；V5-limit = $10 × 0.5 = $5/张。
+// 仅保留给旧调用方使用；新的图片入口使用 trySpendImageCredits。
 export function newApiCost(generation: AffGeneration): number {
   const model = generation.model.toLowerCase();
   if (model.includes("-limit")) {
@@ -146,12 +247,19 @@ export function newApiCost(generation: AffGeneration): number {
 
 export async function affStatus(userId: number): Promise<{
   balance: number;
+  packageBalance: number;
+  totalBalance: number;
+  packageRateLimitRemaining: number;
   checkedInToday: boolean;
   checkInReward: number;
 }> {
   const account = await readAccount(userId);
+  const remaining = packageRateLimitRemaining(account);
   return {
     balance: account.balance,
+    packageBalance: account.packageBalance,
+    totalBalance: account.balance + account.packageBalance,
+    packageRateLimitRemaining: remaining,
     checkedInToday: account.lastCheckInDay === chinaDay(),
     checkInReward: CHECK_IN_REWARD,
   };
@@ -159,6 +267,8 @@ export async function affStatus(userId: number): Promise<{
 
 export async function checkInAff(userId: number): Promise<{
   balance: number;
+  packageBalance: number;
+  totalBalance: number;
   reward: number;
   checkedInToday: boolean;
 }> {
@@ -166,12 +276,24 @@ export async function checkInAff(userId: number): Promise<{
     const account = await readAccount(userId);
     const today = chinaDay();
     if (account.lastCheckInDay === today)
-      return { balance: account.balance, reward: 0, checkedInToday: true };
+      return {
+        balance: account.balance,
+        packageBalance: account.packageBalance,
+        totalBalance: account.balance + account.packageBalance,
+        reward: 0,
+        checkedInToday: true,
+      };
     account.balance += CHECK_IN_REWARD;
     account.lastCheckInDay = today;
-    addTransaction(account, CHECK_IN_REWARD, "check-in", "每日签到奖励");
+    addTransaction(account, CHECK_IN_REWARD, "check-in", "每日签到奖励", undefined, "personal");
     await writeAccount(userId, account);
-    return { balance: account.balance, reward: CHECK_IN_REWARD, checkedInToday: true };
+    return {
+      balance: account.balance,
+      packageBalance: account.packageBalance,
+      totalBalance: account.balance + account.packageBalance,
+      reward: CHECK_IN_REWARD,
+      checkedInToday: true,
+    };
   });
 }
 
@@ -190,6 +312,8 @@ export async function spendAff(
       -cost,
       "generation",
       `${generation.model} ${generation.width}x${generation.height}，${generation.samples} 张`,
+      undefined,
+      "personal",
     );
     await writeAccount(userId, account);
     return { cost, balance: account.balance };
@@ -210,9 +334,169 @@ export async function trySpendAff(
       -cost,
       "generation",
       `${generation.model} ${generation.width}x${generation.height}，${generation.samples} 张`,
+      undefined,
+      "personal",
     );
     await writeAccount(userId, account);
     return { cost, balance: account.balance };
+  });
+}
+
+// 图包优先，个人 AFF 补足。图包额度还受每用户 10 张/60 秒窗口限制；
+// 限速只跳过图包，不会阻止个人 AFF 或 NewAPI 继续尝试。
+export async function trySpendImageCredits(
+  userId: number,
+  generation: AffGeneration,
+): Promise<ImageCreditCharge | null> {
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const cost = affCost(generation);
+    const samples = Math.max(1, Math.floor(generation.samples));
+    const packageRateLimited =
+      account.packageBalance > 0 && packageRateLimitRemaining(account) === 0;
+    const availablePackageImages = packageRateLimited
+      ? 0
+      : Math.min(samples, packageRateLimitRemaining(account));
+    const packageCostLimit =
+      availablePackageImages > 0
+        ? Math.min(cost, Math.ceil((cost * availablePackageImages) / samples))
+        : 0;
+    const packageCost = Math.min(account.packageBalance, packageCostLimit);
+    const personalCost = cost - packageCost;
+    if (account.balance < personalCost) return null;
+
+    // 把整单整数费用分摊到每张图，保证部分批次退款时来源和金额都精确。
+    const baseCost = Math.floor(cost / samples);
+    let remainder = cost - baseCost * samples;
+    const packageChargesBySample: number[] = [];
+    const personalChargesBySample: number[] = [];
+    let remainingPackage = packageCost;
+    for (let index = 0; index < samples; index += 1) {
+      const sampleCost = baseCost + (remainder > 0 ? 1 : 0);
+      if (remainder > 0) remainder -= 1;
+      const packageCharge =
+        index < availablePackageImages
+          ? Math.min(remainingPackage, sampleCost)
+          : 0;
+      remainingPackage -= packageCharge;
+      packageChargesBySample.push(packageCharge);
+      personalChargesBySample.push(sampleCost - packageCharge);
+    }
+    const packageImageIndexes = packageChargesBySample.reduce<number[]>(
+      (indexes, charge, index) => {
+        if (charge > 0) indexes.push(index);
+        return indexes;
+      },
+      [],
+    );
+    const packageImages = packageImageIndexes.length;
+    const packageUsageIds = packageImageIndexes.map(() => randomUUID());
+    const now = Date.now();
+    account.packageBalance -= packageCost;
+    account.balance -= personalCost;
+    account.packageUsage.push(
+      ...packageUsageIds.map((id, index) => ({ id, at: now + index })),
+    );
+    account.packageUsage = account.packageUsage.slice(-MAX_PACKAGE_USAGE);
+    if (packageCost > 0)
+      addTransaction(
+        account,
+        -packageCost,
+        "package-generation",
+        `${generation.model} ${generation.width}x${generation.height}，${packageImages} 张使用图包额度`,
+        undefined,
+        "package",
+      );
+    if (personalCost > 0)
+      addTransaction(
+        account,
+        -personalCost,
+        "generation",
+        `${generation.model} ${generation.width}x${generation.height}，${generation.samples} 张使用个人 AFF`,
+        undefined,
+        "personal",
+      );
+    await writeAccount(userId, account);
+    return {
+      cost,
+      samples,
+      packageCost,
+      personalCost,
+      packageImages,
+      packageImageIndexes,
+      packageChargesBySample,
+      personalChargesBySample,
+      packageUsageIds,
+      packageRateLimited,
+      balance: account.balance,
+      packageBalance: account.packageBalance,
+      totalBalance: account.balance + account.packageBalance,
+    };
+  });
+}
+
+// 上游失败时按生成张数退回原扣费来源；图包使用窗口也一并释放。
+export async function refundImageCredits(
+  userId: number,
+  charge: ImageCreditCharge,
+  generatedSamples = 0,
+): Promise<void> {
+  const generated = Math.max(
+    0,
+    Math.min(charge.samples, Math.floor(generatedSamples)),
+  );
+  if (generated >= charge.samples) return;
+  await withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const packageRefund = charge.packageChargesBySample
+      .slice(generated)
+      .reduce((sum, value) => sum + value, 0);
+    const personalRefund = charge.personalChargesBySample
+      .slice(generated)
+      .reduce((sum, value) => sum + value, 0);
+    if (packageRefund > 0) {
+      account.packageBalance += packageRefund;
+      addTransaction(
+        account,
+        packageRefund,
+        "refund",
+        generated
+          ? `部分批次失败，返还 ${packageRefund} 图包 AFF`
+          : `上游生成失败，返还 ${packageRefund} 图包 AFF`,
+        undefined,
+        "package",
+      );
+    }
+    if (personalRefund > 0) {
+      account.balance += personalRefund;
+      addTransaction(
+        account,
+        personalRefund,
+        "refund",
+        generated
+          ? `部分批次失败，返还 ${personalRefund} 个人 AFF`
+          : `上游生成失败，返还 ${personalRefund} 个人 AFF`,
+        undefined,
+        "personal",
+      );
+    }
+    const unusedIndexes = new Set(
+      charge.packageImageIndexes.filter((index) => index >= generated),
+    );
+    const unusedIds = new Set(
+      charge.packageImageIndexes
+        .map((sampleIndex, usageIndex) =>
+          unusedIndexes.has(sampleIndex)
+            ? charge.packageUsageIds[usageIndex]
+            : null,
+        )
+        .filter((id): id is string => Boolean(id)),
+    );
+    if (unusedIds.size)
+      account.packageUsage = account.packageUsage.filter(
+        (item) => !unusedIds.has(item.id),
+      );
+    await writeAccount(userId, account);
   });
 }
 
@@ -225,7 +509,7 @@ export async function refundAff(
   await withUserLock(userId, async () => {
     const account = await readAccount(userId);
     account.balance += cost;
-    addTransaction(account, cost, "refund", description);
+    addTransaction(account, cost, "refund", description, undefined, "personal");
     await writeAccount(userId, account);
   });
 }
@@ -243,13 +527,13 @@ export async function grantAffOnce(
     if (account.transactions.some((item) => item.referenceId === referenceId))
       return { balance: account.balance, granted: false };
     account.balance += amount;
-    addTransaction(account, amount, "referral", description, referenceId);
+    addTransaction(account, amount, "referral", description, referenceId, "personal");
     await writeAccount(userId, account);
     return { balance: account.balance, granted: true };
   });
 }
 
-// 管理员直接调整 AFF：正数发放、负数回收；返回新余额，不足时抛错。
+// 管理员直接调整个人 AFF：正数发放、负数回收；返回新余额，不足时抛错。
 export async function adjustAff(
   userId: number,
   delta: number,
@@ -263,8 +547,80 @@ export async function adjustAff(
     if (next < 0)
       throw new Error(`AFF 余额不足：当前 ${account.balance}，无法扣减 ${Math.abs(delta)}`);
     account.balance = next;
-    addTransaction(account, delta, delta > 0 ? "referral" : "refund", description);
+    addTransaction(account, delta, delta > 0 ? "referral" : "refund", description, undefined, "personal");
     await writeAccount(userId, account);
     return next;
   });
+}
+
+export async function beginImagePackageOrder(
+  userId: number,
+  order: ImagePackageOrder,
+): Promise<{ order: ImagePackageOrder; created: boolean }> {
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const existing = account.packageOrders.find(
+      (item) => item.requestId === order.requestId,
+    );
+    if (existing) return { order: existing, created: false };
+    account.packageOrders.push(order);
+    await writeAccount(userId, account);
+    return { order, created: true };
+  });
+}
+
+export async function completeImagePackageOrder(
+  userId: number,
+  requestId: string,
+): Promise<{ order: ImagePackageOrder; packageBalance: number }> {
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const order = account.packageOrders.find(
+      (item) => item.requestId === requestId,
+    );
+    if (!order) throw new Error("图包订单不存在");
+    if (order.status === "failed")
+      throw new Error(order.failureMessage || "图包订单已失败");
+    if (order.status === "pending") {
+      order.status = "completed";
+      order.completedAt = new Date().toISOString();
+      account.packageBalance += order.affAmount;
+      addTransaction(
+        account,
+        order.affAmount,
+        "package-purchase",
+        `购买图包 ${order.packageCount} 包，获得 ${order.affAmount} 图包 AFF`,
+        `image-package:${order.requestId}`,
+        "package",
+      );
+      await writeAccount(userId, account);
+    }
+    return { order, packageBalance: account.packageBalance };
+  });
+}
+
+export async function failImagePackageOrder(
+  userId: number,
+  requestId: string,
+  message: string,
+): Promise<ImagePackageOrder | null> {
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const order = account.packageOrders.find(
+      (item) => item.requestId === requestId,
+    );
+    if (!order || order.status === "completed") return order || null;
+    order.status = "failed";
+    order.failureMessage = message.slice(0, 500);
+    await writeAccount(userId, account);
+    return order;
+  });
+}
+
+export async function imagePackageOrder(
+  userId: number,
+  requestId: string,
+): Promise<ImagePackageOrder | null> {
+  const account = await readAccount(userId);
+  return account.packageOrders.find((item) => item.requestId === requestId) || null;
 }

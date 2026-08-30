@@ -24,6 +24,7 @@ import {
   Sparkles,
   Trash2,
   UserRound,
+  WalletCards,
   WandSparkles,
   X,
 } from "lucide-react";
@@ -91,7 +92,25 @@ function estimateNewApiCost(
   return Number((estimateTokens(width, height, samples) * 0.13).toFixed(2));
 }
 type Me = { user?: { balance: number | null; group: string } };
-type Aff = { balance: number };
+type Aff = {
+  balance: number;
+  packageBalance: number;
+  totalBalance: number;
+  packageRateLimitRemaining: number;
+};
+
+type WalletState = {
+  aff?: Aff & { enabled?: boolean };
+  imagePackage?: {
+    balance: number;
+    totalBalance: number;
+    priceUsd: number;
+    affPerPackage: number;
+    rateLimit: number;
+    purchaseEnabled: boolean;
+  };
+  newApi?: { balance: number; used: number; group: string };
+};
 type Operation =
   | "generate"
   | "img2img"
@@ -407,6 +426,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
+  const [wallet, setWallet] = useState<WalletState | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -579,15 +599,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       .catch(() => setIsAdmin(false));
   }, [authenticated]);
 
+  const refreshWallet = useCallback(async () => {
+    try {
+      const response = await fetch("/api/wallet", { cache: "no-store" });
+      if (!response.ok) return null;
+      const result = (await response.json()) as WalletState;
+      setWallet(result);
+      if (result.aff) setAff(result.aff);
+      if (result.newApi) {
+        setMe((current) =>
+          current
+            ? { ...current, user: { ...current.user, balance: result.newApi?.balance ?? current.user?.balance ?? null, group: result.newApi?.group ?? current.user?.group ?? "" } }
+            : current,
+        );
+      }
+      return result;
+    } catch {
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     if (!signedIn) return;
-    fetch("/api/wallet", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((result) => {
-        if (result.aff?.enabled) setAff({ balance: result.aff.balance });
-      })
-      .catch(() => undefined);
-  }, [signedIn]);
+    void refreshWallet();
+  }, [refreshWallet, signedIn]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -1456,7 +1491,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       const sequential = batchMode === "sequential" && count > 1;
       const total = sequential ? count : 1;
       const collected: string[] = [];
-      let affBalance: number | null = null;
       let usedNewApi = false;
       let failures = 0;
       let lastError = "";
@@ -1494,7 +1528,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         } else {
           setImages(newImages);
         }
-        if (result.aff?.balance != null) affBalance = result.aff.balance;
         if (result.payment === "newapi") usedNewApi = true;
         if (result.partial) partialMessage = result.message || "部分批次生成失败。";
         if (sequential && !newImages.length) {
@@ -1502,7 +1535,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           lastError = result.message || "生成失败";
         }
       }
-      if (affBalance != null) setAff({ balance: affBalance });
+      await refreshWallet();
       if (sequential && failures) {
         if (!collected.length) throw new Error(lastError || "分批生成全部失败");
         setNotice(`分批生成完成 ${collected.length}/${total} 张${lastError ? `：${lastError}` : ""}。`);

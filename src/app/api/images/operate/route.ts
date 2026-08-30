@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
-import { refundAff, trySpendAff } from "@/lib/aff";
+import {
+  refundImageCredits,
+  trySpendImageCredits,
+  type ImageCreditCharge,
+} from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { saveHistory } from "@/lib/history";
@@ -129,10 +133,11 @@ export async function POST(request: Request) {
       { status: 400 },
     );
 
-  let affCost = 0;
-  let affBalance: number | null = null;
+  let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
+  let generatedSamples = 0;
   let payment: "aff" | "newapi" = "newapi";
+  let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
   let baseUrlOverride = "";
   try {
     let token: string;
@@ -160,15 +165,20 @@ export async function POST(request: Request) {
         referenceImageCount: referenceImageCount(body, operation),
       };
       const gateway = affGateway();
-      const aff = gateway
-        ? await trySpendAff(session.userId, generation)
+      const credits = gateway
+        ? await trySpendImageCredits(session.userId, generation)
         : null;
-      if (aff && gateway) {
+      if (credits && gateway) {
         token = gateway.token;
         baseUrlOverride = gateway.baseUrl;
         payment = "aff";
-        affCost = aff.cost;
-        affBalance = aff.balance;
+        creditCharge = credits;
+        paymentSource =
+          credits.packageCost > 0 && credits.personalCost > 0
+            ? "mixed"
+            : credits.packageCost > 0
+              ? "package"
+              : "personal";
       } else {
         token = await getImageToken(session, model);
       }
@@ -193,7 +203,6 @@ export async function POST(request: Request) {
     const images: string[] = [];
     let usage: unknown = null;
     let vibe: unknown = null;
-    let generatedSamples = 0;
     let lastStatus = 0;
     let lastRaw = "";
     let lastResult: Record<string, unknown> = {};
@@ -264,20 +273,13 @@ export async function POST(request: Request) {
     }
 
     if (lastRaw) {
-      // 部分成功时只对未生成批次按比例退款；全失败则全额退。
-      if (payment === "aff" && affCost > 0) {
-        const perSampleCost = affCost / totalSamples;
-        const refund = Math.max(0, Math.round(affCost - perSampleCost * generatedSamples));
-        if (refund > 0) {
-          affRefunded = true;
-          await refundAff(
-            session.userId,
-            refund,
-            generatedSamples
-              ? `部分批次失败，返还 ${refund} AFF`
-              : "上游生成失败，自动返还",
-          );
-        }
+      if (creditCharge) {
+        affRefunded = true;
+        await refundImageCredits(
+          session.userId,
+          creditCharge,
+          generatedSamples,
+        );
       }
       const message = generatedSamples
         ? `已生成 ${generatedSamples}/${totalSamples} 张后中断：${lastRaw}`
@@ -303,11 +305,24 @@ export async function POST(request: Request) {
       vibe,
       historyIds: history.map((item) => item.id),
       payment,
-      aff: affBalance == null ? null : { cost: affCost, balance: affBalance },
+      paymentSource,
+      aff:
+        creditCharge == null
+          ? null
+          : {
+              cost: creditCharge.cost,
+              balance: creditCharge.balance,
+              packageCost: creditCharge.packageCost,
+              personalCost: creditCharge.personalCost,
+              packageBalance: creditCharge.packageBalance,
+              totalBalance: creditCharge.totalBalance,
+            },
     });
   } catch (error) {
-    if (!affRefunded)
-      await refundAff(session.userId, affCost, "生成请求异常，自动返还");
+    if (!affRefunded && creditCharge) {
+      affRefunded = true;
+      await refundImageCredits(session.userId, creditCharge, generatedSamples);
+    }
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "NAI 操作失败" },
       { status: 502 },
