@@ -6,6 +6,7 @@ import {
   Coins,
   Copy,
   Images,
+  Package,
   Save,
   UserRound,
   WalletCards,
@@ -26,8 +27,23 @@ type Profile = {
   group: string;
   balance: number | null;
 };
-type Aff = { balance: number; checkedInToday: boolean; checkInReward: number };
+type Aff = {
+  balance: number;
+  packageBalance: number;
+  totalBalance: number;
+  packageRateLimitRemaining: number;
+  checkedInToday: boolean;
+  checkInReward: number;
+};
 type NewApiWallet = { balance: number; used: number; group: string };
+type ImagePackage = {
+  balance: number;
+  totalBalance: number;
+  priceUsd: number;
+  affPerPackage: number;
+  rateLimit: number;
+  purchaseEnabled: boolean;
+};
 type Referral = {
   link: string;
   invitedCount: number;
@@ -45,6 +61,7 @@ export default function AccountPage() {
   const [saving, setSaving] = useState(false);
   const [aff, setAff] = useState<Aff | null>(null);
   const [newApi, setNewApi] = useState<NewApiWallet | null>(null);
+  const [imagePackage, setImagePackage] = useState<ImagePackage | null>(null);
   const [checkingIn, setCheckingIn] = useState(false);
   const [referral, setReferral] = useState<Referral | null>(null);
   const [copyingReferral, setCopyingReferral] = useState(false);
@@ -93,9 +110,11 @@ export default function AccountPage() {
       const result = await readJson<{
         aff?: Aff;
         newApi?: NewApiWallet;
+        imagePackage?: ImagePackage;
       }>(response, "读取钱包失败");
       setAff(result.aff || null);
       setNewApi(result.newApi || null);
+      setImagePackage(result.imagePackage || null);
       setWalletState("loaded");
     } catch (error) {
       if (error instanceof SessionExpiredError) setExpired(error.message);
@@ -139,7 +158,12 @@ export default function AccountPage() {
       if (!response.ok) throw new Error(result.message || "签到失败");
       setAff((current) => ({
         balance: result.balance,
-        checkedInToday: true,
+        packageBalance: result.packageBalance ?? current?.packageBalance ?? 0,
+        totalBalance:
+          result.totalBalance ??
+          result.balance + (result.packageBalance ?? current?.packageBalance ?? 0),
+        packageRateLimitRemaining: current?.packageRateLimitRemaining ?? 10,
+        checkedInToday: result.checkedInToday ?? true,
         checkInReward: current?.checkInReward || 20,
       }));
       setMessage(
@@ -281,7 +305,7 @@ export default function AccountPage() {
               <p className="mt-2 max-w-full break-words text-[11px] leading-4 text-[var(--muted)]">
                 累计使用 {walletState === "loading" ? "读取中…" : newApi ? formatDollars(newApi.used) : "暂无数据"}
                 <br />
-                AFF 不足时生成从此余额扣费
+                图包和个人 AFF 都不足时，生成从此余额扣费
               </p>
             </article>
             <article className="panel min-w-0 rounded-md p-5">
@@ -292,9 +316,20 @@ export default function AccountPage() {
                 {walletState === "loading"
                   ? "读取中…"
                   : aff
-                    ? aff.balance
+                    ? `${aff.balance} + ${aff.packageBalance}`
                     : "暂无 AFF 数据"}
               </strong>
+              <p className="mt-2 text-[11px] leading-4 text-[var(--muted)]">
+                个人 AFF + 图包额度（生成优先消耗图包额度）
+              </p>
+              {imagePackage && (
+                <Link
+                  href="/wallet"
+                  className="mt-3 flex h-9 items-center justify-center gap-2 rounded border border-[var(--line)] bg-white text-xs font-semibold hover:border-[var(--rose)]"
+                >
+                  <Package size={14} /> 购买图包 · ${imagePackage.priceUsd}/包
+                </Link>
+              )}
               {walletState === "error" && (
                 <button
                   type="button"
