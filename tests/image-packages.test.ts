@@ -223,7 +223,10 @@ describe("图包购买服务", () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-      calls.push({ url: String(input), init });
+      const url = String(input);
+      if (url.includes("/api/user/107"))
+        return Response.json({ success: true, data: { quota: 100_000_000 } });
+      calls.push({ url, init });
       return Response.json({ success: true });
     }) as typeof fetch;
     try {
@@ -245,22 +248,77 @@ describe("图包购买服务", () => {
     }
   });
 
-  it("NewAPI 扣款失败时不发放图包额度并标记失败订单", async () => {
-    await seedAccount(108, {
+  it("NewAPI 余额不足时不创建订单、不发放图包额度", async () => {
+    await seedAccount(109, {
       balance: 0,
       packageBalance: 0,
       transactions: [],
     });
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>
-      Response.json({ success: false, message: "余额不足" }, { status: 400 })) as typeof fetch;
+      Response.json({ success: true, data: { quota: 99_999_999 } })) as typeof fetch;
     try {
-      await expect(purchaseImagePackages(108, "request_456", 1)).rejects.toThrow("余额不足");
-      await expect(affStatus(108)).resolves.toMatchObject({ packageBalance: 0 });
-      const account = await readAccountFile(108);
+      await expect(purchaseImagePackages(109, "request_low_balance", 1)).rejects.toThrow(
+        "余额不足",
+      );
+      await expect(affStatus(109)).resolves.toMatchObject({
+        balance: 0,
+        packageBalance: 0,
+      });
+      const account = await readAccountFile(109);
+      expect(account.packageOrders ?? []).toHaveLength(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("同一 requestId 使用不同包数时拒绝参数冲突", async () => {
+    await seedAccount(110, {
+      balance: 0,
+      packageBalance: 0,
+      transactions: [],
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/user/110"))
+        return Response.json({ success: true, data: { quota: 1_000_000_000 } });
+      if (url.includes("/api/user/manage"))
+        return Response.json({ success: true });
+      throw new Error(`unexpected fetch ${url} ${init?.method || "GET"}`);
+    }) as typeof fetch;
+    try {
+      await purchaseImagePackages(110, "request_conflict", 1);
+      await expect(
+        purchaseImagePackages(110, "request_conflict", 2),
+      ).rejects.toThrow("其他购买参数");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("扣款结果未知时订单保持 unknown，不能发放图包", async () => {
+    await seedAccount(111, {
+      balance: 0,
+      packageBalance: 0,
+      transactions: [],
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("/api/user/111"))
+        return Response.json({ success: true, data: { quota: 100_000_000 } });
+      throw new Error("network timeout");
+    }) as typeof fetch;
+    try {
+      await expect(purchaseImagePackages(111, "request_unknown", 1)).rejects.toThrow(
+        "network timeout",
+      );
+      const account = await readAccountFile(111);
       expect(account.packageOrders).toMatchObject([
-        { requestId: "request_456", status: "failed" },
+        { requestId: "request_unknown", status: "unknown" },
       ]);
+      expect(account.packageBalance).toBe(0);
     } finally {
       globalThis.fetch = originalFetch;
     }

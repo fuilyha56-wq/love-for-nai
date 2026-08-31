@@ -1,7 +1,8 @@
 import {
   bearerAuthorization,
+  externalGeneration,
   naiZipResponse,
-  proxyNewApi,
+  proxyImageWithCredits,
 } from "@/lib/compat-api";
 
 const operations: Record<string, string> = {
@@ -43,20 +44,27 @@ export async function POST(request: Request): Promise<Response> {
   const rest = { ...body };
   delete rest.req_type;
   delete rest.model;
-  const upstream = await proxyNewApi(
+  const payload = {
+    ...rest,
+    prompt: typeof body.prompt === "string" ? body.prompt : "",
+    model: "nai-v4.5-full",
+    novelai_operation: operation,
+    response_format: "b64_json",
+  };
+  const generation = externalGeneration(payload, operation);
+  if (!generation)
+    return Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 });
+  const upstream = await proxyImageWithCredits(
     new Request(request.url, {
       method: "POST",
       headers: { Authorization: authorization },
     }),
     "/v1/images/generations",
-    JSON.stringify({
-      ...rest,
-      prompt: typeof body.prompt === "string" ? body.prompt : "",
-      model: "nai-v4.5-full",
-      novelai_operation: operation,
-      response_format: "b64_json",
-    }),
-    "application/json",
+    {
+      body: JSON.stringify(payload),
+      contentType: "application/json",
+      generation,
+    },
   );
   return naiZipResponse(upstream);
 }
