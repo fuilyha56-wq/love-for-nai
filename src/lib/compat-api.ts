@@ -5,7 +5,7 @@ import {
   type AffGeneration,
   type ImageCreditCharge,
 } from "@/lib/aff";
-import { resolveBoundExternalApiUser } from "@/lib/external-api-bindings";
+import { resolveExternalApiUser } from "@/lib/newapi-db";
 import { affGateway, newApiBaseUrl } from "@/lib/newapi";
 
 const droppedResponseHeaders = new Set([
@@ -164,8 +164,10 @@ async function settleExternalCharge(
   return paymentResponse(response, paymentSource);
 }
 
-// 外部 LFN 图像端点统一计费：只有在用户通过 LFN 复制/绑定过该 NewAPI key 后，
-// 才能定位到本地 userId；绝不信任请求体或自定义身份 Header。
+// 外部 LFN 图像端点统一计费：通过 NewAPI 数据库把调用方的 key 解析成
+// 用户 ID（任何有效 key 自动生效，无需绑定），再按 图包 → 个人 AFF →
+// NewAPI 余额 顺序扣费。key 无法识别（未配置数据库或 key 无效）时
+// 透明代理到 NewAPI，由其做鉴权与计费。
 export async function proxyImageWithCredits(
   request: Request,
   pathname: string,
@@ -176,17 +178,31 @@ export async function proxyImageWithCredits(
   const gateway = affGateway();
   if (!gateway) return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
 
-  const userId = await resolveBoundExternalApiUser(authorization);
-  if (userId == null)
+  let userId: number | null;
+  try {
+    userId = await resolveExternalApiUser(authorization);
+  } catch {
+    // 数据库故障无法确认 key 归属，宁可拒绝也不能跳过图包直接扣余额。
     return Response.json(
       {
         error: {
-          message: "该 NewAPI Key 尚未绑定到 LFN 账号，请先在 LFN 账号页重新复制一次密钥",
-          type: "authentication_error",
-          code: "lfn_key_not_bound",
+          message: "暂时无法连接账号服务，请稍后重试",
+          type: "api_error",
+          code: "lfn_account_service_unavailable",
         },
       },
-      { status: 403 },
+      { status: 502 },
+    );
+  }
+  if (userId == null)
+    return paymentResponse(
+      await proxyNewApi(
+        request,
+        pathname,
+        imageRequest.body,
+        imageRequest.contentType,
+      ),
+      "newapi",
     );
 
   let charge: ImageCreditCharge | null = null;
@@ -356,6 +372,22 @@ function parseSize(value: unknown): { width: number; height: number } | null {
     : null;
 }
 
+// 参考图计数与内部 /api/images/operate 保持同一口径：
+// 只数 reference_images/reference_image/references/characters，
+// img2img/edits 的源图（image）不算参考图。
+function externalReferenceCount(body: JsonRecord): number {
+  if (Array.isArray(body.reference_images)) {
+    const count = body.reference_images.filter(
+      (item) => typeof item === "string" && item.trim(),
+    ).length;
+    if (count) return count;
+  }
+  if (typeof body.reference_image === "string" && body.reference_image) return 1;
+  if (Array.isArray(body.references)) return body.references.length;
+  if (Array.isArray(body.characters)) return body.characters.length;
+  return 0;
+}
+
 export function externalGeneration(
   body: JsonRecord,
   operation = "generate",
@@ -381,9 +413,11 @@ export function externalGeneration(
     steps: typeof body.steps === "number" ? body.steps : 28,
     samples,
     strength: typeof body.strength === "number" ? body.strength : undefined,
-    operation,
-    referenceImageCount:
-      typeof body.image === "string" && body.image ? 1 : 0,
+    operation:
+      typeof body.novelai_operation === "string"
+        ? body.novelai_operation
+        : operation,
+    referenceImageCount: externalReferenceCount(body),
     characterPromptCount: Array.isArray(body.characterPrompts)
       ? body.characterPrompts.length
       : 0,
