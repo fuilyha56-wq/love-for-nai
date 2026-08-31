@@ -328,6 +328,23 @@ export function modelAlias(model: unknown): unknown {
   return typeof model === "string" ? novelAiModelAliases[model] || model : model;
 }
 
+function parseFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number")
+    return Number.isFinite(value) ? value : undefined;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  const parsed = parseFiniteNumber(value);
+  return parsed != null && Number.isInteger(parsed) && parsed > 0
+    ? parsed
+    : undefined;
+}
+
 function parseSize(value: unknown): { width: number; height: number } | null {
   if (typeof value !== "string") return null;
   const match = value.trim().match(/^(\d+)x(\d+)$/i);
@@ -344,14 +361,9 @@ export function externalGeneration(
   operation = "generate",
 ): AffGeneration | null {
   const size = parseSize(body.size);
-  const width = typeof body.width === "number" ? body.width : size?.width;
-  const height = typeof body.height === "number" ? body.height : size?.height;
-  const samples =
-    typeof body.n === "number"
-      ? body.n
-      : typeof body.n_samples === "number"
-        ? body.n_samples
-        : 1;
+  const width = parsePositiveInteger(body.width) ?? size?.width;
+  const height = parsePositiveInteger(body.height) ?? size?.height;
+  const samples = parsePositiveInteger(body.n) ?? parsePositiveInteger(body.n_samples) ?? 1;
   if (
     typeof body.model !== "string" ||
     typeof width !== "number" ||

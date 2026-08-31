@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Copy,
   KeyRound,
+  Link as LinkIcon,
   Plus,
   Power,
   Trash2,
@@ -148,6 +149,24 @@ export default function KeysPage() {
       setWorking(false);
     }
   }
+  async function bindKey(item: TokenItem) {
+    setWorking(true);
+    try {
+      const response = await fetch("/api/external-api/bind", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokenId: item.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "绑定失败");
+      setMessage(`密钥“${item.name}”已绑定 LFN 图包计费。`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "绑定失败");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function remove(item: TokenItem) {
     if (!window.confirm(`确认删除密钥“${item.name}”？`)) return;
     setWorking(true);
@@ -197,7 +216,7 @@ export default function KeysPage() {
           </button>
         </form>
         <p className="mt-2 text-xs text-[var(--muted)]">
-          LFN 不保存或展示密钥明文。创建的密钥与 NewAPI 互通。
+          LFN 不保存或展示密钥明文。点击链条按钮绑定后，使用此密钥访问 LFN 图像端点会按图包 → 个人 AFF → NewAPI 余额扣费。
         </p>
         {expired && (
           <div className="my-4">
@@ -240,6 +259,16 @@ export default function KeysPage() {
                   aria-label="复制密钥"
                 >
                   <Copy size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => bindKey(item)}
+                  disabled={working || item.status !== 1}
+                  className="key-action"
+                  title="绑定 LFN 图包计费"
+                  aria-label="绑定 LFN 图包计费"
+                >
+                  <LinkIcon size={15} />
                 </button>
                 <button
                   type="button"

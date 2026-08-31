@@ -297,6 +297,27 @@ describe("图包购买服务", () => {
     }
   });
 
+  it("NewAPI 余额为负时也不允许购买", async () => {
+    await seedAccount(112, {
+      balance: 0,
+      packageBalance: 0,
+      transactions: [],
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      Response.json({ success: true, data: { quota: -149_500_000 } })) as typeof fetch;
+    try {
+      await expect(purchaseImagePackages(112, "request_negative", 1)).rejects.toThrow(
+        "余额不足",
+      );
+      await expect(affStatus(112)).resolves.toMatchObject({
+        balance: 0,
+        packageBalance: 0,
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
   it("扣款结果未知时订单保持 unknown，不能发放图包", async () => {
     await seedAccount(111, {
       balance: 0,
