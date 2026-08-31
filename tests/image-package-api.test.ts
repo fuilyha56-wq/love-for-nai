@@ -8,7 +8,7 @@ const affMocks = vi.hoisted(() => ({
   trySpendImageCredits: vi.fn(),
 }));
 const bindingMocks = vi.hoisted(() => ({
-  resolveBoundExternalApiUser: vi.fn(),
+  resolveExternalApiUser: vi.fn(),
 }));
 
 const session = {
@@ -31,13 +31,9 @@ vi.mock("@/lib/aff", async (importOriginal) => {
     trySpendImageCredits: affMocks.trySpendImageCredits,
   };
 });
-vi.mock("@/lib/external-api-bindings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/external-api-bindings")>();
-  return {
-    ...actual,
-    resolveBoundExternalApiUser: bindingMocks.resolveBoundExternalApiUser,
-  };
-});
+vi.mock("@/lib/newapi-db", () => ({
+  resolveExternalApiUser: bindingMocks.resolveExternalApiUser,
+}));
 vi.mock("@/lib/admin-auth", () => ({
   adminToken: vi.fn(() => "admin-token"),
   adminHeaders: vi.fn(() => ({ Authorization: "admin-token" })),
@@ -56,7 +52,7 @@ let dataDir = "";
 
 beforeEach(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "lfn-image-package-api-"));
-  bindingMocks.resolveBoundExternalApiUser.mockResolvedValue(null);
+  bindingMocks.resolveExternalApiUser.mockResolvedValue(null);
   affMocks.affStatus.mockResolvedValue({
     balance: 3,
     packageBalance: 400,

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { bindExternalApiKey } from "@/lib/external-api-bindings";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 
@@ -32,11 +31,9 @@ export async function POST(
     };
     if (!upstream.ok || !result.success || !result.data?.key)
       throw new Error(result.message || "无法读取密钥明文");
+    // 上游返回裸密钥，调用方按 OpenAI 习惯需要 sk- 前缀。
     const key = result.data.key;
-    const publicKey = key.startsWith("sk-") ? key : `sk-${key}`;
-    // 只保存 HMAC 指纹，绝不持久化明文 API Key；之后兼容接口才能安全定位 LFN 用户。
-    await bindExternalApiKey(session.userId, `Bearer ${publicKey}`);
-    return NextResponse.json({ key: publicKey });
+    return NextResponse.json({ key: key.startsWith("sk-") ? key : `sk-${key}` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "无法读取密钥明文";
     if (isUpstreamAuthError(message))
