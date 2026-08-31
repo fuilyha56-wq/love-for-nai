@@ -45,7 +45,8 @@ describe("resolveExternalApiUser", () => {
 
   it("有效 token 返回 user_id，且带缓存（同 key 只查一次）", async () => {
     process.env.NEWAPI_DB_URL = "postgresql://test";
-    poolMocks.query.mockResolvedValue({ rows: [{ user_id: 41 }] });
+    // pg 驱动把 bigint 序列化成字符串，模拟真实返回形态。
+    poolMocks.query.mockResolvedValue({ rows: [{ user_id: "41" }] });
 
     await expect(resolveExternalApiUser("Bearer sk-abc")).resolves.toBe(41);
     await expect(resolveExternalApiUser("Bearer sk-abc")).resolves.toBe(41);

@@ -73,8 +73,10 @@ export async function resolveExternalApiUser(
       [key, Math.floor(now / 1000)],
     );
     const row = result.rows[0];
-    if (row && Number.isInteger(row.user_id) && row.user_id > 0)
-      userId = row.user_id;
+    // pg 驱动把 bigint 序列化成字符串，需显式转数字再校验。
+    const parsedUserId = row ? Number(row.user_id) : NaN;
+    if (Number.isInteger(parsedUserId) && parsedUserId > 0)
+      userId = parsedUserId;
   } catch (error) {
     console.error("[lfn] NewAPI 数据库查询失败:", error);
     throw new Error("暂时无法连接账号服务，请稍后重试");
