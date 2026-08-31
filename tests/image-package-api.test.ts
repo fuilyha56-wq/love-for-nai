@@ -7,6 +7,9 @@ const affMocks = vi.hoisted(() => ({
   affStatus: vi.fn(),
   trySpendImageCredits: vi.fn(),
 }));
+const bindingMocks = vi.hoisted(() => ({
+  resolveBoundExternalApiUser: vi.fn(),
+}));
 
 const session = {
   userId: 41,
@@ -28,6 +31,13 @@ vi.mock("@/lib/aff", async (importOriginal) => {
     trySpendImageCredits: affMocks.trySpendImageCredits,
   };
 });
+vi.mock("@/lib/external-api-bindings", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/external-api-bindings")>();
+  return {
+    ...actual,
+    resolveBoundExternalApiUser: bindingMocks.resolveBoundExternalApiUser,
+  };
+});
 vi.mock("@/lib/admin-auth", () => ({
   adminToken: vi.fn(() => "admin-token"),
   adminHeaders: vi.fn(() => ({ Authorization: "admin-token" })),
@@ -46,6 +56,7 @@ let dataDir = "";
 
 beforeEach(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "lfn-image-package-api-"));
+  bindingMocks.resolveBoundExternalApiUser.mockResolvedValue(null);
   affMocks.affStatus.mockResolvedValue({
     balance: 3,
     packageBalance: 400,
@@ -56,6 +67,8 @@ beforeEach(async () => {
   });
   affMocks.trySpendImageCredits.mockResolvedValue(null);
   currentFetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "http://newapi.test/api/user/41")
+      return Response.json({ success: true, data: { quota: 123000000 } });
     if (url === "http://newapi.test/api/user/self")
       return Response.json({
         success: true,

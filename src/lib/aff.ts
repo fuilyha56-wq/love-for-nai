@@ -20,7 +20,7 @@ export type AffTransaction = {
 
 export type ImagePackageOrder = {
   requestId: string;
-  status: "pending" | "completed" | "failed";
+  status: "pending" | "unknown" | "completed" | "failed";
   packageCount: number;
   priceUsd: number;
   affAmount: number;
@@ -138,7 +138,7 @@ async function readAccount(userId: number): Promise<AffAccount> {
             (item): item is ImagePackageOrder =>
               Boolean(item) &&
               typeof item.requestId === "string" &&
-              ["pending", "completed", "failed"].includes(item.status) &&
+              ["pending", "unknown", "completed", "failed"].includes(item.status) &&
               Number.isInteger(item.packageCount) &&
               Number.isFinite(item.priceUsd) &&
               Number.isInteger(item.affAmount) &&
@@ -584,7 +584,15 @@ export async function beginImagePackageOrder(
     const existing = account.packageOrders.find(
       (item) => item.requestId === order.requestId,
     );
-    if (existing) return { order: existing, created: false };
+    if (existing) {
+      if (
+        existing.packageCount !== order.packageCount ||
+        existing.quotaValue !== order.quotaValue ||
+        existing.affAmount !== order.affAmount
+      )
+        throw new Error("订单请求编号已被其他购买参数占用");
+      return { order: existing, created: false };
+    }
     account.packageOrders.push(order);
     await writeAccount(userId, account);
     return { order, created: true };
@@ -625,6 +633,7 @@ export async function failImagePackageOrder(
   userId: number,
   requestId: string,
   message: string,
+  status: "failed" | "unknown" = "failed",
 ): Promise<ImagePackageOrder | null> {
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
@@ -632,7 +641,7 @@ export async function failImagePackageOrder(
       (item) => item.requestId === requestId,
     );
     if (!order || order.status === "completed") return order || null;
-    order.status = "failed";
+    order.status = status;
     order.failureMessage = message.slice(0, 500);
     await writeAccount(userId, account);
     return order;
