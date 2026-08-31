@@ -193,8 +193,20 @@ export default function AccountPage() {
     }
   }
 
+  const maxAffordablePackages = imagePackage && newApi
+    ? Math.min(10, Math.max(0, Math.floor(newApi.balance / imagePackage.priceUsd)))
+    : 0;
+
   async function purchasePackages() {
     if (!imagePackage?.purchaseEnabled || purchasing) return;
+    if (maxAffordablePackages < 1 || packageCount > maxAffordablePackages) {
+      setMessage(
+        maxAffordablePackages < 1
+          ? "NewAPI 余额不足，无法购买图包。"
+          : `当前余额最多购买 ${maxAffordablePackages} 包图包。`,
+      );
+      return;
+    }
     const price = imagePackage.priceUsd * packageCount;
     const affAmount = imagePackage.affPerPackage * packageCount;
     if (
@@ -410,29 +422,45 @@ export default function AccountPage() {
                     : `签到 +${aff?.checkInReward ?? 20} AFF`}
               </button>
               {imagePackage && (
-                <div className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded border border-[var(--line)] bg-white px-2">
-                  <label htmlFor="package-count" className="shrink-0 text-xs font-semibold text-[var(--muted)]">购买</label>
-                  <input
+                <div className="flex-1">
+                  <div className="flex h-9 items-center justify-center gap-1.5 rounded border border-[var(--line)] bg-white px-2">
+                    <label htmlFor="package-count" className="shrink-0 text-xs font-semibold text-[var(--muted)]">购买</label>
+                    <input
                     id="package-count"
                     type="number"
                     min={1}
-                    max={10}
+                    max={Math.max(1, maxAffordablePackages)}
                     value={packageCount}
                     onChange={(event) => {
                       const next = Number(event.target.value);
-                      if (Number.isInteger(next)) setPackageCount(Math.min(10, Math.max(1, next)));
+                      if (Number.isInteger(next))
+                        setPackageCount(
+                          Math.min(
+                            Math.max(1, maxAffordablePackages),
+                            Math.max(1, next),
+                          ),
+                        );
                     }}
                     className="h-7 w-12 rounded border border-[var(--line)] px-1 text-center text-sm tabular-nums"
                     disabled={purchasing}
                   />
-                  <span className="shrink-0 text-xs text-[var(--muted)]">包</span>
+                    <span className="shrink-0 text-xs text-[var(--muted)]">包</span>
+                  </div>
+                  <p className="mt-1 text-[10px] text-[var(--muted)]">
+                    当前余额最多可买 {maxAffordablePackages} 包
+                  </p>
                 </div>
               )}
               {imagePackage && (
                 <button
                   type="button"
                   onClick={purchasePackages}
-                  disabled={!imagePackage.purchaseEnabled || purchasing}
+                  disabled={
+                    !imagePackage.purchaseEnabled ||
+                    purchasing ||
+                    maxAffordablePackages < 1 ||
+                    packageCount > maxAffordablePackages
+                  }
                   className="h-9 flex-1 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white disabled:opacity-50"
                   title={`每包 $${imagePackage.priceUsd}，获得 ${imagePackage.affPerPackage} AFF`}
                 >
