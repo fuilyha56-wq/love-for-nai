@@ -46,102 +46,13 @@ type Props = { userName: string; authenticated: boolean };
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
 }
-// Opus 免费档判定（与服务端 isInFreeEnvelope 同口径）：
-// n=1、steps≤28、总像素小于等于 1024×1024（含等于）、纯文生图。
-// 档内完整版与 -limit 同价；档外按 Anlas 动态公式。
-function isInFreeEnvelope(
-  operation: string,
-  width: number,
-  height: number,
-  steps: number,
-  samples: number,
-  characterCount = 0,
-): boolean {
-  return (
-    operation === "generate" &&
-    samples <= 1 &&
-    steps <= 28 &&
-    width * height <= 1024 * 1024 &&
-    characterCount === 0
-  );
-}
 
-function estimateAff(
-  model: string,
-  operation: string,
-  width: number,
-  height: number,
-  steps: number,
-  samples: number,
-  characterCount = 0,
-): number {
-  const lower = model.toLowerCase();
-  if (
-    lower.includes("-limit") ||
-    isInFreeEnvelope(operation, width, height, steps, samples, characterCount)
-  ) {
-    if (lower.includes("nai-v5")) return Math.ceil(1.5 * samples);
-    return samples;
-  }
-  const pixels = Math.max(width * height, 65_536);
-  let perSample = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * steps);
-  if (lower.includes("nai-v5")) perSample *= 2;
-  return Math.max(1, Math.ceil(perSample * samples));
-}
-// NewAPI 实时计价信息：由 /api/pricing 返回，登录后拉取。
-// tiered 模型（V5/V4.5 完整版）分两档：档内固定价、档外按 token 动态；
-// 其余模型 quotaType=0 按倍率（tokens × ratio × 2e-6 × groupRatio），
-// quotaType=1 按次（modelPrice × groupRatio）。
-type ModelPricing = {
-  model: string;
-  modelRatio: number;
-  modelPrice: number;
-  quotaType: number;
-  effectiveGroup: string;
-  groupRatio: number;
-  tiered?: boolean;
-  inEnvelopeUsd?: number;
-  outOfEnvelopeUsdPerMillion?: number;
-};
+import {
+  estimateNewApiCost,
+  affCost as estimateAff,
+  type ModelPricingSnapshot,
+} from "@/lib/image-pricing";
 
-// NAI 图像模型经 OpenAI 转换后的 tokens ≈ 像素/500（实测校准：
-// 832×1216 → 2000 tokens，与 NewAPI 日志一致）。
-function estimateTokens(width: number, height: number, samples: number): number {
-  return Math.max(1, Math.round((width * height) / 500) * samples);
-}
-
-// 有实时计价时按 NewAPI 公式精确计算；无计价数据时退回经验估算。
-// tiered 模型分两档：档内固定价，档外 tokens × 档外系数。
-function estimateNewApiCost(
-  pricing: ModelPricing | null,
-  operation: string,
-  width: number,
-  height: number,
-  steps: number,
-  samples: number,
-  characterCount = 0,
-): number {
-  if (pricing?.tiered && pricing.inEnvelopeUsd != null && pricing.outOfEnvelopeUsdPerMillion != null) {
-    if (isInFreeEnvelope(operation, width, height, steps, samples, characterCount))
-      return Number((pricing.inEnvelopeUsd * samples).toFixed(2));
-    const tokens = estimateTokens(width, height, samples);
-    return Number(
-      ((tokens / 1_000_000) * pricing.outOfEnvelopeUsdPerMillion).toFixed(2),
-    );
-  }
-  if (pricing) {
-    if (pricing.quotaType === 1)
-      return Number(
-        (pricing.modelPrice * pricing.groupRatio * samples).toFixed(2),
-      );
-    const tokens = estimateTokens(width, height, samples);
-    return Number(
-      (tokens * pricing.modelRatio * 2e-6 * pricing.groupRatio).toFixed(2),
-    );
-  }
-  // 兜底：未登录或计价拉取失败，按 V5 全量倍率近似。
-  return Number((estimateTokens(width, height, samples) * 0.13).toFixed(2));
-}
 type Me = { user?: { balance: number | null; group: string } };
 type Aff = {
   balance: number;
@@ -517,7 +428,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     tagPool: [],
   });
   const [conversationOpen, setConversationOpen] = useState(false);
-  const [modelPricing, setModelPricing] = useState<ModelPricing | null>(null);
+  const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantTimeoutRef = useRef<number | null>(null);
   const mobilePanelRef = useRef<HTMLElement>(null);
@@ -1785,15 +1696,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     operation === "generate" && charactersEnabled
       ? characters.filter((character) => character.prompt.trim()).length
       : 0;
-  const estimatedAffCost = estimateAff(
+  const estimatedAffCost = estimateAff({
     model,
     operation,
     width,
     height,
     steps,
-    count,
-    activeCharacterCount,
-  );
+    samples: count,
+    characterPromptCount: activeCharacterCount,
+  });
   const packageRateImages = Math.min(
     count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
@@ -2526,7 +2437,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </>
                 ) : (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, operation, width, height, steps, count, activeCharacterCount)}</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })}</b></div>
                     {modelPricing && (
                       <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
                     )}

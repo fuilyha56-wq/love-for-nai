@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, LoaderCircle, Megaphone, Pin, RotateCcw, Send } from "lucide-react";
+import { LoaderCircle, Pin, RotateCcw, Send } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
+import { PublicHeader } from "@/app/public-header";
 
 type Comment = {
   id: string;
@@ -108,16 +109,7 @@ export default function AnnouncementsPage() {
 
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <Megaphone size={20} className="shrink-0 text-[var(--rose)]" />
-          <b className="truncate">公告</b>
-          {latest && <span className="hidden truncate text-xs text-[var(--muted)] sm:inline">最新：{latest.title}</span>}
-        </div>
-        <Link href="/" className="flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
-          <ArrowLeft size={16} />返回主页
-        </Link>
-      </header>
+      <PublicHeader current="announcements" />
       <section className="mx-auto max-w-3xl p-4 sm:p-7">
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
         {loadState === "error" ? (

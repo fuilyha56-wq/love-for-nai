@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, Eye, EyeOff, Heart, Images, Link2, RotateCcw, Send } from "lucide-react";
+import { Eye, EyeOff, Heart, Link2, RotateCcw, Send } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
+import { PublicHeader } from "@/app/public-header";
 
 type GalleryItem = {
   id: string; title: string; ownerName: string; authorName?: string; rating: string; source: string; tags: string[];
@@ -107,13 +108,12 @@ export default function GalleryPage() {
   }
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3"><Images size={20} className="shrink-0 text-[var(--rose)]" /><b className="truncate">图片广场</b><span className="hidden shrink-0 text-xs text-[var(--muted)] sm:inline">R18 默认打码</span></div>
-        <div className="flex shrink-0 items-center gap-3 sm:gap-4">
-          <button type="button" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })} className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-2.5 text-sm font-semibold text-[var(--rose)] sm:gap-2 sm:px-3"><Send size={15} /><span className="hidden sm:inline">投稿作品</span><span className="sm:hidden">投稿</span></button>
-          <Link href="/image" aria-label="返回工作台" className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:flex sm:h-9 sm:w-auto sm:items-center sm:gap-2 sm:px-3 sm:text-sm sm:font-semibold"><ArrowLeft size={16} /><span className="hidden sm:inline">返回工作台</span></Link>
-        </div>
-      </header>
+      <PublicHeader
+        current="gallery"
+        actionLabel="进入工作台"
+        actionHref="/image"
+        extraActions={<button type="button" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })} className="flex h-9 shrink-0 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-2.5 text-xs font-semibold text-[var(--rose)] sm:px-3"><Send size={14} /><span className="hidden sm:inline">投稿作品</span><span className="sm:hidden">投稿</span></button>}
+      />
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
         {expired && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{expired}</p>}
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
