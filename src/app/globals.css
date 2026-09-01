@@ -28,6 +28,19 @@
 html,
 body {
   min-height: 100%;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 body {
   margin: 0;

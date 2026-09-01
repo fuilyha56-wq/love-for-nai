@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  affCost as calculateAffCost,
+  isInFreeEnvelope as calculateIsInFreeEnvelope,
+} from "@/lib/image-pricing";
+import type { ImagePricingGeneration } from "@/lib/image-pricing";
 
 export type AffTransaction = {
   id: string;
@@ -43,18 +48,7 @@ type AffAccount = {
   packageOrders: ImagePackageOrder[];
 };
 
-export type AffGeneration = {
-  model: string;
-  width: number;
-  height: number;
-  steps: number;
-  samples: number;
-  strength?: number;
-  operation?: string;
-  referenceImageCount?: number;
-  encodedVibeCount?: number;
-  characterPromptCount?: number;
-};
+export type AffGeneration = ImagePricingGeneration;
 
 export type ImageCreditCharge = {
   cost: number;
@@ -206,50 +200,13 @@ function packageRateLimitRemaining(account: AffAccount, now = Date.now()): numbe
   );
 }
 
-// Opus 免费档判定（与网关 _in_opus_free_envelope 对齐，线上实测校准）：
-// n=1、steps≤28、总像素小于等于 1024×1024（含等于）、
-// 纯文生图（img2img/参考图/Director 都会掉出档外）。
+// Opus 免费档判定与费用公式统一来自无 Node 依赖的共享模块，避免前后端口径漂移。
 export function isInFreeEnvelope(generation: AffGeneration): boolean {
-  return (
-    (generation.operation ?? "generate") === "generate" &&
-    generation.samples <= 1 &&
-    generation.steps <= 28 &&
-    generation.width * generation.height <= 1024 * 1024 &&
-    !(generation.referenceImageCount ?? 0) &&
-    !(generation.characterPromptCount ?? 0)
-  );
+  return calculateIsInFreeEnvelope(generation);
 }
 
 export function affCost(generation: AffGeneration): number {
-  const model = generation.model.toLowerCase();
-  // 档内完整版与 -limit 同价（V5 档内 $8、V4.5 档内 $0），AFF 沿用 limit 档口径。
-  if (model.includes("-limit") || isInFreeEnvelope(generation)) {
-    if (model.includes("nai-v5")) return Math.ceil(1.5 * generation.samples);
-    return generation.samples;
-  }
-
-  const pixels = Math.max(generation.width * generation.height, 65_536);
-  let perSample = Math.ceil(
-    2.951823174884865e-6 * pixels +
-      5.753298233447344e-7 * pixels * generation.steps,
-  );
-  if (generation.strength != null && generation.strength < 1)
-    perSample = Math.max(Math.ceil(perSample * generation.strength), 2);
-  let total = perSample * generation.samples;
-  const referenceCount = generation.referenceImageCount ?? 0;
-  if (referenceCount > 0) {
-    if (generation.operation === "precise-reference")
-      total += 5 * referenceCount * generation.samples;
-    else {
-      const billableCount = Math.max(
-        0,
-        referenceCount - (generation.encodedVibeCount ?? 0),
-      );
-      total += 2 * billableCount + 2 * Math.max(0, billableCount - 4);
-    }
-  }
-  if (model.includes("nai-v5")) total *= 2;
-  return Math.max(1, Math.ceil(total));
+  return calculateAffCost(generation);
 }
 
 // 仅保留给旧调用方使用；新的图片入口使用 trySpendImageCredits。

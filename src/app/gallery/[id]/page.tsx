@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowLeft, Download, Eye, Heart, Images, Link2, RotateCcw } from "lucide-react";
+import { Download, Eye, Heart, Link2, RotateCcw } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { PublicHeader } from "@/app/public-header";
 import { useEffect, useState } from "react";
 
 type GalleryItem = {
@@ -125,19 +126,7 @@ export default function GalleryItemPage({
 
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <Images size={20} className="shrink-0 text-[var(--rose)]" />
-          <b className="truncate">{item?.title || "作品详情"}</b>
-        </div>        <Link
-          href="/gallery"
-          aria-label="返回图片广场"
-          className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold"
-        >
-          <ArrowLeft size={16} />
-          返回广场
-        </Link>
-      </header>
+      <PublicHeader current="gallery" actionLabel="进入工作台" actionHref="/image" />
       <section className="mx-auto max-w-5xl p-4 sm:p-7">
         {message && (
           <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

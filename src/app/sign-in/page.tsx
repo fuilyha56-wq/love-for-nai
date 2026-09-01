@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
+import { PublicHeader } from "@/app/public-header";
 
 type Mode = "password" | "token" | "register";
 type GalleryBackground = { imageUrl: string; title: string };
@@ -268,7 +269,9 @@ export default function SignInPage() {
     </>
   );
   return (
-    <main className="min-h-screen grid lg:grid-cols-[1.05fr_.95fr]">
+    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <PublicHeader current={undefined} />
+      <section className="grid lg:grid-cols-[1.05fr_.95fr]">
       <section ref={sectionRef} className="relative hidden overflow-hidden bg-[#262928] px-16 py-14 text-white lg:flex lg:flex-col lg:justify-between">
         <div
           className={`absolute inset-0 bg-cover transition-opacity duration-1000 ease-out ${backgroundVisible && (localBackgroundActive || galleryBackground) ? "opacity-55" : "opacity-0"}`}
@@ -570,6 +573,35 @@ export default function SignInPage() {
               源代码与 AGPL-3.0 许可证
             </a>
           </p>
+        </div>
+      </section>
+      </section>
+      <section className="mx-auto w-full max-w-7xl px-4 py-14 sm:px-7 sm:py-20">
+        <div className="max-w-3xl">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-[var(--rose)]">Why LFN / 为什么是 LFN</p>
+          <h2 className="mt-3 font-[var(--font-display)] text-4xl leading-tight sm:text-5xl">把复杂的 NovelAI，整理成中文创作工作流。</h2>
+          <p className="mt-4 text-sm leading-7 text-[var(--muted)]">LFN 不替你改变 NewAPI 账号，而是把提示词、模型、角色构图、历史和分享集中到一个更适合中文创作者的空间。</p>
+        </div>
+        <div className="mt-9 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[
+            ["中文提示词与标签助手", "从概念检索到多轮对话，整理出可直接使用的正负向提示词和标签。", "/image?demo=1"],
+            ["多角色构图", "每个角色拥有独立提示词和画面位置，复杂构图也能逐个调整。", "/models"],
+            ["NovelAI 原生参数", "支持尺寸、steps、采样器、参考图、Director Tools 和原生 ZIP 入口。", "/pricing"],
+            ["历史与无损下载", "本地与远程分层保存图片，批量打包 ZIP，不经过重编码。", "/image?demo=1"],
+            ["图片广场与分享", "公开浏览作品、查看详情、复制分享链接，R18 内容默认保护。", "/gallery"],
+            ["透明的计费路径", "图包额度优先，个人 AFF 补足，两者都不足才使用 NewAPI 余额。", "/pricing#calculator"],
+          ].map(([title, description, href]) => (
+            <Link key={title} href={href} className="group rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 transition hover:-translate-y-0.5 hover:border-[var(--rose)] hover:shadow-[0_12px_35px_rgba(54,47,39,.08)]">
+              <span className="grid h-9 w-9 place-items-center rounded-lg bg-[#f8e8e9] text-[var(--rose)]"><Brush size={17} /></span>
+              <h3 className="mt-4 font-semibold group-hover:text-[var(--rose)]">{title}</h3>
+              <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{description}</p>
+              <span className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-[var(--rose)]">了解更多 <ArrowRight size={13} /></span>
+            </Link>
+          ))}
+        </div>
+        <div className="mt-10 flex flex-col items-start justify-between gap-5 rounded-xl bg-[#292d2c] p-6 text-white sm:flex-row sm:items-center sm:p-8">
+          <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-[#d9c9a5]">Start creating</p><h2 className="mt-2 font-[var(--font-display)] text-2xl">先浏览，再决定是否登录。</h2><p className="mt-2 text-sm text-white/65">价格、模型、图片广场都无需登录；体验模式可以先熟悉工作台。</p></div>
+          <div className="flex shrink-0 flex-wrap gap-2"><Link href="/pricing" className="inline-flex h-10 items-center rounded bg-white px-4 text-xs font-semibold text-[#292d2c]">查看价格</Link><Link href="/image?demo=1" className="inline-flex h-10 items-center rounded border border-white/25 px-4 text-xs font-semibold">进入体验</Link></div>
         </div>
       </section>
     </main>
