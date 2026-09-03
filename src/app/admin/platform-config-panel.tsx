@@ -1,7 +1,7 @@
 "use client";
 
 import { Plus, Save, Trash2, Power, PowerOff } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 type EndpointConfig = {
   id: string;
@@ -63,7 +63,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
     priority: 50,
   });
 
-  const loadEndpoints = async () => {
+  const loadEndpoints = useCallback(async () => {
     setLoading(true);
     try {
       const response = await fetch("/api/admin/platform/endpoints", { cache: "no-store" });
@@ -71,17 +71,17 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
       if (response.ok) {
         setEndpoints(result.endpoints || []);
       } else {
-        setMessage(result.error || "加载端点配置失败");
+        setMessage(result.message || result.error || "加载端点配置失败");
       }
     } catch {
       setMessage("加载端点配置失败");
     }
     setLoading(false);
-  };
+  }, [setMessage]);
 
   useEffect(() => {
-    void loadEndpoints();
-  }, []);
+    void Promise.resolve().then(() => loadEndpoints());
+  }, [loadEndpoints]);
 
   const handleCreate = async () => {
     if (!formData.name.trim() || !formData.baseUrl.trim() || !formData.token.trim()) {
@@ -119,7 +119,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         });
         await loadEndpoints();
       } else {
-        setMessage(result.error || "创建失败");
+        setMessage(result.message || result.error || "创建失败");
       }
     } catch {
       setMessage("创建端点失败");
@@ -139,7 +139,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         setMessage(enabled ? "端点已停用" : "端点已启用");
         await loadEndpoints();
       } else {
-        setMessage(result.error || "切换失败");
+        setMessage(result.message || result.error || "切换失败");
       }
     } catch {
       setMessage("切换端点状态失败");
@@ -159,7 +159,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         setMessage("端点已删除");
         await loadEndpoints();
       } else {
-        setMessage(result.error || "删除失败");
+        setMessage(result.message || result.error || "删除失败");
       }
     } catch {
       setMessage("删除端点失败");
@@ -183,7 +183,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-[var(--muted)]">
-          管理 LFN 接入的第三方服务端点，支持多个同类端点（按优先级生效）
+          当前生产仍从环境变量读取上游。这里只展示已接入的账号、图像和钱包端点，密钥已脱敏。
         </p>
         <button
           type="button"

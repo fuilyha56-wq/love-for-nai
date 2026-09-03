@@ -6,7 +6,8 @@ export type AdminModuleId =
   | "credits"
   | "announcements"
   | "gallery"
-  | "referrals";
+  | "referrals"
+  | "platform";
 
 export type AdminModule = {
   id: AdminModuleId;
@@ -57,6 +58,12 @@ export function listAdminModules(
       label: "邀请记录",
       description: "查看邀请码、邀请人和已注册人数。",
       enabled: true,
+    },
+    {
+      id: "platform",
+      label: "平台配置",
+      description: "查看当前接入的账号、图像和钱包上游。未接入端点库时只读环境变量。",
+      enabled: capabilities.admin.platform,
     },
   ];
 }
