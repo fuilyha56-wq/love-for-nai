@@ -147,7 +147,7 @@ export default function AdminPage() {
         { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
         { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
         { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
-        { id: "platform", label: "平台配置", description: "管理接入的第三方服务端点", enabled: true },
+        { id: "platform", label: "平台配置", description: "查看当前接入的账号、图像和钱包上游", enabled: true },
       ]
   ).filter((item) => item.enabled);
   const current = visibleModules.find((item) => item.id === tab);
@@ -189,7 +189,7 @@ export default function AdminPage() {
         <p className="mx-auto mt-4 max-w-6xl rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{message}</p>
       )}
       <div className="mx-auto max-w-6xl p-4 sm:p-7">
-        <div className="mb-4 grid grid-cols-2 gap-1 rounded-md border border-[var(--line)] bg-[#f5f3ed] p-1 text-xs font-semibold sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mb-4 grid grid-cols-2 gap-1 rounded-md border border-[var(--line)] bg-[#f5f3ed] p-1 text-xs font-semibold sm:grid-cols-3 lg:grid-cols-7">
           {visibleModules.map((item) => (
             <button
               key={item.id}

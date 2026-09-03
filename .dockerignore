@@ -5,3 +5,5 @@ npm-debug.log
 .env
 .env.local
 README.md
+*.backup
+src/lib/compat-api.ts.backup

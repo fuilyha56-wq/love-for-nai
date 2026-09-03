@@ -51,8 +51,8 @@ class AdapterRegistry {
     // 向后兼容：从环境变量加载默认配置
     const newApiBase = process.env.NEWAPI_BASE_URL?.trim();
     const newApiToken = process.env.LFN_ADMIN_TOKEN?.trim();
-    const gatewayUrl = process.env.LFN_GATEWAY_URL?.trim();
-    const gatewayToken = process.env.LFN_GATEWAY_TOKEN?.trim();
+    const gatewayUrl = process.env.LFN_AFF_GATEWAY_URL?.trim();
+    const gatewayToken = process.env.LFN_AFF_GATEWAY_TOKEN?.trim();
     const genericImageUrl = process.env.LFN_IMAGE_PROVIDER_URL?.trim();
     const genericImageToken = process.env.LFN_IMAGE_PROVIDER_TOKEN?.trim();
 

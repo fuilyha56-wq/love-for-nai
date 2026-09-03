@@ -53,6 +53,7 @@ describe("平台能力探测", () => {
       "announcements",
       "gallery",
       "referrals",
+      "platform",
     ]);
     expect(modules.every((item) => item.enabled && item.description)).toBe(true);
   });
