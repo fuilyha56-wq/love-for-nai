@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPendingSession, pendingCookie } from "@/lib/session";
+import { getPendingSession, resolvedPendingCookie } from "@/lib/session";
 import { callNewApi, establishSession } from "@/lib/login";
 import {
   invalidJsonResponse,
@@ -40,9 +40,10 @@ export async function POST(request: Request) {
         { status: 401 },
       );
 
-    const next = establishSession(result, response);
-    next.cookies.set(pendingCookie.name, "", {
-      ...pendingCookie.options,
+    const next = await establishSession(result, response);
+    const cookie = await resolvedPendingCookie();
+    next.cookies.set(cookie.name, "", {
+      ...cookie.options,
       maxAge: 0,
     });
     return next;

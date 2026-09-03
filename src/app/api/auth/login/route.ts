@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { encodePendingSession, pendingCookie } from "@/lib/session";
+import { encodePendingSession, resolvedPendingCookie } from "@/lib/session";
 import {
   callNewApi,
   establishLocalSession,
@@ -7,7 +7,7 @@ import {
   requiresTwoFactor,
 } from "@/lib/login";
 import { authenticateLocalUser } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     );
 
   try {
-    if (authProviderId() === "local") {
+    if ((await resolvedAuthProviderId()) === "local") {
       const user = await authenticateLocalUser(username, password);
       if (!user)
         return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
@@ -54,13 +54,14 @@ export async function POST(request: Request) {
           { status: 502 },
         );
       const next = NextResponse.json({ twoFactorRequired: true });
+      const cookie = await resolvedPendingCookie();
       next.cookies.set(
-        pendingCookie.name,
+        cookie.name,
         encodePendingSession({
           flowToken,
           expiresAt: Date.now() + 300_000,
         }),
-        pendingCookie.options,
+        cookie.options,
       );
       return next;
     }

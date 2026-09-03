@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { affStatus } from "@/lib/aff";
-import { imagePackageProduct } from "@/lib/image-packages";
+import { resolvedImagePackageProduct } from "@/lib/image-packages";
 import { getSession } from "@/lib/session";
-import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
-import { getPlatformCapabilities } from "@/lib/platform";
+import { isUpstreamAuthError, resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { getResolvedPlatformCapabilities } from "@/lib/platform";
+import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
 
 export async function GET() {
   const session = await getSession();
@@ -13,12 +14,12 @@ export async function GET() {
       { status: 401 },
     );
   try {
-    const capabilities = getPlatformCapabilities();
+    const capabilities = await getResolvedPlatformCapabilities();
     const aff = await affStatus(session.userId);
-    const product = imagePackageProduct();
+    const product = await resolvedImagePackageProduct();
     let newApi: { balance: number; used: number; group: string } | null = null;
     if (capabilities.wallet.upstreamBalance) {
-      const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
+      const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
         headers: userHeaders(session),
         cache: "no-store",
         signal: AbortSignal.timeout(10_000),
@@ -26,7 +27,7 @@ export async function GET() {
       const result = await upstream.json();
       if (!upstream.ok || !result.success)
         throw new Error(result.message || "无法读取钱包余额");
-      const quotaPerUnit = Number(process.env.QUOTA_PER_UNIT || 500000);
+      const quotaPerUnit = await runtimeQuotaPerUnit();
       const user = result.data?.user ?? result.data;
       newApi = {
         balance: Number(user?.quota || 0) / quotaPerUnit,

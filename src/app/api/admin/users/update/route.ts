@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
 import {
   invalidJsonResponse,
   optionalNumber,
@@ -9,9 +9,8 @@ import {
 } from "@/lib/request";
 import { adjustAff } from "@/lib/aff";
 import { updateLocalUser } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
-
-const QUOTA_PER_UNIT = () => Number(process.env.QUOTA_PER_UNIT || 500000);
+import { resolvedAuthProviderId } from "@/lib/platform";
+import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
 
 // 修改用户：密码 / 显示名 / 备注 / 分组 / NewAPI 余额（USD）/ AFF 调整。
 // new-api 的两条上游约束（实测 + 源码确认）：
@@ -61,7 +60,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({ message: "备注最多 255 个字符" }, { status: 400 });
 
   try {
-    if (authProviderId() === "local") {
+    if ((await resolvedAuthProviderId()) === "local") {
       await updateLocalUser(userId, {
         username,
         displayName: displayName || undefined,
@@ -76,7 +75,7 @@ export async function PUT(request: Request) {
     }
     // 1. 先取当前资料：PUT 按列覆盖，缺省字段必须回填当前值，否则会被清空。
     const currentResponse = await fetch(
-      `${newApiBaseUrl()}/api/user/${userId}`,
+      `${await resolvedNewApiBaseUrl()}/api/user/${userId}`,
       {
         headers: userHeaders(gate.session),
         cache: "no-store",
@@ -110,7 +109,7 @@ export async function PUT(request: Request) {
       group: group || current.group || "default",
     };
     if (password) upstreamBody.password = password;
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/`, {
       method: "PUT",
       headers: userHeaders(gate.session),
       body: JSON.stringify(upstreamBody),
@@ -127,10 +126,10 @@ export async function PUT(request: Request) {
     // 3. 余额：POST /api/user/manage 的 add_quota(override)。
     //    与当前值相同时跳过，避免用弹窗打开时的旧值覆盖用户刚消费的额度。
     if (typeof balanceUsd === "number") {
-      const quotaValue = Math.round(balanceUsd * QUOTA_PER_UNIT());
+      const quotaValue = Math.round(balanceUsd * (await runtimeQuotaPerUnit()));
       if (quotaValue !== current.quota) {
         const quotaResponse = await fetch(
-          `${newApiBaseUrl()}/api/user/manage`,
+          `${await resolvedNewApiBaseUrl()}/api/user/manage`,
           {
             method: "POST",
             headers: userHeaders(gate.session),

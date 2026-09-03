@@ -1,4 +1,4 @@
-import { adminHeaders, adminToken } from "@/lib/admin-auth";
+import { adminToken, resolvedAdminHeaders, resolvedAdminTokenValue } from "@/lib/admin-auth";
 import {
   beginImagePackageOrder,
   completeImagePackageOrder,
@@ -8,7 +8,8 @@ import {
   IMAGE_PACKAGE_PRICE_USD,
   type ImagePackageOrder,
 } from "@/lib/aff";
-import { affGateway, newApiBaseUrl } from "@/lib/newapi";
+import { affGateway, resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
 import { SlidingWindowRateLimiter } from "@/lib/rate-limit";
 
 export const IMAGE_PACKAGE_MAX_COUNT = 10;
@@ -64,6 +65,19 @@ export function imagePackageProduct(): ImagePackageProduct {
   };
 }
 
+export async function resolvedImagePackageProduct(): Promise<ImagePackageProduct> {
+  const [token, gateway] = await Promise.all([
+    resolvedAdminTokenValue(),
+    resolvedAffGateway(),
+  ]);
+  return {
+    priceUsd: IMAGE_PACKAGE_PRICE_USD,
+    affPerPackage: IMAGE_PACKAGE_AFF,
+    rateLimit: 10,
+    purchaseEnabled: Boolean(token && gateway),
+  };
+}
+
 export function normalizePackageRequest(
   raw: Record<string, unknown>,
 ): { requestId: string; packageCount: number } {
@@ -85,14 +99,13 @@ export function normalizePackageRequest(
   return { requestId, packageCount: packageCountValue };
 }
 
-export function quotaForPackages(packageCount: number): number {
+export function quotaForPackages(packageCount: number, quotaPerUnit = Number(process.env.QUOTA_PER_UNIT || 500000)): number {
   if (
     !Number.isSafeInteger(packageCount) ||
     packageCount < 1 ||
     packageCount > IMAGE_PACKAGE_MAX_COUNT
   )
     throw new Error(`一次最多购买 ${IMAGE_PACKAGE_MAX_COUNT} 包图包`);
-  const quotaPerUnit = Number(process.env.QUOTA_PER_UNIT || 500000);
   if (!Number.isSafeInteger(quotaPerUnit) || quotaPerUnit <= 0)
     throw new Error("QUOTA_PER_UNIT 配置无效");
   const quota = IMAGE_PACKAGE_PRICE_USD * packageCount * quotaPerUnit;
@@ -115,9 +128,9 @@ async function manageQuota(
 ): Promise<void> {
   let response: Response;
   try {
-    response = await fetch(`${newApiBaseUrl()}/api/user/manage`, {
+    response = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/manage`, {
       method: "POST",
-      headers: adminHeaders(),
+      headers: await resolvedAdminHeaders(),
       body: JSON.stringify({
         id: userId,
         action: "add_quota",
@@ -155,8 +168,8 @@ async function manageQuota(
 }
 
 async function readNewApiQuota(userId: number): Promise<number> {
-  const response = await fetch(`${newApiBaseUrl()}/api/user/${userId}`, {
-    headers: adminHeaders(),
+  const response = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/${userId}`, {
+    headers: await resolvedAdminHeaders(),
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
@@ -201,10 +214,10 @@ export async function purchaseImagePackages(
   packageCount: number,
 ): Promise<Record<string, unknown>> {
   return withPurchaseLock(userId, async () => {
-    if (!adminToken()) throw new Error("图包购买服务尚未配置管理员令牌");
-    if (!affGateway()) throw new Error("图包生图服务尚未启用，请联系管理员");
+    if (!(await resolvedAdminTokenValue())) throw new Error("图包购买服务尚未配置管理员令牌");
+    if (!(await resolvedAffGateway())) throw new Error("图包生图服务尚未启用，请联系管理员");
 
-    const quotaValue = quotaForPackages(packageCount);
+    const quotaValue = quotaForPackages(packageCount, await runtimeQuotaPerUnit());
     const order: ImagePackageOrder = {
       requestId,
       status: "pending",

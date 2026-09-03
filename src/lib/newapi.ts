@@ -1,4 +1,9 @@
 import { getSession } from "@/lib/session";
+import {
+  runtimeAdminToken,
+  runtimeAffGateway,
+  runtimeNewApiBaseUrl,
+} from "@/lib/runtime-config";
 
 type Token = {
   id: number;
@@ -21,12 +26,37 @@ export function affGateway(): { baseUrl: string; token: string } | null {
   return baseUrl && token ? { baseUrl, token } : null;
 }
 
+export async function resolvedAffGateway(): Promise<{ baseUrl: string; token: string } | null> {
+  try {
+    return await runtimeAffGateway();
+  } catch {
+    return affGateway();
+  }
+}
+
 function tokenNameFor(prefix: string, group: string): string {
   return `${prefix}-${group.toLowerCase()}`;
 }
 
 export function newApiBaseUrl(): string {
   return process.env.NEWAPI_BASE_URL || "http://127.0.0.1:3000";
+}
+
+export async function resolvedNewApiBaseUrl(): Promise<string> {
+  try {
+    return await runtimeNewApiBaseUrl();
+  } catch {
+    return newApiBaseUrl();
+  }
+}
+
+export async function resolvedAdminToken(): Promise<string | null> {
+  try {
+    return await runtimeAdminToken();
+  } catch {
+    const token = process.env.LFN_ADMIN_TOKEN?.trim();
+    return token || null;
+  }
 }
 
 export function userHeaders(session: Session): Record<string, string> {

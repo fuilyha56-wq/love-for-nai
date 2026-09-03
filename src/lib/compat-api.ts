@@ -11,8 +11,8 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { resolveExternalApiUser } from "@/lib/newapi-db";
-import { affGateway, newApiBaseUrl } from "@/lib/newapi";
-import { genericImageProvider } from "@/lib/platform";
+import { resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolvedGenericImageProvider } from "@/lib/platform";
 import {
   assertBodySize,
   assertImageModel,
@@ -116,7 +116,7 @@ export async function proxyNewApi(
     const requestContentType = contentType ?? request.headers.get("content-type");
     if (requestContentType && !isFormDataBody)
       headers.set("Content-Type", requestContentType);
-    const upstream = await fetch(`${newApiBaseUrl()}${pathname}`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}${pathname}`, {
       method: request.method,
       headers,
       body:
@@ -214,7 +214,7 @@ export async function proxyImageWithCredits(
   const imageAdapter = await registry.getImageAdapter();
   
   // 向后兼容：如果没有适配器，使用环境变量配置
-  const platformUpstream = affGateway() || genericImageProvider();
+  const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
   if (!imageAdapter && !platformUpstream) {
     return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
   }

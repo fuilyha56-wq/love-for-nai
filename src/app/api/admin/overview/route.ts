@@ -6,13 +6,13 @@ import { countAnnouncementComments } from "@/lib/announcement-comments";
 import { countAnnouncements } from "@/lib/announcements";
 import { countGallery } from "@/lib/gallery";
 import { countLocalUsers } from "@/lib/local-users";
-import { authProviderId, getPlatformCapabilities } from "@/lib/platform";
+import { getResolvedPlatformCapabilities, resolvedAuthProviderId } from "@/lib/platform";
 import { countReferrals, referralReward } from "@/lib/referral";
 
 export async function GET() {
   const gate = await requireAdmin();
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
-  const capabilities = getPlatformCapabilities();
+  const capabilities = await getResolvedPlatformCapabilities();
   const [announcements, comments, gallery, referrals, credits, localUsers] =
     await Promise.all([
       countAnnouncements(),
@@ -20,7 +20,7 @@ export async function GET() {
       countGallery(),
       countReferrals(),
       affTotals(),
-      authProviderId() === "local" ? countLocalUsers() : Promise.resolve(null),
+      (await resolvedAuthProviderId()) === "local" ? countLocalUsers() : Promise.resolve(null),
     ]);
   return NextResponse.json({
     capabilities,

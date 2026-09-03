@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getPlatformCapabilities } from "@/lib/platform";
+import { getResolvedPlatformCapabilities } from "@/lib/platform";
 
-export function GET() {
-  const capabilities = getPlatformCapabilities();
+export async function GET() {
+  const capabilities = await getResolvedPlatformCapabilities();
   return NextResponse.json({
     status: "ok",
     service: "love-for-nai",

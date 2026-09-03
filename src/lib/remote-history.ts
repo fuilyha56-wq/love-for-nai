@@ -1,3 +1,5 @@
+import { runtimeRemoteHistory } from "@/lib/runtime-config";
+
 // 二级历史存储客户端：把本地保留不下的历史图转存到远程 LFN 存储服务。
 // 远程服务是一个极简 HTTP 服务（PUT/GET/DELETE + Bearer 鉴权），
 // 部署在独立的存储节点上（当前为华为云 ECS）。
@@ -11,6 +13,14 @@ export function remoteHistoryStore(): RemoteStoreConfig | null {
   const baseUrl = process.env.LFN_REMOTE_HISTORY_URL?.trim().replace(/\/+$/, "");
   const token = process.env.LFN_REMOTE_HISTORY_TOKEN?.trim();
   return baseUrl && token ? { baseUrl, token } : null;
+}
+
+async function resolvedRemoteHistoryStore(): Promise<RemoteStoreConfig | null> {
+  try {
+    return await runtimeRemoteHistory();
+  } catch {
+    return remoteHistoryStore();
+  }
 }
 
 function authHeaders(config: RemoteStoreConfig): Record<string, string> {
@@ -32,7 +42,7 @@ export async function putRemoteHistoryImage(
   fileName: string,
   data: Buffer,
 ): Promise<boolean> {
-  const config = remoteHistoryStore();
+  const config = await resolvedRemoteHistoryStore();
   if (!config) return false;
   try {
     const response = await fetch(
@@ -56,7 +66,7 @@ export async function getRemoteHistoryImage(
   userId: number,
   fileName: string,
 ): Promise<{ data: Buffer; contentType: string } | null> {
-  const config = remoteHistoryStore();
+  const config = await resolvedRemoteHistoryStore();
   if (!config) return null;
   try {
     const response = await fetch(
@@ -84,7 +94,7 @@ export async function deleteRemoteHistoryImage(
   userId: number,
   fileName: string,
 ): Promise<boolean> {
-  const config = remoteHistoryStore();
+  const config = await resolvedRemoteHistoryStore();
   if (!config) return false;
   try {
     const response = await fetch(
