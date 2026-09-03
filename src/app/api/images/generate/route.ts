@@ -6,6 +6,7 @@ import {
 } from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
+import { authProviderId, genericImageProvider } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
   assertBodySize,
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
     "cfg_rescale",
     "seed",
   ];
-  const gateway = affGateway();
+  const platformUpstream = affGateway() || genericImageProvider();
   let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";
@@ -86,13 +87,13 @@ export async function POST(request: Request) {
       steps,
       samples,
     };
-    const aff = gateway
+    const aff = platformUpstream
       ? await trySpendImageCredits(session.userId, generation)
       : null;
     let key: string;
-    if (aff && gateway) {
-      key = gateway.token;
-      upstreamBaseUrl = gateway.baseUrl;
+    if (aff && platformUpstream) {
+      key = platformUpstream.token;
+      upstreamBaseUrl = platformUpstream.baseUrl;
       payment = "aff";
       creditCharge = aff;
       paymentSource =
@@ -101,6 +102,11 @@ export async function POST(request: Request) {
           : aff.packageCost > 0
             ? "package"
             : "personal";
+    } else if (authProviderId() === "local") {
+      if (!platformUpstream)
+        return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
+      key = platformUpstream.token;
+      upstreamBaseUrl = platformUpstream.baseUrl;
     } else {
       key = await getImageToken(session, body.model);
     }

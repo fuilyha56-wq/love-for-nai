@@ -44,6 +44,19 @@ type ImagePackage = {
   rateLimit: number;
   purchaseEnabled: boolean;
 };
+type WalletCapabilities = {
+  wallet: {
+    upstreamBalance: boolean;
+    credits: boolean;
+    packages: boolean;
+  };
+  labels: {
+    upstreamBalance: string;
+    credits: string;
+    packages: string;
+  };
+  image?: { label: string };
+};
 type Referral = {
   link: string;
   invitedCount: number;
@@ -77,6 +90,7 @@ export default function AccountPage() {
   const [aff, setAff] = useState<Aff | null>(null);
   const [newApi, setNewApi] = useState<NewApiWallet | null>(null);
   const [imagePackage, setImagePackage] = useState<ImagePackage | null>(null);
+  const [capabilities, setCapabilities] = useState<WalletCapabilities | null>(null);
   const [packageCount, setPackageCount] = useState(1);
   const [purchasing, setPurchasing] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
@@ -128,10 +142,12 @@ export default function AccountPage() {
         aff?: Aff;
         newApi?: NewApiWallet;
         imagePackage?: ImagePackage;
+        capabilities?: WalletCapabilities;
       }>(response, "读取钱包失败");
       setAff(result.aff || null);
       setNewApi(result.newApi || null);
       setImagePackage(result.imagePackage || null);
+      setCapabilities(result.capabilities || null);
       setWalletState("loaded");
     } catch (error) {
       if (error instanceof SessionExpiredError) setExpired(error.message);
@@ -362,13 +378,14 @@ export default function AccountPage() {
                 </button>
               )}
             </div>
-            {walletState === "error" && !newApi && (
+            {walletState === "error" && !newApi && !aff && (
               <p className="mt-3 text-xs text-[#77531e]">{walletError || "读取钱包失败"}</p>
             )}
             <dl className="mt-4 divide-y divide-[var(--line)] text-sm">
+              {capabilities?.wallet.upstreamBalance !== false && (
               <div className="flex items-baseline justify-between gap-3 py-2.5">
                 <dt className="flex shrink-0 items-center gap-2 text-xs font-semibold text-[var(--muted)]">
-                  <Coins size={14} className="text-[var(--rose)]" /> NewAPI 余额
+                  <Coins size={14} className="text-[var(--rose)]" /> {capabilities?.labels.upstreamBalance || "上游余额"}
                 </dt>
                 <dd className="min-w-0 break-all text-right font-semibold tabular-nums">
                   {walletState === "loading"
@@ -378,6 +395,8 @@ export default function AccountPage() {
                       : "暂无数据"}
                 </dd>
               </div>
+              )}
+              {capabilities?.wallet.upstreamBalance !== false && (
               <div className="flex items-baseline justify-between gap-3 py-2.5">
                 <dt className="shrink-0 text-xs font-semibold text-[var(--muted)]">累计使用</dt>
                 <dd className="min-w-0 break-all text-right text-xs tabular-nums text-[var(--muted)]">
@@ -388,9 +407,10 @@ export default function AccountPage() {
                       : "暂无数据"}
                 </dd>
               </div>
+              )}
               <div className="flex items-baseline justify-between gap-3 py-2.5">
                 <dt className="flex shrink-0 items-center gap-2 text-xs font-semibold text-[var(--muted)]">
-                  <CalendarCheck size={14} className="text-[var(--rose)]" /> 个人 AFF
+                  <CalendarCheck size={14} className="text-[var(--rose)]" /> 个人 {capabilities?.labels.credits || "AFF"}
                 </dt>
                 <dd className="text-right font-semibold tabular-nums">
                   {walletState === "loading" ? "读取中…" : (aff?.balance ?? 0)}
@@ -398,7 +418,7 @@ export default function AccountPage() {
               </div>
               <div className="flex items-baseline justify-between gap-3 py-2.5">
                 <dt className="flex shrink-0 items-center gap-2 text-xs font-semibold text-[var(--muted)]">
-                  <Package size={14} className="text-[var(--rose)]" /> 图包额度
+                  <Package size={14} className="text-[var(--rose)]" /> {capabilities?.labels.packages || "图包额度"}
                 </dt>
                 <dd className="text-right font-semibold tabular-nums">
                   {walletState === "loading" ? "读取中…" : (aff?.packageBalance ?? 0)}
@@ -406,14 +426,19 @@ export default function AccountPage() {
               </div>
             </dl>
             <p className="mt-1 text-[11px] leading-4 text-[var(--muted)]">
-              生成优先消耗图包额度（最多 {imagePackage?.rateLimit ?? 10} 张/分钟），再消耗个人 AFF，两者都不足才使用 NewAPI 余额。
+              生成优先消耗图包额度（最多 {imagePackage?.rateLimit ?? 10} 张/分钟），再消耗个人创作额度。
+              {capabilities?.wallet.upstreamBalance
+                ? "两者都不足才使用上游余额。"
+                : capabilities?.image?.label
+                  ? `当前图像上游：${capabilities.image.label}。`
+                  : ""}
             </p>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-start">
               <button
                 type="button"
                 onClick={checkIn}
                 disabled={!profile || !aff || aff.checkedInToday || checkingIn}
-                className="h-9 flex-1 rounded bg-[#292d2c] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                className="h-10 w-full rounded bg-[#292d2c] px-3 text-xs font-semibold text-white disabled:opacity-50"
               >
                 {checkingIn
                   ? "签到中…"
@@ -422,8 +447,8 @@ export default function AccountPage() {
                     : `签到 +${aff?.checkInReward ?? 20} AFF`}
               </button>
               {imagePackage && (
-                <div className="flex-1">
-                  <div className="flex h-9 items-center justify-center gap-1.5 rounded border border-[var(--line)] bg-white px-2">
+                <div className="min-w-0">
+                  <div className="flex h-10 items-center gap-2 rounded border border-[var(--line)] bg-white px-3">
                     <label htmlFor="package-count" className="shrink-0 text-xs font-semibold text-[var(--muted)]">购买</label>
                     <input
                     id="package-count"
@@ -441,12 +466,12 @@ export default function AccountPage() {
                           ),
                         );
                     }}
-                    className="h-7 w-12 rounded border border-[var(--line)] px-1 text-center text-sm tabular-nums"
+                    className="h-10 min-w-12 flex-1 border-0 bg-transparent p-0 text-center text-sm tabular-nums outline-none"
                     disabled={purchasing}
                   />
                     <span className="shrink-0 text-xs text-[var(--muted)]">包</span>
                   </div>
-                  <p className="mt-1 text-[10px] text-[var(--muted)]">
+                  <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
                     当前余额最多可买 {maxAffordablePackages} 包
                   </p>
                 </div>
@@ -461,7 +486,7 @@ export default function AccountPage() {
                     maxAffordablePackages < 1 ||
                     packageCount > maxAffordablePackages
                   }
-                  className="h-9 flex-1 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                  className="h-10 w-full rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white disabled:opacity-50"
                   title={`每包 $${imagePackage.priceUsd}，获得 ${imagePackage.affPerPackage} AFF`}
                 >
                   {purchasing

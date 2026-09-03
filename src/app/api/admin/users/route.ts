@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
 import { affStatus } from "@/lib/aff";
+import { listLocalUsers } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 
 // 用户列表（代理 NewAPI 管理端点，并补充 LFN AFF 余额）。
 export async function GET(request: Request) {
@@ -12,6 +14,24 @@ export async function GET(request: Request) {
   const size = params.get("size") || "20";
   const keyword = params.get("keyword") || "";
   try {
+    if (authProviderId() === "local") {
+      const listed = await listLocalUsers({
+        page: Number(page) || 1,
+        size: Number(size) || 20,
+        keyword,
+      });
+      const enriched = await Promise.all(
+        listed.items.map(async (user) => ({
+          ...user,
+          aff: await affStatus(Number(user.id)).catch(() => null),
+        })),
+      );
+      return NextResponse.json({
+        items: enriched,
+        total: listed.total,
+        quotaPerUnit: Number(process.env.QUOTA_PER_UNIT || 500000),
+      });
+    }
     const query = new URLSearchParams({ p: page, size });
     if (keyword) query.set("keyword", keyword);
     const upstream = await fetch(`${newApiBaseUrl()}/api/user/?${query}`, {

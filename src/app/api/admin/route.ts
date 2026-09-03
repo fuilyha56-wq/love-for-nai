@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { readUserRole } from "@/lib/admin-auth";
+import { listAdminModules } from "@/lib/admin-modules";
+import { getPlatformCapabilities } from "@/lib/platform";
 import { getSession } from "@/lib/session";
 
-// 前端用：返回当前登录用户是否为 NewAPI 管理员。
 export async function GET() {
   const session = await getSession();
-  if (!session) return NextResponse.json({ admin: false });
+  const capabilities = getPlatformCapabilities();
+  if (!session)
+    return NextResponse.json({
+      admin: false,
+      capabilities,
+      modules: listAdminModules(capabilities),
+    });
   const role = await readUserRole(session);
-  return NextResponse.json({ admin: typeof role === "number" && role >= 10, role });
+  return NextResponse.json({
+    admin: typeof role === "number" && role >= 10,
+    role,
+    capabilities,
+    modules: listAdminModules(capabilities),
+  });
 }

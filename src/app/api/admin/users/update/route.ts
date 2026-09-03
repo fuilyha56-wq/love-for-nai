@@ -8,6 +8,8 @@ import {
   parseJsonBody,
 } from "@/lib/request";
 import { adjustAff } from "@/lib/aff";
+import { updateLocalUser } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 
 const QUOTA_PER_UNIT = () => Number(process.env.QUOTA_PER_UNIT || 500000);
 
@@ -53,6 +55,17 @@ export async function PUT(request: Request) {
     return NextResponse.json({ message: "备注最多 255 个字符" }, { status: 400 });
 
   try {
+    if (authProviderId() === "local") {
+      await updateLocalUser(userId, {
+        username,
+        displayName: displayName || undefined,
+        password: password || undefined,
+        group: group || undefined,
+      });
+      if (typeof affDelta === "number" && affDelta !== 0)
+        await adjustAff(userId, affDelta, "管理员调整创作额度");
+      return NextResponse.json({ success: true });
+    }
     // 1. 先取当前资料：PUT 按列覆盖，缺省字段必须回填当前值，否则会被清空。
     const currentResponse = await fetch(
       `${newApiBaseUrl()}/api/user/${userId}`,

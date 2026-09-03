@@ -1,6 +1,8 @@
 import { getSession } from "@/lib/session";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
 import type { Session } from "@/lib/newapi";
+import { findLocalUserById } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 
 // NewAPI 角色值：1 普通用户，10 管理员，100 root。
 export const ROLE_ADMIN = 10;
@@ -14,6 +16,10 @@ type SelfResult = {
 export async function readUserRole(
   session: Session,
 ): Promise<number | null> {
+  if (authProviderId() === "local") {
+    const user = await findLocalUserById(session.userId);
+    return user ? user.role : null;
+  }
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
       headers: userHeaders(session),

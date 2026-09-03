@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { encodeSession, sessionCookie } from "@/lib/session";
 import { newApiBaseUrl } from "@/lib/newapi";
+import type { LocalUser } from "@/lib/local-users";
 
 export type NewApiUser = {
   id?: number;
@@ -84,6 +85,24 @@ export function establishSession(
       displayName: user.display_name || user.username,
       upstreamCookie,
       accessToken,
+      expiresAt: Date.now() + 604800000,
+    }),
+    sessionCookie.options,
+  );
+  return next;
+}
+
+export function establishLocalSession(user: LocalUser): NextResponse {
+  const next = NextResponse.json({
+    user: { id: user.id, name: user.displayName || user.username },
+  });
+  next.cookies.set(
+    sessionCookie.name,
+    encodeSession({
+      userId: user.id,
+      username: user.username,
+      displayName: user.displayName || user.username,
+      upstreamCookie: "",
       expiresAt: Date.now() + 604800000,
     }),
     sessionCookie.options,

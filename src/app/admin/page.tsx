@@ -32,22 +32,33 @@ type AdminUser = {
   aff?: { balance: number } | null;
 };
 
-type Tab = "users" | "announcements";
+type Tab = "overview" | "users" | "announcements";
+type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
+type PlatformCapabilities = {
+  auth: { label: string; provider: string };
+  image: { label: string; enabled: boolean };
+  wallet: { upstreamBalance: boolean; credits: boolean; packages: boolean };
+};
 
 const DEFAULT_QUOTA_PER_UNIT = 500000;
 const ROLE_LABELS: Record<number, string> = { 1: "用户", 10: "管理员", 100: "Root" };
 
 export default function AdminPage() {
-  const [tab, setTab] = useState<Tab>("users");
+  const [tab, setTab] = useState<Tab>("overview");
   const [denied, setDenied] = useState<boolean | null>(null);
   const [message, setMessage] = useState("");
+  const [modules, setModules] = useState<AdminModule[]>([]);
+  const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetch("/api/admin")
       .then((response) => response.json())
       .then((result) => {
-        if (!cancelled) setDenied(!result.admin);
+        if (cancelled) return;
+        setDenied(!result.admin);
+        if (Array.isArray(result.modules)) setModules(result.modules);
+        if (result.capabilities) setCapabilities(result.capabilities);
       })
       .catch(() => {
         if (!cancelled) setDenied(true);
@@ -70,7 +81,7 @@ export default function AdminPage() {
         <div className="max-w-sm rounded-lg border border-[var(--line)] bg-white p-8 text-center">
           <ShieldCheck size={34} className="mx-auto text-[var(--rose)]" />
           <h1 className="mt-4 text-lg font-bold">仅管理员可用</h1>
-          <p className="mt-2 text-sm text-[var(--muted)]">此界面仅对 NewAPI 管理员及以上角色开放。</p>
+          <p className="mt-2 text-sm text-[var(--muted)]">此界面仅对站点管理员开放，不绑定某一家上游。</p>
           <Link href="/image" className="mt-5 inline-flex h-9 items-center gap-2 rounded border border-[var(--line)] px-4 text-sm font-semibold hover:border-[var(--rose)]">
             <ArrowLeft size={15} /> 返回工作台
           </Link>
@@ -95,16 +106,53 @@ export default function AdminPage() {
       )}
       <div className="mx-auto max-w-6xl p-4 sm:p-7">
         <div className="mb-5 flex gap-1 rounded-md border border-[var(--line)] bg-[#f5f3ed] p-1 text-xs font-semibold">
-          <button type="button" onClick={() => setTab("users")} className={`h-8 flex-1 rounded ${tab === "users" ? "bg-white text-[var(--rose)] shadow-sm" : "text-[var(--muted)]"}`}>
-            用户管理
-          </button>
-          <button type="button" onClick={() => setTab("announcements")} className={`h-8 flex-1 rounded ${tab === "announcements" ? "bg-white text-[var(--rose)] shadow-sm" : "text-[var(--muted)]"}`}>
-            公告管理
-          </button>
+          {(modules.length ? modules : [
+            { id: "overview", label: "平台概览", description: "", enabled: true },
+            { id: "users", label: "用户管理", description: "", enabled: true },
+            { id: "announcements", label: "公告管理", description: "", enabled: true },
+          ]).filter((item) => item.enabled).map((item) => (
+            <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`h-8 flex-1 rounded ${tab === item.id ? "bg-white text-[var(--rose)] shadow-sm" : "text-[var(--muted)]"}`}>
+              {item.label}
+            </button>
+          ))}
         </div>
-        {tab === "users" ? <UsersPanel setMessage={setMessage} /> : <AnnouncementsPanel setMessage={setMessage} />}
+        {tab === "overview" ? (
+          <OverviewPanel capabilities={capabilities} modules={modules} />
+        ) : tab === "users" ? (
+          <UsersPanel setMessage={setMessage} />
+        ) : (
+          <AnnouncementsPanel setMessage={setMessage} />
+        )}
       </div>
     </main>
+  );
+}
+
+function OverviewPanel({
+  capabilities,
+  modules,
+}: {
+  capabilities: PlatformCapabilities | null;
+  modules: AdminModule[];
+}) {
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">AUTH</p>
+        <h2 className="mt-2 text-lg font-semibold">{capabilities?.auth.label || "账号能力"}</h2>
+        <p className="mt-2 text-sm leading-6 text-[var(--muted)]">当前账号提供者：{capabilities?.auth.provider || "未读取"}。可替换为本地账号或其他登录后端。</p>
+      </article>
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">IMAGE</p>
+        <h2 className="mt-2 text-lg font-semibold">{capabilities?.image.label || "图像上游"}</h2>
+        <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{capabilities?.image.enabled ? "已接入图像生成上游。" : "尚未配置图像上游，工作台仍可浏览但不能真实出图。"}</p>
+      </article>
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">ADMIN</p>
+        <h2 className="mt-2 text-lg font-semibold">可扩展模块</h2>
+        <p className="mt-2 text-sm leading-6 text-[var(--muted)]">{modules.filter((item) => item.enabled).map((item) => item.label).join("、") || "公告、用户、额度"} 均可独立开关。</p>
+      </article>
+    </div>
   );
 }
 

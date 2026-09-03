@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { encodePendingSession, pendingCookie } from "@/lib/session";
-import { callNewApi, establishSession, requiresTwoFactor } from "@/lib/login";
+import {
+  callNewApi,
+  establishLocalSession,
+  establishSession,
+  requiresTwoFactor,
+} from "@/lib/login";
+import { authenticateLocalUser } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -23,6 +30,12 @@ export async function POST(request: Request) {
     );
 
   try {
+    if (authProviderId() === "local") {
+      const user = await authenticateLocalUser(username, password);
+      if (!user)
+        return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
+      return establishLocalSession(user);
+    }
     const { response, result } = await callNewApi("/api/user/login", {
       username,
       password,

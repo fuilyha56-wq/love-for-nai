@@ -6,9 +6,12 @@ services:
     container_name: love-for-nai
     restart: unless-stopped
     environment:
+      LFN_AUTH_PROVIDER: ${LFN_AUTH_PROVIDER:-newapi}
       NEWAPI_BASE_URL: ${NEWAPI_BASE_URL:-http://host.docker.internal:3000}
       LFN_AFF_GATEWAY_URL: ${LFN_AFF_GATEWAY_URL:-}
       LFN_AFF_GATEWAY_TOKEN: ${LFN_AFF_GATEWAY_TOKEN:-}
+      LFN_IMAGE_PROVIDER_URL: ${LFN_IMAGE_PROVIDER_URL:-}
+      LFN_IMAGE_PROVIDER_TOKEN: ${LFN_IMAGE_PROVIDER_TOKEN:-}
       QUOTA_PER_UNIT: ${QUOTA_PER_UNIT:-500000}
       LFN_SESSION_SECRET: ${LFN_SESSION_SECRET:?LFN_SESSION_SECRET is required}
       LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}

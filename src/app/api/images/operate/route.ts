@@ -11,6 +11,7 @@ import {
   imageFromResult,
   newApiBaseUrl,
 } from "@/lib/newapi";
+import { authProviderId, genericImageProvider } from "@/lib/platform";
 import { saveHistory } from "@/lib/history";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
@@ -198,13 +199,13 @@ export async function POST(request: Request) {
           ? body.characterPrompts.length
           : 0,
       };
-      const gateway = affGateway();
-      const credits = gateway
+      const platformUpstream = affGateway() || genericImageProvider();
+      const credits = platformUpstream
         ? await trySpendImageCredits(session.userId, generation)
         : null;
-      if (credits && gateway) {
-        token = gateway.token;
-        baseUrlOverride = gateway.baseUrl;
+      if (credits && platformUpstream) {
+        token = platformUpstream.token;
+        baseUrlOverride = platformUpstream.baseUrl;
         payment = "aff";
         creditCharge = credits;
         paymentSource =
@@ -213,9 +214,20 @@ export async function POST(request: Request) {
             : credits.packageCost > 0
               ? "package"
               : "personal";
+      } else if (authProviderId() === "local") {
+        if (!platformUpstream)
+          return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
+        token = platformUpstream.token;
+        baseUrlOverride = platformUpstream.baseUrl;
       } else {
         token = await getImageToken(session, model);
       }
+    } else if (authProviderId() === "local") {
+      const fallback = affGateway() || genericImageProvider();
+      if (!fallback)
+        return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
+      token = fallback.token;
+      baseUrlOverride = fallback.baseUrl;
     } else {
       token = await getImageToken(session, model);
     }
