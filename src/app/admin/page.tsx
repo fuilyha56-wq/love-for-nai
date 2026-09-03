@@ -18,7 +18,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
-import { PopupSelect } from "@/app/ui/popup-select";
 import CommentsDialog from "./comments-dialog";
 import PlatformConfigPanel from "./platform-config-panel";
 
@@ -684,31 +683,25 @@ function EditUserDialog({
           {localAuth && (
             <div className="grid grid-cols-2 gap-3">
               <label className="block font-semibold">角色
-                <div className="mt-1.5">
-                  <PopupSelect
-                    value={role}
-                    onChange={setRole}
-                    ariaLabel="角色"
-                    options={[
-                      { value: "1", label: "用户" },
-                      { value: "10", label: "管理员" },
-                      { value: "100", label: "Root" },
-                    ]}
-                  />
-                </div>
+                <select 
+                  value={role} 
+                  onChange={(e) => setRole(e.target.value)}
+                  className="field mt-1.5 h-10 w-full px-3 text-sm"
+                >
+                  <option value="1">用户</option>
+                  <option value="10">管理员</option>
+                  <option value="100">Root</option>
+                </select>
               </label>
               <label className="block font-semibold">状态
-                <div className="mt-1.5">
-                  <PopupSelect
-                    value={status}
-                    onChange={setStatus}
-                    ariaLabel="状态"
-                    options={[
-                      { value: "1", label: "正常" },
-                      { value: "0", label: "停用" },
-                    ]}
-                  />
-                </div>
+                <select 
+                  value={status} 
+                  onChange={(e) => setStatus(e.target.value)}
+                  className="field mt-1.5 h-10 w-full px-3 text-sm"
+                >
+                  <option value="1">正常</option>
+                  <option value="0">停用</option>
+                </select>
               </label>
             </div>
           )}
