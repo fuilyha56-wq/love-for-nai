@@ -24,6 +24,7 @@ export type LfnPendingSession = {
 const COOKIE_NAME = "lfn_session";
 const PENDING_COOKIE_NAME = "lfn_2fa";
 const DEVELOPMENT_SECRET = "lfn-development-secret-change-me";
+const PUBLIC_PLACEHOLDER_SECRET = "replace-with-at-least-32-random-bytes";
 
 // 弱密钥会让攻击者伪造任意 userId 的会话，生产环境必须拒绝启动。
 export function validateSessionConfiguration(
@@ -35,9 +36,12 @@ export function validateSessionConfiguration(
       throw new Error("LFN_SESSION_SECRET is required in production");
     if (Buffer.byteLength(configured, "utf8") < 32)
       throw new Error("LFN_SESSION_SECRET must be at least 32 bytes");
-    if (configured === DEVELOPMENT_SECRET)
+    if (
+      configured === DEVELOPMENT_SECRET ||
+      configured === PUBLIC_PLACEHOLDER_SECRET
+    )
       throw new Error(
-        "LFN_SESSION_SECRET must not use the development default",
+        "LFN_SESSION_SECRET must not use a public or development default",
       );
   }
 }

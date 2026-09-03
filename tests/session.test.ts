@@ -23,6 +23,15 @@ describe("validateSessionConfiguration", () => {
     ).toThrow("development default");
   });
 
+  it("rejects the public placeholder secret in production", () => {
+    expect(() =>
+      validateSessionConfiguration({
+        NODE_ENV: "production",
+        LFN_SESSION_SECRET: "replace-with-at-least-32-random-bytes",
+      }),
+    ).toThrow("public or development default");
+  });
+
   it("accepts a sufficiently long production secret", () => {
     expect(() =>
       validateSessionConfiguration({

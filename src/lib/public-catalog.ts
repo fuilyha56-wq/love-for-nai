@@ -3,23 +3,26 @@ import { newApiBaseUrl } from "@/lib/newapi";
 import {
   NEWAPI_BALANCE_PER_CNY,
   newApiBalanceToCny,
+  pointPriceCny,
+  snapshotFromRawPricing,
+  TOKENS_PER_POINT,
+  type RawModelPricing,
 } from "@/lib/image-pricing";
 
 export type PublicModelKind = "image" | "chat";
 
 export type PublicModelPricing = {
-  billingMode: "tiered" | "per_request" | "per_token" | "unknown";
-  groupName: string;
-  groupRatio: number;
-  ratioSource: "draw" | "base";
-  inEnvelopeBalance?: number;
-  inEnvelopeCny?: number;
-  outOfEnvelopeBalancePerMillion?: number;
-  outOfEnvelopeCnyPerMillion?: number;
-  perRequestBalance?: number;
-  perRequestCny?: number;
-  perMillionTokensBalance?: number;
-  perMillionTokensCny?: number;
+  billingMode: "live" | "private_reference" | "unknown";
+  liveType: "per_request" | "per_token" | "tiered" | "unknown";
+  liveCnyPerRequest?: number;
+  liveCnyPerUsageToken?: number;
+  liveGroupName?: string;
+  liveGroupRatio?: number;
+  privatePointReference: {
+    tokensPerPoint: number;
+    pointPriceCny: number;
+    version: "V5" | "V4.5/旧版";
+  } | null;
   note: string;
 };
 
@@ -42,21 +45,14 @@ export type PublicCatalog = {
   message?: string;
 };
 
-type RawPricing = {
+type RawPricing = RawModelPricing & {
   model_name?: unknown;
-  model_ratio?: unknown;
-  model_price?: unknown;
-  quota_type?: unknown;
-  enable_groups?: unknown;
-  billing_mode?: unknown;
-  billing_expr?: unknown;
 };
 
 const CACHE_TTL_MS = 60_000;
 const MAX_MODELS = 120;
 const MAX_FIELD_LENGTH = 96;
 const MODEL_PATTERN = /^nai-[a-z0-9][a-z0-9._-]{0,80}$/i;
-
 const FALLBACK_MODEL_IDS = [
   "nai-v5-full",
   "nai-v5-curated",
@@ -79,8 +75,7 @@ const FALLBACK_MODEL_IDS = [
 ] as const;
 
 const fallbackPricingNotes =
-  "当前未读取到上游实时价格，以下仅为模型目录；请登录后以账号实际分组价格为准。";
-
+  "当前未读取到上游实时价格，积分价格仅作私立参考；登录后以 NewAPI 实时价格为准。";
 let cached: { value: PublicCatalog; expiresAt: number } | null = null;
 let lastVerified: PublicCatalog | null = null;
 
@@ -98,7 +93,7 @@ function cleanText(value: unknown): string {
 }
 
 function modelName(id: string): string {
-  if (id === "nai-chat") return "NAI Chat";
+  if (id.toLowerCase() === "nai-chat") return "NAI Chat";
   const version = id.match(/^nai-(v[345](?:\.5)?)/i)?.[1]?.toUpperCase();
   const mode = id.includes("inpaint")
     ? "局部重绘"
@@ -128,103 +123,108 @@ function modelCapabilities(id: string, kind: PublicModelKind): string[] {
   return capabilities;
 }
 
-function parseTiered(expr: string): { limit: number; full: number } | null {
-  const limit = expr.match(/tier\(\s*["']limit["']\s*,\s*p\s*\*\s*(\d+)\s*\)/i);
-  const full = expr.match(/tier\(\s*["']full["']\s*,\s*p\s*\*\s*(\d+)\s*\)/i);
-  if (!limit || !full) return null;
-  const limitValue = Number(limit[1]);
-  const fullValue = Number(full[1]);
-  if (![limitValue, fullValue].every((value) => Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000)) return null;
-  return { limit: limitValue, full: fullValue };
+function privateReference(id: string): PublicModelPricing["privatePointReference"] {
+  const price = pointPriceCny(id);
+  if (price == null) return null;
+  return {
+    tokensPerPoint: TOKENS_PER_POINT,
+    pointPriceCny: price,
+    version: id.toLowerCase().includes("nai-v5") ? "V5" : "V4.5/旧版",
+  };
 }
 
-function publicPricing(
+function livePricing(
   entry: RawPricing,
+  modelId: string,
   drawRatio: number,
   hasDrawRatio: boolean,
-): PublicModelPricing | null {
-  const ratioValue = finiteNumber(entry.model_ratio, -1);
-  const priceValue = finiteNumber(entry.model_price, -1);
-  const quotaTypeValue = finiteNumber(entry.quota_type, -1);
-  const rawMode = cleanText(entry.billing_mode).toLowerCase();
-  if (rawMode !== "tiered_expr" && ratioValue < 0 && priceValue < 0)
-    return null;
+): PublicModelPricing {
   const ratio = boundedNumber(drawRatio, 1_000_000);
   const groupName = "Draw";
-  const tiered = rawMode === "tiered_expr" ? parseTiered(cleanText(entry.billing_expr)) : null;
-  const noteBase = hasDrawRatio
-    ? "按公开 Draw 分组倍率展示。"
-    : "暂按基础倍率 1 展示，实际价格以登录后的账号分组为准。";
+  const baseNote = hasDrawRatio
+    ? "实时读取 NewAPI 的公开 Draw 分组倍率。"
+    : "未读取到 Draw 分组倍率，登录后以账号实际结算为准。";
+  const privatePointReference = privateReference(modelId);
+  const snapshot = snapshotFromRawPricing(modelId, entry, ratio, groupName);
 
-  if (tiered) {
-    const inEnvelopeBalance = (8 * tiered.limit * 0.5 * ratio) / 500_000;
-    const outOfEnvelopeBalancePerMillion = (tiered.full * 0.5 * ratio) / 500_000;
+  if (snapshot.tiered) {
     return {
-      billingMode: "tiered",
-      groupName,
-      groupRatio: ratio,
-      ratioSource: hasDrawRatio ? "draw" : "base",
-      inEnvelopeBalance,
-      inEnvelopeCny: newApiBalanceToCny(inEnvelopeBalance),
-      outOfEnvelopeBalancePerMillion,
-      outOfEnvelopeCnyPerMillion: newApiBalanceToCny(outOfEnvelopeBalancePerMillion),
-      note: `满足 n=1、steps≤28、≤1024×1024、纯文生图且无参考图/多角色时为档内固定价；${noteBase}`,
+      billingMode: "live",
+      liveType: "tiered",
+      liveCnyPerRequest: newApiBalanceToCny(snapshot.inEnvelopeUsd ?? 0),
+      liveCnyPerUsageToken: newApiBalanceToCny(
+        snapshot.outOfEnvelopeBalancePerUsageToken ?? 0,
+      ),
+      liveGroupName: groupName,
+      liveGroupRatio: ratio,
+      privatePointReference,
+      note: `NewAPI 实时分档价格：限制范围内按张结算，超出后按网关 usage token 结算；${baseNote}`,
     };
   }
 
-  const quotaType = Math.round(quotaTypeValue);
-  if (quotaType === 1) {
-    const perRequestBalance = boundedNumber(entry.model_price, 1_000_000_000) * ratio;
+  if (snapshot.quotaType === 1) {
+    const price =
+      typeof entry.model_price === "number"
+        ? Number.isFinite(entry.model_price)
+          ? entry.model_price
+          : null
+        : typeof entry.model_price === "string" && entry.model_price.trim() !== ""
+          ? Number.isFinite(Number(entry.model_price))
+            ? Number(entry.model_price)
+            : null
+          : null;
+    if (price == null)
+      return {
+        billingMode: "unknown",
+        liveType: "unknown",
+        liveGroupName: groupName,
+        liveGroupRatio: ratio,
+        privatePointReference,
+        note: `NewAPI 返回了按次计费类型，但没有返回可展示的价格；${baseNote}`,
+      };
     return {
-      billingMode: "per_request",
-      groupName,
-      groupRatio: ratio,
-      ratioSource: hasDrawRatio ? "draw" : "base",
-      perRequestBalance,
-      perRequestCny: newApiBalanceToCny(perRequestBalance),
-      note: `按次计费；${noteBase}`,
+      billingMode: "live",
+      liveType: "per_request",
+      liveCnyPerRequest: newApiBalanceToCny(price * ratio),
+      liveGroupName: groupName,
+      liveGroupRatio: ratio,
+      privatePointReference,
+      note: `NewAPI 实时按次价格；${baseNote}`,
     };
   }
 
-  const perMillionTokensBalance =
-    boundedNumber(entry.model_ratio, 1_000_000_000) * 2 * ratio;
+  const modelRatio = boundedNumber(entry.model_ratio, 1_000_000_000);
   return {
-    billingMode: "per_token",
-    groupName,
-    groupRatio: ratio,
-    ratioSource: hasDrawRatio ? "draw" : "base",
-    perMillionTokensBalance,
-    perMillionTokensCny: newApiBalanceToCny(perMillionTokensBalance),
-    note: `按估算 token 计费；${noteBase}`,
+    billingMode: "live",
+    liveType: "per_token",
+    liveCnyPerUsageToken: newApiBalanceToCny(modelRatio * 2e-6 * ratio),
+    liveGroupName: groupName,
+    liveGroupRatio: ratio,
+    privatePointReference,
+    note: `NewAPI 实时按 usage token 结算；${baseNote}`,
+  };
+}
+
+function fallbackImagePricing(id: string): PublicModelPricing | null {
+  const reference = privateReference(id);
+  if (!reference) return null;
+  return {
+    billingMode: "private_reference",
+    liveType: "unknown",
+    privatePointReference: reference,
+    note: "当前暂无 NewAPI 实时数据，这里只显示你提供的私立积分参考价，不代表 NewAPI 实际扣费。",
   };
 }
 
 function makeModel(id: string, pricing: PublicModelPricing | null): PublicModel {
   const kind = id.toLowerCase() === "nai-chat" ? "chat" : "image";
-  const fallback = pricing || (kind === "image" ? fallbackImagePricing(id) : null);
   return {
     id,
     kind,
     name: modelName(id),
     summary: modelSummary(id, kind),
     capabilities: modelCapabilities(id, kind),
-    pricing: fallback,
-  };
-}
-
-function fallbackImagePricing(id: string): PublicModelPricing {
-  const isV5 = id.toLowerCase().includes("nai-v5");
-  const inEnvelopeBalance = isV5 ? 8 : 0;
-  return {
-    billingMode: "tiered",
-    groupName: "Draw",
-    groupRatio: 1,
-    ratioSource: "base",
-    inEnvelopeBalance,
-    inEnvelopeCny: newApiBalanceToCny(inEnvelopeBalance),
-    outOfEnvelopeBalancePerMillion: isV5 ? 130_000 : 100_000,
-    outOfEnvelopeCnyPerMillion: newApiBalanceToCny(isV5 ? 130_000 : 100_000),
-    note: `内置展示估算：${isV5 ? "V5" : "V4.5/旧版"} 档内固定价格；实际价格以登录后账号分组为准。`,
+    pricing: pricing || (kind === "image" ? fallbackImagePricing(id) : null),
   };
 }
 
@@ -235,7 +235,7 @@ function fallbackCatalog(message?: string): PublicCatalog {
     stale: true,
     source: "fallback",
     currency: "CNY",
-    conversion: `200 NewAPI 余额单位 = 1 元人民币；${fallbackPricingNotes}`,
+    conversion: `实时价格不可用。私立参考：1 积分 = ${TOKENS_PER_POINT} token；V4.5 每积分 ¥0.04；V5 每积分 ¥0.06。${fallbackPricingNotes}`,
     ...(message ? { message } : {}),
   };
 }
@@ -257,7 +257,9 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
   if (!response.ok) throw new Error(`上游价格服务返回 ${response.status}`);
   const payload = (await readJson(response)) as { data?: unknown };
   const entries = Array.isArray(payload.data) ? payload.data : [];
-  const rawEntries = entries.filter((entry): entry is RawPricing => Boolean(entry) && typeof entry === "object");
+  const rawEntries = entries.filter(
+    (entry): entry is RawPricing => Boolean(entry) && typeof entry === "object",
+  );
 
   let drawRatio = 1;
   let hasDrawRatio = false;
@@ -268,7 +270,9 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
       signal: AbortSignal.timeout(8_000),
     });
     if (groupsResponse.ok) {
-      const groupsPayload = (await readJson(groupsResponse)) as { data?: Record<string, unknown> };
+      const groupsPayload = (await readJson(groupsResponse)) as {
+        data?: Record<string, unknown>;
+      };
       const draw = groupsPayload.data?.Draw || groupsPayload.data?.draw;
       if (draw && typeof draw === "object") {
         const ratio = finiteNumber((draw as { ratio?: unknown }).ratio, -1);
@@ -279,14 +283,14 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
       }
     }
   } catch {
-    // 没有公开分组倍率时保留基础倍率展示，并在每张卡说明。
+    // 没有公开分组倍率时仍返回实时模型目录，并明确标注。
   }
 
   const byId = new Map<string, PublicModel>();
   for (const entry of rawEntries.slice(0, MAX_MODELS)) {
     const id = cleanText(entry.model_name);
     if (!MODEL_PATTERN.test(id) || byId.has(id)) continue;
-    byId.set(id, makeModel(id, publicPricing(entry, drawRatio, hasDrawRatio)));
+    byId.set(id, makeModel(id, livePricing(entry, id, drawRatio, hasDrawRatio)));
   }
   if (!byId.size) throw new Error("上游没有可展示的 NAI 模型");
 
@@ -296,7 +300,7 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
     stale: false,
     source: "upstream",
     currency: "CNY",
-    conversion: `200 NewAPI 余额单位 = 1 元人民币；价格按公开 ${hasDrawRatio ? "Draw" : "基础"} 倍率展示。`,
+    conversion: `实时价格来自 NewAPI；${NEWAPI_BALANCE_PER_CNY} NewAPI 余额单位 = 1 元人民币。私立参考：1 积分 = ${TOKENS_PER_POINT} token，V4.5 每积分 ¥0.04，V5 每积分 ¥0.06。`,
   };
 }
 

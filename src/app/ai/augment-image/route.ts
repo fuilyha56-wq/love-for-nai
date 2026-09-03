@@ -4,6 +4,7 @@ import {
   naiZipResponse,
   proxyImageWithCredits,
 } from "@/lib/compat-api";
+import { assertBodySize } from "@/lib/image-request";
 
 const operations: Record<string, string> = {
   declutter: "director-declutter",
@@ -20,6 +21,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let body: Record<string, unknown>;
   try {
+    assertBodySize(request);
     body = await readBody(request);
   } catch (error) {
     return Response.json(
@@ -44,6 +46,8 @@ export async function POST(request: Request): Promise<Response> {
   const rest = { ...body };
   delete rest.req_type;
   delete rest.model;
+  delete rest.n;
+  delete rest.n_samples;
   const payload = {
     ...rest,
     prompt: typeof body.prompt === "string" ? body.prompt : "",

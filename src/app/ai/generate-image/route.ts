@@ -5,10 +5,16 @@ import {
   naiZipResponse,
   proxyImageWithCredits,
 } from "@/lib/compat-api";
+import { assertBodySize } from "@/lib/image-request";
 
 export async function POST(request: Request): Promise<Response> {
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
+  try {
+    assertBodySize(request);
+  } catch (error) {
+    return Response.json({ message: error instanceof Error ? error.message : "请求体过大" }, { status: 413 });
+  }
 
   let body: Record<string, unknown>;
   try {
@@ -21,7 +27,15 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof body.model !== "string" || !body.model.trim())
     return Response.json({ message: "model is required" }, { status: 400 });
 
-  const payload = naiGenerationPayload(body);
+  let payload: Record<string, unknown>;
+  try {
+    payload = naiGenerationPayload(body);
+  } catch (error) {
+    return Response.json(
+      { message: error instanceof Error ? error.message : "图像参数无效" },
+      { status: 400 },
+    );
+  }
   const generation = externalGeneration(payload);
   if (!generation)
     return Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 });

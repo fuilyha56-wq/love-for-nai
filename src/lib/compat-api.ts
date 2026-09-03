@@ -7,6 +7,17 @@ import {
 } from "@/lib/aff";
 import { resolveExternalApiUser } from "@/lib/newapi-db";
 import { affGateway, newApiBaseUrl } from "@/lib/newapi";
+import {
+  assertBodySize,
+  assertImageModel,
+  checkImageRateLimit,
+  ImageRequestValidationError,
+  normalizeDimension,
+  normalizeSamples,
+  normalizeSteps,
+  validateImageShape,
+  validateReferenceCount,
+} from "@/lib/image-request";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -38,6 +49,10 @@ const novelAiModelAliases: Record<string, string> = {
   "nai-diffusion-4-5-full": "nai-v4.5-full",
   "nai-diffusion-4-5-curated": "nai-v4.5-curated",
   "nai-diffusion-4-5-full-inpainting": "nai-v4.5-inpaint",
+  "nai-diffusion-5": "nai-v5-full",
+  "nai-diffusion-5-curated": "nai-v5-curated",
+  "nai-diffusion-5-full": "nai-v5-full",
+  "nai-diffusion-5-inpainting": "nai-v5-inpaint",
   "nai-diffusion-4-full": "nai-v4-full",
   "nai-diffusion-4-curated-preview": "nai-v4-curated",
   "nai-diffusion-3": "nai-v3",
@@ -79,13 +94,20 @@ export async function proxyNewApi(
   if (authorization instanceof Response) return authorization;
 
   try {
+    assertBodySize(request);
     const headers = new Headers();
+    const isFormDataBody = body instanceof FormData;
     request.headers.forEach((value, key) => {
-      if (!droppedRequestHeaders.has(key.toLowerCase())) headers.set(key, value);
+      if (
+        !droppedRequestHeaders.has(key.toLowerCase()) &&
+        !(isFormDataBody && key.toLowerCase() === "content-type")
+      )
+        headers.set(key, value);
     });
     headers.set("Authorization", authorization);
     const requestContentType = contentType ?? request.headers.get("content-type");
-    if (requestContentType) headers.set("Content-Type", requestContentType);
+    if (requestContentType && !isFormDataBody)
+      headers.set("Content-Type", requestContentType);
     const upstream = await fetch(`${newApiBaseUrl()}${pathname}`, {
       method: request.method,
       headers,
@@ -175,6 +197,13 @@ export async function proxyImageWithCredits(
 ): Promise<Response> {
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
+  const identity = authorization;
+  const rate = checkImageRateLimit(request, identity);
+  if (!rate.allowed)
+    return Response.json(
+      { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
   const gateway = affGateway();
   if (!gateway) return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
 
@@ -203,6 +232,13 @@ export async function proxyImageWithCredits(
         imageRequest.contentType,
       ),
       "newapi",
+    );
+
+  const userRate = checkImageRateLimit(request, `user:${userId}`);
+  if (!userRate.allowed)
+    return Response.json(
+      { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
+      { status: 429, headers: { "Retry-After": String(userRate.retryAfterSeconds) } },
     );
 
   let charge: ImageCreditCharge | null = null;
@@ -261,9 +297,20 @@ export function forwardResponse(upstream: Response): Response {
 
 export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
-  const width = positiveInteger(parameters.width);
-  const height = positiveInteger(parameters.height);
-  const samples = positiveInteger(parameters.n_samples) ?? 1;
+  const width = normalizeDimension(
+    parameters.width ?? (isRecord(body) ? body.width : undefined),
+    "width",
+  );
+  const height = normalizeDimension(
+    parameters.height ?? (isRecord(body) ? body.height : undefined),
+    "height",
+  );
+  validateImageShape(width, height);
+  const samples = normalizeSamples({
+    n: parameters.n ?? body.n,
+    n_samples: parameters.n_samples ?? body.n_samples,
+  });
+  const steps = normalizeSteps(parameters.steps ?? body.steps);
   const action =
     typeof body.action === "string" ? body.action.toLowerCase() : "generate";
   const operation =
@@ -273,13 +320,18 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
         ? "inpainting"
         : undefined;
   const rest = { ...parameters };
+  delete rest.n;
   delete rest.n_samples;
   return {
     ...rest,
     prompt: typeof body.input === "string" ? body.input : "",
-    model: modelAlias(body.model),
+    model: assertImageModel(modelAlias(body.model)),
+    n: samples,
     n_samples: samples,
-    ...(width && height ? { size: `${width}x${height}` } : {}),
+    steps,
+    width,
+    height,
+    size: `${width}x${height}`,
     response_format: "b64_json",
     ...(operation ? { novelai_operation: operation } : {}),
   };
@@ -332,12 +384,6 @@ export function unsupportedNaiOperation(request: Request, operation: string): Re
 
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? value
-    : undefined;
 }
 
 export function modelAlias(model: unknown): unknown {
@@ -393,30 +439,33 @@ export function externalGeneration(
   operation = "generate",
 ): AffGeneration | null {
   const size = parseSize(body.size);
-  const width = parsePositiveInteger(body.width) ?? size?.width;
-  const height = parsePositiveInteger(body.height) ?? size?.height;
-  const samples = parsePositiveInteger(body.n) ?? parsePositiveInteger(body.n_samples) ?? 1;
-  if (
-    typeof body.model !== "string" ||
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    !Number.isInteger(width) ||
-    !Number.isInteger(height) ||
-    !Number.isInteger(samples) ||
-    samples < 1
-  )
+  let width: number;
+  let height: number;
+  let samples: number;
+  let steps: number;
+  let model: string;
+  try {
+    const rawWidth = parsePositiveInteger(body.width) ?? size?.width;
+    const rawHeight = parsePositiveInteger(body.height) ?? size?.height;
+    width = normalizeDimension(rawWidth, "width");
+    height = normalizeDimension(rawHeight, "height");
+    validateImageShape(width, height);
+    samples = normalizeSamples(body);
+    steps = normalizeSteps(body.steps);
+    model = assertImageModel(modelAlias(body.model));
+    validateReferenceCount(externalReferenceCount(body));
+  } catch (error) {
+    if (error instanceof ImageRequestValidationError) return null;
     return null;
+  }
   return {
-    model: body.model,
+    model,
     width,
     height,
-    steps: typeof body.steps === "number" ? body.steps : 28,
+    steps,
     samples,
     strength: typeof body.strength === "number" ? body.strength : undefined,
-    operation:
-      typeof body.novelai_operation === "string"
-        ? body.novelai_operation
-        : operation,
+    operation,
     referenceImageCount: externalReferenceCount(body),
     characterPromptCount: Array.isArray(body.characterPrompts)
       ? body.characterPrompts.length

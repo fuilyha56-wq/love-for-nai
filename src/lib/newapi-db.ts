@@ -1,8 +1,8 @@
 import { Pool } from "pg";
 
 // 外部 API Key → NewAPI 用户 ID：直接查询 NewAPI 数据库的 tokens 表。
-// 与 NewAPI TokenAuth 使用同一套 key 归一化规则（去 Bearer/sk-、取首个
-// '-' 之前），因此任何在 NewAPI 有效的密钥走 LFN 图像端点都能自动定位
+// 与 NewAPI TokenAuth 使用同一套完整 key 匹配规则（去 Bearer/sk-，不截断），
+// 因此任何在 NewAPI 有效的密钥走 LFN 图像端点都能自动定位
 // 到对应的图包/个人 AFF 账本，用户不需要任何绑定操作。
 // 未配置 NEWAPI_DB_URL 或 key 无效时返回 null，调用方退回透明代理
 //（仅按 NewAPI 余额计费）；数据库故障时抛错，避免静默跳过图包扣费。
@@ -39,8 +39,7 @@ export function normalizeNewApiKey(authorization: string): string {
   return authorization
     .replace(/^Bearer\s+/i, "")
     .trim()
-    .replace(/^sk-/, "")
-    .split("-")[0];
+    .replace(/^sk-/i, "");
 }
 
 export async function resolveExternalApiUser(

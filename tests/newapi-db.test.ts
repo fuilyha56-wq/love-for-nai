@@ -17,16 +17,19 @@ const { normalizeNewApiKey, resolveExternalApiUser } = await import(
 );
 
 describe("NewAPI key 归一化", () => {
-  it("与 NewAPI TokenAuth 同规则：去 Bearer、去 sk-、取首个 - 之前", () => {
+  it("与 NewAPI TokenAuth 同规则：去 Bearer、去 sk-、保留完整 key", () => {
     expect(normalizeNewApiKey("Bearer sk-abc123")).toBe("abc123");
-    expect(normalizeNewApiKey("Bearer abc123-extra")).toBe("abc123");
+    expect(normalizeNewApiKey("Bearer abc123-extra")).toBe("abc123-extra");
     expect(normalizeNewApiKey("sk-abc123")).toBe("abc123");
     expect(normalizeNewApiKey("abc123")).toBe("abc123");
   });
+
+  it("保留完整 key 内容，避免含连字符的 key 发生归属碰撞", () => {
+    expect(normalizeNewApiKey("Bearer sk-abc-123-extra")).toBe("abc-123-extra");
+  });
 });
 
-describe("resolveExternalApiUser", () => {
-  beforeEach(() => {
+describe("resolveExternalApiUser", () => {  beforeEach(() => {
     poolMocks.query.mockReset();
     delete process.env.NEWAPI_DB_URL;
     (

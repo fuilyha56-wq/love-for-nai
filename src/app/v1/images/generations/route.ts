@@ -1,7 +1,9 @@
 import {
   externalGeneration,
+  externalJsonBody,
   proxyImageWithCredits,
 } from "@/lib/compat-api";
+import { assertBodySize } from "@/lib/image-request";
 
 export async function POST(request: Request): Promise<Response> {
   const contentType = request.headers.get("content-type") || "";
@@ -12,10 +14,11 @@ export async function POST(request: Request): Promise<Response> {
     );
   let body: Record<string, unknown>;
   try {
+    assertBodySize(request);
     body = (await request.clone().json()) as Record<string, unknown>;
-  } catch {
+  } catch (error) {
     return Response.json(
-      { error: { message: "Request body must be valid JSON" } },
+      { error: { message: error instanceof Error ? error.message : "Request body must be valid JSON" } },
       { status: 400 },
     );
   }
@@ -25,10 +28,19 @@ export async function POST(request: Request): Promise<Response> {
       { error: { message: "model、size 和 n 必须是有效的图像生成参数" } },
       { status: 400 },
     );
-  const rawBody = await request.arrayBuffer();
+  const sanitized = {
+    ...body,
+    model: generation.model,
+    size: `${generation.width}x${generation.height}`,
+    n: generation.samples,
+    n_samples: generation.samples,
+    steps: generation.steps,
+    width: generation.width,
+    height: generation.height,
+  };
   return proxyImageWithCredits(request, "/v1/images/generations", {
-    body: rawBody,
-    contentType,
+    body: externalJsonBody(sanitized),
+    contentType: "application/json",
     generation,
   });
 }

@@ -166,4 +166,33 @@ describe("内部生成 fallback", () => {
     );
     expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
   });
+
+  it("拒绝非法样本数，不调用 AFF 或上游", async () => {
+    affMocks.trySpendImageCredits.mockClear();
+    currentFetch.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    for (const body of [
+      { n: 0 },
+      { n: -1 },
+      { n: 1.5 },
+      { n: 1, n_samples: 2 },
+    ]) {
+      const response = await POST(
+        new Request("http://localhost/api/images/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "nai-v4.5-full-limit",
+            prompt: "1girl",
+            width: 832,
+            height: 1216,
+            ...body,
+          }),
+        }),
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(affMocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(currentFetch).not.toHaveBeenCalled();
+  });
 });
