@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { grantAffOnce } from "@/lib/aff";
@@ -150,6 +150,54 @@ export async function listGallery(): Promise<GalleryItem[]> {
       ? {}
       : { prompt: "", negativePrompt: "" }),
   }));
+}
+
+export async function countGallery(): Promise<number> {
+  return (await readStore()).items.length;
+}
+
+export async function listGalleryAdmin(): Promise<GalleryItem[]> {
+  return (await readStore()).items;
+}
+
+export async function updateGalleryItem(
+  id: string,
+  patch: {
+    title?: string;
+    authorName?: string;
+    rating?: GalleryRating;
+    tags?: string[];
+  },
+): Promise<GalleryItem> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find((entry) => entry.id === id);
+    if (!item) throw new Error("图库作品不存在");
+    if (typeof patch.title === "string")
+      item.title = patch.title.trim().slice(0, 80) || item.title;
+    if (typeof patch.authorName === "string") {
+      const authorName = patch.authorName.trim().slice(0, 80);
+      if (!authorName) throw new Error("请填写作品作者或画师署名");
+      item.authorName = authorName;
+    }
+    if (patch.rating) item.rating = assertGalleryRating(patch.rating);
+    if (patch.tags)
+      item.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40);
+    await writeStore(store);
+    return item;
+  });
+}
+
+export async function deleteGalleryItem(id: string): Promise<boolean> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find((entry) => entry.id === id);
+    if (!item) return false;
+    store.items = store.items.filter((entry) => entry.id !== id);
+    await writeStore(store);
+    await unlink(imagePath(item.imageFile)).catch(() => undefined);
+    return true;
+  });
 }
 export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
   return (await readStore()).items.find((item) => item.id === id) || null;

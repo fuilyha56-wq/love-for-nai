@@ -40,14 +40,20 @@ export async function PUT(request: Request) {
   const balanceUsdRaw = raw.balanceUsd;
   const balanceUsd = optionalNumber(balanceUsdRaw);
   const affDelta = optionalNumber(raw.affDelta);
+  const role = optionalNumber(raw.role);
+  const status = optionalNumber(raw.status);
   if (balanceUsdRaw !== undefined && balanceUsd === undefined)
-    return NextResponse.json({ message: "NewAPI 余额必须是有效数字" }, { status: 400 });
+    return NextResponse.json({ message: "上游余额必须是有效数字" }, { status: 400 });
   if (typeof balanceUsd === "number" && balanceUsd < 0)
     return NextResponse.json({ message: "余额不能为负数" }, { status: 400 });
   if (typeof affDelta === "undefined" && raw.affDelta !== undefined)
-    return NextResponse.json({ message: "AFF 调整必须是有效数字" }, { status: 400 });
+    return NextResponse.json({ message: "创作额度调整必须是有效数字" }, { status: 400 });
   if (typeof affDelta === "number" && !Number.isInteger(affDelta))
-    return NextResponse.json({ message: "AFF 调整必须是整数" }, { status: 400 });
+    return NextResponse.json({ message: "创作额度调整必须是整数" }, { status: 400 });
+  if (raw.role !== undefined && role !== 1 && role !== 10 && role !== 100)
+    return NextResponse.json({ message: "角色不合法" }, { status: 400 });
+  if (raw.status !== undefined && status !== 0 && status !== 1)
+    return NextResponse.json({ message: "状态不合法" }, { status: 400 });
 
   if (password && (password.length < 8 || password.length > 64))
     return NextResponse.json({ message: "密码需为 8–64 个字符" }, { status: 400 });
@@ -61,9 +67,11 @@ export async function PUT(request: Request) {
         displayName: displayName || undefined,
         password: password || undefined,
         group: group || undefined,
+        role,
+        status,
       });
       if (typeof affDelta === "number" && affDelta !== 0)
-        await adjustAff(userId, affDelta, "管理员调整创作额度");
+        await adjustAff(userId, affDelta, `管理员调整创作额度（${gate.session.username}）`);
       return NextResponse.json({ success: true });
     }
     // 1. 先取当前资料：PUT 按列覆盖，缺省字段必须回填当前值，否则会被清空。

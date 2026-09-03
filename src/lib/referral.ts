@@ -101,3 +101,11 @@ export async function redeemReferral(
 }
 
 export const referralReward = (): number => REFERRAL_REWARD;
+
+export async function listReferrals(): Promise<Referral[]> {
+  return (await readStore()).referrals;
+}
+
+export async function countReferrals(): Promise<number> {
+  return (await readStore()).referrals.length;
+}

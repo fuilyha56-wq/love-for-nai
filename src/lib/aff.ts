@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   affCost as calculateAffCost,
@@ -531,6 +531,105 @@ export async function adjustAff(
       throw new Error(`AFF 余额不足：当前 ${account.balance}，无法扣减 ${Math.abs(delta)}`);
     account.balance = next;
     addTransaction(account, delta, delta > 0 ? "referral" : "refund", description, undefined, "personal");
+    await writeAccount(userId, account);
+    return next;
+  });
+}
+
+export type AffLedgerSummary = {
+  userId: number;
+  balance: number;
+  packageBalance: number;
+  totalBalance: number;
+  lastCheckInDay?: string;
+  transactionCount: number;
+  lastTransactionAt?: string;
+};
+
+export type AffLedgerDetail = AffLedgerSummary & {
+  checkedInToday: boolean;
+  checkInReward: number;
+  transactions: AffTransaction[];
+  packageOrders: ImagePackageOrder[];
+};
+
+function ledgerSummary(userId: number, account: AffAccount): AffLedgerSummary {
+  return {
+    userId,
+    balance: account.balance,
+    packageBalance: account.packageBalance,
+    totalBalance: account.balance + account.packageBalance,
+    lastCheckInDay: account.lastCheckInDay,
+    transactionCount: account.transactions.length,
+    lastTransactionAt: account.transactions[0]?.createdAt,
+  };
+}
+
+export async function listAffLedgers(): Promise<AffLedgerSummary[]> {
+  let files: string[] = [];
+  try {
+    files = await readdir(affRoot());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const rows: AffLedgerSummary[] = [];
+  for (const file of files) {
+    if (!file.endsWith(".json")) continue;
+    const userId = Number(file.slice(0, -5));
+    if (!Number.isInteger(userId) || userId <= 0) continue;
+    rows.push(ledgerSummary(userId, await readAccount(userId)));
+  }
+  return rows.sort((a, b) => b.totalBalance - a.totalBalance || b.userId - a.userId);
+}
+
+export async function affLedger(userId: number): Promise<AffLedgerDetail> {
+  const account = await readAccount(userId);
+  return {
+    ...ledgerSummary(userId, account),
+    checkedInToday: account.lastCheckInDay === chinaDay(),
+    checkInReward: CHECK_IN_REWARD,
+    transactions: account.transactions,
+    packageOrders: account.packageOrders,
+  };
+}
+
+export async function affTotals(): Promise<{
+  accounts: number;
+  personalCredits: number;
+  packageCredits: number;
+}> {
+  const ledgers = await listAffLedgers();
+  return {
+    accounts: ledgers.length,
+    personalCredits: ledgers.reduce((sum, item) => sum + item.balance, 0),
+    packageCredits: ledgers.reduce((sum, item) => sum + item.packageBalance, 0),
+  };
+}
+
+export async function adjustPackageBalance(
+  userId: number,
+  delta: number,
+  description: string,
+): Promise<number> {
+  if (!Number.isInteger(delta) || delta === 0)
+    throw new Error("图包额度调整必须为非零整数");
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    const next = account.packageBalance + delta;
+    if (next < 0)
+      throw new Error(
+        `图包额度不足：当前 ${account.packageBalance}，无法扣减 ${Math.abs(delta)}`,
+      );
+    account.packageBalance = next;
+    addTransaction(
+      account,
+      delta,
+      delta > 0 ? "package-purchase" : "refund",
+      description,
+      undefined,
+      "package",
+    );
     await writeAccount(userId, account);
     return next;
   });

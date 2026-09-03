@@ -124,6 +124,10 @@ export async function deleteAnnouncementComment(
   });
 }
 
+export async function countAnnouncementComments(): Promise<number> {
+  return (await readStore()).items.length;
+}
+
 /** 公告删除时级联清理其全部评论，避免孤儿数据占用评论配额。 */
 export async function deleteCommentsForAnnouncement(
   announcementId: string,
