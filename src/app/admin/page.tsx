@@ -20,6 +20,7 @@ import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
 import { PopupSelect } from "@/app/ui/popup-select";
 import CommentsDialog from "./comments-dialog";
+import PlatformConfigPanel from "./platform-config-panel";
 
 type AdminUser = {
   id: number;
@@ -35,7 +36,7 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals";
+type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "platform";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
 type PlatformCapabilities = {
   auth: { label: string; provider: string };
@@ -147,6 +148,7 @@ export default function AdminPage() {
         { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
         { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
         { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
+        { id: "platform", label: "平台配置", description: "管理接入的第三方服务端点", enabled: true },
       ]
   ).filter((item) => item.enabled);
   const current = visibleModules.find((item) => item.id === tab);
@@ -213,6 +215,8 @@ export default function AdminPage() {
           <GalleryPanel setMessage={setMessage} />
         ) : tab === "referrals" ? (
           <ReferralsPanel />
+        ) : tab === "platform" ? (
+          <PlatformConfigPanel setMessage={setMessage} />
         ) : (
           <AnnouncementsPanel setMessage={setMessage} />
         )}

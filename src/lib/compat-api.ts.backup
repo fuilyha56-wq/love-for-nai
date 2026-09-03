@@ -1,8 +1,3 @@
-/**
- * 适配器系统兼容层
- * 将现有 compat-api 逻辑迁移到适配器系统，保持 API 向后兼容
- */
-
 import JSZip from "jszip";
 import {
   refundImageCredits,
@@ -24,8 +19,6 @@ import {
   validateImageShape,
   validateReferenceCount,
 } from "@/lib/image-request";
-import { registry } from "@/lib/adapters/registry";
-import type { ImageGenerationRequest } from "@/lib/adapters/types";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -194,7 +187,10 @@ async function settleExternalCharge(
   return paymentResponse(response, paymentSource);
 }
 
-// 使用适配器系统处理图像请求
+// 外部 LFN 图像端点统一计费：通过 NewAPI 数据库把调用方的 key 解析成
+// 用户 ID（任何有效 key 自动生效，无需绑定），再按 图包 → 个人 AFF →
+// NewAPI 余额 顺序扣费。key 无法识别（未配置数据库或 key 无效）时
+// 透明代理到 NewAPI，由其做鉴权与计费。
 export async function proxyImageWithCredits(
   request: Request,
   pathname: string,
@@ -209,20 +205,14 @@ export async function proxyImageWithCredits(
       { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
       { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
-
-  // 尝试从适配器获取图像服务
-  const imageAdapter = await registry.getImageAdapter();
-  
-  // 向后兼容：如果没有适配器，使用环境变量配置
   const platformUpstream = affGateway() || genericImageProvider();
-  if (!imageAdapter && !platformUpstream) {
-    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
-  }
+  if (!platformUpstream) return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
 
   let userId: number | null;
   try {
     userId = await resolveExternalApiUser(authorization);
   } catch {
+    // 数据库故障无法确认 key 归属，宁可拒绝也不能跳过图包直接扣余额。
     return Response.json(
       {
         error: {
@@ -266,70 +256,19 @@ export async function proxyImageWithCredits(
         ),
         "newapi",
       );
-
-    // 使用适配器生成图像
-    if (imageAdapter) {
-      try {
-        const gen = imageRequest.generation;
-        const operation = gen.operation as "generate" | "img2img" | "inpainting" | "upscale" | undefined;
-        const adapterRequest: ImageGenerationRequest = {
-          model: gen.model,
-          prompt: "", // 从 body 解析
-          width: gen.width,
-          height: gen.height,
-          samples: gen.samples,
-          steps: gen.steps,
-          strength: gen.strength,
-          operation,
-        };
-        
-        // 解析原始请求体获取 prompt 等参数
-        if (imageRequest.body && typeof imageRequest.body === "string") {
-          try {
-            const bodyJson = JSON.parse(imageRequest.body) as JsonRecord;
-            adapterRequest.prompt = String(bodyJson.prompt || bodyJson.input || "");
-            adapterRequest.negativePrompt = bodyJson.negative_prompt as string | undefined;
-            adapterRequest.seed = bodyJson.seed as number | undefined;
-          } catch {
-            // 无法解析 body，使用默认值
-          }
-        }
-
-        const token = authorization.replace(/^Bearer\s+/i, "");
-        const result = await imageAdapter.generate(adapterRequest, token);
-        
-        settled = true;
-        
-        // 转换为兼容格式
-        const response = Response.json({
-          data: result.images,
-          usage: result.usage,
-        });
-        return settleExternalCharge(response, userId, charge);
-      } catch (error) {
-        console.error("Adapter image generation failed, falling back:", error);
-        // 失败时回退到原始方式
-      }
-    }
-
-    // 回退：使用环境变量配置的端点
-    if (platformUpstream) {
-      const headers = new Headers({
-        Authorization: `Bearer ${platformUpstream.token}`,
-        ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
-      });
-      const upstream = await fetch(`${platformUpstream.baseUrl}${pathname}`, {
-        method: request.method,
-        headers,
-        body: imageRequest.body,
-        cache: "no-store",
-        signal: AbortSignal.timeout(180_000),
-      });
-      settled = true;
-      return settleExternalCharge(upstream, userId, charge);
-    }
-
-    throw new Error("No image service available");
+    const headers = new Headers({
+      Authorization: `Bearer ${platformUpstream.token}`,
+      ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
+    });
+    const upstream = await fetch(`${platformUpstream.baseUrl}${pathname}`, {
+      method: request.method,
+      headers,
+      body: imageRequest.body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(180_000),
+    });
+    settled = true;
+    return settleExternalCharge(upstream, userId, charge);
   } catch (error) {
     if (charge && !settled) await refundImageCredits(userId, charge, 0);
     return Response.json(
@@ -480,6 +419,9 @@ function parseSize(value: unknown): { width: number; height: number } | null {
     : null;
 }
 
+// 参考图计数与内部 /api/images/operate 保持同一口径：
+// 只数 reference_images/reference_image/references/characters，
+// img2img/edits 的源图（image）不算参考图。
 function externalReferenceCount(body: JsonRecord): number {
   if (Array.isArray(body.reference_images)) {
     const count = body.reference_images.filter(
