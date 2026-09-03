@@ -7,6 +7,16 @@ import {
 import { getSession } from "@/lib/session";
 import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import {
+  assertBodySize,
+  assertImageModel,
+  checkImageRateLimit,
+  ImageRequestValidationError,
+  normalizeDimension,
+  normalizeSamples,
+  normalizeSteps,
+  validateImageShape,
+} from "@/lib/image-request";
 
 export async function POST(request: Request) {
   const session = await getSession();
@@ -21,24 +31,41 @@ export async function POST(request: Request) {
     height?: number;
   };
   try {
+    assertBodySize(request);
     body = await parseJsonBody(request);
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  if (!body.model || !body.prompt || !body.width || !body.height)
+  if (!body.model || !body.prompt || body.width == null || body.height == null)
     return NextResponse.json({ message: "生成参数不完整" }, { status: 400 });
-  if (!body.model.startsWith("nai-v"))
-    return NextResponse.json(
-      { message: "当前模型不允许使用" },
-      { status: 400 },
-    );
 
+  let model: string;
+  let width: number;
+  let height: number;
+  let steps: number;
+  let samples: number;
+  try {
+    model = assertImageModel(body.model);
+    width = normalizeDimension(body.width, "width");
+    height = normalizeDimension(body.height, "height");
+    validateImageShape(width, height);
+    steps = normalizeSteps(body.steps);
+    samples = normalizeSamples(body);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "生成参数无效" },
+      { status: error instanceof ImageRequestValidationError ? 400 : 400 },
+    );
+  }
+  const rate = checkImageRateLimit(request, `session:${session.userId}`);
+  if (!rate.allowed)
+    return NextResponse.json(
+      { message: "图像请求过于频繁，请稍后重试" },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
   // 只转发白名单字段，避免调用方注入 novelai_operation 绕过本端点的模型限制。
   const forwarded = [
-    "steps",
     "scale",
-    "n",
-    "n_samples",
     "sampler",
     "noise_schedule",
     "cfg_rescale",
@@ -50,13 +77,14 @@ export async function POST(request: Request) {
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
   let upstreamBaseUrl = newApiBaseUrl();
+  let upstreamAttempted = false;
   try {
     const generation = {
-      model: body.model,
-      width: body.width,
-      height: body.height,
-      steps: typeof body.steps === "number" ? body.steps : 28,
-      samples: typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1,
+      model,
+      width,
+      height,
+      steps,
+      samples,
     };
     const aff = gateway
       ? await trySpendImageCredits(session.userId, generation)
@@ -76,6 +104,7 @@ export async function POST(request: Request) {
     } else {
       key = await getImageToken(session, body.model);
     }
+    upstreamAttempted = true;
     const upstream = await fetch(`${upstreamBaseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
@@ -88,10 +117,13 @@ export async function POST(request: Request) {
             .filter((key) => body[key] !== undefined)
             .map((key) => [key, body[key]]),
         ),
-        model: body.model,
+        model,
         prompt: body.prompt,
         negative_prompt: body.negative_prompt || body.negativePrompt || "",
-        size: `${body.width}x${body.height}`,
+        size: `${width}x${height}`,
+        n: samples,
+        n_samples: samples,
+        steps,
         response_format: "b64_json",
       }),
       cache: "no-store",
@@ -144,7 +176,7 @@ export async function POST(request: Request) {
         : null,
     });
   } catch (error) {
-    if (!affRefunded && creditCharge) {
+    if (!affRefunded && creditCharge && !upstreamAttempted) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, 0);
     }

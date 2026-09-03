@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { snapshotFromRawPricing } from "@/lib/image-pricing";
 
 // 计费预期：把当前模型的 NewAPI 计价信息 + 用户分组倍率发给前端，
 // 前端用实测公式实时估算消耗。
@@ -44,21 +45,6 @@ export async function GET(request: Request) {
     if (!entry)
       return NextResponse.json({ message: "模型不存在" }, { status: 404 });
 
-    // 两档计费（tiered_expr）：p < 100 走档内固定价，否则按 token 动态计价。
-    // 实测换算：quota = p × 系数 × 0.5（Draw 渠道），$1 = 500000 quota；
-    // 档内 p=8（V5），故 档内价 = limit 系数 × 8e-6，档外单价 = full 系数 × 1e-6。
-    const tieredExpr =
-      entry.billing_mode === "tiered_expr" && typeof entry.billing_expr === "string"
-        ? entry.billing_expr
-        : "";
-    const limitCoeff = tieredExpr.match(
-      /tier\(\s*["']limit["']\s*,\s*p\s*\*\s*(\d+)\s*\)/,
-    );
-    const fullCoeff = tieredExpr.match(
-      /tier\(\s*["']full["']\s*,\s*p\s*\*\s*(\d+)\s*\)/,
-    );
-    const tiered = Boolean(limitCoeff && fullCoeff);
-
     // 用户分组倍率：self 接口返回 group 名，倍率要查 GroupRatio 配置。
     // NewAPI 的 /api/user/self/groups 返回 {组名: {desc, ratio}} 映射。
     let groupRatio = 1;
@@ -97,29 +83,8 @@ export async function GET(request: Request) {
       // 倍率读取失败按 1 计。
     }
 
-    return NextResponse.json({
-      model,
-      modelRatio: entry.model_ratio ?? 0,
-      modelPrice: entry.model_price ?? 0,
-      quotaType: entry.quota_type ?? 0,
-      effectiveGroup,
-      groupRatio,
-      ...(tiered && limitCoeff && fullCoeff
-        ? {
-            tiered: true,
-            // 档内固定价（USD/张，V5=$8、V4.5=$0）与档外动态价（USD/张）。
-            // 实测换算（Draw 渠道倍率 0.5，500000 quota=$1）：
-            // 档内 p=8 → 8 × limit系数 × 0.5 ÷ 500000；
-            // 档外 p=pixels/500 → tokens × full系数 × 0.5 ÷ 500000。
-            inEnvelopeUsd:
-              (8 * Number(limitCoeff[1]) * 0.5 * groupRatio) / 500_000,
-            outOfEnvelopeUsdPerMillion:
-              (Number(fullCoeff[1]) * 0.5 * groupRatio * 1_000_000) /
-              500_000 /
-              1_000_000,
-          }
-        : {}),
-    });
+    const snapshot = snapshotFromRawPricing(model, entry, groupRatio, effectiveGroup);
+    return NextResponse.json(snapshot);
   } catch {
     return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
   }

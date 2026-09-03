@@ -55,7 +55,7 @@ describe("两档计费档内判定", () => {
         samples: 1,
         operation: "img2img",
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 

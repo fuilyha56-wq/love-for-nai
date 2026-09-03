@@ -93,6 +93,12 @@ export default function ModelsPage() {
   );
 }
 
+function formatLiveCny(value: number | undefined, digits?: number): string {
+  if (value == null || !Number.isFinite(value)) return "暂无实时金额";
+  const places = digits ?? (value > 0 && value < 0.01 ? 4 : 2);
+  return `¥${value.toFixed(places)}`;
+}
+
 function ModelCard({ model }: { model: PublicModel }) {
   const image = model.kind === "image";
   const pricing = model.pricing;
@@ -100,7 +106,7 @@ function ModelCard({ model }: { model: PublicModel }) {
     <div className="flex items-start gap-3"><div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${image ? "bg-[#f8e8e9] text-[var(--rose)]" : "bg-[#e6f3ed] text-[#28664f]"}`}>{image ? <ImageIcon size={20} /> : <MessageCircle size={20} />}</div><div className="min-w-0"><div className="flex items-center gap-2"><h2 className="truncate font-semibold">{model.name}</h2><span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] text-[var(--muted)]">{image ? "图像" : "聊天"}</span></div><p className="mt-1 truncate text-[11px] text-[var(--muted)]">{model.id}</p></div></div>
     <p className="mt-4 min-h-10 text-sm leading-5 text-[var(--muted)]">{model.summary}</p>
     <div className="mt-4 flex flex-wrap gap-1.5">{model.capabilities.map((capability) => <span key={capability} className="rounded bg-[var(--surface-muted)] px-2 py-1 text-[10px]">{capability}</span>)}</div>
-    <div className="mt-5 border-t border-[var(--line)] pt-4 text-xs">{pricing ? pricing.billingMode === "tiered" ? <><b className="text-[var(--ink)]">档内固定价格</b><p className="mt-1 text-[var(--muted)]">满足限制范围时按固定价格，超出后转为动态计价。</p></> : pricing.billingMode === "per_request" ? <><b className="text-[var(--ink)]">按次计价</b><p className="mt-1 text-[var(--muted)]">每次请求根据公开分组倍率展示。</p></> : <><b className="text-[var(--ink)]">按 token 计价</b><p className="mt-1 text-[var(--muted)]">根据估算 token 数量计算。</p></> : <p className="text-[var(--muted)]">当前暂无实时价格。</p>}</div>
+    <div className="mt-5 space-y-2 border-t border-[var(--line)] pt-4 text-xs">{pricing ? <>{pricing.liveType === "per_request" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveCny(pricing.liveCnyPerRequest)} / 张</b></div>}{pricing.liveType === "tiered" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveCny(pricing.liveCnyPerRequest)} / 张起</b></div>}{pricing.liveType === "per_token" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveCny(pricing.liveCnyPerUsageToken, 4)} / usage token</b></div>}{pricing.liveType === "unknown" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>暂无实时金额</b></div>}{pricing.privatePointReference ? <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">私立参考</span><b>¥{pricing.privatePointReference.pointPriceCny.toFixed(2)} / 积分</b></div> : <p className="text-[var(--muted)]">聊天模型不适用图像积分规则</p>}<p className="text-[10px] leading-5 text-[var(--muted)]">1 积分 = 50 token；私立参考不改变 NewAPI 实际结算。</p></> : <p className="text-[var(--muted)]">当前暂无价格信息。</p>}</div>
     {image && <Link href="/pricing#calculator" className="mt-5 inline-flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white group-hover:bg-[var(--rose)]">计算这个模型 <ArrowRight size={14} /></Link>}
   </article>;
 }

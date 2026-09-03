@@ -46,3 +46,6 @@ next-env.d.ts
 .rsh.py
 .rsh2.py
 .rsh*.py
+
+# 本地 docker save 产物，不要入库
+love-for-nai-*.tar

@@ -325,8 +325,12 @@ export async function trySpendImageCredits(
 ): Promise<ImageCreditCharge | null> {
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
+    const samples = generation.samples;
+    if (!Number.isSafeInteger(samples) || samples < 1 || samples > 6)
+      throw new Error("生成张数必须是 1-6 的正整数");
     const cost = affCost(generation);
-    const samples = Math.max(1, Math.floor(generation.samples));
+    if (!Number.isSafeInteger(cost) || cost <= 0)
+      throw new Error("图像费用计算结果无效");
     const packageRateLimited =
       account.packageBalance > 0 && packageRateLimitRemaining(account) === 0;
     const availablePackageImages = packageRateLimited

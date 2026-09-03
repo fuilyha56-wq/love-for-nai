@@ -49,6 +49,7 @@ function clampPanel(value: number, min: number, max: number): number {
 
 import {
   estimateNewApiCost,
+  newApiBalanceToCny,
   affCost as estimateAff,
   type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
@@ -2437,7 +2438,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </>
                 ) : (
                   <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">${estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })}</b></div>
+                    <div>预计消耗 <b className="text-[var(--ink)]">¥{newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}</b></div>
                     {modelPricing && (
                       <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
                     )}

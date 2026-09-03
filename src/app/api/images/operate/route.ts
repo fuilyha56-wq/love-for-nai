@@ -5,9 +5,24 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { getSession } from "@/lib/session";
-import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
+import {
+  affGateway,
+  getImageToken,
+  imageFromResult,
+  newApiBaseUrl,
+} from "@/lib/newapi";
 import { saveHistory } from "@/lib/history";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import {
+  assertBodySize,
+  assertImageModel,
+  checkImageRateLimit,
+  normalizeDimension,
+  normalizeSamples,
+  normalizeSteps,
+  validateImageShape,
+  validateReferenceCount,
+} from "@/lib/image-request";
 
 const unifiedOperations = new Set([
   "generate",
@@ -24,15 +39,9 @@ const unifiedOperations = new Set([
   "director-colorize",
   "director-emotion",
 ]);
-
+const MAX_SAMPLES_PER_REQUEST = 4;
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 
-// NovelAI 按分辨率限制单次请求张数（如 832x1216 最多 4 张），超量整单 400。
-// 服务端先按保守值拆批，若上游报出更小上限再自适应重拆。
-const MAX_SAMPLES_PER_REQUEST = 4;
-const MAX_SAMPLES_TOTAL = 12;
-
-// 浏览器上传得到的是 data URL，NovelAI 只接受裸 base64；参考图嵌在数组里需递归。
 function stripDataUrls<T>(value: T): T {
   if (typeof value === "string")
     return (DATA_URL.test(value) ? value.replace(DATA_URL, "") : value) as T;
@@ -57,12 +66,28 @@ function referenceImageCount(
   body: Record<string, unknown>,
   operation: string,
 ): number {
-  if (operation === "precise-reference") return Array.isArray(body.references) ? body.references.length : 0;
-  if (operation === "character-reference") return Array.isArray(body.characters) ? body.characters.length : 0;
+  if (operation === "precise-reference")
+    return Array.isArray(body.references) ? body.references.length : 0;
+  if (operation === "character-reference")
+    return Array.isArray(body.characters) ? body.characters.length : 0;
   return imageCount(body.reference_images) || imageCount(body.reference_image);
 }
 
-// NovelAI 上游对不支持的参数只回 500，需要据请求内容给出可操作的提示。
+function parseSamplesLimit(raw: string): number | null {
+  const match = raw.match(/maximum number of images[^]*?is (\d+)/i);
+  return match ? Number(match[1]) : null;
+}
+
+function splitBatches(total: number, perRequest: number): number[] {
+  const batches: number[] = [];
+  let remaining = total;
+  while (remaining > 0) {
+    batches.push(Math.min(perRequest, remaining));
+    remaining -= perRequest;
+  }
+  return batches;
+}
+
 function explainUpstreamFailure(
   raw: string,
   status: number,
@@ -74,25 +99,8 @@ function explainUpstreamFailure(
   if (typeof body.cfg_rescale === "number" && body.cfg_rescale !== 0)
     suspects.push("CFG 重缩放");
   if (!suspects.length)
-    return `NovelAI 上游拒绝了本次请求（500）。请调整采样器、噪声调度或高级参数后重试。原始信息：${raw}`;
+    return `NovelAI 上游拒绝了本次请求（500）。请调整采样器、噪声调度或高级参数后重试。`;
   return `NovelAI 上游不支持当前${suspects.join("、")}，已返回 500。请更换后重试。`;
-}
-
-// 从上游报错中解析分辨率张数上限（如 "Maximum number of images ... is 4"）。
-function parseSamplesLimit(raw: string): number | null {
-  const match = raw.match(/maximum number of images[^]*?is (\d+)/i);
-  return match ? Number(match[1]) : null;
-}
-
-// 把总张数拆成不超过 perRequest 的批次（6 -> [4, 2]）。
-function splitBatches(total: number, perRequest: number): number[] {
-  const batches: number[] = [];
-  let remaining = total;
-  while (remaining > 0) {
-    batches.push(Math.min(perRequest, remaining));
-    remaining -= perRequest;
-  }
-  return batches;
 }
 
 export async function POST(request: Request) {
@@ -102,35 +110,49 @@ export async function POST(request: Request) {
       { message: "请先登录后使用 NAI 工具" },
       { status: 401 },
     );
+
   let body: Record<string, unknown> & { operation?: string; model?: string };
   try {
+    assertBodySize(request);
     body = await parseJsonBody(request);
   } catch (error) {
     return invalidJsonResponse(error);
   }
+
   const operation =
     typeof body.operation === "string" ? body.operation : "generate";
-  const model = typeof body.model === "string" ? body.model : "";
-  if (!model)
-    return NextResponse.json({ message: "缺少模型参数" }, { status: 400 });
-  if (["upscale", "annotate"].includes(operation)) {
+  let model: string;
+  try {
+    model = assertImageModel(body.model);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "当前模型不允许用于图像生成" },
+      { status: 400 },
+    );
+  }
+  if (operation === "upscale" || operation === "annotate")
     return NextResponse.json(
       {
         message: `${operation === "upscale" ? "图片放大" : "控制图生成"}端点已识别，但 Gateway 尚无可审计 usage 映射；为避免零费用漏计，暂不允许提交。`,
       },
       { status: 409 },
     );
-  }
   if (operation !== "suggest-tags" && !unifiedOperations.has(operation))
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
-  // 上游只允许 inpaint 模型执行 infill，否则会返回难以理解的英文报错。
   if (
-    ["inpainting", "edits"].includes(operation) &&
+    (operation === "inpainting" || operation === "edits") &&
     !model.includes("inpaint")
   )
     return NextResponse.json(
       { message: `局部重绘需要选择重绘专用模型，${model} 不支持该操作` },
       { status: 400 },
+    );
+
+  const rate = checkImageRateLimit(request, `session:${session.userId}`);
+  if (!rate.allowed)
+    return NextResponse.json(
+      { message: "图像请求过于频繁，请稍后重试" },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
 
   let creditCharge: ImageCreditCharge | null = null;
@@ -139,31 +161,39 @@ export async function POST(request: Request) {
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
   let baseUrlOverride = "";
+  let upstreamAttempted = false;
+
   try {
     let token: string;
     let totalSamples = 1;
+    let width = 0;
+    let height = 0;
+    let steps = 28;
+
     if (operation !== "suggest-tags") {
-      const width = typeof body.width === "number" ? body.width : 0;
-      const height = typeof body.height === "number" ? body.height : 0;
-      if (!width || !height)
-        return NextResponse.json({ message: "缺少图像尺寸" }, { status: 400 });
-      totalSamples =
-        typeof body.n === "number" ? body.n : typeof body.n_samples === "number" ? body.n_samples : 1;
-      if (!Number.isInteger(totalSamples) || totalSamples < 1 || totalSamples > MAX_SAMPLES_TOTAL)
+      try {
+        width = normalizeDimension(body.width, "width");
+        height = normalizeDimension(body.height, "height");
+        validateImageShape(width, height);
+        totalSamples = normalizeSamples(body);
+        steps = normalizeSteps(body.steps);
+        validateReferenceCount(referenceImageCount(body, operation));
+      } catch (error) {
         return NextResponse.json(
-          { message: `生成张数必须在 1-${MAX_SAMPLES_TOTAL} 之间` },
+          { message: error instanceof Error ? error.message : "图像参数无效" },
           { status: 400 },
         );
+      }
+
       const generation = {
         model,
         width,
         height,
-        steps: typeof body.steps === "number" ? body.steps : 28,
+        steps,
         samples: totalSamples,
         strength: typeof body.strength === "number" ? body.strength : undefined,
         operation,
         referenceImageCount: referenceImageCount(body, operation),
-        // 多角色（characterPrompts）会掉出 Opus 免费档，计费需按档外。
         characterPromptCount: Array.isArray(body.characterPrompts)
           ? body.characterPrompts.length
           : 0,
@@ -189,6 +219,7 @@ export async function POST(request: Request) {
     } else {
       token = await getImageToken(session, model);
     }
+
     const baseUrl = baseUrlOverride || newApiBaseUrl();
     const endpoint =
       operation === "suggest-tags"
@@ -196,22 +227,30 @@ export async function POST(request: Request) {
         : "/v1/images/generations";
     const payload = stripDataUrls({ ...body });
     delete payload.operation;
-    if (operation !== "suggest-tags" && operation !== "generate")
-      payload.novelai_operation = operation;
-    if (operation === "generate") delete payload.novelai_operation;
+    delete payload.n;
+    delete payload.n_samples;
+    if (operation !== "suggest-tags") {
+      payload.n = totalSamples;
+      payload.n_samples = totalSamples;
+      payload.width = width;
+      payload.height = height;
+      payload.steps = steps;
+      if (operation !== "generate") payload.novelai_operation = operation;
+      else delete payload.novelai_operation;
+    }
 
-    // 按上游单请求张数上限拆批（如 6 张 -> 4+2），合并所有批次图片。
-    // 上游若报出更小上限（如 "is 2"），自适应重拆剩余批次。
-    let perRequest = Math.max(1, Math.min(MAX_SAMPLES_PER_REQUEST, totalSamples));
-    const remaining: number[] = splitBatches(totalSamples, perRequest);
+    let perRequest = Math.min(MAX_SAMPLES_PER_REQUEST, totalSamples);
+    const remaining = splitBatches(totalSamples, perRequest);
     const images: string[] = [];
     let usage: unknown = null;
     let vibe: unknown = null;
     let lastStatus = 0;
     let lastRaw = "";
     let lastResult: Record<string, unknown> = {};
+
     while (remaining.length) {
       const batch = remaining.shift() as number;
+      upstreamAttempted = true;
       const upstream = await fetch(`${baseUrl}${endpoint}`, {
         method: "POST",
         headers: {
@@ -228,7 +267,6 @@ export async function POST(request: Request) {
         lastRaw = "上游返回了未支持的二进制响应";
         break;
       }
-      // 上游失败时可能返回空 body，直接 json() 会抛错并盖掉真实状态码。
       const text = await upstream.text();
       let result: {
         error?: { message?: string };
@@ -252,7 +290,6 @@ export async function POST(request: Request) {
           result.detail ||
           result.message ||
           (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
-        // 上游报出更小的单请求上限时，重拆当前批次后重试一次。
         const limit = parseSamplesLimit(raw);
         if (limit && limit >= 1 && limit < batch) {
           remaining.unshift(...splitBatches(batch, limit));
@@ -270,7 +307,7 @@ export async function POST(request: Request) {
         break;
       }
       images.push(...batchImages);
-      generatedSamples += batch;
+      generatedSamples += batchImages.length;
       lastResult = result;
       if (result.usage) usage = result.usage;
       if (result.data?.[0]?.vibe) vibe = result.data[0].vibe;
@@ -279,29 +316,22 @@ export async function POST(request: Request) {
     if (lastRaw) {
       if (creditCharge) {
         affRefunded = true;
-        await refundImageCredits(
-          session.userId,
-          creditCharge,
-          generatedSamples,
-        );
+        await refundImageCredits(session.userId, creditCharge, generatedSamples);
       }
-      const message = generatedSamples
-        ? `已生成 ${generatedSamples}/${totalSamples} 张后中断：${lastRaw}`
-        : lastRaw;
-      const response: Record<string, unknown> = {
-        message,
-        ...(generatedSamples ? { images, image: images[0], partial: true } : {}),
-      };
-      return NextResponse.json(response, { status: generatedSamples ? 207 : lastStatus });
+      return NextResponse.json(
+        {
+          message: generatedSamples
+            ? `已生成 ${generatedSamples}/${totalSamples} 张后中断：${lastRaw}`
+            : lastRaw,
+          ...(generatedSamples ? { images, image: images[0], partial: true } : {}),
+        },
+        { status: generatedSamples ? 207 : lastStatus || 502 },
+      );
     }
     if (operation === "suggest-tags")
       return NextResponse.json({ tags: lastResult.tags || lastResult, raw: lastResult });
-    const history = await saveHistory(
-      session.userId,
-      body,
-      images,
-      usage,
-    );
+
+    const history = await saveHistory(session.userId, body, images, usage);
     return NextResponse.json({
       images,
       image: images[0],
@@ -310,20 +340,19 @@ export async function POST(request: Request) {
       historyIds: history.map((item) => item.id),
       payment,
       paymentSource,
-      aff:
-        creditCharge == null
-          ? null
-          : {
-              cost: creditCharge.cost,
-              balance: creditCharge.balance,
-              packageCost: creditCharge.packageCost,
-              personalCost: creditCharge.personalCost,
-              packageBalance: creditCharge.packageBalance,
-              totalBalance: creditCharge.totalBalance,
-            },
+      aff: creditCharge
+        ? {
+            cost: creditCharge.cost,
+            balance: creditCharge.balance,
+            packageCost: creditCharge.packageCost,
+            personalCost: creditCharge.personalCost,
+            packageBalance: creditCharge.packageBalance,
+            totalBalance: creditCharge.totalBalance,
+          }
+        : null,
     });
   } catch (error) {
-    if (!affRefunded && creditCharge) {
+    if (!affRefunded && creditCharge && !upstreamAttempted) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, generatedSamples);
     }

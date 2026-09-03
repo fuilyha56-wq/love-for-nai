@@ -18,12 +18,18 @@ beforeEach(() => {
           {
             model_name: "nai-v5-full",
             billing_mode: "tiered_expr",
-            billing_expr: 'tier("limit", p * 8) + tier("full", p * 130000)',
+            billing_expr: 'tier("base", p * 240000 + c * 0)',
             enable_groups: ["Draw"],
             model_ratio: 123,
-            model_price: 999,
-            quota_type: 0,
+            model_price: 200,
+            quota_type: 1,
             secret: "must-not-leak",
+          },
+          {
+            model_name: "nai-v5-full-limit",
+            quota_type: 1,
+            model_price: 6,
+            model_ratio: 0,
           },
           { model_name: "nai-chat", quota_type: 1, model_price: 600 },
           { model_name: "openai-secret", model_price: 1 },
@@ -31,7 +37,7 @@ beforeEach(() => {
         ],
       });
     if (url === "http://newapi.test/api/user/self/groups")
-      return Response.json({ data: { Draw: { ratio: 0.5, secret: "no" } } });
+      return Response.json({ data: { Draw: { ratio: 1, secret: "no" } } });
     throw new Error(`unexpected ${url}`);
   });
   vi.stubGlobal("fetch", currentFetch);
@@ -51,23 +57,37 @@ describe("公开模型与价格目录", () => {
 
     expect(response.status).toBe(200);
     expect(result.currency).toBe("CNY");
-    expect(result.models).toHaveLength(2);
+    expect(result.models).toHaveLength(3);
     expect(result.models.map((item: { id: string }) => item.id)).toEqual([
       "nai-chat",
       "nai-v5-full",
+      "nai-v5-full-limit",
     ]);
     expect(result.models.find((item: { id: string }) => item.id === "nai-v5-full")).toMatchObject({
       kind: "image",
       pricing: {
-        billingMode: "tiered",
-        groupName: "Draw",
-        groupRatio: 0.5,
+        billingMode: "live",
+        liveType: "tiered",
+        liveCnyPerRequest: 0.0096,
+        liveCnyPerUsageToken: 0.0012,
+        privatePointReference: {
+          tokensPerPoint: 50,
+          pointPriceCny: 0.06,
+          version: "V5",
+        },
       },
     });
-    const pricing = result.models.find((item: { id: string }) => item.id === "nai-v5-full").pricing;
-    expect(pricing.inEnvelopeCny).toBeGreaterThan(0);
-    expect(pricing.inEnvelopeCny).toBeCloseTo(pricing.inEnvelopeBalance / 200, 10);
+    expect(result.models.find((item: { id: string }) => item.id === "nai-v5-full-limit")).toMatchObject({
+      pricing: {
+        billingMode: "live",
+        liveType: "per_request",
+        liveCnyPerRequest: 0.03,
+      },
+    });
     const serialized = JSON.stringify(result);
+    expect(result.conversion).toContain("1 积分 = 50 token");
+    expect(result.conversion).toContain("V4.5 每积分 ¥0.04");
+    expect(result.conversion).toContain("V5 每积分 ¥0.06");
     expect(serialized).not.toContain("server-admin-token");
     expect(serialized).not.toContain("secret");
     expect(serialized).not.toContain("billing_expr");

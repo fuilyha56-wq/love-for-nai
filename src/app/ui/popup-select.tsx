@@ -66,20 +66,20 @@ export function PopupSelect({
     const trigger = rootRef.current?.getBoundingClientRect();
     if (!trigger) return;
     const gap = 6;
-    const availableBelow = window.innerHeight - trigger.bottom - gap - 8;
-    const availableAbove = trigger.top - gap - 8;
+    const availableBelow = Math.max(0, window.innerHeight - trigger.bottom - gap - 8);
+    const availableAbove = Math.max(0, trigger.top - gap - 8);
     const openAbove = availableBelow < 180 && availableAbove > availableBelow;
+    const available = openAbove ? availableAbove : availableBelow;
     setMenuStyle({
       position: "fixed",
       visibility: "visible",
-      left: trigger.left,
+      left: Math.max(8, Math.min(trigger.left, window.innerWidth - trigger.width - 8)),
       top: openAbove ? undefined : trigger.bottom + gap,
       bottom: openAbove ? window.innerHeight - trigger.top + gap : undefined,
       width: trigger.width,
-      maxHeight: Math.max(
-        120,
-        Math.min(360, openAbove ? availableAbove : availableBelow),
-      ),
+      maxHeight: Math.max(0, Math.min(360, available)),
+      transform: "none",
+      transformOrigin: openAbove ? "bottom left" : "top left",
     });
   }
 
@@ -187,6 +187,7 @@ export function PopupSelect({
         }}
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          if (!options.length) return;
           event.preventDefault();
           const current = options.findIndex((option) => option.value === value);
           const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -205,7 +206,7 @@ export function PopupSelect({
           <div
             id={listboxId}
             ref={menuRef}
-            className="popup-select-menu"
+            className={`popup-select-menu${menuStyle.bottom != null ? " is-above" : ""}`}
             role="listbox"
             aria-label={ariaLabel}
             tabIndex={-1}
