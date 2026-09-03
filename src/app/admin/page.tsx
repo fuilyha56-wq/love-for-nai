@@ -1035,18 +1035,15 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
                 <input value={authorName} onChange={(event) => setAuthorName(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
               </label>
               <label className="block font-semibold">评级
-                <div className="mt-1.5">
-                  <PopupSelect
-                    value={rating}
-                    onChange={setRating}
-                    ariaLabel="评级"
-                    options={[
-                      { value: "general", label: "全年龄" },
-                      { value: "r13", label: "R13" },
-                      { value: "r18", label: "R18" },
-                    ]}
-                  />
-                </div>
+                <select 
+                  value={rating} 
+                  onChange={(e) => setRating(e.target.value as "general" | "r13" | "r18")}
+                  className="field mt-1.5 h-10 w-full px-3 text-sm"
+                >
+                  <option value="general">全年龄</option>
+                  <option value="r13">R13</option>
+                  <option value="r18">R18</option>
+                </select>
               </label>
               <label className="block font-semibold">标签（逗号分隔）
                 <input value={tags} onChange={(event) => setTags(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
