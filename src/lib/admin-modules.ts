@@ -1,6 +1,12 @@
 import { getPlatformCapabilities, type PlatformCapabilities } from "@/lib/platform";
 
-export type AdminModuleId = "overview" | "users" | "announcements";
+export type AdminModuleId =
+  | "overview"
+  | "users"
+  | "credits"
+  | "announcements"
+  | "gallery"
+  | "referrals";
 
 export type AdminModule = {
   id: AdminModuleId;
@@ -12,26 +18,45 @@ export type AdminModule = {
 export function listAdminModules(
   capabilities: PlatformCapabilities = getPlatformCapabilities(),
 ): AdminModule[] {
+  const creditLabel = capabilities.labels.credits;
   return [
     {
       id: "overview",
       label: "平台概览",
-      description: "查看当前接入的账号、图像和计费能力，不绑定某一家上游。",
+      description: "站点健康、接入能力和运营数字。不绑定某一家上游。",
       enabled: capabilities.admin.platform,
     },
     {
       id: "users",
       label: "用户管理",
       description: capabilities.auth.provider === "newapi"
-        ? "管理上游账号、分组和余额。"
-        : "管理本地账号、角色和创作额度。",
+        ? "搜索账号、改资料、分组、上游余额和创作额度。"
+        : "搜索本地账号，改资料、角色、停用状态和创作额度。",
       enabled: capabilities.admin.users,
+    },
+    {
+      id: "credits",
+      label: `${creditLabel} 账本`,
+      description: `查看个人${creditLabel}与图包额度，发放或回收，并核对流水。`,
+      enabled: capabilities.admin.credits,
     },
     {
       id: "announcements",
       label: "公告管理",
-      description: "站点公告与评论，始终存储在 LFN 本地。",
+      description: "发布、置顶、编辑站点公告，并管理评论。公告始终存在 LFN 本地。",
       enabled: capabilities.admin.announcements,
+    },
+    {
+      id: "gallery",
+      label: "图库管理",
+      description: "查看投稿、改评级/标题，或下架作品。",
+      enabled: true,
+    },
+    {
+      id: "referrals",
+      label: "邀请记录",
+      description: "查看邀请码、邀请人和已注册人数。",
+      enabled: true,
     },
   ];
 }

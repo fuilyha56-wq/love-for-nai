@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { listAdminModules } from "@/lib/admin-modules";
 import { authProviderId, getPlatformCapabilities, imageProviderId } from "@/lib/platform";
 
 const keys = [
@@ -44,5 +45,15 @@ describe("平台能力探测", () => {
     expect(capabilities.wallet.credits).toBe(true);
     expect(capabilities.admin.users).toBe(true);
     expect(capabilities.image.enabled).toBe(true);
+    const modules = listAdminModules(capabilities);
+    expect(modules.map((item) => item.id)).toEqual([
+      "overview",
+      "users",
+      "credits",
+      "announcements",
+      "gallery",
+      "referrals",
+    ]);
+    expect(modules.every((item) => item.enabled && item.description)).toBe(true);
   });
 });

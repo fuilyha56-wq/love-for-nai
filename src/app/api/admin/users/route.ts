@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
-import { affStatus } from "@/lib/aff";
-import { listLocalUsers } from "@/lib/local-users";
+import { affStatus, adjustAff } from "@/lib/aff";
+import { createLocalUser, listLocalUsers, publicLocalUser } from "@/lib/local-users";
 import { authProviderId } from "@/lib/platform";
+import {
+  invalidJsonResponse,
+  optionalNumber,
+  optionalString,
+  parseJsonBody,
+} from "@/lib/request";
 
-// 用户列表（代理 NewAPI 管理端点，并补充 LFN AFF 余额）。
 export async function GET(request: Request) {
   const gate = await requireAdmin();
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
@@ -53,7 +58,6 @@ export async function GET(request: Request) {
       ? result.data
       : result.data?.items || [];
     const total = Array.isArray(result.data) ? items.length : result.data?.total ?? items.length;
-    // AFF 余额并行补齐（失败时静默为 null）。
     const enriched = await Promise.all(
       (items as Array<Record<string, unknown>>).map(async (user) => ({
         ...user,
@@ -67,5 +71,44 @@ export async function GET(request: Request) {
     });
   } catch {
     return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
+  }
+}
+
+export async function POST(request: Request) {
+  const gate = await requireAdmin();
+  if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
+  if (authProviderId() !== "local")
+    return NextResponse.json({ message: "当前账号上游不支持在此创建用户" }, { status: 400 });
+  let raw: Record<string, unknown>;
+  try {
+    raw = await parseJsonBody(request);
+  } catch (error) {
+    return invalidJsonResponse(error);
+  }
+  const username = optionalString(raw.username)?.trim() || "";
+  const password = optionalString(raw.password) || "";
+  const displayName = optionalString(raw.displayName)?.trim();
+  const email = optionalString(raw.email)?.trim();
+  const credits = optionalNumber(raw.credits) ?? 0;
+  if (!username) return NextResponse.json({ message: "缺少用户名" }, { status: 400 });
+  if (password.length < 8 || password.length > 64)
+    return NextResponse.json({ message: "密码需为 8–64 个字符" }, { status: 400 });
+  if (!Number.isInteger(credits) || credits < 0)
+    return NextResponse.json({ message: "初始额度必须是非负整数" }, { status: 400 });
+  try {
+    const user = await createLocalUser({ username, password, displayName, email });
+    if (credits > 0)
+      await adjustAff(user.id, credits, `管理员发放初始额度（${gate.session.username}）`);
+    return NextResponse.json({
+      item: {
+        ...publicLocalUser(user),
+        aff: await affStatus(user.id).catch(() => null),
+      },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "创建用户失败" },
+      { status: 400 },
+    );
   }
 }

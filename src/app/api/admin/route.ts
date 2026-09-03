@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readUserRole } from "@/lib/admin-auth";
+import { isAdminRole, readUserRole } from "@/lib/admin-auth";
 import { listAdminModules } from "@/lib/admin-modules";
 import { getPlatformCapabilities } from "@/lib/platform";
 import { getSession } from "@/lib/session";
@@ -15,7 +15,7 @@ export async function GET() {
     });
   const role = await readUserRole(session);
   return NextResponse.json({
-    admin: typeof role === "number" && role >= 10,
+    admin: isAdminRole(role),
     role,
     capabilities,
     modules: listAdminModules(capabilities),

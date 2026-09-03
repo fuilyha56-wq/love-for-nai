@@ -160,11 +160,23 @@ export async function updateLocalUser(
     if (patch.password.length < 6) throw new Error("密码至少 6 位");
     user.passwordHash = hashPassword(patch.password);
   }
-  if (patch.role === 1 || patch.role === 10 || patch.role === 100) user.role = patch.role;
+  if (patch.role === 1 || patch.role === 10 || patch.role === 100) {
+    if (user.role >= 10 && patch.role < 10 && !hasOtherActiveAdmin(store.users, id))
+      throw new Error("不能取消最后一位管理员");
+    user.role = patch.role;
+  }
   if (typeof patch.group === "string" && patch.group.trim()) user.group = patch.group.trim();
-  if (patch.status === 0 || patch.status === 1) user.status = patch.status;
+  if (patch.status === 0 || patch.status === 1) {
+    if (user.role >= 10 && patch.status === 0 && !hasOtherActiveAdmin(store.users, id))
+      throw new Error("不能停用最后一位管理员");
+    user.status = patch.status;
+  }
   await writeStore(store);
   return user;
+}
+
+function hasOtherActiveAdmin(users: LocalUser[], exceptId: number): boolean {
+  return users.some((item) => item.id !== exceptId && item.role >= 10 && item.status === 1);
 }
 
 export async function listLocalUsers(options: {
@@ -186,4 +198,8 @@ export async function listLocalUsers(options: {
     items: filtered.slice(start, start + size).map(publicLocalUser),
     total: filtered.length,
   };
+}
+
+export async function countLocalUsers(): Promise<number> {
+  return (await readStore()).users.length;
 }

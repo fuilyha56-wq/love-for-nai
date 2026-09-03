@@ -160,6 +160,11 @@ export async function ensureSeed(): Promise<void> {
   });
 }
 
+export async function countAnnouncements(): Promise<number> {
+  await ensureSeed();
+  return (await readStore()).items.length;
+}
+
 export async function listAnnouncements(): Promise<Announcement[]> {
   await ensureSeed();
   const store = await readStore();
