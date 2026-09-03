@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
 import { affStatus, adjustAff } from "@/lib/aff";
 import { createLocalUser, listLocalUsers, publicLocalUser } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
+import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
 import {
   invalidJsonResponse,
   optionalNumber,
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
   const size = params.get("size") || "20";
   const keyword = params.get("keyword") || "";
   try {
-    if (authProviderId() === "local") {
+    if ((await resolvedAuthProviderId()) === "local") {
       const listed = await listLocalUsers({
         page: Number(page) || 1,
         size: Number(size) || 20,
@@ -34,12 +35,12 @@ export async function GET(request: Request) {
       return NextResponse.json({
         items: enriched,
         total: listed.total,
-        quotaPerUnit: Number(process.env.QUOTA_PER_UNIT || 500000),
+        quotaPerUnit: await runtimeQuotaPerUnit(),
       });
     }
     const query = new URLSearchParams({ p: page, size });
     if (keyword) query.set("keyword", keyword);
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/?${query}`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/?${query}`, {
       headers: userHeaders(gate.session),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
@@ -67,7 +68,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       items: enriched,
       total,
-      quotaPerUnit: Number(process.env.QUOTA_PER_UNIT || 500000),
+      quotaPerUnit: await runtimeQuotaPerUnit(),
     });
   } catch {
     return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
@@ -77,7 +78,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const gate = await requireAdmin();
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
-  if (authProviderId() !== "local")
+  if ((await resolvedAuthProviderId()) !== "local")
     return NextResponse.json({ message: "当前账号上游不支持在此创建用户" }, { status: 400 });
   let raw: Record<string, unknown>;
   try {

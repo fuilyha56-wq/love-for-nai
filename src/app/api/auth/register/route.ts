@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { callNewApi } from "@/lib/login";
-import { newApiBaseUrl } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { redeemReferral } from "@/lib/referral";
 import { createLocalUser } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -53,7 +53,7 @@ async function forward(
   rateLimitFallback: string,
 ): Promise<NextResponse> {
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}${path}`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}${path}`, {
       ...init,
       cache: "no-store",
       signal: AbortSignal.timeout(30_000),
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
       { message: "请输入有效的邮箱地址" },
       { status: 400 },
     );
-  if (authProviderId() !== "local" && !code)
+  if ((await resolvedAuthProviderId()) !== "local" && !code)
     return NextResponse.json({ message: "请输入邮箱验证码" }, { status: 400 });
 
   const registrationRate = registrationEmailLimiter.check(
@@ -180,7 +180,7 @@ export async function POST(request: Request) {
       "注册尝试过于频繁，请稍后再试",
     );
 
-  if (authProviderId() === "local") {
+  if ((await resolvedAuthProviderId()) === "local") {
     try {
       const user = await createLocalUser({
         username,
@@ -227,8 +227,8 @@ export async function POST(request: Request) {
   // default 分组而无法调用 Draw 渠道。注册成功后用 LFN 管理令牌把用户
   // 划入 Draw 分组，这是目前唯一的可靠途径。
   try {
-    const { adminToken, adminHeaders } = await import("@/lib/admin-auth");
-    const token = adminToken();
+    const { resolvedAdminTokenValue, resolvedAdminHeaders } = await import("@/lib/admin-auth");
+    const token = await resolvedAdminTokenValue();
     if (token) {
       const loginResult = await callNewApi("/api/user/login", {
         username,
@@ -236,10 +236,11 @@ export async function POST(request: Request) {
       });
       const user = loginResult.result.data?.user ?? loginResult.result.data;
       if (loginResult.result.success && typeof user?.id === "number") {
-        const groupId = process.env.LFN_REGISTER_GROUP || "Draw";
-        await fetch(`${newApiBaseUrl()}/api/user/`, {
+        const { runtimeRegisterGroup } = await import("@/lib/runtime-config");
+        const groupId = await runtimeRegisterGroup();
+        await fetch(`${await resolvedNewApiBaseUrl()}/api/user/`, {
           method: "PUT",
-          headers: adminHeaders(),
+          headers: await resolvedAdminHeaders(),
           body: JSON.stringify({ id: user.id, group: groupId }),
           cache: "no-store",
           signal: AbortSignal.timeout(10_000),

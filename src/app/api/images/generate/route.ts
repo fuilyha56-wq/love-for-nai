@@ -5,8 +5,8 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { getSession } from "@/lib/session";
-import { affGateway, getImageToken, imageFromResult, newApiBaseUrl } from "@/lib/newapi";
-import { authProviderId, genericImageProvider } from "@/lib/platform";
+import { getImageToken, imageFromResult, resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolvedAuthProviderId, resolvedGenericImageProvider } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
   assertBodySize,
@@ -72,12 +72,12 @@ export async function POST(request: Request) {
     "cfg_rescale",
     "seed",
   ];
-  const platformUpstream = affGateway() || genericImageProvider();
+  const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
   let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
-  let upstreamBaseUrl = newApiBaseUrl();
+  let upstreamBaseUrl = await resolvedNewApiBaseUrl();
   let upstreamAttempted = false;
   try {
     const generation = {
@@ -102,7 +102,7 @@ export async function POST(request: Request) {
           : aff.packageCost > 0
             ? "package"
             : "personal";
-    } else if (authProviderId() === "local") {
+    } else if ((await resolvedAuthProviderId()) === "local") {
       if (!platformUpstream)
         return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
       key = platformUpstream.token;

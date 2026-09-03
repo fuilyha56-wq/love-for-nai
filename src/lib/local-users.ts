@@ -1,6 +1,7 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { runtimeRegisterGroup } from "@/lib/runtime-config";
 
 export type LocalUser = {
   id: number;
@@ -120,7 +121,7 @@ export async function createLocalUser(input: {
     passwordHash: hashPassword(input.password),
     role: bootstrapAdmin ? 10 : 1,
     status: 1,
-    group: process.env.LFN_REGISTER_GROUP?.trim() || "default",
+    group: (await runtimeRegisterGroup().catch(() => process.env.LFN_REGISTER_GROUP?.trim())) || "default",
     createdAt: new Date().toISOString(),
   };
   store.nextId += 1;

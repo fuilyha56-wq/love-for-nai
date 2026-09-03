@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { encodeSession, sessionCookie } from "@/lib/session";
-import { newApiBaseUrl } from "@/lib/newapi";
+import { encodeSession, resolvedSessionCookie } from "@/lib/session";
+import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 import type { LocalUser } from "@/lib/local-users";
 
 export type NewApiUser = {
@@ -28,7 +28,7 @@ export async function callNewApi(
   path: string,
   body: unknown,
 ): Promise<{ response: Response; result: NewApiLoginResponse }> {
-  const response = await fetch(`${newApiBaseUrl()}${path}`, {
+  const response = await fetch(`${await resolvedNewApiBaseUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -54,10 +54,10 @@ export function requiresTwoFactor(result: NewApiLoginResponse): boolean {
   );
 }
 
-export function establishSession(
+export async function establishSession(
   result: NewApiLoginResponse,
   response: Response,
-): NextResponse {
+): Promise<NextResponse> {
   const data = result.data;
   const user = data?.user ?? data;
   if (!user || typeof user.id !== "number" || !user.username)
@@ -77,8 +77,9 @@ export function establishSession(
   const next = NextResponse.json({
     user: { id: user.id, name: user.display_name || user.username },
   });
+  const cookie = await resolvedSessionCookie();
   next.cookies.set(
-    sessionCookie.name,
+    cookie.name,
     encodeSession({
       userId: user.id,
       username: user.username,
@@ -87,17 +88,18 @@ export function establishSession(
       accessToken,
       expiresAt: Date.now() + 604800000,
     }),
-    sessionCookie.options,
+    cookie.options,
   );
   return next;
 }
 
-export function establishLocalSession(user: LocalUser): NextResponse {
+export async function establishLocalSession(user: LocalUser): Promise<NextResponse> {
   const next = NextResponse.json({
     user: { id: user.id, name: user.displayName || user.username },
   });
+  const cookie = await resolvedSessionCookie();
   next.cookies.set(
-    sessionCookie.name,
+    cookie.name,
     encodeSession({
       userId: user.id,
       username: user.username,
@@ -105,7 +107,7 @@ export function establishLocalSession(user: LocalUser): NextResponse {
       upstreamCookie: "",
       expiresAt: Date.now() + 604800000,
     }),
-    sessionCookie.options,
+    cookie.options,
   );
   return next;
 }

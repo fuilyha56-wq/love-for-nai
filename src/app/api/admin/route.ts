@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { isAdminRole, readUserRole } from "@/lib/admin-auth";
 import { listAdminModules } from "@/lib/admin-modules";
-import { getPlatformCapabilities } from "@/lib/platform";
+import { getResolvedPlatformCapabilities } from "@/lib/platform";
 import { getSession } from "@/lib/session";
 
 export async function GET() {
   const session = await getSession();
-  const capabilities = getPlatformCapabilities();
+  const capabilities = await getResolvedPlatformCapabilities();
   if (!session)
     return NextResponse.json({
       admin: false,

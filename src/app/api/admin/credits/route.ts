@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { affLedger, listAffLedgers } from "@/lib/aff";
 import { findLocalUserById } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (Number.isInteger(userId) && userId > 0) {
     const ledger = await affLedger(userId);
     const local =
-      authProviderId() === "local" ? await findLocalUserById(userId) : null;
+      (await resolvedAuthProviderId()) === "local" ? await findLocalUserById(userId) : null;
     return NextResponse.json({
       item: {
         ...ledger,

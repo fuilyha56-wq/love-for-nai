@@ -6,12 +6,12 @@ import {
 } from "@/lib/aff";
 import { getSession } from "@/lib/session";
 import {
-  affGateway,
   getImageToken,
   imageFromResult,
-  newApiBaseUrl,
+  resolvedAffGateway,
+  resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
-import { authProviderId, genericImageProvider } from "@/lib/platform";
+import { resolvedAuthProviderId, resolvedGenericImageProvider } from "@/lib/platform";
 import { saveHistory } from "@/lib/history";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
           ? body.characterPrompts.length
           : 0,
       };
-      const platformUpstream = affGateway() || genericImageProvider();
+      const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
       const credits = platformUpstream
         ? await trySpendImageCredits(session.userId, generation)
         : null;
@@ -214,7 +214,7 @@ export async function POST(request: Request) {
             : credits.packageCost > 0
               ? "package"
               : "personal";
-      } else if (authProviderId() === "local") {
+      } else if ((await resolvedAuthProviderId()) === "local") {
         if (!platformUpstream)
           return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
         token = platformUpstream.token;
@@ -222,8 +222,8 @@ export async function POST(request: Request) {
       } else {
         token = await getImageToken(session, model);
       }
-    } else if (authProviderId() === "local") {
-      const fallback = affGateway() || genericImageProvider();
+    } else if ((await resolvedAuthProviderId()) === "local") {
+      const fallback = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
       if (!fallback)
         return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
       token = fallback.token;
@@ -232,7 +232,7 @@ export async function POST(request: Request) {
       token = await getImageToken(session, model);
     }
 
-    const baseUrl = baseUrlOverride || newApiBaseUrl();
+    const baseUrl = baseUrlOverride || (await resolvedNewApiBaseUrl());
     const endpoint =
       operation === "suggest-tags"
         ? "/v1/images/suggest-tags"

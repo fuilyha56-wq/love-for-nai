@@ -1,6 +1,13 @@
 import { affGateway, newApiBaseUrl } from "@/lib/newapi";
+import {
+  getRuntimeSettings,
+  runtimeAffGateway,
+  runtimeAuthProvider,
+  runtimeGenericImage,
+  type AuthProviderId,
+} from "@/lib/runtime-config";
 
-export type AuthProviderId = "newapi" | "local";
+export type { AuthProviderId };
 export type ImageProviderId = "newapi" | "gateway" | "openai_compat" | "none";
 
 export type PlatformCapabilities = {
@@ -46,10 +53,29 @@ export function authProviderId(): AuthProviderId {
   return "newapi";
 }
 
+export async function resolvedAuthProviderId(): Promise<AuthProviderId> {
+  try {
+    return await runtimeAuthProvider();
+  } catch {
+    return authProviderId();
+  }
+}
+
 export function genericImageProvider(): { baseUrl: string; token: string } | null {
   const baseUrl = process.env.LFN_IMAGE_PROVIDER_URL?.trim().replace(/\/+$/, "");
   const token = process.env.LFN_IMAGE_PROVIDER_TOKEN?.trim();
   return baseUrl && token ? { baseUrl, token } : null;
+}
+
+export async function resolvedGenericImageProvider(): Promise<{
+  baseUrl: string;
+  token: string;
+} | null> {
+  try {
+    return await runtimeGenericImage();
+  } catch {
+    return genericImageProvider();
+  }
 }
 
 export function imageProviderId(): ImageProviderId {
@@ -109,4 +135,59 @@ export function getPlatformCapabilities(): PlatformCapabilities {
 
 export function newApiConfigured(): boolean {
   return authProviderId() === "newapi" && Boolean(newApiBaseUrl());
+}
+
+export async function getResolvedPlatformCapabilities(): Promise<PlatformCapabilities> {
+  const settings = await getRuntimeSettings();
+  const auth = settings.authProvider;
+  const gateway = await runtimeAffGateway();
+  const generic = await runtimeGenericImage();
+  const image: ImageProviderId = gateway
+    ? "gateway"
+    : generic
+      ? "openai_compat"
+      : auth === "newapi" && configured(settings.newApiBaseUrl)
+        ? "newapi"
+        : "none";
+  const newapi = auth === "newapi";
+  const packages = Boolean(settings.newApiAdminToken && gateway);
+  return {
+    auth: {
+      provider: auth,
+      label: auth === "newapi" ? "NewAPI 账号" : "本地账号",
+      login: true,
+      register: true,
+      groups: newapi,
+      keys: newapi,
+    },
+    image: {
+      provider: image,
+      label:
+        image === "gateway"
+          ? "NovelAI Gateway"
+          : image === "openai_compat"
+            ? "OpenAI 兼容图像接口"
+            : image === "newapi"
+              ? "NewAPI 图像接口"
+              : "未配置图像上游",
+      enabled: image !== "none",
+    },
+    wallet: {
+      upstreamBalance: newapi,
+      credits: true,
+      packages,
+      usageLogs: newapi,
+    },
+    admin: {
+      users: true,
+      announcements: true,
+      credits: true,
+      platform: true,
+    },
+    labels: {
+      upstreamBalance: newapi ? "NewAPI 余额" : "账户余额",
+      credits: newapi ? "AFF" : "创作额度",
+      packages: "图包额度",
+    },
+  };
 }

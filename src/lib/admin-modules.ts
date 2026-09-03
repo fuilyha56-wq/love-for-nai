@@ -62,7 +62,7 @@ export function listAdminModules(
     {
       id: "platform",
       label: "平台配置",
-      description: "查看当前接入的账号、图像和钱包上游。未接入端点库时只读环境变量。",
+      description: "用 LFN 控件改账号、图像、钱包上游和全部站点环境项，保存后立即生效。",
       enabled: capabilities.admin.platform,
     },
   ];

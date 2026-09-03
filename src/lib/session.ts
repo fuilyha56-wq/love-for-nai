@@ -5,6 +5,7 @@ import {
   randomBytes,
 } from "node:crypto";
 import { cookies } from "next/headers";
+import { getRuntimeSettings } from "@/lib/runtime-config";
 
 export type LfnSession = {
   userId: number;
@@ -102,19 +103,37 @@ export async function getPendingSession(): Promise<LfnPendingSession | null> {
   return decoded?.flowToken ? decoded : null;
 }
 
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.LFN_COOKIE_SECURE === "true",
-  sameSite: "lax" as const,
-  path: "/",
-};
+function cookieOptions(secure = process.env.LFN_COOKIE_SECURE === "true") {
+  return {
+    httpOnly: true,
+    secure,
+    sameSite: "lax" as const,
+    path: "/",
+  };
+}
 
 export const sessionCookie = {
   name: COOKIE_NAME,
-  options: { ...cookieOptions, maxAge: 604800 },
+  options: { ...cookieOptions(), maxAge: 604800 },
 };
 
 export const pendingCookie = {
   name: PENDING_COOKIE_NAME,
-  options: { ...cookieOptions, maxAge: 300 },
+  options: { ...cookieOptions(), maxAge: 300 },
 };
+
+export async function resolvedSessionCookie() {
+  const settings = await getRuntimeSettings().catch(() => null);
+  return {
+    name: COOKIE_NAME,
+    options: { ...cookieOptions(settings?.cookieSecure === true), maxAge: 604800 },
+  };
+}
+
+export async function resolvedPendingCookie() {
+  const settings = await getRuntimeSettings().catch(() => null);
+  return {
+    name: PENDING_COOKIE_NAME,
+    options: { ...cookieOptions(settings?.cookieSecure === true), maxAge: 300 },
+  };
+}

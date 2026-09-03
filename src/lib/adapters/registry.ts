@@ -5,7 +5,7 @@
 
 import type { AuthAdapter, ImageAdapter, WalletAdapter, EndpointConfig } from "./types";
 import { adapterFactory } from "./factory";
-import { db } from "@/lib/db";
+import { getEnabledRuntimeEndpoints } from "@/lib/runtime-config";
 
 class AdapterRegistry {
   private authAdapters: Map<string, AuthAdapter> = new Map();
@@ -16,12 +16,8 @@ class AdapterRegistry {
   async init() {
     if (this.initialized) return;
     
-    // 从数据库加载端点配置
     try {
-      const configs = await db.any<EndpointConfig>(
-        "SELECT * FROM lfn_endpoints WHERE enabled = true ORDER BY priority DESC"
-      );
-      
+      const configs = await getEnabledRuntimeEndpoints();
       for (const config of configs) {
         try {
           switch (config.type) {
@@ -39,8 +35,10 @@ class AdapterRegistry {
           console.error(`Failed to create adapter for endpoint ${config.id}:`, error);
         }
       }
+      if (!this.authAdapters.size && !this.imageAdapters.size && !this.walletAdapters.size)
+        this.loadFromEnvironment();
     } catch (error) {
-      console.warn("Failed to load endpoint configs from database, using environment fallback:", error);
+      console.warn("Failed to load endpoint configs, using environment fallback:", error);
       this.loadFromEnvironment();
     }
 

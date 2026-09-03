@@ -1,8 +1,9 @@
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
 import type { Session } from "@/lib/newapi";
 import { findLocalUserById } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
+import { getRuntimeSettings, runtimeAdminToken } from "@/lib/runtime-config";
 
 // NewAPI 角色值：1 普通用户，10 管理员，100 root。
 export const ROLE_ADMIN = 10;
@@ -16,12 +17,12 @@ type SelfResult = {
 export async function readUserRole(
   session: Session,
 ): Promise<number | null> {
-  if (authProviderId() === "local") {
+  if ((await resolvedAuthProviderId()) === "local") {
     const user = await findLocalUserById(session.userId);
     return user ? user.role : null;
   }
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
       headers: userHeaders(session),
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
@@ -58,12 +59,31 @@ export function adminToken(): string | null {
   return token || null;
 }
 
+export async function resolvedAdminTokenValue(): Promise<string | null> {
+  try {
+    return await runtimeAdminToken();
+  } catch {
+    return adminToken();
+  }
+}
+
 export function adminHeaders(): Record<string, string> {
   const token = adminToken();
   if (!token) throw new Error("LFN_ADMIN_TOKEN 未配置");
   return {
     Authorization: token,
     "New-Api-User": process.env.LFN_ADMIN_USER_ID || "1",
+    "Content-Type": "application/json",
+  };
+}
+
+export async function resolvedAdminHeaders(): Promise<Record<string, string>> {
+  const token = await resolvedAdminTokenValue();
+  if (!token) throw new Error("LFN_ADMIN_TOKEN 未配置");
+  const settings = await getRuntimeSettings().catch(() => null);
+  return {
+    Authorization: token,
+    "New-Api-User": settings?.newApiAdminUserId || process.env.LFN_ADMIN_USER_ID || "1",
     "Content-Type": "application/json",
   };
 }
