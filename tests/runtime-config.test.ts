@@ -7,6 +7,8 @@ import {
   isMaskedSecret,
   publicSettings,
   resetRuntimeConfigCache,
+  runtimeAffGateway,
+  runtimeImageUpstream,
   updateRuntimeSettings,
   upsertRuntimeEndpoint,
 } from "@/lib/runtime-config";
@@ -70,5 +72,32 @@ describe("runtime platform config", () => {
     });
     expect(updated.name).toBe("NovelAI Gateway");
     expect(updated.config.token).toBe("real-token-value");
+  });
+
+  it("uses the highest-priority enabled image endpoint, not a leftover Gateway field", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-runtime-image-"));
+    process.env.LFN_AFF_GATEWAY_URL = "http://env-gateway";
+    process.env.LFN_AFF_GATEWAY_TOKEN = "env-gateway-token";
+    resetRuntimeConfigCache();
+    await updateRuntimeSettings({
+      affGatewayUrl: "http://settings-gateway",
+      affGatewayToken: "settings-gateway-token",
+    });
+    await upsertRuntimeEndpoint({
+      id: "compat-image",
+      type: "image",
+      adapterType: "openai_compat",
+      name: "兼容接口",
+      enabled: true,
+      priority: 200,
+      config: { baseUrl: "http://compat-image", token: "compat-token" },
+    });
+    const upstream = await runtimeImageUpstream();
+    expect(upstream).toEqual({
+      baseUrl: "http://compat-image",
+      token: "compat-token",
+      adapterType: "openai_compat",
+    });
+    expect(await runtimeAffGateway()).toBeNull();
   });
 });

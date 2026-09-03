@@ -11,8 +11,7 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { resolveExternalApiUser } from "@/lib/newapi-db";
-import { resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
-import { resolvedGenericImageProvider } from "@/lib/platform";
+import { resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
 import {
   assertBodySize,
   assertImageModel,
@@ -214,7 +213,7 @@ export async function proxyImageWithCredits(
   const imageAdapter = await registry.getImageAdapter();
   
   // 向后兼容：如果没有适配器，使用环境变量配置
-  const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
+  const platformUpstream = await resolvedImageUpstream();
   if (!imageAdapter && !platformUpstream) {
     return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
   }

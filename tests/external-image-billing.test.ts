@@ -19,6 +19,7 @@ vi.mock("@/lib/newapi", () => ({
   affGateway: mocks.affGateway,
   newApiBaseUrl: mocks.newApiBaseUrl,
   resolvedAffGateway: mocks.affGateway,
+  resolvedImageUpstream: mocks.affGateway,
   resolvedNewApiBaseUrl: mocks.newApiBaseUrl,
 }));
 

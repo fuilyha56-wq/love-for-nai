@@ -2,6 +2,7 @@ import { getSession } from "@/lib/session";
 import {
   runtimeAdminToken,
   runtimeAffGateway,
+  runtimeImageUpstream,
   runtimeNewApiBaseUrl,
 } from "@/lib/runtime-config";
 
@@ -32,6 +33,22 @@ export async function resolvedAffGateway(): Promise<{ baseUrl: string; token: st
   } catch {
     return affGateway();
   }
+}
+
+export async function resolvedImageUpstream(): Promise<{ baseUrl: string; token: string } | null> {
+  try {
+    const upstream = await runtimeImageUpstream();
+    if (upstream) return { baseUrl: upstream.baseUrl, token: upstream.token };
+  } catch {
+    // fall through to environment
+  }
+  return affGateway() || genericImageFromEnv();
+}
+
+function genericImageFromEnv(): { baseUrl: string; token: string } | null {
+  const baseUrl = process.env.LFN_IMAGE_PROVIDER_URL?.trim().replace(/\/+$/, "");
+  const token = process.env.LFN_IMAGE_PROVIDER_TOKEN?.trim();
+  return baseUrl && token ? { baseUrl, token } : null;
 }
 
 function tokenNameFor(prefix: string, group: string): string {
