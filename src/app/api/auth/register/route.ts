@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { callNewApi } from "@/lib/login";
 import { newApiBaseUrl } from "@/lib/newapi";
 import { redeemReferral } from "@/lib/referral";
+import { createLocalUser } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -166,7 +168,7 @@ export async function POST(request: Request) {
       { message: "请输入有效的邮箱地址" },
       { status: 400 },
     );
-  if (!code)
+  if (authProviderId() !== "local" && !code)
     return NextResponse.json({ message: "请输入邮箱验证码" }, { status: 400 });
 
   const registrationRate = registrationEmailLimiter.check(
@@ -177,6 +179,30 @@ export async function POST(request: Request) {
       registrationRate.retryAfterSeconds,
       "注册尝试过于频繁，请稍后再试",
     );
+
+  if (authProviderId() === "local") {
+    try {
+      const user = await createLocalUser({
+        username,
+        password,
+        displayName: username,
+        email,
+      });
+      if (inviteCode) {
+        try {
+          await redeemReferral(inviteCode, user.id);
+        } catch {
+          // 邀请失败不影响注册本身。
+        }
+      }
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      return NextResponse.json(
+        { message: error instanceof Error ? error.message : "注册失败" },
+        { status: 400 },
+      );
+    }
+  }
 
   const registered = await forward(
     "/api/user/register",

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { findLocalUserById, updateLocalUser } from "@/lib/local-users";
+import { authProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -10,6 +12,22 @@ import {
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ authenticated: false });
+  if (authProviderId() === "local") {
+    const user = await findLocalUserById(session.userId);
+    if (!user) return NextResponse.json({ authenticated: false }, { status: 401 });
+    return NextResponse.json({
+      authenticated: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email || "",
+        name: user.displayName,
+        group: user.group,
+        balance: null,
+      },
+    });
+  }
   try {
     const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
       headers: userHeaders(session),
@@ -75,6 +93,13 @@ export async function PUT(request: Request) {
       { status: 400 },
     );
   try {
+    if (authProviderId() === "local") {
+      const user = await updateLocalUser(session.userId, {
+        displayName,
+        username: username || undefined,
+      });
+      return NextResponse.json({ success: true, user: { id: user.id, username: user.username, displayName: user.displayName } });
+    }
     const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
       method: "PUT",
       headers: userHeaders(session),

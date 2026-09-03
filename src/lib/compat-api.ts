@@ -7,6 +7,7 @@ import {
 } from "@/lib/aff";
 import { resolveExternalApiUser } from "@/lib/newapi-db";
 import { affGateway, newApiBaseUrl } from "@/lib/newapi";
+import { genericImageProvider } from "@/lib/platform";
 import {
   assertBodySize,
   assertImageModel,
@@ -204,8 +205,8 @@ export async function proxyImageWithCredits(
       { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
       { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
-  const gateway = affGateway();
-  if (!gateway) return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+  const platformUpstream = affGateway() || genericImageProvider();
+  if (!platformUpstream) return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
 
   let userId: number | null;
   try {
@@ -256,10 +257,10 @@ export async function proxyImageWithCredits(
         "newapi",
       );
     const headers = new Headers({
-      Authorization: `Bearer ${gateway.token}`,
+      Authorization: `Bearer ${platformUpstream.token}`,
       ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
     });
-    const upstream = await fetch(`${gateway.baseUrl}${pathname}`, {
+    const upstream = await fetch(`${platformUpstream.baseUrl}${pathname}`, {
       method: request.method,
       headers,
       body: imageRequest.body,
