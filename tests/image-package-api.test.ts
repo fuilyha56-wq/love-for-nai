@@ -44,6 +44,7 @@ vi.mock("@/lib/newapi", () => ({
   affGateway: vi.fn(() => ({ baseUrl: "http://gateway.test", token: "gateway-token" })),
   newApiBaseUrl: vi.fn(() => "http://newapi.test"),
   resolvedAffGateway: vi.fn(async () => ({ baseUrl: "http://gateway.test", token: "gateway-token" })),
+  resolvedImageUpstream: vi.fn(async () => ({ baseUrl: "http://gateway.test", token: "gateway-token" })),
   resolvedNewApiBaseUrl: vi.fn(async () => "http://newapi.test"),
   userHeaders: vi.fn(() => ({ Authorization: "Bearer access-token" })),
   isUpstreamAuthError: vi.fn(() => false),

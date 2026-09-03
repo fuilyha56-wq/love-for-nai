@@ -340,7 +340,34 @@ export async function runtimeAdminToken(): Promise<string | null> {
   return token || null;
 }
 
+function endpointUpstream(endpoint: EndpointConfig | undefined): { baseUrl: string; token: string } | null {
+  const baseUrl = endpoint?.config.baseUrl?.trim().replace(/\/+$/, "") || "";
+  const token = endpoint?.config.token?.trim() || "";
+  return baseUrl && token ? { baseUrl, token } : null;
+}
+
+export async function runtimeImageEndpoint(): Promise<EndpointConfig | null> {
+  const endpoints = await getEnabledRuntimeEndpoints();
+  return endpoints.find((item) => item.type === "image") || null;
+}
+
+export async function runtimeImageUpstream(): Promise<{
+  baseUrl: string;
+  token: string;
+  adapterType: string;
+} | null> {
+  const endpoint = await runtimeImageEndpoint();
+  const upstream = endpointUpstream(endpoint || undefined);
+  if (!upstream) return null;
+  return { ...upstream, adapterType: endpoint?.adapterType || "openai_compat" };
+}
+
 export async function runtimeAffGateway(): Promise<{ baseUrl: string; token: string } | null> {
+  const endpoint = await runtimeImageEndpoint();
+  if (endpoint) {
+    if (endpoint.adapterType !== "gateway") return null;
+    return endpointUpstream(endpoint);
+  }
   const settings = await getRuntimeSettings();
   const baseUrl = settings.affGatewayUrl.trim().replace(/\/+$/, "");
   const token = settings.affGatewayToken.trim();
@@ -348,6 +375,11 @@ export async function runtimeAffGateway(): Promise<{ baseUrl: string; token: str
 }
 
 export async function runtimeGenericImage(): Promise<{ baseUrl: string; token: string } | null> {
+  const endpoint = await runtimeImageEndpoint();
+  if (endpoint) {
+    if (endpoint.adapterType === "gateway") return null;
+    return endpointUpstream(endpoint);
+  }
   const settings = await getRuntimeSettings();
   const baseUrl = settings.imageProviderUrl.trim().replace(/\/+$/, "");
   const token = settings.imageProviderToken.trim();

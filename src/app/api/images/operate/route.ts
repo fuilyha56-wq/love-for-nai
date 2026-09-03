@@ -8,10 +8,10 @@ import { getSession } from "@/lib/session";
 import {
   getImageToken,
   imageFromResult,
-  resolvedAffGateway,
+  resolvedImageUpstream,
   resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
-import { resolvedAuthProviderId, resolvedGenericImageProvider } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
 import { saveHistory } from "@/lib/history";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
           ? body.characterPrompts.length
           : 0,
       };
-      const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
+      const platformUpstream = await resolvedImageUpstream();
       const credits = platformUpstream
         ? await trySpendImageCredits(session.userId, generation)
         : null;
@@ -223,7 +223,7 @@ export async function POST(request: Request) {
         token = await getImageToken(session, model);
       }
     } else if ((await resolvedAuthProviderId()) === "local") {
-      const fallback = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
+      const fallback = await resolvedImageUpstream();
       if (!fallback)
         return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
       token = fallback.token;

@@ -5,8 +5,8 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { getSession } from "@/lib/session";
-import { getImageToken, imageFromResult, resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
-import { resolvedAuthProviderId, resolvedGenericImageProvider } from "@/lib/platform";
+import { getImageToken, imageFromResult, resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import {
   assertBodySize,
@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     "cfg_rescale",
     "seed",
   ];
-  const platformUpstream = (await resolvedAffGateway()) || (await resolvedGenericImageProvider());
+  const platformUpstream = await resolvedImageUpstream();
   let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";

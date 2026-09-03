@@ -237,7 +237,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">站点设置</p>
-            <p className="mt-1 text-sm text-[var(--muted)]">账号、上游、余额单位、Cookie 和远程历史都可在这里改，保存后立即生效。密钥留脱敏值表示保持不变。</p>
+            <p className="mt-1 text-sm text-[var(--muted)]">账号、上游、余额单位、Cookie 和远程历史都可在这里改。真正出图走下方启用的图像端点，Gateway 只是可选项，不是必选项。密钥留脱敏值表示保持不变。</p>
           </div>
           <button type="button" disabled={saving} onClick={saveSettings} className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white disabled:opacity-60">
             <Save size={15} />{saving ? "保存中…" : "保存设置"}
@@ -275,17 +275,17 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="block text-sm font-semibold">公开地址
             <input value={settings.publicUrl} onChange={(event) => setSettings({ ...settings, publicUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
-          <label className="block text-sm font-semibold">Gateway 地址
-            <input value={settings.affGatewayUrl} onChange={(event) => setSettings({ ...settings, affGatewayUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="http://novelai-gateway:41555/v1" />
+          <label className="block text-sm font-semibold">可选 Gateway 地址
+            <input value={settings.affGatewayUrl} onChange={(event) => setSettings({ ...settings, affGatewayUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="不用 Gateway 请留空" />
           </label>
-          <label className="block text-sm font-semibold">Gateway 令牌
-            <input value={settings.affGatewayToken} onChange={(event) => setSettings({ ...settings, affGatewayToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="留脱敏值表示不改" />
+          <label className="block text-sm font-semibold">可选 Gateway 令牌
+            <input value={settings.affGatewayToken} onChange={(event) => setSettings({ ...settings, affGatewayToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="不用 Gateway 请留空" />
           </label>
-          <label className="block text-sm font-semibold">通用图像上游
-            <input value={settings.imageProviderUrl} onChange={(event) => setSettings({ ...settings, imageProviderUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+          <label className="block text-sm font-semibold">可选通用图像上游
+            <input value={settings.imageProviderUrl} onChange={(event) => setSettings({ ...settings, imageProviderUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="OpenAI 兼容 /v1，没有请留空" />
           </label>
-          <label className="block text-sm font-semibold">图像上游令牌
-            <input value={settings.imageProviderToken} onChange={(event) => setSettings({ ...settings, imageProviderToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="留脱敏值表示不改" />
+          <label className="block text-sm font-semibold">可选图像上游令牌
+            <input value={settings.imageProviderToken} onChange={(event) => setSettings({ ...settings, imageProviderToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="没有请留空" />
           </label>
           <label className="block text-sm font-semibold">远程历史地址
             <input value={settings.remoteHistoryUrl} onChange={(event) => setSettings({ ...settings, remoteHistoryUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
@@ -311,7 +311,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
       </article>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-[var(--muted)]">端点决定实际走哪家认证、出图和钱包。可添加多条，优先级高的先用。</p>
+        <p className="text-sm text-[var(--muted)]">端点才是实际接入。图像端点可只开 OpenAI 兼容接口，不必开 Gateway；停用或删除即可切走。</p>
         <button type="button" onClick={() => setEditing(emptyForm())} className="flex h-10 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold text-[var(--rose)] hover:border-[var(--rose)]">
           <Plus size={15} />添加端点
         </button>

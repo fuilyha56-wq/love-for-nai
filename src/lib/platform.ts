@@ -4,6 +4,7 @@ import {
   runtimeAffGateway,
   runtimeAuthProvider,
   runtimeGenericImage,
+  runtimeImageEndpoint,
   type AuthProviderId,
 } from "@/lib/runtime-config";
 
@@ -140,17 +141,19 @@ export function newApiConfigured(): boolean {
 export async function getResolvedPlatformCapabilities(): Promise<PlatformCapabilities> {
   const settings = await getRuntimeSettings();
   const auth = settings.authProvider;
+  const imageEndpoint = await runtimeImageEndpoint();
   const gateway = await runtimeAffGateway();
   const generic = await runtimeGenericImage();
-  const image: ImageProviderId = gateway
-    ? "gateway"
-    : generic
-      ? "openai_compat"
-      : auth === "newapi" && configured(settings.newApiBaseUrl)
-        ? "newapi"
-        : "none";
+  const image: ImageProviderId =
+    imageEndpoint?.adapterType === "gateway" || (!imageEndpoint && gateway)
+      ? "gateway"
+      : imageEndpoint || generic
+        ? "openai_compat"
+        : auth === "newapi" && configured(settings.newApiBaseUrl)
+          ? "newapi"
+          : "none";
   const newapi = auth === "newapi";
-  const packages = Boolean(settings.newApiAdminToken && gateway);
+  const packages = Boolean(settings.newApiAdminToken && image === "gateway");
   return {
     auth: {
       provider: auth,

@@ -7,7 +7,7 @@ LFN 不再把 NewAPI 和 NovelAI Gateway 当成唯一运行方式。站点本身
 | 能力 | 默认 | 可替换为 |
 |---|---|---|
 | 账号 / 登录 | NewAPI | `LFN_AUTH_PROVIDER=local` 本地账号 |
-| 图像生成 | NewAPI `/v1/images` | Gateway，或任意 OpenAI 兼容图像接口 |
+| 图像生成 | NewAPI `/v1/images` | 管理端启用的图像端点：Gateway 或任意 OpenAI 兼容接口 |
 | 上游余额 / 密钥 / 用量 | NewAPI | 关闭，仅保留 LFN 创作额度 |
 | 图包购买 | NewAPI 扣余额 + Gateway | 未配置时自动关闭 |
 | 管理中心 | NewAPI 用户 + 本地公告 / 额度 / 图库 | 本地用户、公告、额度账本、图库下架、邀请记录、平台配置 |
