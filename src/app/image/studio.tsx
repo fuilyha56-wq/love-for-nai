@@ -2021,7 +2021,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               <button
                 type="submit"
                 disabled={tagSearching || assistantLoading}
-                className="flex h-9 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
+                className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
               >
                 <Search size={15} />
                 {tagSearching
@@ -2034,7 +2034,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 <button
                   type="button"
                   onClick={cancelAssistantTask}
-                  className="h-9 shrink-0 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+                  className="h-10 shrink-0 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
                 >
                   取消
                 </button>
