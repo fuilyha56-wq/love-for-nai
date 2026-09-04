@@ -5,6 +5,8 @@ export type SuggestedCharacter = {
 };
 
 export type TagSuggestion = {
+  // 助手想对用户说的自然语言（≤500 字），缺省表示本轮没有留言。
+  message?: string;
   prompt: string;
   negativePrompt: string;
   tags: string[];
@@ -88,6 +90,7 @@ export function parseTagSuggestion(content: string): TagSuggestion {
   const rawSeed = finiteNumber(rawParameters.seed);
 
   return {
+    message: limitedString(raw.message, 500).trim() || undefined,
     prompt: limitedString(raw.prompt, 10_000),
     negativePrompt: limitedString(raw.negativePrompt, 10_000),
     tags,

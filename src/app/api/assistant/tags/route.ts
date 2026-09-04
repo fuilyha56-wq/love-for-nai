@@ -145,6 +145,7 @@ async function runJob(
     );
     job.result = {
       suggestion: {
+        ...(suggestion.message ? { message: suggestion.message } : {}),
         prompt: mergeTagsIntoPrompt(suggestion.prompt, validTags),
         negativePrompt: suggestion.negativePrompt,
         parameters: suggestion.parameters,
@@ -167,6 +168,7 @@ async function runJob(
         request,
         answer: content,
         createdAt: new Date().toISOString(),
+        ...(suggestion.message ? { message: suggestion.message } : {}),
         prompt: job.result.suggestion.prompt,
         negativePrompt: job.result.suggestion.negativePrompt,
         parameters: job.result.suggestion.parameters,

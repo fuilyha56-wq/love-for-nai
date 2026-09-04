@@ -106,6 +106,7 @@ type DanbooruTag = {
   postCount: number;
 };
 type AssistantSuggestion = {
+  message?: string;
   prompt: string;
   negativePrompt: string;
   tags: DanbooruTag[];
@@ -131,6 +132,7 @@ type ConversationTurnUi = {
   id: string;
   request: string;
   createdAt: string;
+  message?: string;
   prompt: string;
   negativePrompt: string;
   parameters: Record<string, unknown>;
@@ -269,6 +271,7 @@ const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
 const ASSISTANT_POLL_INTERVAL_MS = 2_000;
 const ASSISTANT_MAX_POLLS = 60;
 const ASSISTANT_TIMEOUT_MS = 2 * 60 * 1_000;
+const ASSISTANT_MESSAGE_MAX = 500;
 const defaultPrompt =
   "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light";
 const defaultNegative = "lowres, bad anatomy, blurry, text, watermark";
@@ -399,6 +402,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
   ]);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
+  // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
+  const [dropActive, setDropActive] = useState(false);
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
@@ -899,51 +904,97 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     else await searchDanbooru(input);
   }
 
-  // 从本地 NAI 图片提取生成参数并填充到工作台（浏览器端解析 PNG/JPEG 元数据）。
-  async function importParametersFromFile(file?: File) {
+  // 拖入/选入 NAI 图片：解析元数据并回填参数；图片本体同时进入图生图源图。
+  async function importImageAndParameters(file?: File) {
     if (!file) return;
-    if (!file.type.startsWith("image/") || file.size > 15 * 1024 * 1024) {
-      setNotice("仅支持 15MB 以内的 PNG/JPEG 图片。");
+    const invalid = validateUploadFile(file);
+    if (invalid) {
+      setNotice(invalid);
       return;
     }
     try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
       const { parseNaiImageMetadata } = await import("@/lib/nai-metadata");
       const bytes = new Uint8Array(await file.arrayBuffer());
       const metadata = parseNaiImageMetadata(bytes);
+      setSource({ data, name: file.name });
+      if (operation === "generate" || operation === "suggest-tags")
+        setOperation("img2img");
       if (!metadata) {
-        setNotice("未能从图片中解析出 NAI 生成参数。");
+        setNotice(`已导入 ${file.name}，未检测到 NAI 参数（仅作为源图）。`);
         return;
       }
-      const params = metadata.parameters;
-      if (typeof params.prompt === "string" && params.prompt)
-        setPrompt(params.prompt);
-      const negative = params.negative_prompt ?? params.uc;
-      if (typeof negative === "string" && negative) setNegative(negative);
-      const numeric: Array<[string, (value: number) => void, number, number]> = [
-        ["width", setWidth, 64, 1600],
-        ["height", setHeight, 64, 1600],
-        ["steps", setSteps, 1, 50],
-        ["scale", setScale, 0, 10],
-        ["cfg_rescale", setCfgRescale, 0, 1],
-      ];
-      numeric.forEach(([key, setter, min, max]) => {
-        const value = Number(params[key]);
-        if (Number.isFinite(value) && value >= min && value <= max)
-          setter(value);
-      });
-      if (typeof params.sampler === "string" &&
-        samplers.some(({ value }) => value === params.sampler))
-        setSampler(params.sampler);
-      if (typeof params.noise_schedule === "string" &&
-        schedules.some(({ value }) => value === params.noise_schedule))
-        setSchedule(params.noise_schedule);
-      if (params.seed != null && Number.isFinite(Number(params.seed)))
-        setSeed(String(params.seed));
-      setNotice(`已从 ${file.name} 导入生成参数。`);
+      const { mapNaiParameters } = await import("@/lib/nai-import");
+      const imported = mapNaiParameters(
+        metadata.parameters,
+        models.map(({ value }) => value),
+      );
+      if (imported.prompt) setPrompt(imported.prompt);
+      if (imported.negativePrompt) setNegative(imported.negativePrompt);
+      if (imported.model) setModel(imported.model);
+      if (imported.width) setWidth(imported.width);
+      if (imported.height) setHeight(imported.height);
+      if (imported.steps != null) setSteps(imported.steps);
+      if (imported.scale != null) setScale(imported.scale);
+      if (imported.cfgRescale != null) setCfgRescale(imported.cfgRescale);
+      if (imported.sampler) setSampler(imported.sampler);
+      if (imported.noiseSchedule) setSchedule(imported.noiseSchedule);
+      if (imported.seed != null) setSeed(imported.seed);
+      if (imported.count != null) setCount(imported.count);
+      if (imported.strength != null) setStrength(imported.strength);
+      setNotice(`已从 ${file.name} 导入图片与生成参数。`);
     } catch {
       setNotice("读取图片失败，请重试。");
     }
   }
+
+  // window 级拖放：遮罩期间计数 enter/leave，避免子元素触发闪烁。
+  useEffect(() => {
+    let depth = 0;
+    function hasFiles(event: DragEvent): boolean {
+      return Array.from(event.dataTransfer?.types || []).includes("Files");
+    }
+    function onDragEnter(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      setDropActive(true);
+    }
+    function onDragOver(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+    }
+    function onDragLeave(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDropActive(false);
+    }
+    function onDrop(event: DragEvent) {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setDropActive(false);
+      if (maskEditorOpen) return;
+      const file = event.dataTransfer?.files?.[0];
+      if (file) void importImageAndParameters(file);
+    }
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [maskEditorOpen, operation]);
 
   function applySuggestedParameters(
     parameters: AssistantSuggestion["parameters"],
@@ -1075,13 +1126,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       <div className="settings-scroll space-y-5 p-4">
         <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
           <FileUp size={15} />
-          <span className="truncate">从图片导入 NAI 参数</span>
+          <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
           <input
             type="file"
-            accept="image/png,image/jpeg"
+            accept="image/png,image/jpeg,image/webp"
             className="hidden"
             onChange={(event) => {
-              importParametersFromFile(event.target.files?.[0]);
+              void importImageAndParameters(event.target.files?.[0]);
               event.target.value = "";
             }}
           />
@@ -1875,6 +1926,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                           ))}
                         </div>
                       )}
+                      {turn.message && (
+                        <p className="assistant-speech-turn">
+                          {turn.message.slice(0, ASSISTANT_MESSAGE_MAX)}
+                        </p>
+                      )}
                       {turn.prompt && (
                         <p className="mt-1.5 line-clamp-2 break-words text-[10px] leading-4 text-[var(--muted)]">
                           {turn.prompt}
@@ -2056,6 +2112,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               {assistantSuggestion && (
                 <div className="assistant-preview">
                   <b>建议差异预览</b>
+                  {assistantSuggestion.message && (
+                    <div className="assistant-speech">
+                      <Sparkles size={13} className="mt-0.5 shrink-0 text-[var(--rose)]" />
+                      <p>{assistantSuggestion.message.slice(0, ASSISTANT_MESSAGE_MAX)}</p>
+                    </div>
+                  )}
                   {assistantSuggestion.prompt && (
                     <PreviewRow
                       label="正向提示词"
@@ -2562,7 +2624,33 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           }}
         />
       )}
+      {dropActive && !maskEditorOpen && (
+        <DropOverlay
+          onPick={() => setDropActive(false)}
+        />
+      )}
     </main>
+  );
+}
+
+// 拖放进行中的全屏提示遮罩：portal 到 body，主题变量 + 虚线内框。
+function DropOverlay({ onPick }: { onPick: () => void }) {
+  return createPortal(
+    <div
+      className="drop-overlay"
+      role="button"
+      aria-label="松手导入图片与生成参数"
+      onPointerDown={onPick}
+    >
+      <div className="drop-overlay-card">
+        <FileUp size={30} className="text-[var(--rose)]" />
+        <p className="drop-overlay-title">松手导入图片</p>
+        <p className="drop-overlay-hint">
+          自动读取 NAI 生成参数，并把图片设为图生图源图
+        </p>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

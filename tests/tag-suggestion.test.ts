@@ -99,4 +99,26 @@ describe("parseTagSuggestion", () => {
         .characters,
     ).toBeUndefined();
   });
+
+  it("keeps the agent's natural-language message when present", () => {
+    const result = parseTagSuggestion(
+      JSON.stringify({
+        message: "我先检索了白发和雨夜相关标签，挑了图片数较多的通用标签。",
+        prompt: "1girl",
+      }),
+    );
+    expect(result.message).toBe(
+      "我先检索了白发和雨夜相关标签，挑了图片数较多的通用标签。",
+    );
+  });
+
+  it("message 缺省或为空白时保持 undefined", () => {
+    expect(
+      parseTagSuggestion(JSON.stringify({ prompt: "1girl" })).message,
+    ).toBeUndefined();
+    expect(
+      parseTagSuggestion(JSON.stringify({ message: "   ", prompt: "1" }))
+        .message,
+    ).toBeUndefined();
+  });
 });
