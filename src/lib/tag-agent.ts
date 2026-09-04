@@ -40,12 +40,14 @@ ${toolCatalog()}
 这是一次延续对话：消息历史中包含此前轮次的需求与最终 JSON 结论。
 延续对话时参考已确认的标签，不要重复检索相同的标签，除非用户要求重新验证。
 
-每次回复只能输出一个 JSON 对象，不要 Markdown 或解释文字。
+每次回复只能输出一个 JSON 对象，不要 Markdown。工具调用轮次不要输出任何解释文字。
 调用工具时输出：
 {"action":"工具名","args":{"参数名":"参数值"}}
 
 完成后输出：
-{"final":{"prompt":"逗号分隔的完整提示词（描述整体场景，不含单角色细节）","negativePrompt":"负面提示词","tags":["tag_1","tag_2"],"characters":[{"prompt":"该角色专属提示词","center":{"x":0.3,"y":0.5}}],"parameters":{"width":832,"height":1216,"steps":28,"scale":5,"sampler":"k_euler_ancestral","noiseSchedule":"karras"}}}
+{"final":{"message":"用简体中文对用户说的一小段话（≤120字：说明这次理解了什么、检索/取舍了什么、有什么建议），语气自然","prompt":"逗号分隔的完整提示词（描述整体场景，不含单角色细节）","negativePrompt":"负面提示词","tags":["tag_1","tag_2"],"characters":[{"prompt":"该角色专属提示词","center":{"x":0.3,"y":0.5}}],"parameters":{"width":832,"height":1216,"steps":28,"scale":5,"sampler":"k_euler_ancestral","noiseSchedule":"karras"}}}
+
+对用户想说的话只能放在 final.message 字段里，不要在 JSON 之外输出文字。
 
 tags 只能包含已通过工具确认存在的标签。parameters 可省略字段。
 characters（多角色）规则：仅当用户需求明确包含多个角色（如"两个女孩""一男一女"）时输出；每个角色一条 prompt（角色外貌服饰，不含场景），center 是该角色在画面中的位置（x 左右、y 上下，0–1 归一化，多个角色左右分开摆放）；主 prompt 只写场景与整体氛围。单角色或场景类需求省略 characters。最多 6 个角色。`;

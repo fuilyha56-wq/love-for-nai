@@ -5,6 +5,8 @@ import type { AgentStep } from "@/lib/tag-agent";
 // 用轮询代替一次长连接，避免移动端 WebView 在长等待中掐断请求。
 export type AssistantJobResult = {
   suggestion: {
+    // 助手对用户说的自然语言（final.message），缺省表示本轮没有留言。
+    message?: string;
     prompt: string;
     negativePrompt: string;
     parameters: Record<string, unknown>;

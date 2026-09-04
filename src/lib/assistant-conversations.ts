@@ -17,6 +17,8 @@ export type ConversationTurn = {
   // agent 最终输出的 JSON 字符串，下次对话原样回填给模型延续上下文。
   answer: string;
   createdAt: string;
+  // 助手本轮对用户说的话（final.message），可选。
+  message?: string;
   prompt: string;
   negativePrompt: string;
   parameters: Record<string, unknown>;
