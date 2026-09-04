@@ -183,12 +183,6 @@ html[data-motion="reduced"] *::after {
   transition-duration: 0.01ms !important;
   scroll-behavior: auto !important;
 }
-button,
-input,
-textarea,
-select {
-  font: inherit;
-}
 button {
   cursor: pointer;
 }
