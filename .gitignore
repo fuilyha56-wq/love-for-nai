@@ -49,3 +49,7 @@ next-env.d.ts
 
 # 本地 docker save 产物，不要入库
 love-for-nai-*.tar
+*.tar
+
+# 测试数据残渣（1.3MB 无引用）
+aff-test.json
