@@ -6,4 +6,5 @@ npm-debug.log
 .env.local
 README.md
 *.backup
-src/lib/compat-api.ts.backup
+src/lib/compat-api.ts.backup.rsh*.py
+*.tar
