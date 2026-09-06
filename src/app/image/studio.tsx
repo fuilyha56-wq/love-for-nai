@@ -404,6 +404,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
   const [dropActive, setDropActive] = useState(false);
+  // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
+  const [paramsOpen, setParamsOpen] = useState(true);
+  // 站内菜单抽屉（品牌、账号与外链）。
+  const [menuOpen, setMenuOpen] = useState(false);
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
@@ -460,16 +464,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!mobilePanel && !mobileToolsOpen) return;
+    if (!mobilePanel && !mobileToolsOpen && !menuOpen) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       event.preventDefault();
       setMobilePanel(false);
       setMobileToolsOpen(false);
+      setMenuOpen(false);
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [mobilePanel, mobileToolsOpen]);
+  }, [mobilePanel, mobileToolsOpen, menuOpen]);
 
   useEffect(() => {
     if (mobilePanel) mobilePanelRef.current?.focus();
@@ -1077,16 +1082,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   const controls = (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
-        <b className="flex items-center gap-2 text-sm">
-          <SlidersHorizontal size={16} /> 图像设置
-        </b>
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
         <button
           type="button"
           title="重置参数"
           aria-label="重置所有生成参数"
           disabled={generating}
-          className="disabled:cursor-not-allowed disabled:opacity-50"
+          className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => {
                 setWidth(832);
                 setHeight(1216);
@@ -1122,21 +1124,38 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         >
           <RotateCcw size={16} />
         </button>
+        <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
+          <div
+            className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs"
+            title="创作额度余额，签到/邀请/管理员发放都会进入这里"
+          >
+            <span className="shrink-0 text-[var(--muted)]">AFF</span>
+            <b className="truncate tabular-nums">
+              {!signedIn
+                ? "体验"
+                : wallet?.aff
+                  ? wallet.aff.balance + wallet.aff.packageBalance
+                  : "…"}
+            </b>
+          </div>
+          <Link
+            href="/account"
+            title="钱包、签到与图包"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-white text-[var(--rose)] hover:border-[var(--rose)]"
+          >
+            <Plus size={15} />
+          </Link>
+        </div>
+        <button
+          type="button"
+          aria-label="打开站内菜单"
+          onClick={() => setMenuOpen(true)}
+          className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white"
+        >
+          <Menu size={16} />
+        </button>
       </div>
       <div className="settings-scroll space-y-5 p-4">
-        <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
-          <FileUp size={15} />
-          <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={(event) => {
-              void importImageAndParameters(event.target.files?.[0]);
-              event.target.value = "";
-            }}
-          />
-        </label>
         <div className="nai-model-mode-row">
           <Control label="模型">
             <PopupSelect
@@ -1164,205 +1183,20 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </button>
           </Control>
         </div>
-        <section className="nai-reference-section">
-          <div className="nai-section-heading">参考图片</div>
-          <button
-            type="button"
-            className={`nai-reference-card ${operation === "generate" ? "is-active" : ""}`}
-            onClick={() => {
-              setOperation("generate");
-              setNotice("");
-            }}
-          >
-            <ImagePlus size={18} />
-            <span>
-              <b>文生图</b>
-              <small>根据提示词生成图片。</small>
-            </span>
-          </button>
-          {referenceOperations.map((item) => (
-            <button
-              type="button"
-              className={`nai-reference-card ${operation === item.id ? "is-active" : ""}`}
-              key={item.id}
-              onClick={() => {
-                setOperation(item.id);
-                setNotice("");
-              }}
-            >
-              <ImagePlus size={18} />
-              <span>
-                <b>{item.label}</b>
-                <small>{item.detail}</small>
-              </span>
-            </button>
-          ))}
-        </section>
-        <Control label="图片工具">
-          <PopupSelect
-            value={
-              toolOperations.some(({ value }) => value === operation)
-                ? operation
-                : "generate"
-            }
-            options={[
-              { value: "generate", label: "不使用工具" },
-              ...toolOperations,
-            ]}
-            onChange={(value) => {
-              setOperation(value as Operation);
-              setNotice("");
-            }}
-            ariaLabel="图片工具"
-          />
-        </Control>
-        <Control label="自定义分辨率 · 64–1600">
-          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-            <NumberField
-              value={width}
-              setValue={setWidth}
-              min={64}
-              max={1600}
-              step={64}
+        {(promptModes.has(operation) || operation === "suggest-tags") && (
+          <div className="grid gap-3">
+            <Prompt
+              label={operation.startsWith("director-") ? "工具提示" : "描述画面"}
+              value={prompt}
+              onChange={setPrompt}
+              accent
             />
-            <span>×</span>
-            <NumberField
-              value={height}
-              setValue={setHeight}
-              min={64}
-              max={1600}
-              step={64}
-            />
+            {operation !== "suggest-tags" && (
+              <Prompt label="排除内容" value={negative} onChange={setNegative} />
+            )}
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {[
-              [832, 1216],
-              [1024, 1024],
-              [1216, 832],
-            ].map(([w, h]) => (
-              <button
-                key={`${w}x${h}`}
-                className="rounded border border-[var(--line)] bg-white py-2 text-[10px]"
-                onClick={() => {
-                  setWidth(w);
-                  setHeight(h);
-                }}
-              >
-                {w}×{h}
-              </button>
-            ))}
-          </div>
-        </Control>
-        {generationModes.has(operation) && (
-          <>
-            <div className="nai-ai-settings">
-              <NumericSlider
-                label="采样步数"
-                value={steps}
-                setValue={setSteps}
-                min={1}
-                max={50}
-                step={1}
-              />
-              <NumericSlider
-                label="提示词相关性"
-                value={scale}
-                setValue={setScale}
-                min={0}
-                max={10}
-                step={0.1}
-              />
-              <div className="nai-seed-sampler-row">
-                <Control label="种子">
-                  <input
-                    className="field h-10 px-3"
-                    value={seed}
-                    onChange={(event) => setSeed(event.target.value)}
-                    placeholder="输入种子"
-                    inputMode="numeric"
-                  />
-                </Control>
-                <Control label="采样器">
-                  <PopupSelect
-                    value={sampler}
-                    options={samplers}
-                    onChange={setSampler}
-                    ariaLabel="采样器"
-                  />
-                </Control>
-              </div>
-              <button
-                type="button"
-                className="advanced-settings-toggle"
-                aria-expanded={advancedOpen}
-                onClick={() => setAdvancedOpen((current) => !current)}
-              >
-                <span>高级设置</span>
-                <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
-              </button>
-              {advancedOpen && (
-                <div className="space-y-4 pt-1">
-                  <NumericSlider
-                    label="提示词相关性重缩放"
-                    value={cfgRescale}
-                    setValue={setCfgRescale}
-                    min={0}
-                    max={1}
-                    step={0.02}
-                  />
-                  <Control label="噪声调度">
-                    <PopupSelect
-                      value={schedule}
-                      options={schedules}
-                      onChange={setSchedule}
-                      ariaLabel="噪声调度"
-                    />
-                  </Control>
-                </div>
-              )}
-            </div>
-            <div>
-              <Control label="生成张数 · 1–6">
-                <NumberField
-                  value={count}
-                  setValue={setCount}
-                  min={1}
-                  max={6}
-                  step={1}
-                />
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={batchMode === "once"}
-                    onClick={() => setBatchMode("once")}
-                    className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                      batchMode === "once"
-                        ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
-                        : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
-                    }`}
-                  >
-                    一次性
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={batchMode === "sequential"}
-                    onClick={() => setBatchMode("sequential")}
-                    className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
-                      batchMode === "sequential"
-                        ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
-                        : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
-                    }`}
-                  >
-                    分批次
-                  </button>
-                </div>
-                {batchMode === "sequential" && (
-                  <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                    每 0.5 秒发送一张（n=1），逐张出图。
-                  </p>
-                )}
-              </Control>
-            </div>
+        )}
+
             {operation === "generate" && (
               <section className="rounded-md border border-[var(--line)] bg-white p-3">
                 <div className="flex items-center justify-between">
@@ -1481,8 +1315,165 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 )}
               </section>
             )}
-          </>
+
+        <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
+          <FileUp size={15} />
+          <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={(event) => {
+              void importImageAndParameters(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <section className="nai-reference-section">
+          <div className="nai-section-heading">参考图片</div>
+          <button
+            type="button"
+            className={`nai-reference-card ${operation === "generate" ? "is-active" : ""}`}
+            onClick={() => {
+              setOperation("generate");
+              setNotice("");
+            }}
+          >
+            <ImagePlus size={18} />
+            <span>
+              <b>文生图</b>
+              <small>根据提示词生成图片。</small>
+            </span>
+          </button>
+          {referenceOperations.map((item) => (
+            <button
+              type="button"
+              className={`nai-reference-card ${operation === item.id ? "is-active" : ""}`}
+              key={item.id}
+              onClick={() => {
+                setOperation(item.id);
+                setNotice("");
+              }}
+            >
+              <ImagePlus size={18} />
+              <span>
+                <b>{item.label}</b>
+                <small>{item.detail}</small>
+              </span>
+            </button>
+          ))}
+        </section>
+        <Control label="图片工具">
+          <PopupSelect
+            value={
+              toolOperations.some(({ value }) => value === operation)
+                ? operation
+                : "generate"
+            }
+            options={[
+              { value: "generate", label: "不使用工具" },
+              ...toolOperations,
+            ]}
+            onChange={(value) => {
+              setOperation(value as Operation);
+              setNotice("");
+            }}
+            ariaLabel="图片工具"
+          />
+        </Control>
+        <Control label="自定义分辨率 · 64–1600">
+          <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+            <NumberField
+              value={width}
+              setValue={setWidth}
+              min={64}
+              max={1600}
+              step={64}
+            />
+            <button
+              type="button"
+              aria-label="交换宽高"
+              title="交换宽高"
+              onClick={() => {
+                setWidth(height);
+                setHeight(width);
+              }}
+              className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+            >
+              ×
+            </button>
+            <NumberField
+              value={height}
+              setValue={setHeight}
+              min={64}
+              max={1600}
+              step={64}
+            />
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[
+              [832, 1216],
+              [1024, 1024],
+              [1216, 832],
+            ].map(([w, h]) => (
+              <button
+                key={`${w}x${h}`}
+                className="rounded border border-[var(--line)] bg-white py-2 text-[10px]"
+                onClick={() => {
+                  setWidth(w);
+                  setHeight(h);
+                }}
+              >
+                {w}×{h}
+              </button>
+            ))}
+          </div>
+        </Control>
+        {generationModes.has(operation) && (
+          <div>
+            <Control label="生成张数 · 1–6">
+              <NumberField
+                value={count}
+                setValue={setCount}
+                min={1}
+                max={6}
+                step={1}
+              />
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  aria-pressed={batchMode === "once"}
+                  onClick={() => setBatchMode("once")}
+                  className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                    batchMode === "once"
+                      ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
+                      : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
+                  }`}
+                >
+                  一次性
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={batchMode === "sequential"}
+                  onClick={() => setBatchMode("sequential")}
+                  className={`rounded border px-2 py-1.5 text-[11px] font-semibold transition-colors ${
+                    batchMode === "sequential"
+                      ? "border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] text-[var(--rose)]"
+                      : "border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)]"
+                  }`}
+                >
+                  分批次
+                </button>
+              </div>
+              {batchMode === "sequential" && (
+                <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
+                  每 0.5 秒发送一张（n=1），逐张出图。
+                </p>
+              )}
+            </Control>
+          </div>
         )}
+
         {["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
             <input
@@ -2266,64 +2257,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   return (
     <main className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]">
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
-        <div className="flex items-center gap-3">
-          <Aperture className="text-[var(--rose)]" size={23} />
-          <span className="font-[var(--font-display)] text-lg font-bold">
-            Love for NAI
-          </span>
-          <span className="hidden text-[10px] text-[var(--muted)] sm:inline">
-            IMAGE STUDIO
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <a
-            title="源代码与 AGPL-3.0"
-            href="https://github.com/fuilyha56-wq/love-for-nai"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
-          >
-            <Code2 size={16} />
-          </a>
-          <a
-            title="打开 NewAPI 控制台"
-            href="http://47.108.250.118:3000/"
-            target="_blank"
-            rel="noreferrer"
-            className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
-          >
-            <ExternalLink size={16} />
-          </a>
-          <span
-            className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
-          >
-            {signedIn
-              ? "NewAPI 已连接"
-              : authenticated
-                ? "登录已过期"
-                : "体验模式"}
-          </span>
-          {signedIn || !authenticated ? (
-            <Link
-              href="/account"
-              title="我的账号：资料、钱包、签到与邀请"
-              className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
-            >
-              <UserRound size={16} />
-              {userName}
-            </Link>
-          ) : (
-            <Link
-              href="/sign-in"
-              className="flex h-9 items-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-sm font-semibold text-[var(--rose)]"
-            >
-              <UserRound size={16} />
-              重新登录
-            </Link>
-          )}
-        </div>
-      </header>
       <div
         className="studio-layout grid min-h-0 flex-1"
         style={
@@ -2335,6 +2268,121 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       >
         <aside className="panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
+          {generationModes.has(operation) && (
+            <div className="nai-ai-settings shrink-0 border-t border-[var(--line)] p-3 pb-1">
+              <button
+                type="button"
+                className="advanced-settings-toggle"
+                aria-expanded={paramsOpen}
+                onClick={() => setParamsOpen((current) => !current)}
+              >
+                <span>生成参数</span>
+                <span aria-hidden="true">{paramsOpen ? "▾" : "▸"}</span>
+              </button>
+              {paramsOpen && (
+              <>
+              <NumericSlider
+                label="采样步数"
+                value={steps}
+                setValue={setSteps}
+                min={1}
+                max={50}
+                step={1}
+              />
+              <NumericSlider
+                label="提示词相关性"
+                value={scale}
+                setValue={setScale}
+                min={0}
+                max={10}
+                step={0.1}
+              />
+              <div className="nai-seed-sampler-row">
+                <Control label="种子">
+                  <input
+                    className="field h-10 px-3"
+                    value={seed}
+                    onChange={(event) => setSeed(event.target.value)}
+                    placeholder="输入种子"
+                    inputMode="numeric"
+                  />
+                </Control>
+                <Control label="采样器">
+                  <PopupSelect
+                    value={sampler}
+                    options={samplers}
+                    onChange={setSampler}
+                    ariaLabel="采样器"
+                  />
+                </Control>
+              </div>
+              <button
+                type="button"
+                className="advanced-settings-toggle"
+                aria-expanded={advancedOpen}
+                onClick={() => setAdvancedOpen((current) => !current)}
+              >
+                <span>高级设置</span>
+                <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
+              </button>
+              {advancedOpen && (
+                <div className="space-y-4 pt-1">
+                  <NumericSlider
+                    label="提示词相关性重缩放"
+                    value={cfgRescale}
+                    setValue={setCfgRescale}
+                    min={0}
+                    max={1}
+                    step={0.02}
+                  />
+                  <Control label="噪声调度">
+                    <PopupSelect
+                      value={schedule}
+                      options={schedules}
+                      onChange={setSchedule}
+                      ariaLabel="噪声调度"
+                    />
+                  </Control>
+                </div>
+              )}
+              </>
+              )}
+            </div>
+          )}
+          <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] p-3">
+            <button
+              onClick={runOperation}
+              disabled={generating}
+              title={
+                canUseAffEstimate
+                  ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
+                  : modelPricing
+                    ? `${modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率 · 按 NewAPI 余额计费`
+                    : undefined
+              }
+              className="flex h-11 w-full items-center justify-between gap-2 rounded bg-[var(--rose)] px-3 text-sm font-semibold text-white disabled:opacity-60 sm:h-12"
+            >
+              <span className="flex items-center gap-2">
+                <Sparkles size={18} />
+                {generating
+                  ? batchProgress
+                    ? `生成中 ${batchProgress}…`
+                    : "处理中，请稍候..."
+                  : generationModes.has(operation)
+                    ? `生成 ${count} 张`
+                    : `执行${modes.find((item) => item.id === operation)?.label}`}
+              </span>
+              {!generating && (canUseAffEstimate || modelPricing) && (
+                <span className="flex shrink-0 items-center gap-1 rounded bg-black/20 px-2 py-1 text-[11px] font-semibold">
+                  {canUseAffEstimate
+                    ? `${estimatedAffCost} AFF`
+                    : modelPricing
+                      ? `¥${newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}`
+                      : null}
+                </span>
+              )}
+            </button>
+          </div>
         </aside>
         <div
           role="separator"
@@ -2369,25 +2417,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               功能区
             </button>
           </div>
-          {(promptModes.has(operation) || operation === "suggest-tags") && (
-            <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
-              <Prompt
-                label={
-                  operation.startsWith("director-") ? "工具提示" : "描述画面"
-                }
-                value={prompt}
-                onChange={setPrompt}
-                accent
-              />
-              {operation !== "suggest-tags" && (
-                <Prompt
-                  label="排除内容"
-                  value={negative}
-                  onChange={setNegative}
-                />
-              )}
-            </div>
-          )}
           <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
             <div className="pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
@@ -2484,45 +2513,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             </div>
           )}
-          <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
-            {operation !== "suggest-tags" && signedIn && (
-              <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
-                {canUseAffEstimate ? (
-                  <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">{estimatedAffCost} AFF</b></div>
-                    {estimatedPackageCost > 0 && (
-                      <div>图包额度 <b className="text-[var(--ink)]">-{estimatedPackageCost} AFF</b></div>
-                    )}
-                    {estimatedPersonalCost > 0 && (
-                      <div>个人 AFF <b className="text-[var(--ink)]">-{estimatedPersonalCost} AFF</b></div>
-                    )}
-                    <div>图包 / 个人余量 <b className="text-[var(--ink)]">{wallet?.aff?.packageBalance ?? 0} / {wallet?.aff?.balance ?? 0}</b></div>
-                  </>
-                ) : (
-                  <>
-                    <div>预计消耗 <b className="text-[var(--ink)]">¥{newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}</b></div>
-                    {modelPricing && (
-                      <div>{modelPricing.effectiveGroup} × {modelPricing.groupRatio} 倍率</div>
-                    )}
-                    <div>图包/个人 AFF 不足或服务未启用，将使用 NewAPI 余额</div>
-                    <div>NewAPI 余额 <b className="text-[var(--ink)]">{me?.user?.balance != null ? `$${me.user.balance.toFixed(2)}` : "--"}</b></div>
-                  </>
-                )}
-              </div>
-            )}
-            <button
-              onClick={runOperation}
-              disabled={generating}
-              className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
-            >
-              <Sparkles size={18} />
-              {generating
-                ? batchProgress
-                  ? `生成中 ${batchProgress}…`
-                  : "处理中，请稍候..."
-                : `执行${modes.find((item) => item.id === operation)?.label}`}
-            </button>
-          </div>
         </section>
         <div
           role="separator"
@@ -2610,6 +2600,92 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             </div>
             {toolsPanel}
+          </aside>
+        </div>
+      )}
+      {menuOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/35"
+          onClick={() => setMenuOpen(false)}
+        >
+          <aside
+            role="dialog"
+            aria-modal="true"
+            aria-label="站内菜单"
+            className="panel absolute right-0 top-0 flex h-full w-[min(85vw,320px)] flex-col p-5"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <Aperture className="text-[var(--rose)]" size={21} />
+                <div>
+                  <b className="block font-[var(--font-display)] text-base leading-5">
+                    Love for NAI
+                  </b>
+                  <span className="text-[9px] tracking-[0.22em] text-[var(--muted)]">
+                    IMAGE STUDIO
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="关闭菜单"
+                onClick={() => setMenuOpen(false)}
+                className="grid h-8 w-8 place-items-center rounded border border-[var(--line)] bg-white"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <div className="mt-6 space-y-1 text-sm">
+              <span
+                className={`block rounded px-3 py-2 text-xs font-semibold ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
+              >
+                {signedIn ? "NewAPI 已连接" : authenticated ? "登录已过期" : "体验模式"}
+              </span>
+              {signedIn || !authenticated ? (
+                <Link
+                  href="/account"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
+                >
+                  <UserRound size={15} /> 我的账号 · {userName}
+                </Link>
+              ) : (
+                <Link
+                  href="/sign-in"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 rounded px-3 py-2 font-semibold text-[var(--rose)] hover:bg-[var(--surface-muted)]"
+                >
+                  <UserRound size={15} /> 重新登录
+                </Link>
+              )}
+              <Link
+                href="/settings"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
+              >
+                <Paintbrush size={15} /> 外观设置
+              </Link>
+              <a
+                href="https://github.com/fuilyha56-wq/love-for-nai"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
+              >
+                <Code2 size={15} /> 源代码与 AGPL-3.0
+              </a>
+              <a
+                href="http://47.108.250.118:3000/"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
+              >
+                <ExternalLink size={15} /> NewAPI 控制台
+              </a>
+            </div>
+            <p className="mt-auto text-[10px] leading-5 text-[var(--muted)]">
+              图片历史、图片广场、使用记录等入口常驻右侧「创作中心」。
+            </p>
           </aside>
         </div>
       )}
