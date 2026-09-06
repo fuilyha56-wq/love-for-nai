@@ -54,11 +54,11 @@ const THEME_TOKENS: Record<AppearanceTheme, ThemeTokens> = {
     muted: "#a6aab2",
   },
   nai: {
-    paper: "#101120",
+    paper: "#13152c",
     panel: "#191b31",
     line: "#22253f",
-    ink: "#f2f3ff",
-    muted: "#9ba0c8",
+    ink: "#ffffff",
+    muted: "#b3b4c8",
   },
 };
 

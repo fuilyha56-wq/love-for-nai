@@ -33,6 +33,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
+import { useAppearance } from "@/app/appearance";
+import { NaiImageSettings } from "./nai-image-settings";
+import { NaiBalanceMeter } from "./nai-balance-meter";
 import {
   useCallback,
   useEffect,
@@ -375,6 +378,8 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 export default function ImageStudio({ userName, authenticated }: Props) {
+  const { preferences } = useAppearance();
+  const naiLayout = preferences.theme === "nai";
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
@@ -405,9 +410,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
   const [dropActive, setDropActive] = useState(false);
   // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
-  const [paramsOpen, setParamsOpen] = useState(true);
-  // 站内菜单抽屉（品牌、账号与外链）。
+  const [paramsOpen, setParamsOpen] = useState(false);
+  const [referenceOpen, setReferenceOpen] = useState(false);
+  // 站内菜单抽屉（账号、创作入口与外链）。
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuDirectorOpen, setMenuDirectorOpen] = useState(false);
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
   const [notice, setNotice] = useState("");
@@ -450,7 +457,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
-  const [leftWidth, setLeftWidth] = useState(310);
+  const [classicLeftWidth, setClassicLeftWidth] = useState(310);
+  const [naiLeftWidth, setNaiLeftWidth] = useState(400);
+  const leftWidth = naiLayout ? naiLeftWidth : classicLeftWidth;
+  const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
 
   useEffect(() => {
@@ -500,11 +510,23 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
     // 异步应用，避免在 effect 内同步 setState 触发级联渲染。
     const timer = window.setTimeout(() => {
-      if (parsed.left) setLeftWidth(clampPanel(parsed.left, 240, 520));
+      if (parsed.left) setClassicLeftWidth(clampPanel(parsed.left, 240, 520));
       if (parsed.right) setRightWidth(clampPanel(parsed.right, 200, 460));
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("lfn-nai-left-width"));
+    if (!saved) return;
+    const timer = window.setTimeout(() => setNaiLeftWidth(clampPanel(saved, 240, 520)), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  function savePanelWidths(left: number, right: number) {
+    if (naiLayout) window.localStorage.setItem("lfn-nai-left-width", String(left));
+    window.localStorage.setItem("lfn-layout", JSON.stringify({ left: naiLayout ? classicLeftWidth : left, right }));
+  }
 
   function startResize(side: "left" | "right", event: React.PointerEvent) {
     event.preventDefault();
@@ -530,10 +552,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       document.removeEventListener("pointerup", end);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      window.localStorage.setItem(
-        "lfn-layout",
-        JSON.stringify({ left: latestLeft, right: latestRight }),
-      );
+      savePanelWidths(latestLeft, latestRight);
     }
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -558,10 +577,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     next = clampPanel(next, min, max);
     if (side === "left") setLeftWidth(next);
     else setRightWidth(next);
-    window.localStorage.setItem(
-      "lfn-layout",
-      JSON.stringify({ left: side === "left" ? next : leftWidth, right: side === "right" ? next : rightWidth }),
-    );
+    savePanelWidths(side === "left" ? next : leftWidth, side === "right" ? next : rightWidth);
   }
 
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
@@ -1080,82 +1096,396 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     );
   }
 
+  const imageImport = (
+    <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
+      <FileUp size={15} />
+      <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(event) => {
+          void importImageAndParameters(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+    </label>
+  );
+
+  const promptFields = (promptModes.has(operation) ||
+    operation === "suggest-tags") && (
+    <div className="nai-prompts grid gap-3">
+      <Prompt
+        label={
+          operation.startsWith("director-")
+            ? "工具提示"
+            : naiLayout
+              ? "提示词"
+              : "描述画面"
+        }
+        value={prompt}
+        onChange={setPrompt}
+        accent
+      />
+      {operation !== "suggest-tags" && (
+        <Prompt
+          label={naiLayout ? "负面内容" : "排除内容"}
+          value={negative}
+          onChange={setNegative}
+        />
+      )}
+    </div>
+  );
+
+  const characterControls = operation === "generate" && (
+    <section className="nai-characters rounded-md border border-[var(--line)] bg-white p-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Users size={14} className="text-[var(--rose)]" />
+          <div><b className="text-xs">{naiLayout ? "角色提示词" : "多角色"}</b>{naiLayout && <p className="nai-character-hint">为画面中的角色编写独立提示词。</p>}</div>
+        </div>
+        {naiLayout ? (
+          <button type="button" className="nai-square-button" aria-label={charactersEnabled ? "收起角色提示词" : "添加角色提示词"} aria-expanded={charactersEnabled} onClick={() => setCharactersEnabled(!charactersEnabled)}>
+            {charactersEnabled ? <X size={22} /> : <Plus size={22} />}
+          </button>
+        ) : <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)]">
+          <input
+            type="checkbox"
+            checked={charactersEnabled}
+            onChange={(event) => setCharactersEnabled(event.target.checked)}
+            className="h-3.5 w-3.5 accent-[var(--rose)]"
+          />
+          启用
+        </label>}
+      </div>
+      {charactersEnabled && (
+        <div className="mt-3 space-y-3">
+          <p className="text-[10px] leading-4 text-[var(--muted)]">
+            为画面中的每个角色编写独立提示词，并用滑块摆放角色位置（0–1
+            归一化坐标）。主提示词描述整体场景。
+          </p>
+          {characters.map((character, index) => (
+            <div
+              key={character.id}
+              className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
+            >
+              <div className="flex items-center justify-between">
+                <b className="text-[11px] text-[var(--rose)]">
+                  角色 {index + 1}
+                </b>
+                {characters.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setCharacters((current) =>
+                        current.filter((item) => item.id !== character.id),
+                      )
+                    }
+                    className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--rose)]"
+                    aria-label={`删除角色 ${index + 1}`}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+              <textarea
+                className="field mt-2 min-h-16 w-full p-2 text-xs"
+                placeholder="该角色的提示词，如 1girl, white hair, blue eyes"
+                value={character.prompt}
+                onChange={(event) =>
+                  setCharacters((current) =>
+                    current.map((item) =>
+                      item.id === character.id
+                        ? { ...item, prompt: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
+              <div className="mt-2 space-y-1.5">
+                {(
+                  [
+                    ["水平位置", "centerX"],
+                    ["垂直位置", "centerY"],
+                  ] as const
+                ).map(([label, axis]) => (
+                  <label
+                    key={axis}
+                    className="block text-[10px] text-[var(--muted)]"
+                  >
+                    <span className="flex items-center justify-between">
+                      <span>{label}</span>
+                      <output className="font-mono text-[var(--rose)]">
+                        {character[axis].toFixed(2)}
+                      </output>
+                    </span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={character[axis]}
+                      onChange={(event) =>
+                        setCharacters((current) =>
+                          current.map((item) =>
+                            item.id === character.id
+                              ? { ...item, [axis]: Number(event.target.value) }
+                              : item,
+                          ),
+                        )
+                      }
+                      className="range mt-1 w-full"
+                      aria-label={`角色 ${index + 1} ${label}`}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+          {characters.length < 6 && (
+            <button
+              type="button"
+              onClick={() =>
+                setCharacters((current) => [
+                  ...current,
+                  {
+                    id: `char-${Date.now()}`,
+                    prompt: "",
+                    centerX: 0.5,
+                    centerY: 0.5,
+                  },
+                ])
+              }
+              className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-dashed border-[var(--line)] bg-white text-[11px] font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+            >
+              <Plus size={13} /> 添加角色
+            </button>
+          )}
+        </div>
+      )}
+    </section>
+  );
+
+  const generationParameters = generationModes.has(operation) && (
+    <div
+      className={
+        naiLayout
+          ? "nai-ai-settings nai-parameter-dock"
+          : "nai-ai-settings"
+      }
+    >
+      {naiLayout && (
+        <div className="nai-parameter-summary">
+          <label>
+            <small>步数</small>
+            <input
+              type="number"
+              aria-label="采样步数"
+              min={1}
+              max={50}
+              step={1}
+              value={steps}
+              onChange={(event) => setSteps(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <small>引导强度</small>
+            <input
+              type="number"
+              aria-label="提示词相关性"
+              min={0}
+              max={10}
+              step={0.1}
+              value={scale}
+              onChange={(event) => setScale(Number(event.target.value))}
+            />
+          </label>
+          <span>
+            <small>种子</small>
+            <b>{seed || "随机"}</b>
+          </span>
+          <span>
+            <small>采样器</small>
+            <b>{samplers.find((item) => item.value === sampler)?.label}</b>
+          </span>
+          <button
+            type="button"
+            className="nai-parameter-more"
+            aria-label="生成参数"
+            aria-expanded={paramsOpen}
+            onClick={() => setParamsOpen((current) => !current)}
+          >
+            <ChevronRight size={12} className={paramsOpen ? "is-open" : ""} />
+          </button>
+        </div>
+      )}
+      {(!naiLayout || paramsOpen) && (
+        <div className={naiLayout ? "nai-parameter-details" : "contents"}>
+          <NumericSlider
+            label="采样步数"
+            value={steps}
+            setValue={setSteps}
+            min={1}
+            max={50}
+            step={1}
+          />
+          <NumericSlider
+            label="提示词相关性"
+            value={scale}
+            setValue={setScale}
+            min={0}
+            max={10}
+            step={0.1}
+          />
+          <div className="nai-seed-sampler-row">
+            <Control label="种子">
+              <input
+                className="field h-10 px-3"
+                value={seed}
+                onChange={(event) => setSeed(event.target.value)}
+                placeholder="输入种子"
+                inputMode="numeric"
+              />
+            </Control>
+            <Control label="采样器">
+              <PopupSelect
+                value={sampler}
+                options={samplers}
+                onChange={setSampler}
+                ariaLabel="采样器"
+              />
+            </Control>
+          </div>
+          <button
+            type="button"
+            className="advanced-settings-toggle"
+            aria-expanded={advancedOpen}
+            onClick={() => setAdvancedOpen((current) => !current)}
+          >
+            <span>高级设置</span>
+            <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
+          </button>
+          {advancedOpen && (
+            <div className="space-y-4 pt-1">
+              <NumericSlider
+                label="提示词相关性重缩放"
+                value={cfgRescale}
+                setValue={setCfgRescale}
+                min={0}
+                max={1}
+                step={0.02}
+              />
+              <Control label="噪声调度">
+                <PopupSelect
+                  value={schedule}
+                  options={schedules}
+                  onChange={setSchedule}
+                  ariaLabel="噪声调度"
+                />
+              </Control>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
   const controls = (
     <>
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5">
+      <div
+        className={
+          naiLayout
+            ? "nai-toolbar flex shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5"
+            : "flex items-center justify-between border-b border-[var(--line)] px-4 py-3"
+        }
+      >
+        {!naiLayout && (
+          <b className="flex items-center gap-2 text-sm">
+            <SlidersHorizontal size={16} /> 图像设置
+          </b>
+        )}
         <button
           type="button"
           title="重置参数"
           aria-label="重置所有生成参数"
           disabled={generating}
-          className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={() => {
-                setWidth(832);
-                setHeight(1216);
-                setSteps(28);
-                setScale(5);
-                setCount(1);
-                setBatchMode("sequential");
-                setBatchProgress("");
-                setSampler("k_euler_ancestral");
-                setSchedule("native");
-                setModel(models[0].value);
-                setCfgRescale(0);
-                setSeed("");
-                setStrength(0.7);
-                setPrompt(defaultPrompt);
-                setNegative(defaultNegative);
-                setOperation("generate");
-                setContentMode("anime");
-                setSource(null);
-                setMask(null);
-                setMaskEditorOpen(false);
-                setCharactersEnabled(false);
-                setCharacters([
-                  { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
-                ]);
-                setReferenceType("character&style");
-                setControlModel("hed");
-                setAdvancedOpen(false);
-                setSuggestedTags([]);
-                setImages([]);
-                setNotice("");
-              }}
+          className={
+            naiLayout
+              ? "grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white disabled:cursor-not-allowed disabled:opacity-50"
+              : "disabled:cursor-not-allowed disabled:opacity-50"
+          }
+          onClick={() => {
+            setWidth(832);
+            setHeight(1216);
+            setSteps(28);
+            setScale(5);
+            setCount(1);
+            setBatchMode("sequential");
+            setBatchProgress("");
+            setSampler("k_euler_ancestral");
+            setSchedule("native");
+            setModel(models[0].value);
+            setCfgRescale(0);
+            setSeed("");
+            setStrength(0.7);
+            setPrompt(defaultPrompt);
+            setNegative(defaultNegative);
+            setOperation("generate");
+            setContentMode("anime");
+            setSource(null);
+            setMask(null);
+            setMaskEditorOpen(false);
+            setCharactersEnabled(false);
+            setCharacters([
+              { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
+            ]);
+            setReferenceType("character&style");
+            setControlModel("hed");
+            setAdvancedOpen(false);
+            setSuggestedTags([]);
+            setImages([]);
+            setNotice("");
+          }}
         >
           <RotateCcw size={16} />
         </button>
-        <div className="flex min-w-0 flex-1 items-center justify-center gap-1.5">
-          <div
-            className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs"
-            title="创作额度余额，签到/邀请/管理员发放都会进入这里"
-          >
-            <span className="shrink-0 text-[var(--muted)]">AFF</span>
-            <b className="truncate tabular-nums">
-              {!signedIn
-                ? "体验"
-                : wallet?.aff
-                  ? wallet.aff.balance + wallet.aff.packageBalance
-                  : "…"}
-            </b>
-          </div>
-          <Link
-            href="/account"
-            title="钱包、签到与图包"
-            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-white text-[var(--rose)] hover:border-[var(--rose)]"
-          >
-            <Plus size={15} />
-          </Link>
-        </div>
-        <button
-          type="button"
-          aria-label="打开站内菜单"
-          onClick={() => setMenuOpen(true)}
-          className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white"
-        >
-          <Menu size={16} />
-        </button>
+        {naiLayout && (
+          <>
+            <div className="nai-wallet flex min-w-0 flex-1 items-center justify-center gap-1.5">
+              <div
+                className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2 text-xs"
+                title="创作额度余额，签到/邀请/管理员发放都会进入这里"
+              >
+                <span className="shrink-0 text-[var(--muted)]">AFF</span>
+                <b className="truncate tabular-nums">
+                  {!signedIn
+                    ? "体验"
+                    : wallet?.aff
+                      ? wallet.aff.balance + wallet.aff.packageBalance
+                      : "…"}
+                </b>
+              </div>
+              <Link
+                href="/account"
+                title="钱包、签到与图包"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-white text-[var(--rose)] hover:border-[var(--rose)]"
+              >
+                <Plus size={15} />
+              </Link>
+            </div>
+            <button
+              type="button"
+              aria-label="打开站内菜单"
+              onClick={() => setMenuOpen(true)}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white"
+            >
+              <Menu size={16} />
+            </button>
+          </>
+        )}
       </div>
       <div className="settings-scroll space-y-5 p-4">
+        {!naiLayout && imageImport}
         <div className="nai-model-mode-row">
           <Control label="模型">
             <PopupSelect
@@ -1183,152 +1513,20 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </button>
           </Control>
         </div>
-        {(promptModes.has(operation) || operation === "suggest-tags") && (
-          <div className="grid gap-3">
-            <Prompt
-              label={operation.startsWith("director-") ? "工具提示" : "描述画面"}
-              value={prompt}
-              onChange={setPrompt}
-              accent
-            />
-            {operation !== "suggest-tags" && (
-              <Prompt label="排除内容" value={negative} onChange={setNegative} />
-            )}
-          </div>
+        {naiLayout && promptFields}
+
+        {naiLayout && characterControls}
+
+        {naiLayout && (
+          <section className="nai-reference-section">
+            <div className="nai-section-heading">参考图片</div>
+            <button type="button" className="nai-reference-card nai-reference-toggle" aria-expanded={referenceOpen} onClick={() => setReferenceOpen(!referenceOpen)}>
+              <ImagePlus size={22} /><span><b>{operation === "generate" ? "图生图" : modes.find((item) => item.id === operation)?.label}</b><small>{source?.name || "上传图片，转换画面或参考风格。"}</small></span><Plus size={20} />
+            </button>
+            {referenceOpen && imageImport}
+          </section>
         )}
-
-            {operation === "generate" && (
-              <section className="rounded-md border border-[var(--line)] bg-white p-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users size={14} className="text-[var(--rose)]" />
-                    <b className="text-xs">多角色</b>
-                  </div>
-                  <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold text-[var(--muted)]">
-                    <input
-                      type="checkbox"
-                      checked={charactersEnabled}
-                      onChange={(event) => setCharactersEnabled(event.target.checked)}
-                      className="h-3.5 w-3.5 accent-[var(--rose)]"
-                    />
-                    启用
-                  </label>
-                </div>
-                {charactersEnabled && (
-                  <div className="mt-3 space-y-3">
-                    <p className="text-[10px] leading-4 text-[var(--muted)]">
-                      为画面中的每个角色编写独立提示词，并用滑块摆放角色位置（0–1 归一化坐标）。主提示词描述整体场景。
-                    </p>
-                    {characters.map((character, index) => (
-                      <div
-                        key={character.id}
-                        className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
-                      >
-                        <div className="flex items-center justify-between">
-                          <b className="text-[11px] text-[var(--rose)]">角色 {index + 1}</b>
-                          {characters.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setCharacters((current) =>
-                                  current.filter((item) => item.id !== character.id),
-                                )
-                              }
-                              className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--rose)]"
-                              aria-label={`删除角色 ${index + 1}`}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          )}
-                        </div>
-                        <textarea
-                          className="field mt-2 min-h-16 w-full p-2 text-xs"
-                          placeholder="该角色的提示词，如 1girl, white hair, blue eyes"
-                          value={character.prompt}
-                          onChange={(event) =>
-                            setCharacters((current) =>
-                              current.map((item) =>
-                                item.id === character.id
-                                  ? { ...item, prompt: event.target.value }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                        <div className="mt-2 space-y-1.5">
-                          {(
-                            [
-                              ["水平位置", "centerX"],
-                              ["垂直位置", "centerY"],
-                            ] as const
-                          ).map(([label, axis]) => (
-                            <label key={axis} className="block text-[10px] text-[var(--muted)]">
-                              <span className="flex items-center justify-between">
-                                <span>{label}</span>
-                                <output className="font-mono text-[var(--rose)]">
-                                  {character[axis].toFixed(2)}
-                                </output>
-                              </span>
-                              <input
-                                type="range"
-                                min="0"
-                                max="1"
-                                step="0.05"
-                                value={character[axis]}
-                                onChange={(event) =>
-                                  setCharacters((current) =>
-                                    current.map((item) =>
-                                      item.id === character.id
-                                        ? { ...item, [axis]: Number(event.target.value) }
-                                        : item,
-                                    ),
-                                  )
-                                }
-                                className="range mt-1 w-full"
-                                aria-label={`角色 ${index + 1} ${label}`}
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    {characters.length < 6 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCharacters((current) => [
-                            ...current,
-                            {
-                              id: `char-${Date.now()}`,
-                              prompt: "",
-                              centerX: 0.5,
-                              centerY: 0.5,
-                            },
-                          ])
-                        }
-                        className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-dashed border-[var(--line)] bg-white text-[11px] font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
-                      >
-                        <Plus size={13} /> 添加角色
-                      </button>
-                    )}
-                  </div>
-                )}
-              </section>
-            )}
-
-        <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
-          <FileUp size={15} />
-          <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={(event) => {
-              void importImageAndParameters(event.target.files?.[0]);
-              event.target.value = "";
-            }}
-          />
-        </label>
+        {(!naiLayout || referenceOpen) && <>
         <section className="nai-reference-section">
           <div className="nai-section-heading">参考图片</div>
           <button
@@ -1381,6 +1579,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             ariaLabel="图片工具"
           />
         </Control>
+        </>}
+        {naiLayout ? <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : (
         <Control label="自定义分辨率 · 64–1600">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
             <NumberField
@@ -1390,18 +1590,22 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               max={1600}
               step={64}
             />
-            <button
-              type="button"
-              aria-label="交换宽高"
-              title="交换宽高"
-              onClick={() => {
-                setWidth(height);
-                setHeight(width);
-              }}
-              className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
-            >
-              ×
-            </button>
+            {naiLayout ? (
+              <button
+                type="button"
+                aria-label="交换宽高"
+                title="交换宽高"
+                onClick={() => {
+                  setWidth(height);
+                  setHeight(width);
+                }}
+                className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
+              >
+                ×
+              </button>
+            ) : (
+              <span>×</span>
+            )}
             <NumberField
               value={height}
               setValue={setHeight}
@@ -1429,16 +1633,18 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             ))}
           </div>
         </Control>
+        )}
+        {!naiLayout && generationParameters}
         {generationModes.has(operation) && (
           <div>
-            <Control label="生成张数 · 1–6">
-              <NumberField
+            <Control label={naiLayout ? "提交方式" : "生成张数 · 1–6"}>
+              {!naiLayout && <NumberField
                 value={count}
                 setValue={setCount}
                 min={1}
                 max={6}
                 step={1}
-              />
+              />}
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -1474,6 +1680,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </div>
         )}
 
+        {!naiLayout && characterControls}
         {["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
             <input
@@ -1767,56 +1974,59 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       wallet.aff.packageBalance >= estimatedPackageCost,
   );
 
-  // 右侧功能区：创作中心 + 标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
+  // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
+  // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
   const toolsPanel = (
     <>
-          <div className="border-b border-[var(--line)] p-4">
-            <b className="text-sm">创作中心</b>
-            <nav className="mt-3 grid grid-cols-2 gap-2">
-              <FeatureLink
-                href="/history"
-                label="图片历史"
-                icon={<Images size={15} />}
-              />
-              <FeatureLink
-                href="/gallery"
-                label="图片广场"
-                icon={<Images size={15} />}
-              />
-              <FeatureLink
-                href="/usage"
-                label="使用记录"
-                icon={<SlidersHorizontal size={15} />}
-              />
-              <FeatureLink
-                href="/account"
-                label="我的账号"
-                icon={<UserRound size={15} />}
-              />
-              <FeatureLink
-                href="/resources"
-                label="模型密钥"
-                icon={<Sparkles size={15} />}
-              />
-              <FeatureLink
-                href="/announcements"
-                label="公告"
-                icon={<Megaphone size={15} />}
-              />
-              <FeatureLink
-                href="/settings"
-                label="外观设置"
-                icon={<Paintbrush size={15} />}
-              />
-              {isAdmin && (
+          {!naiLayout && (
+            <div className="border-b border-[var(--line)] p-4">
+              <b className="text-sm">创作中心</b>
+              <nav className="mt-3 grid grid-cols-2 gap-2">
                 <FeatureLink
-                  href="/admin"
-                  label="管理"
-                  icon={<ShieldCheck size={15} />}
+                  href="/history"
+                  label="图片历史"
+                  icon={<Images size={15} />}
                 />
-              )}
-            </nav>
-          </div>
+                <FeatureLink
+                  href="/gallery"
+                  label="图片广场"
+                  icon={<Images size={15} />}
+                />
+                <FeatureLink
+                  href="/usage"
+                  label="使用记录"
+                  icon={<SlidersHorizontal size={15} />}
+                />
+                <FeatureLink
+                  href="/account"
+                  label="我的账号"
+                  icon={<UserRound size={15} />}
+                />
+                <FeatureLink
+                  href="/resources"
+                  label="模型密钥"
+                  icon={<Sparkles size={15} />}
+                />
+                <FeatureLink
+                  href="/announcements"
+                  label="公告"
+                  icon={<Megaphone size={15} />}
+                />
+                <FeatureLink
+                  href="/settings"
+                  label="外观设置"
+                  icon={<Paintbrush size={15} />}
+                />
+                {isAdmin && (
+                  <FeatureLink
+                    href="/admin"
+                    label="管理"
+                    icon={<ShieldCheck size={15} />}
+                  />
+                )}
+              </nav>
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
@@ -2255,8 +2465,119 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     </>
   );
 
+  const naiGenerationFooter = (
+    <div className="nai-generation-footer">
+      {generationParameters}
+      {operation !== "suggest-tags" && (
+        <NaiBalanceMeter
+          signedIn={signedIn}
+          unit={canUseAffEstimate ? "AFF" : "USD"}
+          balance={canUseAffEstimate ? wallet?.aff?.totalBalance : me?.user?.balance}
+          cost={canUseAffEstimate ? estimatedAffCost : modelPricing ? estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount }) : null}
+        />
+      )}
+      <div className="nai-generation-action">
+        <button
+          onClick={runOperation}
+          disabled={generating}
+          title={
+            canUseAffEstimate
+              ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
+              : modelPricing
+                ? `${modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率 · 按 NewAPI 余额计费`
+                : undefined
+          }
+          className="nai-generate-button"
+        >
+          <span className="flex items-center gap-2">
+            <Sparkles size={18} />
+            {generating
+              ? batchProgress
+                ? `生成中 ${batchProgress}…`
+                : "处理中，请稍候..."
+              : generationModes.has(operation)
+                ? `生成 ${count} 张图像`
+                : `执行${modes.find((item) => item.id === operation)?.label}`}
+          </span>
+          {!generating && (canUseAffEstimate || modelPricing) && (
+            <span className="nai-cost-badge">
+              {canUseAffEstimate
+                ? `${estimatedAffCost} AFF`
+                : modelPricing
+                  ? `¥${newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}`
+                  : null}
+            </span>
+          )}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <main className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]">
+    <main
+      data-studio-layout={naiLayout ? "nai" : "classic"}
+      className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
+    >
+      {!naiLayout && (
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
+          <div className="flex items-center gap-3">
+            <Aperture className="text-[var(--rose)]" size={23} />
+            <span className="font-[var(--font-display)] text-lg font-bold">
+              Love for NAI
+            </span>
+            <span className="hidden text-[10px] text-[var(--muted)] sm:inline">
+              IMAGE STUDIO
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              title="源代码与 AGPL-3.0"
+              href="https://github.com/fuilyha56-wq/love-for-nai"
+              target="_blank"
+              rel="noreferrer"
+              className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
+            >
+              <Code2 size={16} />
+            </a>
+            <a
+              title="打开 NewAPI 控制台"
+              href="http://47.108.250.118:3000/"
+              target="_blank"
+              rel="noreferrer"
+              className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
+            >
+              <ExternalLink size={16} />
+            </a>
+            <span
+              className={`hidden px-2 py-1 text-xs sm:inline ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
+            >
+              {signedIn
+                ? "NewAPI 已连接"
+                : authenticated
+                  ? "登录已过期"
+                  : "体验模式"}
+            </span>
+            {signedIn || !authenticated ? (
+              <Link
+                href="/account"
+                title="我的账号：资料、钱包、签到与邀请"
+                className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
+              >
+                <UserRound size={16} />
+                {userName}
+              </Link>
+            ) : (
+              <Link
+                href="/sign-in"
+                className="flex h-9 items-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-sm font-semibold text-[var(--rose)]"
+              >
+                <UserRound size={16} />
+                重新登录
+              </Link>
+            )}
+          </div>
+        </header>
+      )}
       <div
         className="studio-layout grid min-h-0 flex-1"
         style={
@@ -2266,123 +2587,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           } as React.CSSProperties
         }
       >
-        <aside className="panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
+        <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
-          {generationModes.has(operation) && (
-            <div className="nai-ai-settings shrink-0 border-t border-[var(--line)] p-3 pb-1">
-              <button
-                type="button"
-                className="advanced-settings-toggle"
-                aria-expanded={paramsOpen}
-                onClick={() => setParamsOpen((current) => !current)}
-              >
-                <span>生成参数</span>
-                <span aria-hidden="true">{paramsOpen ? "▾" : "▸"}</span>
-              </button>
-              {paramsOpen && (
-              <>
-              <NumericSlider
-                label="采样步数"
-                value={steps}
-                setValue={setSteps}
-                min={1}
-                max={50}
-                step={1}
-              />
-              <NumericSlider
-                label="提示词相关性"
-                value={scale}
-                setValue={setScale}
-                min={0}
-                max={10}
-                step={0.1}
-              />
-              <div className="nai-seed-sampler-row">
-                <Control label="种子">
-                  <input
-                    className="field h-10 px-3"
-                    value={seed}
-                    onChange={(event) => setSeed(event.target.value)}
-                    placeholder="输入种子"
-                    inputMode="numeric"
-                  />
-                </Control>
-                <Control label="采样器">
-                  <PopupSelect
-                    value={sampler}
-                    options={samplers}
-                    onChange={setSampler}
-                    ariaLabel="采样器"
-                  />
-                </Control>
-              </div>
-              <button
-                type="button"
-                className="advanced-settings-toggle"
-                aria-expanded={advancedOpen}
-                onClick={() => setAdvancedOpen((current) => !current)}
-              >
-                <span>高级设置</span>
-                <span aria-hidden="true">{advancedOpen ? "▾" : "▸"}</span>
-              </button>
-              {advancedOpen && (
-                <div className="space-y-4 pt-1">
-                  <NumericSlider
-                    label="提示词相关性重缩放"
-                    value={cfgRescale}
-                    setValue={setCfgRescale}
-                    min={0}
-                    max={1}
-                    step={0.02}
-                  />
-                  <Control label="噪声调度">
-                    <PopupSelect
-                      value={schedule}
-                      options={schedules}
-                      onChange={setSchedule}
-                      ariaLabel="噪声调度"
-                    />
-                  </Control>
-                </div>
-              )}
-              </>
-              )}
-            </div>
-          )}
-          <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] p-3">
-            <button
-              onClick={runOperation}
-              disabled={generating}
-              title={
-                canUseAffEstimate
-                  ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
-                  : modelPricing
-                    ? `${modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率 · 按 NewAPI 余额计费`
-                    : undefined
-              }
-              className="flex h-11 w-full items-center justify-between gap-2 rounded bg-[var(--rose)] px-3 text-sm font-semibold text-white disabled:opacity-60 sm:h-12"
-            >
-              <span className="flex items-center gap-2">
-                <Sparkles size={18} />
-                {generating
-                  ? batchProgress
-                    ? `生成中 ${batchProgress}…`
-                    : "处理中，请稍候..."
-                  : generationModes.has(operation)
-                    ? `生成 ${count} 张`
-                    : `执行${modes.find((item) => item.id === operation)?.label}`}
-              </span>
-              {!generating && (canUseAffEstimate || modelPricing) && (
-                <span className="flex shrink-0 items-center gap-1 rounded bg-black/20 px-2 py-1 text-[11px] font-semibold">
-                  {canUseAffEstimate
-                    ? `${estimatedAffCost} AFF`
-                    : modelPricing
-                      ? `¥${newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}`
-                      : null}
-                </span>
-              )}
-            </button>
-          </div>
+          {naiLayout && naiGenerationFooter}
         </aside>
         <div
           role="separator"
@@ -2395,11 +2602,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           className="panel-resizer hidden lg:block"
           onPointerDown={(event) => startResize("left", event)}
           onKeyDown={(event) => resizePanelWithKeyboard("left", event)}
-          onDoubleClick={() => setLeftWidth(310)}
+          onDoubleClick={() => { setLeftWidth(naiLayout ? 400 : 310); savePanelWidths(naiLayout ? 400 : 310, rightWidth); }}
         />
-        <section className="flex min-h-0 flex-col">
+        <section className="studio-canvas flex min-h-0 flex-col">
           <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
             <button
+              ref={mobilePanelTriggerRef}
               onClick={() => setMobilePanel(true)}
               className="flex items-center gap-2 text-sm"
             >
@@ -2410,6 +2618,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               {width}×{height}
             </span>
             <button
+              ref={mobileToolsTriggerRef}
               onClick={() => setMobileToolsOpen(true)}
               className="flex items-center gap-2 text-sm"
             >
@@ -2417,6 +2626,26 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               功能区
             </button>
           </div>
+          {!naiLayout &&
+            (promptModes.has(operation) || operation === "suggest-tags") && (
+              <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
+                <Prompt
+                  label={
+                    operation.startsWith("director-") ? "工具提示" : "描述画面"
+                  }
+                  value={prompt}
+                  onChange={setPrompt}
+                  accent
+                />
+                {operation !== "suggest-tags" && (
+                  <Prompt
+                    label="排除内容"
+                    value={negative}
+                    onChange={setNegative}
+                  />
+                )}
+              </div>
+            )}
           <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
             <div className="pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
@@ -2508,8 +2737,102 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           {notice && (
             <div className="mx-3 mb-2 flex items-start justify-between gap-2 rounded border border-[#e4c991] bg-[#fff8e8] px-3 py-2.5 text-sm text-[#77531e] sm:mx-4 sm:mb-3 sm:px-4 sm:py-3">
               <span className="min-w-0 break-words">{notice}</span>
-              <button onClick={() => setNotice("")} aria-label="关闭提示" className="shrink-0">
+              <button
+                onClick={() => setNotice("")}
+                aria-label="关闭提示"
+                className="shrink-0"
+              >
                 <X size={16} />
+              </button>
+            </div>
+          )}
+          {!naiLayout && (
+            <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
+              {operation !== "suggest-tags" && signedIn && (
+                <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
+                  {canUseAffEstimate ? (
+                    <>
+                      <div>
+                        预计消耗{" "}
+                        <b className="text-[var(--ink)]">
+                          {estimatedAffCost} AFF
+                        </b>
+                      </div>
+                      {estimatedPackageCost > 0 && (
+                        <div>
+                          图包额度{" "}
+                          <b className="text-[var(--ink)]">
+                            -{estimatedPackageCost} AFF
+                          </b>
+                        </div>
+                      )}
+                      {estimatedPersonalCost > 0 && (
+                        <div>
+                          个人 AFF{" "}
+                          <b className="text-[var(--ink)]">
+                            -{estimatedPersonalCost} AFF
+                          </b>
+                        </div>
+                      )}
+                      <div>
+                        图包 / 个人余量{" "}
+                        <b className="text-[var(--ink)]">
+                          {wallet?.aff?.packageBalance ?? 0} /{" "}
+                          {wallet?.aff?.balance ?? 0}
+                        </b>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        预计消耗{" "}
+                        <b className="text-[var(--ink)]">
+                          ¥
+                          {newApiBalanceToCny(
+                            estimateNewApiCost(modelPricing, {
+                              model,
+                              operation,
+                              width,
+                              height,
+                              steps,
+                              samples: count,
+                              characterPromptCount: activeCharacterCount,
+                            }),
+                          ).toFixed(2)}
+                        </b>
+                      </div>
+                      {modelPricing && (
+                        <div>
+                          {modelPricing.effectiveGroup} ×{" "}
+                          {modelPricing.groupRatio} 倍率
+                        </div>
+                      )}
+                      <div>
+                        图包/个人 AFF 不足或服务未启用，将使用 NewAPI 余额
+                      </div>
+                      <div>
+                        NewAPI 余额{" "}
+                        <b className="text-[var(--ink)]">
+                          {me?.user?.balance != null
+                            ? `$${me.user.balance.toFixed(2)}`
+                            : "--"}
+                        </b>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              <button
+                onClick={runOperation}
+                disabled={generating}
+                className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
+              >
+                <Sparkles size={18} />
+                {generating
+                  ? batchProgress
+                    ? `生成中 ${batchProgress}…`
+                    : "处理中，请稍候..."
+                  : `执行${modes.find((item) => item.id === operation)?.label}`}
               </button>
             </div>
           )}
@@ -2527,7 +2850,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
           onDoubleClick={() => setRightWidth(230)}
         />
-        <aside className="panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
+        <aside className="studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
           {toolsPanel}
         </aside>
       </div>
@@ -2557,12 +2880,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="图像设置"
-            className="panel flex h-full w-[min(90vw,350px)] flex-col"
+            tabIndex={-1}
+            className="studio-controls-panel panel flex h-full w-[min(90vw,350px)] flex-col"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--line)] px-4">
               <b className="flex items-center gap-2 text-sm">
-                <SlidersHorizontal size={15} className="text-[var(--rose)]" /> 图像设置
+                <SlidersHorizontal size={15} className="text-[var(--rose)]" />{" "}
+                图像设置
               </b>
               <button
                 onClick={() => setMobilePanel(false)}
@@ -2572,6 +2897,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             </div>
             {controls}
+            {naiLayout && naiGenerationFooter}
           </aside>
         </div>
       )}
@@ -2585,6 +2911,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="功能区"
+            tabIndex={-1}
             className="panel ml-auto flex h-full w-[min(90vw,350px)] flex-col"
             onClick={(event) => event.stopPropagation()}
           >
@@ -2603,7 +2930,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </aside>
         </div>
       )}
-      {menuOpen && (
+      {naiLayout && menuOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/35"
           onClick={() => setMenuOpen(false)}
@@ -2612,17 +2939,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             role="dialog"
             aria-modal="true"
             aria-label="站内菜单"
-            className="panel absolute right-0 top-0 flex h-full w-[min(85vw,320px)] flex-col p-5"
+            className="nai-menu panel absolute right-0 top-0 flex h-full w-[min(85vw,340px)] flex-col overflow-y-auto"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <Aperture className="text-[var(--rose)]" size={21} />
-                <div>
-                  <b className="block font-[var(--font-display)] text-base leading-5">
+            <div className="nai-menu-head">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Aperture className="text-[var(--nai-action)]" size={20} />
+                <div className="min-w-0">
+                  <b className="block truncate font-[var(--font-display)] text-base leading-5">
                     Love for NAI
                   </b>
-                  <span className="text-[9px] tracking-[0.22em] text-[var(--muted)]">
+                  <span className="block text-[9px] tracking-[0.22em] text-[var(--muted)]">
                     IMAGE STUDIO
                   </span>
                 </div>
@@ -2631,60 +2958,147 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 type="button"
                 aria-label="关闭菜单"
                 onClick={() => setMenuOpen(false)}
-                className="grid h-8 w-8 place-items-center rounded border border-[var(--line)] bg-white"
+                className="nai-menu-close"
               >
-                <X size={15} />
+                <X size={16} />
               </button>
             </div>
-            <div className="mt-6 space-y-1 text-sm">
-              <span
-                className={`block rounded px-3 py-2 text-xs font-semibold ${signedIn ? "text-emerald-700" : authenticated ? "text-red-700" : "text-amber-700"}`}
-              >
-                {signedIn ? "NewAPI 已连接" : authenticated ? "登录已过期" : "体验模式"}
+
+            <p className="nai-menu-label">账号</p>
+            <div className="nai-menu-user">
+              <span className="nai-menu-avatar" aria-hidden="true">
+                {(userName || "游").slice(0, 1).toUpperCase()}
               </span>
-              {signedIn || !authenticated ? (
-                <Link
-                  href="/account"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
+              <span className="min-w-0">
+                <b className="block truncate text-sm">{userName}</b>
+                <small
+                  className={
+                    signedIn
+                      ? "text-emerald-600"
+                      : authenticated
+                        ? "text-red-600"
+                        : "text-[var(--muted)]"
+                  }
                 >
-                  <UserRound size={15} /> 我的账号 · {userName}
-                </Link>
-              ) : (
-                <Link
-                  href="/sign-in"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2 rounded px-3 py-2 font-semibold text-[var(--rose)] hover:bg-[var(--surface-muted)]"
-                >
-                  <UserRound size={15} /> 重新登录
-                </Link>
-              )}
-              <Link
-                href="/settings"
-                onClick={() => setMenuOpen(false)}
-                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
-              >
-                <Paintbrush size={15} /> 外观设置
-              </Link>
-              <a
-                href="https://github.com/fuilyha56-wq/love-for-nai"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
-              >
-                <Code2 size={15} /> 源代码与 AGPL-3.0
-              </a>
-              <a
-                href="http://47.108.250.118:3000/"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded px-3 py-2 hover:bg-[var(--surface-muted)]"
-              >
-                <ExternalLink size={15} /> NewAPI 控制台
-              </a>
+                  {signedIn
+                    ? "NewAPI 已连接"
+                    : authenticated
+                      ? "登录已过期"
+                      : "体验模式 · 不扣费"}
+                </small>
+              </span>
             </div>
-            <p className="mt-auto text-[10px] leading-5 text-[var(--muted)]">
-              图片历史、图片广场、使用记录等入口常驻右侧「创作中心」。
+            <Link href="/account" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <UserRound size={16} /> 我的账号
+            </Link>
+            {signedIn ? (
+              <button
+                type="button"
+                className="nai-menu-item"
+                onClick={async () => {
+                  await fetch("/api/auth/logout", { method: "POST" });
+                  router.push("/sign-in");
+                  router.refresh();
+                }}
+              >
+                <X size={16} /> 退出登录
+              </button>
+            ) : (
+              <Link href="/sign-in" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+                <UserRound size={16} /> 重新登录
+              </Link>
+            )}
+
+            <p className="nai-menu-label">创作</p>
+            <Link href="/history" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <Images size={16} /> 图片历史
+            </Link>
+            <Link href="/gallery" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <Images size={16} /> 图片广场
+            </Link>
+            <Link href="/usage" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <SlidersHorizontal size={16} /> 使用记录
+            </Link>
+            <button
+              type="button"
+              className="nai-menu-item"
+              aria-expanded={menuDirectorOpen}
+              onClick={() => setMenuDirectorOpen((open) => !open)}
+            >
+              <WandSparkles size={16} /> 导演工具
+              <ChevronRight size={14} className={`nai-menu-chev ${menuDirectorOpen ? "is-open" : ""}`} />
+            </button>
+            {menuDirectorOpen && (
+              <div className="nai-menu-sub">
+                {modes
+                  .filter((item) => item.id.startsWith("director-"))
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="nai-menu-item"
+                      onClick={() => {
+                        setOperation(item.id);
+                        setNotice("");
+                        setMenuOpen(false);
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+              </div>
+            )}
+            <button
+              type="button"
+              className="nai-menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                window.setTimeout(() => {
+                  document
+                    .querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
+                    ?.focus();
+                }, 60);
+              }}
+            >
+              <Sparkles size={16} /> 标签助手
+            </button>
+
+            <p className="nai-menu-label">设置</p>
+            <Link href="/settings" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <Paintbrush size={16} /> 外观设置
+            </Link>
+            <Link href="/resources" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <Code2 size={16} /> 模型密钥
+            </Link>
+            <Link href="/announcements" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <Megaphone size={16} /> 公告
+            </Link>
+            {isAdmin && (
+              <Link href="/admin" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+                <ShieldCheck size={16} /> 管理
+              </Link>
+            )}
+
+            <p className="nai-menu-label">其他</p>
+            <a
+              href="https://github.com/fuilyha56-wq/love-for-nai"
+              target="_blank"
+              rel="noreferrer"
+              className="nai-menu-item"
+            >
+              <Code2 size={16} /> 源代码与 AGPL-3.0
+            </a>
+            <a
+              href="http://47.108.250.118:3000/"
+              target="_blank"
+              rel="noreferrer"
+              className="nai-menu-item"
+            >
+              <ExternalLink size={16} /> NewAPI 控制台
+            </a>
+
+            <p className="nai-menu-foot">
+              图片历史、导演工具等创作入口已收入此菜单。
             </p>
           </aside>
         </div>
@@ -2701,9 +3115,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         />
       )}
       {dropActive && !maskEditorOpen && (
-        <DropOverlay
-          onPick={() => setDropActive(false)}
-        />
+        <DropOverlay onPick={() => setDropActive(false)} />
       )}
     </main>
   );
@@ -2975,6 +3387,7 @@ function NumericSlider({
       <div className="nai-slider-row">
         <input
           className="nai-number-input"
+          aria-label={label}
           type="number"
           value={value}
           min={min}
@@ -2984,6 +3397,7 @@ function NumericSlider({
         />
         <input
           className="range min-w-0 flex-1"
+          aria-label={`${label}滑块`}
           type="range"
           value={value}
           min={min}

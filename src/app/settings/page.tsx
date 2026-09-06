@@ -37,7 +37,7 @@ const themeOptions: Array<{
   { value: "paper", label: "宣纸", detail: "明亮、温和的默认界面", swatches: ["#f7f6f2", "#fffefa", "#a83a4c"] },
   { value: "dusk", label: "暮色", detail: "暖灰纸张与柔和对比", swatches: ["#eee9e4", "#fffaf5", "#7658a8"] },
   { value: "night", label: "夜间", detail: "低亮度深色工作环境", swatches: ["#17191d", "#22252b", "#b47c2a"] },
-  { value: "nai", label: "NAI 风格", detail: "深海军蓝的 NovelAI 气质界面", swatches: ["#101120", "#191b31", "#6c7fff"] },
+  { value: "nai", label: "NAI 风格", detail: "深海军蓝的 NovelAI 气质界面", swatches: ["#13152c", "#191b31", "#f5f3c2"] },
 ];
 
 const accentOptions: Array<{
