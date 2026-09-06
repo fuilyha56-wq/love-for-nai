@@ -4,8 +4,8 @@ export const BACKGROUND_DB_NAME = "lfn-ui-background-v1";
 export const BACKGROUND_STORE_NAME = "images";
 const BACKGROUND_KEY = "current";
 
-export type AppearanceTheme = "paper" | "dusk" | "night";
-export type AccentPreset = "rose" | "mint" | "gold" | "violet";
+export type AppearanceTheme = "paper" | "dusk" | "night" | "nai";
+export type AccentPreset = "rose" | "mint" | "gold" | "violet" | "indigo";
 export type AppearanceDensity = "comfortable" | "compact";
 export type AppearanceMotion = "full" | "reduced";
 export type HexColor = `#${string}`;
@@ -43,8 +43,8 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
 // Short aliases make the store convenient to consume from small client components.
 export const DEFAULT_PREFERENCES = DEFAULT_APPEARANCE_PREFERENCES;
 
-const THEMES: AppearanceTheme[] = ["paper", "dusk", "night"];
-const ACCENTS: AccentPreset[] = ["rose", "mint", "gold", "violet"];
+const THEMES: AppearanceTheme[] = ["paper", "dusk", "night", "nai"];
+const ACCENTS: AccentPreset[] = ["rose", "mint", "gold", "violet", "indigo"];
 const DENSITIES: AppearanceDensity[] = ["comfortable", "compact"];
 const MOTIONS: AppearanceMotion[] = ["full", "reduced"];
 

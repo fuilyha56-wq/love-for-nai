@@ -37,6 +37,7 @@ const themeOptions: Array<{
   { value: "paper", label: "宣纸", detail: "明亮、温和的默认界面", swatches: ["#f7f6f2", "#fffefa", "#a83a4c"] },
   { value: "dusk", label: "暮色", detail: "暖灰纸张与柔和对比", swatches: ["#eee9e4", "#fffaf5", "#7658a8"] },
   { value: "night", label: "夜间", detail: "低亮度深色工作环境", swatches: ["#17191d", "#22252b", "#b47c2a"] },
+  { value: "nai", label: "NAI 风格", detail: "深海军蓝的 NovelAI 气质界面", swatches: ["#101120", "#191b31", "#6c7fff"] },
 ];
 
 const accentOptions: Array<{
@@ -48,6 +49,7 @@ const accentOptions: Array<{
   { value: "mint", label: "薄荷", color: "#2d7567" },
   { value: "gold", label: "琥珀", color: "#b47c2a" },
   { value: "violet", label: "紫藤", color: "#7658a8" },
+  { value: "indigo", label: "靛蓝", color: "#6c7fff" },
 ];
 
 function compressImage(file: File): Promise<Blob> {
@@ -448,12 +450,24 @@ function SettingsPageContent() {
             title="选择工作环境"
             detail="主题只影响当前浏览器，不会改变账号或作品数据。"
           />
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {themeOptions.map((option) => (
               <ChoiceButton
                 key={option.value}
                 selected={preferences.theme === option.value}
-                onClick={() => updatePreferences({ theme: option.value })}
+                onClick={() => {
+                  // NAI 深色主题下默认的蔷薇强调色对比生硬，
+                  // 未自定义强调色时随主题切换到靛蓝。
+                  if (
+                    option.value === "nai" &&
+                    !preferences.customAccent &&
+                    preferences.accentPreset === "rose"
+                  ) {
+                    updatePreferences({ theme: option.value, accentPreset: "indigo" });
+                    return;
+                  }
+                  updatePreferences({ theme: option.value });
+                }}
               >
                 <span className="mb-3 flex gap-1.5" aria-hidden="true">
                   {option.swatches.map((color) => (
@@ -474,7 +488,7 @@ function SettingsPageContent() {
             title="让界面更像你的工作台"
             detail="选择一个预设，或输入安全的六位十六进制颜色。"
           />
-          <div className="mt-5 grid gap-3 sm:grid-cols-4">
+          <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {accentOptions.map((option) => (
               <ChoiceButton
                 key={option.value}

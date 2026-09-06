@@ -53,6 +53,13 @@ const THEME_TOKENS: Record<AppearanceTheme, ThemeTokens> = {
     ink: "#f1eee8",
     muted: "#a6aab2",
   },
+  nai: {
+    paper: "#101120",
+    panel: "#191b31",
+    line: "#22253f",
+    ink: "#f2f3ff",
+    muted: "#9ba0c8",
+  },
 };
 
 const ACCENT_TOKENS = {
@@ -60,6 +67,7 @@ const ACCENT_TOKENS = {
   mint: { base: "#2d7567", dark: "#205649" },
   gold: { base: "#b47c2a", dark: "#805719" },
   violet: { base: "#7658a8", dark: "#503b7c" },
+  indigo: { base: "#6c7fff", dark: "#4a57d6" },
 } as const;
 
 type AppearanceContextValue = {
@@ -200,10 +208,13 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
     // globals.css owns the default paper grid. Inline layers let this module
     // toggle it and add a local image without touching the shared stylesheet.
+    // 深色主题（nai）用浅色网格线，浅色主题用深色网格线。
+    const gridTint =
+      preferences.theme === "nai" ? "rgba(255, 255, 255, 0.03)" : "rgba(56, 52, 45, 0.035)";
     const gridLayers = preferences.grid
       ? [
-          "linear-gradient(rgba(56, 52, 45, 0.035) 1px, transparent 1px)",
-          "linear-gradient(90deg, rgba(56, 52, 45, 0.035) 1px, transparent 1px)",
+          `linear-gradient(${gridTint} 1px, transparent 1px)`,
+          `linear-gradient(90deg, ${gridTint} 1px, transparent 1px)`,
         ]
       : [];
     const imageLayer = preferences.backgroundEnabled && backgroundUrl

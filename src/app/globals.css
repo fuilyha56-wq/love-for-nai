@@ -20,6 +20,9 @@
   --glass-blur: 14px;
   --glass-saturation: 1.15;
   --glass-border: rgba(255, 255, 255, 0.62);
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 * {
@@ -120,8 +123,105 @@ html[data-theme="night"] .text-emerald-600 {
 html[data-theme="night"] .text-red-600 {
   color: #ef8a8a;
 }
+html[data-theme="night"] .text-\[\#4c5052\],
 html[data-theme="night"] .text-\[var\(--muted\)\] {
   color: var(--muted);
+}
+html[data-theme="nai"] .text-\[\#4c5052\],
+html[data-theme="nai"] .text-\[var\(--muted\)\] {
+  color: var(--muted);
+}
+html[data-theme="nai"] {
+  --ink: #f2f3ff;
+  --muted: #9ba0c8;
+  --paper: #101120;
+  --panel: #191b31;
+  --line: #22253f;
+  --canvas: #0d0e1c;
+  --surface: #191b31;
+  --surface-muted: #141632;
+  --motion-fast: 120ms;
+  --motion-base: 160ms;
+  --motion-ease: cubic-bezier(0.3, 0.6, 0.25, 1);
+}
+html[data-theme="nai"] .bg-white,
+html[data-theme="nai"] .field,
+html[data-theme="nai"] .gallery-select-menu,
+html[data-theme="nai"] .gallery-select-trigger,
+html[data-theme="nai"] .popup-select-menu,
+html[data-theme="nai"] .popup-select-trigger,
+html[data-theme="nai"] .nai-mode-button,
+html[data-theme="nai"] .feature-link,
+html[data-theme="nai"] .danbooru-result,
+html[data-theme="nai"] .assistant-preview,
+html[data-theme="nai"] .history-action,
+html[data-theme="nai"] .page-button,
+html[data-theme="nai"] .key-action,
+html[data-theme="nai"] .wallet-panel,
+html[data-theme="nai"] .assistant-actions button,
+html[data-theme="nai"] .bg-\[\#f1eee7\],
+html[data-theme="nai"] .bg-\[\#f2f0ea\],
+html[data-theme="nai"] .bg-\[\#e9e6de\],
+html[data-theme="nai"] .bg-\[\#f5f3ed\],
+html[data-theme="nai"] .bg-\[\#fff8e8\],
+html[data-theme="nai"] .bg-\[\#fffefa\],
+html[data-theme="nai"] .bg-\[\#f8f6f0\],
+html[data-theme="nai"] .bg-\[\#f8e8e9\] {
+  background-color: #1c1f3d;
+  color: var(--ink);
+}
+html[data-theme="nai"] .bg-\[\#fffefa\]\/95 {
+  background-color: rgba(28, 31, 61, 0.95);
+  color: var(--ink);
+}
+html[data-theme="nai"] .bg-\[\#faf9f5\],
+html[data-theme="nai"] .bg-\[\#f7f5ef\],
+html[data-theme="nai"] .bg-\[\#ebe9e2\] {
+  background-color: #161936;
+  color: var(--ink);
+}
+html[data-theme="nai"] .bg-\[\#292d2c\],
+html[data-theme="nai"] .bg-\[\#17191f\] {
+  background-color: #262b4a;
+}
+html[data-theme="nai"] .bg-\[\#fff8e8\].text-\[\#77531e\],
+html[data-theme="nai"] .bg-amber-50,
+html[data-theme="nai"] .bg-emerald-50,
+html[data-theme="nai"] .bg-red-50 {
+  color: #f0d9a8;
+}
+html[data-theme="nai"] .bg-emerald-50.text-emerald-700,
+html[data-theme="nai"] .bg-red-50.text-red-700 {
+  color: #a7d7c5;
+}
+html[data-theme="nai"] .bg-\[\#fff3d6\],
+html[data-theme="nai"] .nai-control-label {
+  background-color: #1c1f3d;
+  color: var(--ink);
+}
+html[data-theme="nai"] .bg-\[\#fff3d6\].text-\[\#8a6116\],
+html[data-theme="nai"] .text-\[\#8a6116\] {
+  color: #f0d9a8;
+}
+html[data-theme="nai"] .text-emerald-600 {
+  color: #6cc49f;
+}
+html[data-theme="nai"] .text-red-600 {
+  color: #ef8a8a;
+}
+html[data-theme="nai"] .text-\[var\(--muted\)\] {
+  color: var(--muted);
+}
+html[data-theme="nai"] .border-\[\#e4c991\] {
+  border-color: #3a3f70;
+}
+html[data-theme="nai"] .mask-editor-canvas-wrap {
+  background-color: #141630;
+  background-image:
+    linear-gradient(45deg, #1f2344 25%, transparent 25%),
+    linear-gradient(-45deg, #1f2344 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1f2344 75%),
+    linear-gradient(-45deg, transparent 75%, #1f2344 75%);
 }
 html[data-theme="rose"] {
   --paper: #fbf2f1;
@@ -208,8 +308,8 @@ button {
   height: 40px;
   outline: none;
   transition:
-    border-color 160ms ease,
-    box-shadow 160ms ease;
+    border-color var(--motion-fast) ease,
+    box-shadow var(--motion-fast) ease;
 }
 textarea.field {
   height: auto;
@@ -229,7 +329,7 @@ html[data-theme="night"] .field::placeholder {
 }
 .field:focus {
   border-color: var(--rose);
-  box-shadow: 0 0 0 3px rgba(168, 58, 76, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 12%, transparent);
 }
 .gallery-select-trigger {
   display: flex;
@@ -246,7 +346,7 @@ html[data-theme="night"] .field::placeholder {
   font-size: 14px;
   font-weight: 500;
   text-align: left;
-  transition: border-color 160ms ease, box-shadow 160ms ease;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 .gallery-select-trigger:hover,
 .gallery-select-trigger[aria-expanded="true"] {
@@ -254,7 +354,7 @@ html[data-theme="night"] .field::placeholder {
 }
 .gallery-select-trigger:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(168, 58, 76, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 12%, transparent);
 }
 .gallery-select-menu {
   position: absolute;
@@ -357,7 +457,7 @@ html[data-theme="night"] .field::placeholder {
   padding: 28px;
   background: color-mix(in srgb, var(--paper) 78%, transparent);
   backdrop-filter: blur(3px);
-  animation: drop-overlay-fade 140ms ease both;
+  animation: drop-overlay-fade var(--motion-fast) ease both;
 }
 .drop-overlay-card {
   display: flex;
@@ -550,7 +650,7 @@ html[data-theme="night"] .field::placeholder {
   gap: 9px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.62);
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
   padding: 9px 10px;
   color: var(--ink);
   text-align: left;
@@ -558,7 +658,7 @@ html[data-theme="night"] .field::placeholder {
 .nai-reference-card:hover,
 .nai-reference-card.is-active {
   border-color: color-mix(in srgb, var(--rose) 58%, var(--line));
-  background: color-mix(in srgb, var(--rose) 7%, white);
+  background: color-mix(in srgb, var(--rose) 7%, var(--surface));
 }
 .nai-reference-card > span {
   display: flex;
@@ -655,7 +755,7 @@ html[data-theme="night"] .field::placeholder {
 .popup-select-trigger[aria-expanded="true"] {
   border-color: var(--rose);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(168, 58, 76, 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rose) 12%, transparent);
 }
 .popup-select-chevrons {
   display: grid;
@@ -683,7 +783,7 @@ html[data-theme="night"] .field::placeholder {
   border: 0;
   background: var(--line);
   touch-action: none;
-  transition: background 140ms ease;
+  transition: background var(--motion-fast) ease;
 }
 .panel-resizer:hover,
 .panel-resizer:active {
@@ -703,12 +803,12 @@ html[data-theme="night"] .field::placeholder {
 .lightbox::backdrop {
   background: rgba(20, 18, 16, 0.82);
   backdrop-filter: blur(6px);
-  animation: lightbox-fade 180ms ease both;
+  animation: lightbox-fade var(--motion-base) ease both;
 }
 .lightbox[open] {
   display: grid;
   place-items: center;
-  animation: lightbox-pop 220ms cubic-bezier(0.2, 1.2, 0.4, 1) both;
+  animation: lightbox-pop calc(var(--motion-base) + 20ms) cubic-bezier(0.2, 1.2, 0.4, 1) both;
 }
 .lightbox-surface {
   position: relative;
@@ -801,7 +901,7 @@ html[data-theme="night"] .field::placeholder {
     0 3px 8px rgba(32, 35, 40, 0.08);
   backdrop-filter: blur(20px);
   transform-origin: top left;
-  animation: popup-fade 140ms ease-out both;
+  animation: popup-fade var(--motion-fast) ease-out both;
 }
 .popup-select-menu.is-above {
   transform-origin: bottom left;
@@ -1089,7 +1189,7 @@ html[data-theme="night"] .field::placeholder {
   }
 }
 .enter {
-  animation: enter 420ms ease both;
+  animation: enter calc(var(--motion-base) * 2) ease both;
 }
 /*
  * 登录页左下宣传文字的弹簧入场。
