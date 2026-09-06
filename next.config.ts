@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
   devIndicators: {
     position: "bottom-left",
   },
+  // 本机内嵌浏览器以 127.0.0.1 访问 dev server 时会被当作跨域，
+  // 放行本机回环地址，避免 dev 资源（含 HMR）被拦截导致无法水合。
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
 };
 
 export default nextConfig;
