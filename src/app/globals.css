@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./image/nai-studio.css";
 
 :root {
   --font-sans: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", system-ui,
@@ -132,14 +133,17 @@ html[data-theme="nai"] .text-\[var\(--muted\)\] {
   color: var(--muted);
 }
 html[data-theme="nai"] {
-  --ink: #f2f3ff;
-  --muted: #9ba0c8;
-  --paper: #101120;
+  --ink: #ffffff;
+  --muted: #b3b4c8;
+  --paper: #13152c;
   --panel: #191b31;
   --line: #22253f;
-  --canvas: #0d0e1c;
+  --canvas: #0e0f21;
   --surface: #191b31;
-  --surface-muted: #141632;
+  --surface-muted: #0e0f21;
+  --font-sans: "Source Sans 3", "Source Sans Pro", "Noto Sans SC",
+    "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  --font-display: Eczar, "Noto Serif SC", Georgia, "Times New Roman", serif;
   --motion-fast: 120ms;
   --motion-base: 160ms;
   --motion-ease: cubic-bezier(0.3, 0.6, 0.25, 1);

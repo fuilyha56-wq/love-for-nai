@@ -1,4 +1,11 @@
 import type { Metadata, Viewport } from "next";
+// NAI 同款字体：正文 Source Sans 3（CJK 回落 Noto Sans SC/雅黑），标题 Eczar。
+import "@fontsource/source-sans-3/400.css";
+import "@fontsource/source-sans-3/600.css";
+import "@fontsource/source-sans-3/700.css";
+import "@fontsource/eczar/400.css";
+import "@fontsource/eczar/600.css";
+import "@fontsource/eczar/700.css";
 import "./globals.css";
 import { AppearanceProvider } from "./appearance";
 import { LayoutAnnouncements } from "./layout-announcements";
