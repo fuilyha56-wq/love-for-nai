@@ -23,6 +23,8 @@ services:
       LFN_ADMIN_TOKEN: ${LFN_ADMIN_TOKEN:-}
       LFN_ADMIN_USER_ID: ${LFN_ADMIN_USER_ID:-1}
       LFN_REGISTER_GROUP: ${LFN_REGISTER_GROUP:-Draw}
+      LFN_REMOTE_HISTORY_URL: ${LFN_REMOTE_HISTORY_URL:-}
+      LFN_REMOTE_HISTORY_TOKEN: ${LFN_REMOTE_HISTORY_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -32,6 +34,11 @@ services:
     mem_limit: 512m
     cpus: "1.0"
     pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
       interval: 15s

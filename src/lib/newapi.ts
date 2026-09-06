@@ -20,6 +20,18 @@ export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
 const LFN_TOKEN_PREFIX = "lfn-image-studio";
 const LFN_CHAT_TOKEN_PREFIX = "lfn-assistant";
 
+// 生成密钥本身是 NewAPI 的管理操作：一次请求会触发多次用户/分组/密钥查询。
+// 密钥默认长期有效，因此在单个 Web 进程内短时间复用即可显著减少上游请求，
+// 同时用 TTL 避免管理员禁用密钥后长期使用旧缓存。
+const TOKEN_CACHE_TTL_MS = 15 * 60 * 1000;
+const TOKEN_CACHE_MAX_ENTRIES = 256;
+type TokenCacheEntry = {
+  token?: string;
+  expiresAt: number;
+  pending?: Promise<string>;
+};
+const tokenCache = new Map<string, TokenCacheEntry>();
+
 // AFF 支付直连 Gateway：返回 { baseUrl, token }；未配置时返回 null。
 export function affGateway(): { baseUrl: string; token: string } | null {
   const baseUrl = process.env.LFN_AFF_GATEWAY_URL?.trim().replace(/\/+$/, "");
@@ -145,7 +157,7 @@ async function resolveToken(
   model: string,
   prefix: string,
 ): Promise<string> {
-  const baseUrl = newApiBaseUrl();
+  const baseUrl = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
   const selfResponse = await fetch(`${baseUrl}/api/user/self`, {
     headers,
@@ -245,18 +257,71 @@ async function resolveToken(
   return keyResult.data.key;
 }
 
+function tokenCacheKey(
+  session: Session,
+  model: string,
+  prefix: string,
+  baseUrl: string,
+): string {
+  return `${baseUrl}|${session.userId}|${prefix}|${model}`;
+}
+
+function pruneTokenCache(now: number): void {
+  for (const [key, entry] of tokenCache) {
+    if (!entry.pending && entry.expiresAt <= now) tokenCache.delete(key);
+  }
+  while (tokenCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
+    const evictable = [...tokenCache.entries()].find(([, entry]) => !entry.pending);
+    if (!evictable) break;
+    tokenCache.delete(evictable[0]);
+  }
+}
+
+async function cachedToken(
+  session: Session,
+  model: string,
+  prefix: string,
+): Promise<string> {
+  // baseUrl 也放进 key，运行时切换 NewAPI 后不会误用旧实例密钥。
+  const baseUrl = await resolvedNewApiBaseUrl();
+  const key = tokenCacheKey(session, model, prefix, baseUrl);
+  const now = Date.now();
+  const existing = tokenCache.get(key);
+  if (existing?.pending) return existing.pending;
+  if (existing?.token && existing.expiresAt > now)
+    return Promise.resolve(existing.token);
+
+  pruneTokenCache(now);
+  const entry: TokenCacheEntry = { expiresAt: now + TOKEN_CACHE_TTL_MS };
+  const pending = resolveToken(session, model, prefix);
+  entry.pending = pending;
+  tokenCache.set(key, entry);
+  void pending.then(
+    (token) => {
+      if (tokenCache.get(key) !== entry) return;
+      entry.token = token;
+      entry.expiresAt = Date.now() + TOKEN_CACHE_TTL_MS;
+      delete entry.pending;
+    },
+    () => {
+      if (tokenCache.get(key) === entry) tokenCache.delete(key);
+    },
+  );
+  return pending;
+}
+
 export function getImageToken(
   session: Session,
   model: string,
 ): Promise<string> {
-  return resolveToken(session, model, LFN_TOKEN_PREFIX);
+  return cachedToken(session, model, LFN_TOKEN_PREFIX);
 }
 
 export function getChatToken(
   session: Session,
   model: string,
 ): Promise<string> {
-  return resolveToken(session, model, LFN_CHAT_TOKEN_PREFIX);
+  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX);
 }
 
 // 上游会话过期时消息是英文的，前端需要据此提示重新登录而不是展示原文。
