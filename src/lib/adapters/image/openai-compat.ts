@@ -13,7 +13,7 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
     type: "openai_compat",
     name: config.name,
 
-    async generate(request: ImageGenerationRequest, userToken?: string) {
+    async generate(request: ImageGenerationRequest, _userToken?: string) {
       const payload: Record<string, unknown> = {
         model: request.model,
         prompt: request.prompt,
@@ -41,7 +41,7 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
 
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${userToken || token}`,
+        Authorization: `Bearer ${token}`,
       };
 
       const response = await fetch(`${baseUrl}/v1/images/generations`, {

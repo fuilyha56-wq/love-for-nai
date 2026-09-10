@@ -9,11 +9,15 @@ import {
   getImageToken,
   imageFromResult,
   resolvedImageUpstream,
+  resolvedNaiImageUpstream,
   resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { saveHistory } from "@/lib/history";
+import { naiNativeGenerationBody } from "@/lib/nai-native-request";
+import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { sseEvent, sseResponse } from "@/lib/sse";
 import {
   assertBodySize,
   assertImageModel,
@@ -230,6 +234,135 @@ export async function POST(request: Request) {
       baseUrlOverride = fallback.baseUrl;
     } else {
       token = await getImageToken(session, model);
+    }
+
+    const nativeImage = await resolvedNaiImageUpstream();
+    const canStreamNative =
+      Boolean(nativeImage) &&
+      unifiedOperations.has(operation) &&
+      !operation.startsWith("director-");
+    if (canStreamNative && nativeImage && Boolean(creditCharge || baseUrlOverride)) {
+      const encoder = new TextEncoder();
+      const samples = totalSamples;
+      const nativeBody = naiNativeGenerationBody(
+        { ...body, n: samples, n_samples: samples },
+        { stream: true, samples },
+      );
+      const abort = new AbortController();
+      const timeout = setTimeout(() => abort.abort(), 180_000);
+      const nativeResponse = await fetch(
+        `${nativeImage.baseUrl}/ai/generate-image-stream`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${nativeImage.token}`,
+            "Content-Type": "application/json",
+            Accept: "application/x-msgpack",
+          },
+          body: JSON.stringify(nativeBody),
+          cache: "no-store",
+          signal: abort.signal,
+        },
+      );
+      if (!nativeResponse.ok || !nativeResponse.body) {
+        clearTimeout(timeout);
+        const raw = (await nativeResponse.text()).slice(0, 200);
+        if (creditCharge) {
+          affRefunded = true;
+          await refundImageCredits(session.userId, creditCharge, 0);
+        }
+        return NextResponse.json(
+          { message: raw || `上游流式生成失败（${nativeResponse.status}）` },
+          { status: nativeResponse.status || 502 },
+        );
+      }
+
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const send = (event: string, data: unknown) =>
+            controller.enqueue(encoder.encode(sseEvent(event, data)));
+          const finals = new Map<number, string>();
+          let errorMessage = "";
+          try {
+            send("meta", {
+              payment,
+              paymentSource,
+              samples,
+              steps,
+              width,
+              height,
+            });
+            for await (const event of readNaiMsgpackStream(nativeResponse.body)) {
+              if (event.eventType === "error") {
+                errorMessage = event.message || "流式生成失败";
+                send("error", { message: errorMessage });
+                break;
+              }
+              if (!event.image?.length) continue;
+              const image = pngDataUrl(event.image);
+              if (event.eventType === "final") {
+                finals.set(event.sampleIndex, image);
+                generatedSamples = finals.size;
+                send("final", {
+                  sampleIndex: event.sampleIndex,
+                  image,
+                  currentStep: steps,
+                  totalSteps: steps,
+                });
+              } else {
+                send("preview", {
+                  sampleIndex: event.sampleIndex,
+                  image,
+                  currentStep: Math.min((event.stepIndex ?? 0) + 1, steps),
+                  totalSteps: steps,
+                });
+              }
+            }
+            if (!errorMessage && finals.size) {
+              const images = Array.from(
+                { length: Math.max(samples, ...finals.keys()) + 1 },
+                (_, index) => finals.get(index),
+              ).filter((item): item is string => Boolean(item));
+              generatedSamples = images.length;
+              const history = await saveHistory(session.userId, body, images, null);
+              send("done", {
+                images,
+                image: images[0],
+                historyIds: history.map((item) => item.id),
+                payment,
+                paymentSource,
+                aff: creditCharge
+                  ? {
+                      cost: creditCharge.cost,
+                      balance: creditCharge.balance,
+                      packageCost: creditCharge.packageCost,
+                      personalCost: creditCharge.personalCost,
+                      packageBalance: creditCharge.packageBalance,
+                      totalBalance: creditCharge.totalBalance,
+                    }
+                  : null,
+              });
+            } else if (!errorMessage) {
+              errorMessage = "上游未返回最终图片";
+              send("error", { message: errorMessage });
+            }
+          } catch (error) {
+            errorMessage =
+              error instanceof Error ? error.message : "流式生成中断";
+            send("error", { message: errorMessage });
+          } finally {
+            clearTimeout(timeout);
+            if (errorMessage && creditCharge && !affRefunded) {
+              affRefunded = true;
+              await refundImageCredits(session.userId, creditCharge, generatedSamples);
+            }
+            controller.close();
+          }
+        },
+      });
+      return sseResponse(stream, {
+        "X-LFN-Payment-Source": paymentSource,
+      });
     }
 
     const baseUrl = baseUrlOverride || (await resolvedNewApiBaseUrl());

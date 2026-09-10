@@ -3,8 +3,10 @@ import {
   externalGeneration,
   naiZipResponse,
   proxyImageWithCredits,
+  proxyNaiNativeWithCredits,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
+import { resolvedNaiImageUpstream } from "@/lib/newapi";
 
 const operations: Record<string, string> = {
   declutter: "director-declutter",
@@ -42,6 +44,42 @@ export async function POST(request: Request): Promise<Response> {
       { message: "Director tools do not support -limit models" },
       { status: 400 },
     );
+
+  const nativeUpstream = await resolvedNaiImageUpstream();
+  if (nativeUpstream) {
+    return proxyNaiNativeWithCredits(
+      new Request(request.url, {
+        method: "POST",
+        headers: { Authorization: authorization },
+      }),
+      "/ai/augment-image",
+      {
+        body: JSON.stringify(body),
+        contentType: "application/json",
+        generation: {
+          model: "nai-v4.5-full",
+          width: typeof body.width === "number" ? body.width : 1024,
+          height: typeof body.height === "number" ? body.height : 1024,
+          steps: 1,
+          samples: 1,
+          operation,
+        },
+      },
+      {
+        pathname: "/v1/images/generations",
+        body: JSON.stringify({
+          prompt: typeof body.prompt === "string" ? body.prompt : "",
+          model: "nai-v4.5-full",
+          novelai_operation: operation,
+          response_format: "b64_json",
+          image: body.image,
+          width: body.width,
+          height: body.height,
+        }),
+        contentType: "application/json",
+      },
+    );
+  }
 
   const rest = { ...body };
   delete rest.req_type;

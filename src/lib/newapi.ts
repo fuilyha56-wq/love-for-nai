@@ -3,7 +3,10 @@ import {
   runtimeAdminToken,
   runtimeAffGateway,
   runtimeImageUpstream,
+  runtimeNaiAccountUpstream,
+  runtimeNaiImageUpstream,
   runtimeNewApiBaseUrl,
+  type NaiNativeUpstream,
 } from "@/lib/runtime-config";
 
 type Token = {
@@ -55,6 +58,55 @@ export async function resolvedImageUpstream(): Promise<{ baseUrl: string; token:
     // fall through to environment
   }
   return affGateway() || genericImageFromEnv();
+}
+
+function trimNativeBase(value: string | undefined): string {
+  return value?.trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || "";
+}
+
+function naiAccountFromEnv(): NaiNativeUpstream | null {
+  const baseUrl =
+    trimNativeBase(process.env.LFN_NAI_API_URL) ||
+    trimNativeBase(process.env.LFN_AFF_GATEWAY_URL);
+  const token =
+    process.env.LFN_NAI_API_TOKEN?.trim() ||
+    process.env.LFN_AFF_GATEWAY_TOKEN?.trim() ||
+    "";
+  return baseUrl && token ? { baseUrl, token } : null;
+}
+
+function naiImageFromEnv(): NaiNativeUpstream | null {
+  const imageUrl = trimNativeBase(process.env.LFN_NAI_IMAGE_API_URL);
+  const imageToken = process.env.LFN_NAI_IMAGE_API_TOKEN?.trim() || "";
+  if (imageUrl && imageToken) return { baseUrl: imageUrl, token: imageToken };
+  if (imageUrl) {
+    const fallback =
+      process.env.LFN_NAI_API_TOKEN?.trim() ||
+      process.env.LFN_AFF_GATEWAY_TOKEN?.trim() ||
+      "";
+    if (fallback) return { baseUrl: imageUrl, token: fallback };
+  }
+  return naiAccountFromEnv();
+}
+
+export async function resolvedNaiAccountUpstream(): Promise<NaiNativeUpstream | null> {
+  try {
+    const upstream = await runtimeNaiAccountUpstream();
+    if (upstream) return upstream;
+  } catch {
+    // fall through to environment
+  }
+  return naiAccountFromEnv();
+}
+
+export async function resolvedNaiImageUpstream(): Promise<NaiNativeUpstream | null> {
+  try {
+    const upstream = await runtimeNaiImageUpstream();
+    if (upstream) return upstream;
+  } catch {
+    // fall through to environment
+  }
+  return naiImageFromEnv();
 }
 
 function genericImageFromEnv(): { baseUrl: string; token: string } | null {

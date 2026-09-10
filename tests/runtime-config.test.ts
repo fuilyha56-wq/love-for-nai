@@ -9,6 +9,8 @@ import {
   resetRuntimeConfigCache,
   runtimeAffGateway,
   runtimeImageUpstream,
+  runtimeNaiAccountUpstream,
+  runtimeNaiImageUpstream,
   updateRuntimeSettings,
   upsertRuntimeEndpoint,
 } from "@/lib/runtime-config";
@@ -99,5 +101,41 @@ describe("runtime platform config", () => {
       adapterType: "openai_compat",
     });
     expect(await runtimeAffGateway()).toBeNull();
+  });
+
+  it("splits NovelAI account and image native endpoints", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-runtime-nai-"));
+    resetRuntimeConfigCache();
+    await updateRuntimeSettings({
+      naiApiUrl: "http://account-gateway/v1",
+      naiApiToken: "account-token",
+      naiImageApiUrl: "http://image-gateway",
+      naiImageApiToken: "image-token",
+    });
+    expect(await runtimeNaiAccountUpstream()).toEqual({
+      baseUrl: "http://account-gateway",
+      token: "account-token",
+    });
+    expect(await runtimeNaiImageUpstream()).toEqual({
+      baseUrl: "http://image-gateway",
+      token: "image-token",
+    });
+  });
+
+  it("reuses the account native endpoint when image site is empty", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-runtime-nai2-"));
+    resetRuntimeConfigCache();
+    await updateRuntimeSettings({
+      affGatewayUrl: "http://shared-gateway/v1",
+      affGatewayToken: "shared-token",
+    });
+    expect(await runtimeNaiAccountUpstream()).toEqual({
+      baseUrl: "http://shared-gateway",
+      token: "shared-token",
+    });
+    expect(await runtimeNaiImageUpstream()).toEqual({
+      baseUrl: "http://shared-gateway",
+      token: "shared-token",
+    });
   });
 });

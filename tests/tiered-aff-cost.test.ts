@@ -88,4 +88,38 @@ describe("两档 AFF 计费", () => {
       affCost({ model: "nai-v4.5-full-limit", width: 832, height: 1216, steps: 28, samples: 3 }),
     ).toBe(3);
   });
+
+  it("encode-vibe / upscale / annotate 按固定操作计费", () => {
+    expect(
+      affCost({
+        model: "nai-v4.5-full",
+        width: 512,
+        height: 512,
+        steps: 1,
+        samples: 1,
+        operation: "encode-vibe",
+        referenceImageCount: 2,
+      }),
+    ).toBe(4);
+    expect(
+      affCost({
+        model: "nai-v4.5-full",
+        width: 1024,
+        height: 1024,
+        steps: 1,
+        samples: 1,
+        operation: "upscale",
+      }),
+    ).toBe(4);
+    expect(
+      affCost({
+        model: "hed",
+        width: 1024,
+        height: 1024,
+        steps: 1,
+        samples: 1,
+        operation: "annotate",
+      }),
+    ).toBe(1);
+  });
 });

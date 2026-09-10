@@ -14,6 +14,10 @@ export type RuntimeSettings = {
   quotaPerUnit: number;
   affGatewayUrl: string;
   affGatewayToken: string;
+  naiApiUrl: string;
+  naiApiToken: string;
+  naiImageApiUrl: string;
+  naiImageApiToken: string;
   imageProviderUrl: string;
   imageProviderToken: string;
   publicUrl: string;
@@ -33,6 +37,8 @@ export type RuntimeConfigStore = {
 const SECRET_KEYS = new Set([
   "newApiAdminToken",
   "affGatewayToken",
+  "naiApiToken",
+  "naiImageApiToken",
   "imageProviderToken",
   "remoteHistoryToken",
 ]);
@@ -46,6 +52,10 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   quotaPerUnit: 500000,
   affGatewayUrl: "",
   affGatewayToken: "",
+  naiApiUrl: "",
+  naiApiToken: "",
+  naiImageApiUrl: "",
+  naiImageApiToken: "",
   imageProviderUrl: "",
   imageProviderToken: "",
   publicUrl: "",
@@ -82,6 +92,10 @@ function envSettings(): RuntimeSettings {
     quotaPerUnit: Number.isFinite(quota) && quota > 0 ? quota : 500000,
     affGatewayUrl: process.env.LFN_AFF_GATEWAY_URL?.trim() || "",
     affGatewayToken: process.env.LFN_AFF_GATEWAY_TOKEN?.trim() || "",
+    naiApiUrl: process.env.LFN_NAI_API_URL?.trim() || "",
+    naiApiToken: process.env.LFN_NAI_API_TOKEN?.trim() || "",
+    naiImageApiUrl: process.env.LFN_NAI_IMAGE_API_URL?.trim() || "",
+    naiImageApiToken: process.env.LFN_NAI_IMAGE_API_TOKEN?.trim() || "",
     imageProviderUrl: process.env.LFN_IMAGE_PROVIDER_URL?.trim() || "",
     imageProviderToken: process.env.LFN_IMAGE_PROVIDER_TOKEN?.trim() || "",
     publicUrl: process.env.LFN_PUBLIC_URL?.trim() || "",
@@ -384,6 +398,34 @@ export async function runtimeGenericImage(): Promise<{ baseUrl: string; token: s
   const baseUrl = settings.imageProviderUrl.trim().replace(/\/+$/, "");
   const token = settings.imageProviderToken.trim();
   return baseUrl && token ? { baseUrl, token } : null;
+}
+
+function trimUrl(value: string | undefined): string {
+  return value?.trim().replace(/\/+$/, "").replace(/\/v1$/i, "") || "";
+}
+
+export type NaiNativeUpstream = {
+  baseUrl: string;
+  token: string;
+};
+
+export async function runtimeNaiAccountUpstream(): Promise<NaiNativeUpstream | null> {
+  const settings = await getRuntimeSettings();
+  const baseUrl = trimUrl(settings.naiApiUrl) || trimUrl(settings.affGatewayUrl);
+  const token = settings.naiApiToken.trim() || settings.affGatewayToken.trim();
+  return baseUrl && token ? { baseUrl, token } : null;
+}
+
+export async function runtimeNaiImageUpstream(): Promise<NaiNativeUpstream | null> {
+  const settings = await getRuntimeSettings();
+  const imageUrl = trimUrl(settings.naiImageApiUrl);
+  const imageToken = settings.naiImageApiToken.trim();
+  if (imageUrl && imageToken) return { baseUrl: imageUrl, token: imageToken };
+  if (imageUrl) {
+    const fallbackToken = settings.naiApiToken.trim() || settings.affGatewayToken.trim();
+    if (fallbackToken) return { baseUrl: imageUrl, token: fallbackToken };
+  }
+  return runtimeNaiAccountUpstream();
 }
 
 export async function runtimeQuotaPerUnit(): Promise<number> {

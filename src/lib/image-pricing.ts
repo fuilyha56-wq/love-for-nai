@@ -182,6 +182,23 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
 }
 
 export function affCost(generation: ImagePricingGeneration): number {
+  const operation = generation.operation ?? "generate";
+  if (operation === "encode-vibe") {
+    const count = Math.max(1, generation.referenceImageCount ?? generation.samples ?? 1);
+    return 2 * count;
+  }
+  if (operation === "annotate") {
+    const samples = Number.isSafeInteger(generation.samples) && generation.samples > 0
+      ? generation.samples
+      : 1;
+    return Math.max(1, samples);
+  }
+  if (operation === "upscale") {
+    const samples = Number.isSafeInteger(generation.samples) && generation.samples > 0
+      ? generation.samples
+      : 1;
+    return Math.max(1, 4 * samples);
+  }
   if (
     !Number.isSafeInteger(generation.samples) ||
     generation.samples < 1 ||
