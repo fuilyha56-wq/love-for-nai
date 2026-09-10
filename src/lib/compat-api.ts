@@ -11,7 +11,12 @@ import {
   type ImageCreditCharge,
 } from "@/lib/aff";
 import { resolveExternalApiUser } from "@/lib/newapi-db";
-import { resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import {
+  resolvedImageUpstream,
+  resolvedNaiAccountUpstream,
+  resolvedNaiImageUpstream,
+  resolvedNewApiBaseUrl,
+} from "@/lib/newapi";
 import {
   assertBodySize,
   assertImageModel,
@@ -294,8 +299,7 @@ export async function proxyImageWithCredits(
           }
         }
 
-        const token = authorization.replace(/^Bearer\s+/i, "");
-        const result = await imageAdapter.generate(adapterRequest, token);
+        const result = await imageAdapter.generate(adapterRequest);
         
         settled = true;
         
@@ -443,6 +447,142 @@ export function unsupportedNaiOperation(request: Request, operation: string): Re
   );
 }
 
+const IMAGE_NATIVE_PREFIXES = [
+  "/ai/generate-image",
+  "/ai/generate-image-stream",
+  "/ai/encode-vibe",
+  "/ai/augment-image",
+  "/ai/upscale",
+];
+
+function naiNativeError(message: string, status: number, code: string): Response {
+  return Response.json(
+    { message, error: { message, type: "invalid_request_error", code } },
+    { status },
+  );
+}
+
+export function forbiddenUserAccount(): Response {
+  return naiNativeError(
+    "账户信息不对普通用户开放，必须由 Love for NAI 服务端使用 Gateway Token 请求",
+    403,
+    "gateway_auth_required",
+  );
+}
+
+export async function proxyNaiNativeWithCredits(
+  request: Request,
+  pathname: string,
+  imageRequest: ExternalImageRequest,
+  newApiFallback?: { pathname: string; body: BodyInit; contentType: string } | "unsupported",
+): Promise<Response> {
+  const authorization = bearerAuthorization(request);
+  if (authorization instanceof Response) return authorization;
+  const identity = authorization;
+  const rate = checkImageRateLimit(request, identity);
+  if (!rate.allowed)
+    return Response.json(
+      { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
+      { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
+    );
+
+  const preferImage = IMAGE_NATIVE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  const nativeUpstream = preferImage
+    ? (await resolvedNaiImageUpstream()) || (await resolvedNaiAccountUpstream())
+    : (await resolvedNaiAccountUpstream()) || (await resolvedNaiImageUpstream());
+  if (!nativeUpstream)
+    return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+
+  let userId: number | null;
+  try {
+    userId = await resolveExternalApiUser(authorization);
+  } catch {
+    return Response.json(
+      {
+        error: {
+          message: "暂时无法连接账号服务，请稍后重试",
+          type: "api_error",
+          code: "lfn_account_service_unavailable",
+        },
+      },
+      { status: 502 },
+    );
+  }
+  if (userId == null)
+    return paymentResponse(
+      await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
+      "newapi",
+    );
+
+  const userRate = checkImageRateLimit(request, `user:${userId}`);
+  if (!userRate.allowed)
+    return Response.json(
+      { error: { message: "图像请求过于频繁，请稍后重试", code: "rate_limit_exceeded" } },
+      { status: 429, headers: { "Retry-After": String(userRate.retryAfterSeconds) } },
+    );
+
+  let charge: ImageCreditCharge | null = null;
+  let settled = false;
+  try {
+    charge = await trySpendImageCredits(userId, imageRequest.generation);
+    if (!charge)
+      return paymentResponse(
+        await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
+        "newapi",
+      );
+
+    const headers = new Headers({
+      Authorization: `Bearer ${nativeUpstream.token}`,
+      ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
+    });
+    const accept = request.headers.get("accept");
+    if (accept) headers.set("Accept", accept);
+    const upstream = await fetch(`${nativeUpstream.baseUrl}${pathname}`, {
+      method: request.method,
+      headers,
+      body: imageRequest.body,
+      cache: "no-store",
+      signal: AbortSignal.timeout(180_000),
+    });
+    settled = true;
+    if (!upstream.ok) {
+      await refundImageCredits(userId, charge, 0);
+      return paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge));
+    }
+    return paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge));
+  } catch (error) {
+    if (charge && !settled) await refundImageCredits(userId, charge, 0);
+    return Response.json(
+      {
+        error: {
+          message: error instanceof Error ? error.message : "LFN 图像请求失败",
+          type: "api_error",
+          code: "lfn_image_upstream_error",
+        },
+      },
+      { status: 502 },
+    );
+  }
+}
+
+async function nativeNewApiFallback(
+  request: Request,
+  pathname: string,
+  imageRequest: ExternalImageRequest,
+  newApiFallback?: { pathname: string; body: BodyInit; contentType: string } | "unsupported",
+): Promise<Response> {
+  if (newApiFallback === "unsupported")
+    return unsupportedNaiOperation(request, pathname.replace(/^\/ai\//, ""));
+  if (newApiFallback)
+    return proxyNewApi(
+      request,
+      newApiFallback.pathname,
+      newApiFallback.body,
+      newApiFallback.contentType,
+    );
+  return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+}
+
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -486,7 +626,14 @@ function externalReferenceCount(body: JsonRecord): number {
     ).length;
     if (count) return count;
   }
+  if (Array.isArray(body.reference_image_multiple)) {
+    const count = body.reference_image_multiple.filter(
+      (item) => typeof item === "string" && item.trim(),
+    ).length;
+    if (count) return count;
+  }
   if (typeof body.reference_image === "string" && body.reference_image) return 1;
+  if (Array.isArray(body.vibe)) return body.vibe.length;
   if (Array.isArray(body.references)) return body.references.length;
   if (Array.isArray(body.characters)) return body.characters.length;
   return 0;

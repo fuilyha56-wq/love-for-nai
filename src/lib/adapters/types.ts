@@ -83,7 +83,7 @@ export type ImageAdapter = {
   name: string;
   
   // 图像生成
-  generate(request: ImageGenerationRequest, token: string): Promise<ImageGenerationResponse>;
+  generate(request: ImageGenerationRequest, token?: string): Promise<ImageGenerationResponse>;
   
   // 模型列表
   listModels?(): Promise<Array<{ id: string; name: string; capabilities: string[] }>>;

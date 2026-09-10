@@ -25,6 +25,10 @@ type RuntimeSettings = {
   quotaPerUnit: number;
   affGatewayUrl: string;
   affGatewayToken: string;
+  naiApiUrl: string;
+  naiApiToken: string;
+  naiImageApiUrl: string;
+  naiImageApiToken: string;
   imageProviderUrl: string;
   imageProviderToken: string;
   publicUrl: string;
@@ -74,6 +78,10 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   quotaPerUnit: 500000,
   affGatewayUrl: "",
   affGatewayToken: "",
+  naiApiUrl: "",
+  naiApiToken: "",
+  naiImageApiUrl: "",
+  naiImageApiToken: "",
   imageProviderUrl: "",
   imageProviderToken: "",
   publicUrl: "",
@@ -280,6 +288,18 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           </label>
           <label className="block text-sm font-semibold">可选 Gateway 令牌
             <input value={settings.affGatewayToken} onChange={(event) => setSettings({ ...settings, affGatewayToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="不用 Gateway 请留空" />
+          </label>
+          <label className="block text-sm font-semibold">第三方 API 站点
+            <input value={settings.naiApiUrl} onChange={(event) => setSettings({ ...settings, naiApiUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="账号/订阅默认走这里，可与 Gateway 相同" />
+          </label>
+          <label className="block text-sm font-semibold">第三方 API 站点令牌
+            <input value={settings.naiApiToken} onChange={(event) => setSettings({ ...settings, naiApiToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="Gateway Token，浏览器不会看到" />
+          </label>
+          <label className="block text-sm font-semibold">图像 API 站点（可选）
+            <input value={settings.naiImageApiUrl} onChange={(event) => setSettings({ ...settings, naiImageApiUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="只填时生图走这里；留空则用第三方 API 站点" />
+          </label>
+          <label className="block text-sm font-semibold">图像 API 站点令牌
+            <input value={settings.naiImageApiToken} onChange={(event) => setSettings({ ...settings, naiImageApiToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="可与第三方 API 站点共用 Gateway Token" />
           </label>
           <label className="block text-sm font-semibold">可选通用图像上游
             <input value={settings.imageProviderUrl} onChange={(event) => setSettings({ ...settings, imageProviderUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="OpenAI 兼容 /v1，没有请留空" />

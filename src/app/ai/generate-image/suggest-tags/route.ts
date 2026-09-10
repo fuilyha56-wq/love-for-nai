@@ -3,6 +3,7 @@ import {
   modelAlias,
   proxyNewApi,
 } from "@/lib/compat-api";
+import { resolvedNaiImageUpstream } from "@/lib/newapi";
 
 export async function GET(request: Request): Promise<Response> {
   const authorization = bearerAuthorization(request);
@@ -34,6 +35,26 @@ async function suggestTags(
 ): Promise<Response> {
   if (typeof prompt !== "string" || !prompt.trim())
     return Response.json({ message: "prompt is required" }, { status: 400 });
+  const native = await resolvedNaiImageUpstream();
+  if (native) {
+    const params = new URLSearchParams({
+      prompt: prompt.trim(),
+      model: String(model || "nai-diffusion-3"),
+    });
+    const upstream = await fetch(
+      `${native.baseUrl}/ai/generate-image/suggest-tags?${params.toString()}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${native.token}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
+  }
   return proxyNewApi(
     new Request(request.url, { method: "POST", headers: request.headers }),
     "/v1/images/suggest-tags",

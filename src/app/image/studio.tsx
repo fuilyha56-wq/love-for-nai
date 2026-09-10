@@ -95,6 +95,83 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string };
+
+async function consumeImageStream(
+  response: Response,
+  options: {
+    expected: number;
+    onPreview: (images: string[]) => void;
+    onProgress: (label: string) => void;
+  },
+): Promise<string[]> {
+  if (!response.body) throw new Error("上游未返回流式响应");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let leftover = "";
+  const previews: string[] = Array.from({ length: options.expected }, () => "");
+  const finals: string[] = Array.from({ length: options.expected }, () => "");
+  let doneImages: string[] | null = null;
+  let errorMessage = "";
+  const applySlot = (target: string[], sampleIndex: number, image: string) => {
+    const index = Math.max(0, sampleIndex);
+    while (target.length <= index) target.push("");
+    target[index] = image;
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      leftover += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const blocks = leftover.split("\n\n");
+      leftover = done ? "" : blocks.pop() || "";
+      for (const block of blocks) {
+        const eventMatch = block.match(/^event:\s*(.+)$/m);
+        const dataMatch = block.match(/^data:\s*(.+)$/m);
+        if (!eventMatch || !dataMatch) continue;
+        const event = eventMatch[1].trim();
+        let payload: Record<string, unknown> = {};
+        try {
+          payload = JSON.parse(dataMatch[1]) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (event === "error") {
+          errorMessage = String(payload.message || "流式生成失败");
+          continue;
+        }
+        if (event === "preview" || event === "final") {
+          const image = typeof payload.image === "string" ? payload.image : "";
+          const sampleIndex =
+            typeof payload.sampleIndex === "number" ? payload.sampleIndex : 0;
+          if (!image) continue;
+          if (event === "final") applySlot(finals, sampleIndex, image);
+          else applySlot(previews, sampleIndex, image);
+          const visible = (event === "final" ? finals : previews).filter(Boolean);
+          options.onPreview(visible.length ? visible : [image]);
+          const currentStep =
+            typeof payload.currentStep === "number" ? payload.currentStep : 0;
+          const totalSteps =
+            typeof payload.totalSteps === "number" ? payload.totalSteps : 0;
+          if (totalSteps)
+            options.onProgress(
+              `${Math.min(currentStep, totalSteps)}/${totalSteps} 步`,
+            );
+        }
+        if (event === "done") {
+          const images = Array.isArray(payload.images)
+            ? payload.images.filter((item): item is string => typeof item === "string")
+            : [];
+          if (images.length) doneImages = images;
+        }
+      }
+      if (done) break;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (errorMessage) throw new Error(errorMessage);
+  const completed = finals.filter(Boolean);
+  return doneImages?.length ? doneImages : completed;
+}
 // 多角色：每角色独立 prompt + 画面中心坐标（对齐 NAI Character Prompts）。
 type CharacterPromptUi = {
   id: string;
@@ -426,6 +503,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
+  const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
+  const [streamProgress, setStreamProgress] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
 
   const [tagResults, setTagResults] = useState<DanbooruTag[]>([]);
@@ -1795,6 +1874,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
     setGenerating(true);
     setImages([]);
+    setPreviewDrafts([]);
+    setStreamProgress("");
     setSuggestedTags([]);
     setNotice("");
     const base: Record<string, unknown> = {
@@ -1886,6 +1967,32 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(sequential ? { ...base, n: 1 } : base),
         });
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("text/event-stream") && response.body) {
+          const batchImages = await consumeImageStream(response, {
+            expected: sequential ? 1 : count,
+            onPreview(next) {
+              if (sequential) setPreviewDrafts([...collected, ...next]);
+              else setPreviewDrafts(next);
+            },
+            onProgress(label) {
+              setStreamProgress(label);
+            },
+          });
+          if (response.headers.get("x-lfn-payment-source") === "newapi")
+            usedNewApi = true;
+          if (!batchImages.length) throw new Error("上游未返回最终图片");
+          if (sequential) {
+            collected.push(...batchImages);
+            setImages([...collected]);
+            setPreviewDrafts([]);
+          } else {
+            collected.push(...batchImages);
+            setImages(batchImages);
+            setPreviewDrafts([]);
+          }
+          continue;
+        }
         const result = await response.json();
         if (!response.ok && !result.images) throw new Error(result.message || "操作失败");
         if (operation === "suggest-tags") {
@@ -1938,6 +2045,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       );
     } finally {
       setBatchProgress("");
+      setStreamProgress("");
       setGenerating(false);
     }
   }
@@ -2492,9 +2600,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           <span className="flex items-center gap-2">
             <Sparkles size={18} />
             {generating
-              ? batchProgress
-                ? `生成中 ${batchProgress}…`
-                : "处理中，请稍候..."
+              ? streamProgress
+                ? `生成中 ${streamProgress}`
+                : batchProgress
+                  ? `生成中 ${batchProgress}…`
+                  : "处理中，请稍候..."
               : generationModes.has(operation)
                 ? `生成 ${count} 张图像`
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
@@ -2667,19 +2777,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </button>
                 ))}
               </div>
-            ) : images.length ? (
+            ) : images.length || previewDrafts.length ? (
               <div
                 className={`grid w-full gap-3 overflow-auto ${
-                  images.length === 1
+                  (images.length || previewDrafts.length) === 1
                     ? "h-full max-w-none grid-cols-1 place-content-center place-items-center"
                     : "max-h-full max-w-5xl grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
                 }`}
               >
-                {images.map((image, index) => (
+                {(images.length ? images : previewDrafts).map((image, index) => (
                   <div
                     key={`${image.slice(-24)}-${index}`}
                     className={`relative overflow-hidden border border-[var(--line)] bg-white ${
-                      images.length === 1
+                      (images.length || previewDrafts.length) === 1
                         ? "flex h-full max-h-full w-full max-w-full items-center justify-center"
                         : ""
                     }`}
@@ -2688,7 +2798,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       type="button"
                       onClick={() => setLightboxIndex(index)}
                       className={`block w-full cursor-zoom-in ${
-                        images.length === 1
+                        (images.length || previewDrafts.length) === 1
                           ? "flex h-full max-h-full items-center justify-center"
                           : ""
                       }`}
@@ -2701,12 +2811,18 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                         height={height}
                         unoptimized
                         className={
-                          images.length === 1
+                          (images.length || previewDrafts.length) === 1
                             ? "h-full max-h-full w-auto max-w-full object-contain"
                             : "h-auto w-full object-contain"
                         }
                       />
                     </button>
+                    {generating && !images.length && (
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2 text-xs text-white">
+                        {streamProgress || "正在生成预览…"}
+                      </div>
+                    )}
+                    {images.length ? (
                     <a
                       href={image}
                       download={`lfn-${index + 1}.png`}
@@ -2715,6 +2831,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                     >
                       <Download size={17} />
                     </a>
+                    ) : null}
                   </div>
                 ))}
               </div>

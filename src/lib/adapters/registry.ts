@@ -80,7 +80,7 @@ class AdapterRegistry {
       const imageConfig: EndpointConfig = {
         id: "env-gateway-image",
         type: "image",
-        adapterType: "openai_compat",
+        adapterType: "gateway",
         name: "NovelAI Gateway (环境变量)",
         enabled: true,
         config: { baseUrl: gatewayUrl, token: gatewayToken },

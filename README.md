@@ -20,10 +20,12 @@ OpenAI 路径：
 
 NovelAI 路径：
 
-- `POST /ai/generate-image`：接受 NovelAI 原生生成 JSON，成功返回 `application/zip`。
+- `POST /ai/generate-image`：接受 NovelAI 原生生成 JSON。配置 Gateway 后原样转发 ZIP / Msgpack Stream；否则转换为 OpenAI 兼容请求并打包成 ZIP。
+- `POST /ai/generate-image-stream`：官方流式入口。请求体 `parameters.stream=msgpack`，响应为带 4 字节长度前缀的 MessagePack 事件（`intermediate` / `final`）。LFN 工作台会把中间帧刷新到同一画布，效果对齐 NovelAI 官网。
 - `GET|POST /ai/generate-image/suggest-tags`：标签建议。
 - `POST /ai/augment-image`：支持 `declutter`、`bg-removal`、`lineart`、`sketch`、`colorize`、`emotion`。
-- `POST /ai/encode-vibe`、`POST /ai/upscale`：路径已保留；在 NewAPI 尚无可审计计费映射时返回 `409`，不会绕过 NewAPI 免费直连 Gateway。
+- `POST /ai/encode-vibe`、`POST /ai/upscale`、`POST /ai/annotate-image`：配置 Gateway 后由服务端携带 Gateway Token 转发；未配置或本地额度不足且没有 NewAPI 计费映射时返回 `409`。
+- `GET /user/subscription`、`GET /user/account`、`GET /user/objects`：对普通用户 Token 一律返回 `403`。账户信息只能由 LFN 服务端使用 Gateway Token 向网关读取。
 
 OpenAI 示例：
 
@@ -67,7 +69,12 @@ docker compose up -d --build
 
 如果服务器不适合现场构建，可在构建机执行 `docker build -t love-for-nai:<版本> .` 和 `docker save`，导入服务器后设置 `LFN_IMAGE=love-for-nai:<版本>`，再使用 `docker compose -f compose.prod.yml up -d`。
 
-AFF 与 NewAPI 余额是两种独立支付方式。同时配置 `LFN_AFF_GATEWAY_URL`（Gateway 的 `/v1` 入口）与 `LFN_AFF_GATEWAY_TOKEN`（Gateway 的 `GATEWAY_PASSWORD`）后，AFF 足够的图像生成会直连 Gateway，由平台 NovelAI 凭据承担上游成本，不再经过 NewAPI，也不会扣用户 NewAPI 余额；AFF 不足时会自动改用登录用户的 NewAPI 余额并按 NewAPI 计费。两者未配置时，所有生成只使用 NewAPI 余额且不扣 AFF。
+AFF 与 NewAPI 余额是两种独立支付方式。同时配置 `LFN_AFF_GATEWAY_URL`（Gateway 入口）与 `LFN_AFF_GATEWAY_TOKEN`（Gateway 的 `GATEWAY_AUTH_TOKEN` / `GATEWAY_PASSWORD`）后，AFF 足够的图像生成会直连 Gateway，由平台 NovelAI 凭据承担上游成本，不再经过 NewAPI，也不会扣用户 NewAPI 余额；AFF 不足时会自动改用登录用户的 NewAPI 余额并按 NewAPI 计费。两者未配置时，所有生成只使用 NewAPI 余额且不扣 AFF。浏览器不会持有 Gateway Token。
+
+可选双端点：
+
+- `LFN_NAI_API_URL` / `LFN_NAI_API_TOKEN`：第三方 API 站点，默认账号与图像入口。
+- `LFN_NAI_IMAGE_API_URL` / `LFN_NAI_IMAGE_API_TOKEN`：图像 API 站点。填写后 `/ai/generate-image`、`/ai/encode-vibe` 等走该地址。
 
 Danbooru 或 Wikipedia 无法直连时设置 `LFN_OUTBOUND_PROXY`。只有在受信反向代理会覆盖客户端传入的 `X-Forwarded-For` 时，才可设置 `LFN_TRUST_PROXY=true`；否则标签搜索使用站点级安全限流。
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] - 2026-09-08
+
+### NovelAI 原生兼容层
+
+- Gateway 与 LFN 共同支持官方 `/ai/*`、`/user/*` 路径。
+- `/user/*` 对普通用户 Token 一律返回 403；账户信息只能由 LFN 服务端携带 Gateway Token 读取。
+- `POST /ai/encode-vibe`、`/ai/upscale`、`/ai/annotate-image` 在配置 Gateway 后由服务端转发，浏览器不持有 Gateway Token。
+- 支持独立的第三方 API 站点与图像 API 站点。
+- 工作台生图改为官方流式：Gateway `/ai/generate-image-stream` 的 msgpack 中间帧会刷新到同一画布，最终帧替换预览图。
+
 ## [Unreleased] - 2026-09-04
 
 ### 🎉 重大更新：适配器系统
