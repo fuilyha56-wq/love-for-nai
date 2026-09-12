@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
+import JSZip from "jszip";
 import {
   refundImageCredits,
   trySpendImageCredits,
   type ImageCreditCharge,
 } from "@/lib/aff";
+import { UPSCALE_MODELS, upscaleAnlasCost } from "@/lib/image-pricing";
+import { pngDimensions } from "@/lib/png-dims";
 import { getSession } from "@/lib/session";
 import {
   getImageToken,
@@ -46,6 +49,137 @@ const unifiedOperations = new Set([
 ]);
 const MAX_SAMPLES_PER_REQUEST = 4;
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
+
+// NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
+// 计费口径与上游实扣 Anlas 1:1，详见 docs/SUPER_RESOLUTION.md。
+async function handleUpscale(
+  session: { userId: number },
+  body: Record<string, unknown> & { operation?: string; model?: string },
+): Promise<NextResponse> {
+  const nativeImage = await resolvedNaiImageUpstream();
+  if (!nativeImage)
+    return NextResponse.json(
+      { message: "超分需要 NAI 原生图像上游（Gateway），当前未配置" },
+      { status: 503 },
+    );
+
+  const rawImage = typeof body.image === "string" ? body.image : "";
+  if (!rawImage)
+    return NextResponse.json({ message: "请先上传要超分的图片" }, { status: 400 });
+  const image = rawImage.replace(DATA_URL, "");
+  const dims = pngDimensions(image);
+  if (!dims)
+    return NextResponse.json(
+      { message: "超分仅接受 PNG 图片（JPEG/WEBP 请先转为 PNG）" },
+      { status: 400 },
+    );
+
+  const upscaleModel =
+    typeof body.upscale_model === "string" && body.upscale_model
+      ? body.upscale_model
+      : "nai-diffusion-5-curated";
+  if (!UPSCALE_MODELS.has(upscaleModel))
+    return NextResponse.json(
+      { message: `超分模型仅支持 nai-diffusion-5-full / nai-diffusion-5-curated` },
+      { status: 400 },
+    );
+
+  try {
+    upscaleAnlasCost(dims.width, dims.height);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "超分参数无效" },
+      { status: 400 },
+    );
+  }
+
+  const platformUpstream = await resolvedImageUpstream();
+  if (!platformUpstream)
+    return NextResponse.json({ message: "未配置图像上游，无法超分" }, { status: 503 });
+  const generation = {
+    model: upscaleModel,
+    width: dims.width,
+    height: dims.height,
+    steps: 1,
+    samples: 1,
+    operation: "upscale",
+  };
+  const credits = await trySpendImageCredits(session.userId, generation);
+  if (!credits)
+    return NextResponse.json({ message: "AFF 余额不足，无法超分" }, { status: 402 });
+  const payment = "aff" as const;
+  const paymentSource: "package" | "personal" | "mixed" =
+    credits.packageCost > 0 && credits.personalCost > 0
+      ? "mixed"
+      : credits.packageCost > 0
+        ? "package"
+        : "personal";
+
+  try {
+    const upstream = await fetch(`${nativeImage.baseUrl}/ai/upscale`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${nativeImage.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        image,
+        model: upscaleModel,
+        declared_blur_sigma: 0,
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!upstream.ok) {
+      await refundImageCredits(session.userId, credits, 0);
+      const raw = (await upstream.text()).slice(0, 300);
+      return NextResponse.json(
+        { message: raw || `上游超分失败（${upstream.status}）` },
+        { status: upstream.status || 502 },
+      );
+    }
+    const png = await extractUpscaledPng(await upstream.arrayBuffer());
+    if (!png) {
+      await refundImageCredits(session.userId, credits, 0);
+      return NextResponse.json({ message: "上游超分响应中没有图片" }, { status: 502 });
+    }
+    const images = [pngDataUrl(png)];
+    const history = await saveHistory(session.userId, body, images, null);
+    return NextResponse.json({
+      images,
+      image: images[0],
+      width: dims.width * 2,
+      height: dims.height * 2,
+      historyIds: history.map((item) => item.id),
+      payment,
+      paymentSource,
+      aff: {
+        cost: credits.cost,
+        balance: credits.balance,
+        packageCost: credits.packageCost,
+        personalCost: credits.personalCost,
+        packageBalance: credits.packageBalance,
+        totalBalance: credits.totalBalance,
+      },
+    });
+  } catch (error) {
+    await refundImageCredits(session.userId, credits, 0);
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "上游超分失败" },
+      { status: 502 },
+    );
+  }
+}
+
+// NAI /ai/upscale 返回 ZIP（image_0.png），解出第一张 PNG 原始字节。
+async function extractUpscaledPng(payload: ArrayBuffer): Promise<Uint8Array | null> {
+  const archive = await JSZip.loadAsync(payload);
+  const entry = Object.values(archive.files).find(
+    (file) => !file.dir && file.name.endsWith(".png"),
+  );
+  if (!entry) return null;
+  return new Uint8Array(await entry.async("arraybuffer"));
+}
 
 function stripDataUrls<T>(value: T): T {
   if (typeof value === "string")
@@ -135,13 +269,14 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (operation === "upscale" || operation === "annotate")
+  if (operation === "annotate")
     return NextResponse.json(
       {
-        message: `${operation === "upscale" ? "图片放大" : "控制图生成"}端点已识别，但 Gateway 尚无可审计 usage 映射；为避免零费用漏计，暂不允许提交。`,
+        message: "控制图生成端点已识别，但 Gateway 尚无可审计 usage 映射；为避免零费用漏计，暂不允许提交。",
       },
       { status: 409 },
     );
+  if (operation === "upscale") return handleUpscale(session, body);
   if (operation !== "suggest-tags" && !unifiedOperations.has(operation))
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
   if (

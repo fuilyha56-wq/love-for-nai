@@ -163,8 +163,30 @@ export function snapshotFromRawPricing(
   };
 }
 
-export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
-  const operation = generation.operation ?? "generate";
+// NAI 独立超分（/ai/upscale）按输入面积档位计费，与官网价格表逐档对齐；
+// 超过 3145728 px（1536x2048）上游直接 400 拒绝。
+export const UPSCALE_MAX_PIXELS = 3_145_728;
+export const UPSCALE_MODELS = new Set([
+  "nai-diffusion-5-full",
+  "nai-diffusion-5-curated",
+]);
+
+export function upscaleAnlasCost(width: number, height: number): number {
+  const pixels = width * height;
+  if (!Number.isSafeInteger(pixels) || pixels <= 0)
+    throw new Error("超分图片尺寸无效");
+  if (pixels > UPSCALE_MAX_PIXELS)
+    throw new Error(
+      `图片超出超分上限：${pixels} 像素，最大 ${UPSCALE_MAX_PIXELS}（1536x2048）`,
+    );
+  // 档位边界来自 NAI webui 价格表：1048576→1、1747627→2、2446678→3、3145728→4。
+  if (pixels <= 1_048_576) return 1;
+  if (pixels <= 1_747_627) return 2;
+  if (pixels <= 2_446_678) return 3;
+  return 4;
+}
+
+export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {  const operation = generation.operation ?? "generate";
   const referenceCount = generation.referenceImageCount ?? 0;
   return (
     ["generate", "img2img", "inpainting", "edits"].includes(operation) &&
@@ -194,10 +216,11 @@ export function affCost(generation: ImagePricingGeneration): number {
     return Math.max(1, samples);
   }
   if (operation === "upscale") {
+    // V5 扩散超分：按输入面积 1-4 档，与 NAI 实扣 Anlas 1:1。
     const samples = Number.isSafeInteger(generation.samples) && generation.samples > 0
       ? generation.samples
       : 1;
-    return Math.max(1, 4 * samples);
+    return upscaleAnlasCost(generation.width, generation.height) * samples;
   }
   if (
     !Number.isSafeInteger(generation.samples) ||

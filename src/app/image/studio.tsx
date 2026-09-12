@@ -54,6 +54,8 @@ import {
   estimateNewApiCost,
   newApiBalanceToCny,
   affCost as estimateAff,
+  UPSCALE_MAX_PIXELS,
+  upscaleAnlasCost,
   type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
 
@@ -341,7 +343,7 @@ const generationModes = new Set<Operation>([
   "precise-reference",
 ]);
 
-const unsupportedOperations = new Set<Operation>(["upscale", "annotate"]);
+const unsupportedOperations = new Set<Operation>(["annotate"]);
 const acceptedUploadTypes = new Set([
   "image/png",
   "image/jpeg",
@@ -429,6 +431,23 @@ export function validateUploadFile(
   return null;
 }
 
+// 超分只收 PNG：把任意受支持格式按原始尺寸重编码为 PNG data URL。
+async function toPngDataUrl(dataUrl: string): Promise<string> {
+  const image = new window.Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error("源图解码失败，请重新上传"));
+    image.src = dataUrl;
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器不支持 Canvas，无法转换图片");
+  context.drawImage(image, 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
 function createAbortError(): Error {
   const error = new Error("智能助手任务已取消");
   error.name = "AbortError";
@@ -494,6 +513,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [menuDirectorOpen, setMenuDirectorOpen] = useState(false);
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
+  // 超分（V5 扩散超分）：模型二选一 + 源图真实尺寸（决定档位费用与 2x 输出）。
+  const [upscaleModel, setUpscaleModel] = useState("nai-diffusion-5-curated");
+  const [upscaleSource, setUpscaleSource] = useState<{ width: number; height: number } | null>(
+    null,
+  );
   const [notice, setNotice] = useState("");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
@@ -601,6 +625,27 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     const timer = window.setTimeout(() => setNaiLeftWidth(clampPanel(saved, 240, 520)), 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  // 超分：读取源图真实尺寸，用于档位费用展示、超限拦截与 2x 输出尺寸提示。
+  useEffect(() => {
+    if (operation !== "upscale" || !source) {
+      void Promise.resolve().then(() => setUpscaleSource(null));
+      return;
+    }
+    let cancelled = false;
+    const image = new window.Image();
+    image.onload = () => {
+      if (!cancelled)
+        setUpscaleSource({ width: image.naturalWidth, height: image.naturalHeight });
+    };
+    image.onerror = () => {
+      if (!cancelled) setUpscaleSource(null);
+    };
+    image.src = source.data;
+    return () => {
+      cancelled = true;
+    };
+  }, [operation, source]);
 
   function savePanelWidths(left: number, right: number) {
     if (naiLayout) window.localStorage.setItem("lfn-nai-left-width", String(left));
@@ -1836,7 +1881,34 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             />
           </div>
         )}
-        {["upscale", "annotate"].includes(operation) && (
+        {operation === "upscale" && (
+          <>
+            <Control label="超分模型">
+              <PopupSelect
+                value={upscaleModel}
+                options={[
+                  { value: "nai-diffusion-5-curated", label: "V5 Curated（推荐）" },
+                  { value: "nai-diffusion-5-full", label: "V5 Full" },
+                ]}
+                onChange={setUpscaleModel}
+                ariaLabel="超分模型"
+              />
+            </Control>
+            <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
+              V5 扩散超分：输出固定为源图的 2 倍，仅接受 PNG。
+              {upscaleSource
+                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，消耗 ${upscaleAnlasCost(upscaleSource.width, upscaleSource.height)} AFF。`
+                : "请先上传源图以确认费用档位。"}
+              {upscaleSource &&
+                upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS && (
+                  <span className="mt-1 block text-amber-500">
+                    源图超过超分上限 1536×2048（3145728 像素），请缩小后再试。
+                  </span>
+                )}
+            </p>
+          </>
+        )}
+        {operation === "annotate" && (
           <p className="rounded border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
             Gateway 端点存在，但尚无可审计的 usage
             计费映射，当前只展示完整入口并阻止零费用提交。
@@ -1941,8 +2013,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       base.model = controlModel;
     }
     if (operation === "upscale") {
-      base.image = source?.data;
-      base.scale = 2;
+      if (!source) throw new Error("请先上传要超分的图片");
+      if (!upscaleSource) throw new Error("无法读取源图尺寸，请重新上传");
+      if (upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS)
+        throw new Error("源图超过超分上限 1536×2048（3145728 像素），请缩小后再试");
+      // 上游只收 PNG；JPEG/WEBP 源图在此统一重编码为 PNG。
+      base.image = await toPngDataUrl(source.data);
+      base.upscale_model = upscaleModel;
+      base.n = 1;
     }
     if (operation.startsWith("director-")) {
       base.image = source?.data;
@@ -1950,7 +2028,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }
     try {
       // 分批次：每 0.5 秒发送一张（n=1），逐张出图；一次性保持单请求 n 张。
-      const sequential = batchMode === "sequential" && count > 1;
+      // 超分单次固定 1 张，避免重复扣费。
+      const sequential = batchMode === "sequential" && count > 1 && operation !== "upscale";
       const total = sequential ? count : 1;
       const collected: string[] = [];
       let usedNewApi = false;
@@ -2054,17 +2133,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     operation === "generate" && charactersEnabled
       ? characters.filter((character) => character.prompt.trim()).length
       : 0;
+  // 超分费用按源图真实尺寸（1-4 AFF 档位）；其余操作按生成尺寸估算。
+  const upscaleDims = operation === "upscale" ? upscaleSource : null;
   const estimatedAffCost = estimateAff({
     model,
     operation,
-    width,
-    height,
+    width: upscaleDims ? upscaleDims.width : width,
+    height: upscaleDims ? upscaleDims.height : height,
     steps,
-    samples: count,
+    samples: operation === "upscale" ? 1 : count,
     characterPromptCount: activeCharacterCount,
   });
   const packageRateImages = Math.min(
-    count,
+    operation === "upscale" ? 1 : count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
       ? wallet.aff.packageRateLimitRemaining
       : 0,
@@ -2072,7 +2153,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const estimatedPackageCost = wallet?.aff?.enabled
     ? Math.min(
         wallet.aff.packageBalance,
-        Math.ceil((estimatedAffCost * packageRateImages) / Math.max(1, count)),
+        Math.ceil(
+          (estimatedAffCost * packageRateImages) /
+            Math.max(1, operation === "upscale" ? 1 : count),
+        ),
       )
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;

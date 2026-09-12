@@ -101,16 +101,27 @@ describe("两档 AFF 计费", () => {
         referenceImageCount: 2,
       }),
     ).toBe(4);
+    // V5 扩散超分按输入面积档位计费（与 NAI 实扣 Anlas 1:1），见 docs/SUPER_RESOLUTION.md。
     expect(
       affCost({
-        model: "nai-v4.5-full",
+        model: "nai-diffusion-5-curated",
         width: 1024,
         height: 1024,
         steps: 1,
         samples: 1,
         operation: "upscale",
       }),
-    ).toBe(4);
+    ).toBe(1);
+    expect(
+      affCost({
+        model: "nai-diffusion-5-curated",
+        width: 1024,
+        height: 1536,
+        steps: 1,
+        samples: 1,
+        operation: "upscale",
+      }),
+    ).toBe(2);
     expect(
       affCost({
         model: "hed",
