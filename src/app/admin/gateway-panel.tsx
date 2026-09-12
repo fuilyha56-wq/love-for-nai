@@ -2,20 +2,7 @@
 
 import { CircleCheck, CircleX, Power, PowerOff, RefreshCw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-
-// 面板固定使用 NovelAI 官网同款深蓝夜色与紫蓝主色，独立于站点主题。
-const NAI = {
-  paper: "#13152c",
-  panel: "#191b31",
-  line: "#22253f",
-  ink: "#ffffff",
-  muted: "#b3b4c8",
-  accent: "#7052e6",
-  accentSoft: "rgba(112, 82, 230, 0.16)",
-  ok: "#4fd1a5",
-  warn: "#e8b84b",
-  bad: "#ef6a6a",
-};
+import { PopupSelect } from "@/app/ui/popup-select";
 
 type GatewayAccount = {
   id: string;
@@ -46,9 +33,7 @@ type NaiSubscription = {
   tier?: number;
   active?: boolean;
   status?: number;
-  expiresAt?: number;
   trainingStepsLeft?: { fixedTrainingStepsLeft?: number; purchasedTrainingSteps?: number };
-  perks?: { grossWeeklyTokens?: number } | Record<string, unknown>;
 };
 
 type NaiAccountData = {
@@ -66,11 +51,11 @@ const TIER_LABELS: Record<number, string> = {
   3: "Opus",
 };
 
-const STATUS_LABELS: Record<string, { label: string; color: string }> = {
-  active: { label: "使用中", color: NAI.ok },
-  ready: { label: "就绪", color: NAI.ok },
-  cooldown: { label: "冷却中", color: NAI.warn },
-  disabled: { label: "已停用", color: NAI.muted },
+const STATUS_LABELS: Record<string, { label: string; className: string }> = {
+  active: { label: "使用中", className: "text-[var(--mint)]" },
+  ready: { label: "就绪", className: "text-[var(--mint)]" },
+  cooldown: { label: "冷却中", className: "text-amber-600" },
+  disabled: { label: "已停用", className: "text-[var(--muted)]" },
 };
 
 function formatAnlas(steps: NaiSubscription["trainingStepsLeft"]): string {
@@ -87,7 +72,8 @@ function formatTime(value: number | null | undefined): string {
   return new Date(value * 1000).toLocaleString("zh-CN", { hour12: false });
 }
 
-export default function GatewayPanel({ setMessage }: { setMessage: (msg: string) => void }) {
+// 平台概览内嵌的 Gateway 区块：渠道池状态/启停/NAI 原始数据 + 模型计费覆盖。
+export default function GatewaySection({ setMessage }: { setMessage: (msg: string) => void }) {
   const [overview, setOverview] = useState<GatewayOverview | null>(null);
   const [billing, setBilling] = useState<ModelBillingMap>({});
   const [loading, setLoading] = useState(true);
@@ -118,7 +104,11 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
     void Promise.resolve().then(() => load());
   }, [load]);
 
-  async function accountAction(account: GatewayAccount, action: string, patch?: Record<string, unknown>) {
+  async function accountAction(
+    account: GatewayAccount,
+    action: string,
+    patch?: Record<string, unknown>,
+  ) {
     setBusyAccount(account.id + action);
     try {
       const response = await fetch("/api/admin/gateway", {
@@ -163,7 +153,10 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
         cache: "no-store",
       });
       const result = (await response.json()) as NaiAccountData;
-      setNaiData((current) => ({ ...current, [account.id]: response.ok ? result : { message: result.message || "读取失败" } }));
+      setNaiData((current) => ({
+        ...current,
+        [account.id]: response.ok ? result : { message: result.message || "读取失败" },
+      }));
     } catch {
       setNaiData((current) => ({ ...current, [account.id]: { message: "读取失败" } }));
     }
@@ -201,8 +194,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
   }
 
   if (loading) return <p className="text-sm text-[var(--muted)]">加载中…</p>;
-  if (!overview)
-    return <p className="text-sm text-[var(--muted)]">Gateway 不可用</p>;
+  if (!overview) return null;
 
   const configuredModels = Object.keys(billing);
   const availableModels = overview.models
@@ -210,71 +202,55 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
     .filter((id) => !configuredModels.includes(id));
 
   return (
-    <div className="space-y-5 font-sans" style={{ color: NAI.ink }}>
-      {/* ── 渠道（NAI 账号池） ── */}
-      <section
-        className="rounded-xl border p-5"
-        style={{ background: NAI.panel, borderColor: NAI.line }}
-      >
-        <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-3">
+      {/* ── 渠道池 ── */}
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p
-              className="text-xs font-bold uppercase tracking-[0.14em]"
-              style={{ color: NAI.accent }}
-            >
-              Channels
+            <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
+              Gateway 渠道池（{overview.accounts.length}）
             </p>
-            <h3 className="mt-1 text-base font-bold">NovelAI 渠道池（{overview.accounts.length}）</h3>
-            <p className="mt-1 text-xs leading-5" style={{ color: NAI.muted }}>
-              出图轮询的共享账号。启用/停用立即生效；「NAI 数据」拉取该账号在 NovelAI
-              的原始订阅与剩余额度。
+            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+              出图轮询的共享 NovelAI 账号。启停立即生效；「NAI 数据」拉取该账号的原始订阅与剩余额度。
             </p>
           </div>
           <button
             type="button"
             onClick={() => void load()}
-            className="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold"
-            style={{ borderColor: NAI.line, color: NAI.muted }}
+            className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)]"
           >
             <RefreshCw size={13} /> 刷新
           </button>
-        </header>
+        </div>
 
-        <div className="space-y-3">
+        <div className="space-y-2">
           {overview.accounts.map((account) => {
             const status = STATUS_LABELS[account.status] || {
               label: account.status,
-              color: NAI.muted,
+              className: "text-[var(--muted)]",
             };
             const detail = naiData[account.id];
             const sub = typeof detail === "object" ? detail.subscription : undefined;
             return (
-              <article
+              <div
                 key={account.id}
-                className="rounded-lg border p-4"
-                style={{ background: NAI.paper, borderColor: NAI.line }}
+                className="rounded-lg border border-[var(--line)] bg-[#faf9f5] px-4 py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="flex flex-wrap items-center gap-2 text-sm font-bold">
+                    <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                       {account.name}
-                      <span
-                        className="rounded px-1.5 py-0.5 font-mono text-[10px]"
-                        style={{ background: NAI.accentSoft, color: NAI.muted }}
-                      >
+                      <span className="rounded bg-[#f1eee7] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
                         {account.id}
                       </span>
-                      <span
-                        className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                        style={{ background: NAI.accentSoft, color: status.color }}
-                      >
+                      <span className={`text-[10px] font-semibold ${status.className}`}>
                         {status.label}
                       </span>
-                      <span className="text-[10px] font-normal" style={{ color: NAI.muted }}>
+                      <span className="text-[10px] text-[var(--muted)]">
                         权重 {account.weight} · {account.masked_key}
                       </span>
                     </p>
-                    <p className="mt-1 text-[11px]" style={{ color: NAI.muted }}>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
                       成功 {account.success_count} · 失败 {account.failure_count} · 最近使用{" "}
                       {formatTime(account.last_used_at)}
                       {account.last_error ? ` · 最近错误：${account.last_error.slice(0, 80)}` : ""}
@@ -285,14 +261,14 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                       type="button"
                       disabled={busyAccount === account.id + "account-update"}
                       onClick={() =>
-                        void accountAction(account, "account-update", { enabled: !account.enabled })
+                        void accountAction(account, "account-update", {
+                          enabled: !account.enabled,
+                        })
                       }
-                      className="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold disabled:opacity-50"
-                      style={{ borderColor: NAI.line }}
+                      className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-white hover:border-[var(--rose)] disabled:opacity-50"
                       title={account.enabled ? "停用渠道" : "启用渠道"}
                     >
-                      {account.enabled ? <PowerOff size={13} /> : <Power size={13} />}
-                      {account.enabled ? "停用" : "启用"}
+                      {account.enabled ? <PowerOff size={15} /> : <Power size={15} />}
                     </button>
                     <button
                       type="button"
@@ -304,8 +280,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                             `${account.name} 测试：${result.ok ? "✅ " : "❌ "}${result.message}`,
                           );
                       }}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold disabled:opacity-50"
-                      style={{ borderColor: NAI.line, color: NAI.muted }}
+                      className="h-10 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
                     >
                       测试
                     </button>
@@ -313,8 +288,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                       type="button"
                       disabled={busyAccount === account.id + "account-reset"}
                       onClick={() => void accountAction(account, "account-reset")}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold disabled:opacity-50"
-                      style={{ borderColor: NAI.line, color: NAI.muted }}
+                      className="h-10 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
                       title="清除失败与冷却状态"
                     >
                       重置
@@ -322,8 +296,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                     <button
                       type="button"
                       onClick={() => void loadNaiData(account)}
-                      className="flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-white disabled:opacity-50"
-                      style={{ background: `linear-gradient(135deg, ${NAI.accent}, #4a57d6)` }}
+                      className="flex h-10 items-center rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white"
                     >
                       {detail === "loading" ? "拉取中…" : "NAI 数据"}
                     </button>
@@ -331,107 +304,86 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                 </div>
 
                 {detail && typeof detail === "object" && (
-                  <div
-                    className="mt-3 rounded-lg border p-3 text-xs leading-6"
-                    style={{ borderColor: NAI.line, background: NAI.panel }}
-                  >
+                  <div className="mt-3 rounded border border-[var(--line)] bg-white p-3 text-xs leading-6">
                     {"message" in detail && detail.message ? (
-                      <span style={{ color: NAI.bad }}>{detail.message}</span>
+                      <span className="text-red-600">{detail.message}</span>
                     ) : sub ? (
                       <>
                         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 font-semibold">
                           <span className="flex items-center gap-1">
                             {sub.active ? (
-                              <CircleCheck size={13} style={{ color: NAI.ok }} />
+                              <CircleCheck size={13} className="text-[var(--mint)]" />
                             ) : (
-                              <CircleX size={13} style={{ color: NAI.bad }} />
+                              <CircleX size={13} className="text-red-600" />
                             )}
                             {TIER_LABELS[Number(sub.tier)] || `Tier ${sub.tier ?? "?"}`}
                             {sub.active ? " · 订阅有效" : " · 订阅未激活"}
                           </span>
                           <span>
-                            剩余额度：<b style={{ color: NAI.ok }}>{formatAnlas(sub.trainingStepsLeft)}</b>
+                            剩余额度：
+                            <b className="text-[var(--mint)]">{formatAnlas(sub.trainingStepsLeft)}</b>
                           </span>
-                          {typeof sub.status === "number" && (
-                            <span style={{ color: NAI.muted }}>status={sub.status}</span>
-                          )}
                         </p>
-                        <details className="mt-2">
-                          <summary
-                            className="cursor-pointer select-none text-[11px]"
-                            style={{ color: NAI.muted }}
-                          >
+                        <details className="mt-1.5">
+                          <summary className="cursor-pointer select-none text-[11px] text-[var(--muted)]">
                             原始 NAI 返回
                           </summary>
-                          <pre
-                            className="mt-2 max-h-64 overflow-auto rounded p-2 font-mono text-[10px] leading-5"
-                            style={{ background: NAI.paper, color: NAI.muted }}
-                          >
+                          <pre className="mt-2 max-h-64 overflow-auto rounded bg-[#f5f3ed] p-2 font-mono text-[10px] leading-5 text-[var(--muted)]">
 {JSON.stringify(detail, null, 2)}
                           </pre>
                         </details>
                       </>
                     ) : (
-                      <span style={{ color: NAI.muted }}>暂无数据</span>
+                      <span className="text-[var(--muted)]">暂无数据</span>
                     )}
                   </div>
                 )}
-              </article>
+              </div>
             );
           })}
           {!overview.accounts.length && (
-            <p
-              className="rounded-lg border border-dashed px-4 py-6 text-center text-xs"
-              style={{ borderColor: NAI.line, color: NAI.muted }}
-            >
+            <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-6 text-center text-xs text-[var(--muted)]">
               Gateway 未配置任何渠道账号
             </p>
           )}
         </div>
-      </section>
+      </article>
 
-      {/* ── 模型价格计费配置 ── */}
-      <section
-        className="rounded-xl border p-5"
-        style={{ background: NAI.panel, borderColor: NAI.line }}
-      >
-        <header className="mb-4">
-          <p className="text-xs font-bold uppercase tracking-[0.14em]" style={{ color: NAI.accent }}>
-            Model Pricing
-          </p>
-          <h3 className="mt-1 text-base font-bold">模型价格计费配置</h3>
-          <p className="mt-1 text-xs leading-5" style={{ color: NAI.muted }}>
-            「自动」使用内置公式（面积 × 步数、Opus 档内减免、超分按面积 1–4）；「固定」改为每张固定
-            AFF，填 0 即该模型免费。保存后计费与工作台的预计消耗立即生效。
-          </p>
-        </header>
+      {/* ── 模型计费配置 ── */}
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
+          模型价格计费配置
+        </p>
+        <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+          「自动公式」按内置规则计费（面积 × 步数、Opus 档内减免、超分按面积 1–4）；「固定」改为每张固定
+          AFF，填 0 即该模型免费。保存后扣费与工作台的预计消耗立即生效。
+        </p>
 
-        <div className="space-y-2">
+        <div className="mt-4 space-y-2">
           {configuredModels.map((model) => {
             const entry = billing[model];
             return (
               <div
                 key={model}
-                className="flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2.5"
-                style={{ background: NAI.paper, borderColor: NAI.line }}
+                className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[#faf9f5] px-3 py-2.5"
               >
                 <b className="min-w-40 font-mono text-xs">{model}</b>
-                <select
+                <PopupSelect
                   value={entry.mode}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     updateBillingEntry(model, {
-                      mode: event.target.value as ModelBillingEntry["mode"],
+                      mode: value as ModelBillingEntry["mode"],
                       fixedCost: entry.fixedCost,
                     })
                   }
-                  className="h-8 rounded border bg-transparent px-2 text-xs"
-                  style={{ borderColor: NAI.line, color: NAI.ink }}
-                >
-                  <option value="auto">自动公式</option>
-                  <option value="fixed">固定 AFF/张</option>
-                </select>
+                  ariaLabel={`${model} 计费模式`}
+                  options={[
+                    { value: "auto", label: "自动公式" },
+                    { value: "fixed", label: "固定 AFF/张" },
+                  ]}
+                />
                 {entry.mode === "fixed" && (
-                  <label className="flex items-center gap-1.5 text-xs" style={{ color: NAI.muted }}>
+                  <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
                     单价
                     <input
                       type="number"
@@ -444,8 +396,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                           fixedCost: Math.max(0, Number(event.target.value) || 0),
                         })
                       }
-                      className="h-8 w-24 rounded border bg-transparent px-2 text-xs"
-                      style={{ borderColor: NAI.line, color: NAI.ink }}
+                      className="field h-9 w-24 px-2 text-xs"
                     />
                     AFF
                   </label>
@@ -453,8 +404,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                 <button
                   type="button"
                   onClick={() => updateBillingEntry(model, null)}
-                  className="ml-auto grid h-8 w-8 place-items-center rounded-lg border"
-                  style={{ borderColor: NAI.line, color: NAI.bad }}
+                  className="ml-auto grid h-9 w-9 place-items-center rounded border border-red-200 bg-white text-red-600 hover:border-red-400"
                   title="移除该模型的特殊计费"
                 >
                   <Trash2 size={13} />
@@ -463,31 +413,23 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
             );
           })}
           {!configuredModels.length && (
-            <p
-              className="rounded-lg border border-dashed px-4 py-5 text-center text-xs"
-              style={{ borderColor: NAI.line, color: NAI.muted }}
-            >
+            <p className="rounded-lg border border-dashed border-[var(--line)] px-4 py-5 text-center text-xs text-[var(--muted)]">
               所有模型都按自动公式计费
             </p>
           )}
 
-          <div
-            className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2.5"
-            style={{ borderColor: NAI.line }}
-          >
-            <select
-              value={newModel}
-              onChange={(event) => setNewModel(event.target.value)}
-              className="h-8 rounded border bg-transparent px-2 text-xs"
-              style={{ borderColor: NAI.line, color: NAI.ink }}
-            >
-              <option value="">选择要覆盖计费的模型…</option>
-              {availableModels.map((id) => (
-                <option key={id} value={id}>
-                  {id}
-                </option>
-              ))}
-            </select>
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[var(--line)] px-3 py-2.5">
+            <div className="w-64">
+              <PopupSelect
+                value={newModel}
+                onChange={(value) => setNewModel(value)}
+                ariaLabel="选择模型"
+                options={[
+                  { value: "", label: "选择要覆盖计费的模型…" },
+                  ...availableModels.map((id) => ({ value: id, label: id })),
+                ]}
+              />
+            </div>
             <button
               type="button"
               disabled={!newModel}
@@ -496,8 +438,7 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
                 updateBillingEntry(newModel, { mode: "auto", fixedCost: 0 });
                 setNewModel("");
               }}
-              className="flex h-8 items-center gap-1 rounded-lg border px-2.5 text-xs font-semibold disabled:opacity-40"
-              style={{ borderColor: NAI.accent, color: NAI.accent }}
+              className="h-10 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] disabled:opacity-40"
             >
               添加
             </button>
@@ -509,14 +450,13 @@ export default function GatewayPanel({ setMessage }: { setMessage: (msg: string)
             type="button"
             disabled={savingBilling}
             onClick={() => void saveBilling()}
-            className="flex h-9 items-center gap-2 rounded-lg px-4 text-xs font-bold text-white disabled:opacity-60"
-            style={{ background: `linear-gradient(135deg, ${NAI.accent}, #4a57d6)` }}
+            className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white disabled:opacity-60"
           >
-            <Save size={13} />
+            <Save size={15} />
             {savingBilling ? "保存中…" : "保存计费配置"}
           </button>
         </div>
-      </section>
+      </article>
     </div>
   );
 }

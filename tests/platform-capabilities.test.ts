@@ -54,27 +54,7 @@ describe("平台能力探测", () => {
       "gallery",
       "referrals",
       "platform",
-      "gateway",
     ]);
-    // Gateway 渠道模块仅在图像端点为 Gateway 时开放。
-    const gatewayModule = modules.find((item) => item.id === "gateway");
-    expect(gatewayModule?.enabled).toBe(false);
-    expect(
-      modules
-        .filter((item) => item.id !== "gateway")
-        .every((item) => item.enabled && item.description),
-    ).toBe(true);
-  });
-
-  it("图像端点为 Gateway 时开放 Gateway 渠道模块", () => {
-    process.env.LFN_AUTH_PROVIDER = "local";
-    process.env.LFN_AFF_GATEWAY_URL = "http://gateway.test:41555";
-    process.env.LFN_AFF_GATEWAY_TOKEN = "token";
-    delete process.env.LFN_IMAGE_PROVIDER_URL;
-    delete process.env.LFN_IMAGE_PROVIDER_TOKEN;
-    const capabilities = getPlatformCapabilities();
-    expect(capabilities.image.provider).toBe("gateway");
-    const modules = listAdminModules(capabilities);
-    expect(modules.find((item) => item.id === "gateway")?.enabled).toBe(true);
+    expect(modules.every((item) => item.enabled && item.description)).toBe(true);
   });
 });
