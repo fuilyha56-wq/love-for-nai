@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
 import CommentsDialog from "./comments-dialog";
+import GatewayPanel from "./gateway-panel";
 import PlatformConfigPanel from "./platform-config-panel";
 
 type AdminUser = {
@@ -35,7 +36,7 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "platform";
+type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "platform" | "gateway";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
 type PlatformCapabilities = {
   auth: { label: string; provider: string };
@@ -148,6 +149,7 @@ export default function AdminPage() {
         { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
         { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
         { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
+        { id: "gateway", label: "Gateway 渠道", description: "NovelAI 渠道池与模型计费配置", enabled: capabilities?.image?.provider === "gateway" },
       ]
   ).filter((item) => item.enabled);
   const current = visibleModules.find((item) => item.id === tab);
@@ -216,6 +218,8 @@ export default function AdminPage() {
           <ReferralsPanel />
         ) : tab === "platform" ? (
           <PlatformConfigPanel setMessage={setMessage} />
+        ) : tab === "gateway" ? (
+          <GatewayPanel setMessage={setMessage} />
         ) : (
           <AnnouncementsPanel setMessage={setMessage} />
         )}

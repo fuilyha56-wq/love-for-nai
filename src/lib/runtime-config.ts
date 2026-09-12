@@ -5,6 +5,11 @@ import type { EndpointConfig } from "@/lib/adapters/types";
 
 export type AuthProviderId = "newapi" | "local";
 
+// 模型计费覆盖：auto = 内置公式（面积/步数），fixed = 固定 AFF/张（0 = 免费）。
+export type ModelBillingMode = "auto" | "fixed";
+export type ModelBillingEntry = { mode: ModelBillingMode; fixedCost: number };
+export type ModelBillingMap = Record<string, ModelBillingEntry>;
+
 export type RuntimeSettings = {
   authProvider: AuthProviderId;
   newApiBaseUrl: string;
@@ -32,6 +37,7 @@ export type RuntimeSettings = {
 export type RuntimeConfigStore = {
   settings: RuntimeSettings;
   endpoints: EndpointConfig[];
+  modelBilling: ModelBillingMap;
 };
 
 const SECRET_KEYS = new Set([
@@ -218,6 +224,25 @@ function defaultEndpoints(settings: RuntimeSettings): EndpointConfig[] {
   return items;
 }
 
+function normalizeModelBilling(raw: unknown): ModelBillingMap {
+  const source = raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+  const result: ModelBillingMap = {};
+  for (const [model, value] of Object.entries(source)) {
+    const name = String(model || "").trim();
+    if (!name || !value || typeof value !== "object") continue;
+    const entry = value as Partial<ModelBillingEntry>;
+    if (entry.mode !== "auto" && entry.mode !== "fixed") continue;
+    const fixedCost = Number(entry.fixedCost);
+    result[name] = {
+      mode: entry.mode,
+      fixedCost: Number.isFinite(fixedCost) && fixedCost >= 0 ? fixedCost : 0,
+    };
+  }
+  return result;
+}
+
 async function readStore(): Promise<RuntimeConfigStore> {
   if (cached) return cached;
   try {
@@ -226,10 +251,10 @@ async function readStore(): Promise<RuntimeConfigStore> {
     const endpoints = Array.isArray(parsed.endpoints)
       ? parsed.endpoints.map((item) => normalizeEndpoint(item))
       : defaultEndpoints(settings);
-    cached = { settings, endpoints };
+    cached = { settings, endpoints, modelBilling: normalizeModelBilling(parsed.modelBilling) };
   } catch {
     const settings = envSettings();
-    cached = { settings, endpoints: defaultEndpoints(settings) };
+    cached = { settings, endpoints: defaultEndpoints(settings), modelBilling: {} };
   }
   return cached;
 }
@@ -303,6 +328,27 @@ export async function deleteRuntimeEndpoint(id: string): Promise<boolean> {
     await writeStore(store);
     return true;
   });
+}
+
+export async function getModelBilling(): Promise<ModelBillingMap> {
+  return (await readStore()).modelBilling;
+}
+
+export async function updateModelBilling(map: ModelBillingMap): Promise<ModelBillingMap> {
+  return withLock(async () => {
+    const store = await readStore();
+    store.modelBilling = normalizeModelBilling(map);
+    await writeStore(store);
+    return store.modelBilling;
+  });
+}
+
+// 命中 fixed 模型时返回「每张固定 AFF」，否则 null 走内置公式。
+export async function runtimeModelFixedCost(model: string): Promise<number | null> {
+  const entry = (await getModelBilling())[model];
+  if (!entry || entry.mode !== "fixed") return null;
+  const cost = Number(entry.fixedCost);
+  return Number.isFinite(cost) && cost >= 0 ? cost : null;
 }
 
 export function maskSecret(value: string | undefined): string {
