@@ -6,6 +6,7 @@ import {
   isInFreeEnvelope as calculateIsInFreeEnvelope,
 } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
+import { runtimeModelFixedCost } from "@/lib/runtime-config";
 
 export type AffTransaction = {
   id: string;
@@ -328,8 +329,15 @@ export async function trySpendImageCredits(
     const samples = generation.samples;
     if (!Number.isSafeInteger(samples) || samples < 1 || samples > 6)
       throw new Error("生成张数必须是 1-6 的正整数");
-    const cost = affCost(generation);
-    if (!Number.isSafeInteger(cost) || cost <= 0)
+    // 管理员为模型配置了固定单价时覆盖内置公式；0 = 免费该模型。
+    const fixedCostPerSample = await runtimeModelFixedCost(generation.model);
+    const cost =
+      fixedCostPerSample != null
+        ? Math.ceil(fixedCostPerSample) * samples
+        : affCost(generation);
+    if (!Number.isSafeInteger(cost) || cost < 0)
+      throw new Error("图像费用计算结果无效");
+    if (fixedCostPerSample == null && cost === 0)
       throw new Error("图像费用计算结果无效");
     const packageRateLimited =
       account.packageBalance > 0 && packageRateLimitRemaining(account) === 0;

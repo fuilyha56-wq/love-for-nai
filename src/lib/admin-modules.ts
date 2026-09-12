@@ -7,7 +7,8 @@ export type AdminModuleId =
   | "announcements"
   | "gallery"
   | "referrals"
-  | "platform";
+  | "platform"
+  | "gateway";
 
 export type AdminModule = {
   id: AdminModuleId;
@@ -64,6 +65,12 @@ export function listAdminModules(
       label: "平台配置",
       description: "用 LFN 控件改账号、图像、钱包上游和全部站点环境项，保存后立即生效。",
       enabled: capabilities.admin.platform,
+    },
+    {
+      id: "gateway",
+      label: "Gateway 渠道",
+      description: "NovelAI 账号池的启停、状态与原始订阅额度，以及每个模型的 AFF 计费配置。仅在图像端点为 Gateway 时可用。",
+      enabled: capabilities.image.provider === "gateway" && capabilities.image.enabled,
     },
   ];
 }

@@ -47,7 +47,8 @@ function body() {
   return { operation: "generate", prompt: "test", width: 64, height: 64 };
 }
 
-describe("历史分层保留", () => {
+// 整套并行跑时 FS/fetch mock 会拖慢 120 张的写入循环，放宽超时避免偶发超时。
+describe("历史分层保留", { timeout: 30_000 }, () => {
   it("前 40 张全部留在本地磁盘", async () => {
     const { saveHistory, listHistory } = await import("@/lib/history");
     for (let i = 0; i < 40; i += 1) {

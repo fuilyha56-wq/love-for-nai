@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
 import { snapshotFromRawPricing } from "@/lib/image-pricing";
+import { runtimeModelFixedCost } from "@/lib/runtime-config";
 
 // 计费预期：把当前模型的 NewAPI 计价信息 + 用户分组倍率发给前端，
 // 前端用实测公式实时估算消耗。
@@ -84,7 +85,9 @@ export async function GET(request: Request) {
     }
 
     const snapshot = snapshotFromRawPricing(model, entry, groupRatio, effectiveGroup);
-    return NextResponse.json(snapshot);
+    // 管理员配置了固定 AFF 单价时透出给前端，Studio 优先按它估算。
+    const affFixedCost = await runtimeModelFixedCost(model);
+    return NextResponse.json({ ...snapshot, affFixedCost });
   } catch {
     return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
   }

@@ -2134,16 +2134,24 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       ? characters.filter((character) => character.prompt.trim()).length
       : 0;
   // 超分费用按源图真实尺寸（1-4 AFF 档位）；其余操作按生成尺寸估算。
+  // 管理员配置了固定 AFF 单价的模型优先按固定价 × 张数。
   const upscaleDims = operation === "upscale" ? upscaleSource : null;
-  const estimatedAffCost = estimateAff({
-    model,
-    operation,
-    width: upscaleDims ? upscaleDims.width : width,
-    height: upscaleDims ? upscaleDims.height : height,
-    steps,
-    samples: operation === "upscale" ? 1 : count,
-    characterPromptCount: activeCharacterCount,
-  });
+  const affFixedCost =
+    typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
+      ? ((modelPricing as unknown as { affFixedCost: number }).affFixedCost)
+      : null;
+  const estimatedAffCost =
+    affFixedCost != null
+      ? Math.ceil(affFixedCost) * (operation === "upscale" ? 1 : count)
+      : estimateAff({
+          model,
+          operation,
+          width: upscaleDims ? upscaleDims.width : width,
+          height: upscaleDims ? upscaleDims.height : height,
+          steps,
+          samples: operation === "upscale" ? 1 : count,
+          characterPromptCount: activeCharacterCount,
+        });
   const packageRateImages = Math.min(
     operation === "upscale" ? 1 : count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
