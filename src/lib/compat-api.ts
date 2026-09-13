@@ -242,6 +242,9 @@ export async function proxyImageWithCredits(
   // 向后兼容：如果没有适配器，使用环境变量配置
   const platformUpstream = await resolvedImageUpstream();
   if (!imageAdapter && !platformUpstream) {
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
+    )(-1);
     return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
   }
 
@@ -262,7 +265,8 @@ export async function proxyImageWithCredits(
   }
   const userId = apiIdentity.userId;
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
-  if (userId == null)
+  if (userId == null) {
+    gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
     return paymentResponse(
       await proxyNewApi(
         request,
@@ -272,6 +276,7 @@ export async function proxyImageWithCredits(
       ),
       "newapi",
     );
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -284,7 +289,8 @@ export async function proxyImageWithCredits(
   let settled = false;
   try {
     charge = await trySpendImageCredits(userId, imageRequest.generation);
-    if (!charge)
+    if (!charge) {
+      gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
       return paymentResponse(
         await proxyNewApi(
           request,
@@ -294,6 +300,7 @@ export async function proxyImageWithCredits(
         ),
         "newapi",
       );
+    }
 
     // 使用适配器生成图像
     if (imageAdapter) {
@@ -526,8 +533,17 @@ export async function proxyNaiNativeWithCredits(
   const nativeUpstream = preferImage
     ? (await resolvedNaiImageUpstream()) || (await resolvedNaiAccountUpstream())
     : (await resolvedNaiAccountUpstream()) || (await resolvedNaiImageUpstream());
-  if (!nativeUpstream)
+  if (!nativeUpstream) {
+    // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
+    const fallbackEndpoint =
+      newApiFallback && newApiFallback !== "unsupported"
+        ? newApiFallback.pathname
+        : pathname;
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+    )(-1);
     return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+  }
 
   let apiIdentity: { userId: number | null; username: string | null };
   try {
