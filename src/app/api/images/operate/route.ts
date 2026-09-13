@@ -20,6 +20,7 @@ import { saveHistory } from "@/lib/history";
 import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { gatewayLogStart } from "@/lib/gateway-log";
 import { sseEvent, sseResponse } from "@/lib/sse";
 import {
   assertBodySize,
@@ -53,7 +54,7 @@ const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 // NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
 // 计费口径与上游实扣 Anlas 1:1，详见 docs/SUPER_RESOLUTION.md。
 async function handleUpscale(
-  session: { userId: number },
+  session: { userId: number; username: string },
   body: Record<string, unknown> & { operation?: string; model?: string },
 ): Promise<NextResponse> {
   const nativeImage = await resolvedNaiImageUpstream();
@@ -116,6 +117,14 @@ async function handleUpscale(
         : "personal";
 
   try {
+    const finishGatewayLog = gatewayLogStart({
+      source: "lfn",
+      user: session.username,
+      endpoint: "/ai/upscale",
+      op: "upscale",
+      model: upscaleModel,
+      samples: 1,
+    });
     const upstream = await fetch(`${nativeImage.baseUrl}/ai/upscale`, {
       method: "POST",
       headers: {
@@ -129,7 +138,11 @@ async function handleUpscale(
       }),
       cache: "no-store",
       signal: AbortSignal.timeout(180_000),
+    }).catch((error: unknown) => {
+      finishGatewayLog(0);
+      throw error;
     });
+    finishGatewayLog(upstream.status);
     if (!upstream.ok) {
       await refundImageCredits(session.userId, credits, 0);
       const raw = (await upstream.text()).slice(0, 300);
@@ -385,6 +398,14 @@ export async function POST(request: Request) {
       );
       const abort = new AbortController();
       const timeout = setTimeout(() => abort.abort(), 180_000);
+      const finishGatewayLog = gatewayLogStart({
+        source: "lfn",
+        user: session.username,
+        endpoint: "/ai/generate-image-stream",
+        op: operation,
+        model,
+        samples,
+      });
       const nativeResponse = await fetch(
         `${nativeImage.baseUrl}/ai/generate-image-stream`,
         {
@@ -398,7 +419,11 @@ export async function POST(request: Request) {
           cache: "no-store",
           signal: abort.signal,
         },
-      );
+      ).catch((error: unknown) => {
+        finishGatewayLog(0);
+        throw error;
+      });
+      finishGatewayLog(nativeResponse.status);
       if (!nativeResponse.ok || !nativeResponse.body) {
         clearTimeout(timeout);
         const raw = (await nativeResponse.text()).slice(0, 200);
@@ -531,6 +556,14 @@ export async function POST(request: Request) {
     while (remaining.length) {
       const batch = remaining.shift() as number;
       upstreamAttempted = true;
+      const finishGatewayLog = gatewayLogStart({
+        source: "lfn",
+        user: session.username,
+        endpoint,
+        op: operation,
+        model,
+        samples: batch,
+      });
       const upstream = await fetch(`${baseUrl}${endpoint}`, {
         method: "POST",
         headers: {
@@ -540,7 +573,11 @@ export async function POST(request: Request) {
         body: JSON.stringify({ ...payload, n: batch, n_samples: batch }),
         cache: "no-store",
         signal: AbortSignal.timeout(180_000),
+      }).catch((error: unknown) => {
+        finishGatewayLog(0);
+        throw error;
       });
+      finishGatewayLog(upstream.status);
       const contentType = upstream.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         lastStatus = 502;
