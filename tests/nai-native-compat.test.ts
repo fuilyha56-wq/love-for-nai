@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  resolveExternalApiUser: vi.fn(),
+  resolveExternalApiIdentity: vi.fn(),
   trySpendImageCredits: vi.fn(),
   refundImageCredits: vi.fn(),
   affGateway: vi.fn(),
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/newapi-db", () => ({
-  resolveExternalApiUser: mocks.resolveExternalApiUser,
+  resolveExternalApiIdentity: mocks.resolveExternalApiIdentity,
 }));
 vi.mock("@/lib/aff", () => ({
   trySpendImageCredits: mocks.trySpendImageCredits,
@@ -44,7 +44,7 @@ const charge = {
 };
 
 beforeEach(() => {
-  mocks.resolveExternalApiUser.mockResolvedValue(41);
+  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
   mocks.affGateway.mockResolvedValue({

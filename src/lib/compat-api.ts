@@ -10,7 +10,12 @@ import {
   type AffGeneration,
   type ImageCreditCharge,
 } from "@/lib/aff";
-import { resolveExternalApiUser } from "@/lib/newapi-db";
+import { resolveExternalApiIdentity } from "@/lib/newapi-db";
+import {
+  gatewayLogStart,
+  maskKeyForLog,
+  type GatewayLogMeta,
+} from "@/lib/gateway-log";
 import {
   resolvedImageUpstream,
   resolvedNaiAccountUpstream,
@@ -56,6 +61,23 @@ const droppedRequestHeaders = new Set([
 ]);
 
 type JsonRecord = Record<string, unknown>;
+
+/** 外部 API（source=api）请求的上游日志：用户名缺失时退化为掩码 key。 */
+function externalLogMeta(
+  user: string,
+  imageRequest: ExternalImageRequest,
+  endpoint: string,
+): GatewayLogMeta {
+  const gen = imageRequest.generation;
+  return {
+    source: "api",
+    user,
+    endpoint,
+    op: gen.operation,
+    model: gen.model,
+    samples: gen.samples,
+  };
+}
 
 const novelAiModelAliases: Record<string, string> = {
   "nai-diffusion-4-5-full": "nai-v4.5-full",
@@ -223,9 +245,9 @@ export async function proxyImageWithCredits(
     return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
   }
 
-  let userId: number | null;
+  let apiIdentity: { userId: number | null; username: string | null };
   try {
-    userId = await resolveExternalApiUser(authorization);
+    apiIdentity = await resolveExternalApiIdentity(authorization);
   } catch {
     return Response.json(
       {
@@ -238,6 +260,8 @@ export async function proxyImageWithCredits(
       { status: 502 },
     );
   }
+  const userId = apiIdentity.userId;
+  const logUser = apiIdentity.username || maskKeyForLog(authorization);
   if (userId == null)
     return paymentResponse(
       await proxyNewApi(
@@ -273,6 +297,9 @@ export async function proxyImageWithCredits(
 
     // 使用适配器生成图像
     if (imageAdapter) {
+      const finishAdapterLog = gatewayLogStart(
+        externalLogMeta(logUser, imageRequest, "adapter"),
+      );
       try {
         const gen = imageRequest.generation;
         const operation = gen.operation as "generate" | "img2img" | "inpainting" | "upscale" | undefined;
@@ -300,9 +327,10 @@ export async function proxyImageWithCredits(
         }
 
         const result = await imageAdapter.generate(adapterRequest);
-        
+
         settled = true;
-        
+        finishAdapterLog(200);
+
         // 转换为兼容格式
         const response = Response.json({
           data: result.images,
@@ -311,6 +339,7 @@ export async function proxyImageWithCredits(
         return settleExternalCharge(response, userId, charge);
       } catch (error) {
         console.error("Adapter image generation failed, falling back:", error);
+        finishAdapterLog(0);
         // 失败时回退到原始方式
       }
     }
@@ -321,13 +350,20 @@ export async function proxyImageWithCredits(
         Authorization: `Bearer ${platformUpstream.token}`,
         ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
       });
+      const finishUpstreamLog = gatewayLogStart(
+        externalLogMeta(logUser, imageRequest, pathname),
+      );
       const upstream = await fetch(`${platformUpstream.baseUrl}${pathname}`, {
         method: request.method,
         headers,
         body: imageRequest.body,
         cache: "no-store",
         signal: AbortSignal.timeout(180_000),
+      }).catch((error: unknown) => {
+        finishUpstreamLog(0);
+        throw error;
       });
+      finishUpstreamLog(upstream.status);
       settled = true;
       return settleExternalCharge(upstream, userId, charge);
     }
@@ -493,9 +529,9 @@ export async function proxyNaiNativeWithCredits(
   if (!nativeUpstream)
     return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
 
-  let userId: number | null;
+  let apiIdentity: { userId: number | null; username: string | null };
   try {
-    userId = await resolveExternalApiUser(authorization);
+    apiIdentity = await resolveExternalApiIdentity(authorization);
   } catch {
     return Response.json(
       {
@@ -508,11 +544,22 @@ export async function proxyNaiNativeWithCredits(
       { status: 502 },
     );
   }
-  if (userId == null)
+  const userId = apiIdentity.userId;
+  const logUser = apiIdentity.username || maskKeyForLog(authorization);
+  // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
+  const fallbackEndpoint =
+    newApiFallback && newApiFallback !== "unsupported"
+      ? newApiFallback.pathname
+      : pathname;
+  if (userId == null) {
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+    )(-1);
     return paymentResponse(
       await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
       "newapi",
     );
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -525,11 +572,15 @@ export async function proxyNaiNativeWithCredits(
   let settled = false;
   try {
     charge = await trySpendImageCredits(userId, imageRequest.generation);
-    if (!charge)
+    if (!charge) {
+      gatewayLogStart(
+        externalLogMeta(logUser, imageRequest, fallbackEndpoint),
+      )(-1);
       return paymentResponse(
         await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
         "newapi",
       );
+    }
 
     const headers = new Headers({
       Authorization: `Bearer ${nativeUpstream.token}`,
@@ -537,13 +588,20 @@ export async function proxyNaiNativeWithCredits(
     });
     const accept = request.headers.get("accept");
     if (accept) headers.set("Accept", accept);
+    const finishNativeLog = gatewayLogStart(
+      externalLogMeta(logUser, imageRequest, pathname),
+    );
     const upstream = await fetch(`${nativeUpstream.baseUrl}${pathname}`, {
       method: request.method,
       headers,
       body: imageRequest.body,
       cache: "no-store",
       signal: AbortSignal.timeout(180_000),
+    }).catch((error: unknown) => {
+      finishNativeLog(0);
+      throw error;
     });
+    finishNativeLog(upstream.status);
     settled = true;
     if (!upstream.ok) {
       await refundImageCredits(userId, charge, 0);

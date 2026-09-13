@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  resolveExternalApiUser: vi.fn(),
+  resolveExternalApiIdentity: vi.fn(),
   trySpendImageCredits: vi.fn(),
   refundImageCredits: vi.fn(),
   affGateway: vi.fn(),
@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/newapi-db", () => ({
-  resolveExternalApiUser: mocks.resolveExternalApiUser,
+  resolveExternalApiIdentity: mocks.resolveExternalApiIdentity,
 }));
 vi.mock("@/lib/aff", () => ({
   trySpendImageCredits: mocks.trySpendImageCredits,
@@ -40,7 +40,7 @@ const charge = {
 };
 
 beforeEach(() => {
-  mocks.resolveExternalApiUser.mockResolvedValue(null);
+  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null, username: null });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
   mocks.affGateway.mockReturnValue({
@@ -100,13 +100,13 @@ describe("外部 LFN 图像入口计费", () => {
   });
 
   it("有效 key 自动识别用户且图包足够时走 Gateway，不把用户 key 发给上游", async () => {
-    mocks.resolveExternalApiUser.mockResolvedValue(41);
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
-    expect(mocks.resolveExternalApiUser).toHaveBeenCalledWith("Bearer sk-test-key");
+    expect(mocks.resolveExternalApiIdentity).toHaveBeenCalledWith("Bearer sk-test-key");
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(
       41,
       expect.objectContaining({ model: "nai-v5-full", samples: 1 }),
@@ -121,7 +121,7 @@ describe("外部 LFN 图像入口计费", () => {
   });
 
   it("有效 key 但本地额度不足时透传到 NewAPI", async () => {
-    mocks.resolveExternalApiUser.mockResolvedValue(41);
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
     mocks.trySpendImageCredits.mockResolvedValue(null);
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
@@ -139,7 +139,7 @@ describe("外部 LFN 图像入口计费", () => {
   });
 
   it("数据库故障时返回 502，不透传也不扣图包", async () => {
-    mocks.resolveExternalApiUser.mockRejectedValue(
+    mocks.resolveExternalApiIdentity.mockRejectedValue(
       new Error("暂时无法连接账号服务，请稍后重试"),
     );
     const { POST } = await import("@/app/v1/images/generations/route");
