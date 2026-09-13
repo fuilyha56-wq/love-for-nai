@@ -3,7 +3,7 @@ import { Brush, LogIn, Sparkles } from "lucide-react";
 import Link from "next/link";
 
 type PublicHeaderProps = {
-  current?: "pricing" | "models" | "gallery" | "announcements";
+  current?: "pricing" | "docs" | "models" | "gallery" | "announcements";
   actionLabel?: string;
   actionHref?: string;
   extraActions?: ReactNode;
@@ -11,6 +11,7 @@ type PublicHeaderProps = {
 
 const links = [
   ["pricing", "价格", "/pricing"],
+  ["docs", "API", "/docs"],
   ["models", "模型", "/models"],
   ["gallery", "图片广场", "/gallery"],
   ["announcements", "公告", "/announcements"],
