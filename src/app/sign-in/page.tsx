@@ -586,7 +586,7 @@ export default function SignInPage() {
           {[
             ["中文提示词与标签助手", "从概念检索到多轮对话，整理出可直接使用的正负向提示词和标签。", "/image?demo=1"],
             ["多角色构图", "每个角色拥有独立提示词和画面位置，复杂构图也能逐个调整。", "/models"],
-            ["NovelAI 原生参数", "支持尺寸、steps、采样器、参考图、Director Tools 和原生 ZIP 入口。", "/pricing"],
+            ["原生 API 端点", "NAI 原生 /ai、OpenAI 兼容 /v1 与站内 /api 三种格式：请求体、鉴权与返回内容一览。", "/docs"],
             ["历史与无损下载", "本地与远程分层保存图片，批量打包 ZIP，不经过重编码。", "/image?demo=1"],
             ["图片广场与分享", "公开浏览作品、查看详情、复制分享链接，R18 内容默认保护。", "/gallery"],
             ["透明的计费路径", "图包额度优先，个人 AFF 补足，两者都不足才使用 NewAPI 余额。", "/pricing#calculator"],
