@@ -424,19 +424,16 @@ export async function POST(request: Request) {
         throw error;
       });
       finishGatewayLog(nativeResponse.status);
-      if (!nativeResponse.ok || !nativeResponse.body) {
+      // 流式初始化失败不再直接报错：保留扣费，回退到下方缓冲端点生成。
+      const streamReady = nativeResponse.ok && Boolean(nativeResponse.body);
+      if (!streamReady) {
         clearTimeout(timeout);
-        const raw = (await nativeResponse.text()).slice(0, 200);
-        if (creditCharge) {
-          affRefunded = true;
-          await refundImageCredits(session.userId, creditCharge, 0);
-        }
-        return NextResponse.json(
-          { message: raw || `上游流式生成失败（${nativeResponse.status}）` },
-          { status: nativeResponse.status || 502 },
+        console.warn(
+          `[lfn] 流式初始化失败（${nativeResponse.status}），回退缓冲端点生成`,
         );
       }
 
+      if (streamReady) {
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const send = (event: string, data: unknown) =>
@@ -454,8 +451,9 @@ export async function POST(request: Request) {
             });
             for await (const event of readNaiMsgpackStream(nativeResponse.body)) {
               if (event.eventType === "error") {
+                // 先不发 error 事件：留出缓冲兜底机会，兜底失败才统一上报
+                // （客户端见到 error 即判失败，后续 final/done 会被丢弃）。
                 errorMessage = event.message || "流式生成失败";
-                send("error", { message: errorMessage });
                 break;
               }
               if (!event.image?.length) continue;
@@ -504,7 +502,95 @@ export async function POST(request: Request) {
               });
             } else if (!errorMessage) {
               errorMessage = "上游未返回最终图片";
-              send("error", { message: errorMessage });
+            }
+            if (errorMessage && finals.size === 0) {
+              // 流式上游失败（如 NAI 流式管线内部错误）：同笔扣费回退到
+              // 缓冲端点再试一次，成功照常下发 final/done，失败才退款报错。
+              const fallbackBase = baseUrlOverride;
+              if (fallbackBase && token) {
+                upstreamAttempted = true;
+                const payload = stripDataUrls({ ...body });
+                delete payload.operation;
+                delete payload.n;
+                delete payload.n_samples;
+                payload.n = samples;
+                payload.n_samples = samples;
+                payload.width = width;
+                payload.height = height;
+                payload.steps = steps;
+                payload.response_format = "b64_json";
+                if (operation !== "generate")
+                  payload.novelai_operation = operation;
+                const finishFallbackLog = gatewayLogStart({
+                  source: "lfn",
+                  user: session.username,
+                  endpoint: "/v1/images/generations",
+                  op: operation,
+                  model,
+                  samples,
+                });
+                try {
+                  const resp = await fetch(
+                    `${fallbackBase}/v1/images/generations`,
+                    {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(payload),
+                      cache: "no-store",
+                      signal: AbortSignal.timeout(180_000),
+                    },
+                  ).catch((error: unknown) => {
+                    finishFallbackLog(0);
+                    throw error;
+                  });
+                  finishFallbackLog(resp.status);
+                  if (!resp.ok) throw new Error(`fallback ${resp.status}`);
+                  const result = (await resp.json()) as {
+                    data?: Array<{ b64_json?: string; url?: string }>;
+                    usage?: unknown;
+                  };
+                  const images = imageFromResult(result);
+                  if (!images.length) throw new Error("fallback no images");
+                  generatedSamples = images.length;
+                  const history = await saveHistory(
+                    session.userId,
+                    body,
+                    images,
+                    result.usage ?? null,
+                  );
+                  images.forEach((image, index) =>
+                    send("final", {
+                      sampleIndex: index,
+                      image,
+                      currentStep: steps,
+                      totalSteps: steps,
+                    }),
+                  );
+                  send("done", {
+                    images,
+                    image: images[0],
+                    historyIds: history.map((item) => item.id),
+                    payment,
+                    paymentSource,
+                    aff: creditCharge
+                      ? {
+                          cost: creditCharge.cost,
+                          balance: creditCharge.balance,
+                          packageCost: creditCharge.packageCost,
+                          personalCost: creditCharge.personalCost,
+                          packageBalance: creditCharge.packageBalance,
+                          totalBalance: creditCharge.totalBalance,
+                        }
+                      : null,
+                  });
+                  errorMessage = "";
+                } catch {
+                  // 兜底也失败：保留 errorMessage，finally 统一退款。
+                }
+              }
             }
           } catch (error) {
             errorMessage =
@@ -523,6 +609,7 @@ export async function POST(request: Request) {
       return sseResponse(stream, {
         "X-LFN-Payment-Source": paymentSource,
       });
+      }
     }
 
     const baseUrl = baseUrlOverride || (await resolvedNewApiBaseUrl());
