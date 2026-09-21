@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { encodeSession, sessionCookie } from "@/lib/session";
+import { encodeSession, resolvedSessionCookie } from "@/lib/session";
 import { newApiBaseUrl } from "@/lib/newapi";
 import {
   invalidJsonResponse,
@@ -49,8 +49,9 @@ export async function POST(request: Request) {
     const response = NextResponse.json({
       user: { id: user.id, name: user.display_name || user.username },
     });
+    const cookie = await resolvedSessionCookie();
     response.cookies.set(
-      sessionCookie.name,
+      cookie.name,
       encodeSession({
         userId: user.id,
         username: user.username,
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
         systemToken: token,
         expiresAt: Date.now() + 604800000,
       }),
-      sessionCookie.options,
+      cookie.options,
     );
     return response;
   } catch {

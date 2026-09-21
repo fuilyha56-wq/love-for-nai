@@ -38,6 +38,7 @@ const unifiedOperations = new Set([
   "img2img",
   "inpainting",
   "edits",
+  "outpainting",
   "vibe-transfer",
   "character-reference",
   "precise-reference",
@@ -48,7 +49,10 @@ const unifiedOperations = new Set([
   "director-colorize",
   "director-emotion",
 ]);
-const MAX_SAMPLES_PER_REQUEST = 4;
+// 缓冲路径每次上游请求的张数上限（网关 OpenAI 兼容路径同为 8）。
+const MAX_SAMPLES_PER_REQUEST = 8;
+// 流式路径单请求张数上限；更多张数由客户端分批并发。
+const MAX_STREAM_SAMPLES = 8;
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 
 // NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
@@ -273,6 +277,8 @@ export async function POST(request: Request) {
 
   const operation =
     typeof body.operation === "string" ? body.operation : "generate";
+  const deferPatchHistory = body.editor_composite === true;
+  delete body.editor_composite;
   let model: string;
   try {
     model = assertImageModel(body.model);
@@ -292,14 +298,35 @@ export async function POST(request: Request) {
   if (operation === "upscale") return handleUpscale(session, body);
   if (operation !== "suggest-tags" && !unifiedOperations.has(operation))
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
+  const implicitInpaintModel = /^nai-v(?:4\.5|5)-(?:full|curated)(?:-limit)?$/.test(model);
   if (
-    (operation === "inpainting" || operation === "edits") &&
-    !model.includes("inpaint")
+    (operation === "inpainting" || operation === "edits" || operation === "outpainting") &&
+    !model.includes("inpaint") &&
+    !implicitInpaintModel
   )
     return NextResponse.json(
-      { message: `局部重绘需要选择重绘专用模型，${model} 不支持该操作` },
+      { message: `局部重绘需要重绘模型，${model} 不支持该操作` },
       { status: 400 },
     );
+  if (operation === "inpainting" || operation === "edits" || operation === "outpainting") {
+    const sourceImage = typeof body.image === "string" ? body.image : "";
+    const sourceMask = typeof body.mask === "string" ? body.mask : "";
+    if (!DATA_URL.test(sourceImage) || !DATA_URL.test(sourceMask))
+      return NextResponse.json(
+        { message: "局部重绘需要有效的源图片和 PNG 蒙版" },
+        { status: 400 },
+      );
+    const imageDimensions = pngDimensions(sourceImage);
+    const maskDimensions = pngDimensions(sourceMask);
+    if (imageDimensions && maskDimensions && (
+      imageDimensions.width !== maskDimensions.width ||
+      imageDimensions.height !== maskDimensions.height
+    ))
+      return NextResponse.json(
+        { message: "源图片和蒙版尺寸必须一致" },
+        { status: 400 },
+      );
+  }
 
   const rate = checkImageRateLimit(request, `session:${session.userId}`);
   if (!rate.allowed)
@@ -390,6 +417,18 @@ export async function POST(request: Request) {
       unifiedOperations.has(operation) &&
       !operation.startsWith("director-");
     if (canStreamNative && nativeImage && Boolean(creditCharge || baseUrlOverride)) {
+      if (totalSamples > MAX_STREAM_SAMPLES) {
+        if (creditCharge) {
+          affRefunded = true;
+          await refundImageCredits(session.userId, creditCharge, 0);
+        }
+        return NextResponse.json(
+          {
+            message: `流式单请求最多 ${MAX_STREAM_SAMPLES} 张，更多张数请改用分批次并发`,
+          },
+          { status: 400 },
+        );
+      }
       const encoder = new TextEncoder();
       const samples = totalSamples;
       const nativeBody = naiNativeGenerationBody(
@@ -482,7 +521,9 @@ export async function POST(request: Request) {
                 (_, index) => finals.get(index),
               ).filter((item): item is string => Boolean(item));
               generatedSamples = images.length;
-              const history = await saveHistory(session.userId, body, images, null);
+              const history = deferPatchHistory
+                ? []
+                : await saveHistory(session.userId, body, images, null);
               send("done", {
                 images,
                 image: images[0],
@@ -520,7 +561,7 @@ export async function POST(request: Request) {
                 payload.steps = steps;
                 payload.response_format = "b64_json";
                 if (operation !== "generate")
-                  payload.novelai_operation = operation;
+                  payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
                 const finishFallbackLog = gatewayLogStart({
                   source: "lfn",
                   user: session.username,
@@ -555,12 +596,14 @@ export async function POST(request: Request) {
                   const images = imageFromResult(result);
                   if (!images.length) throw new Error("fallback no images");
                   generatedSamples = images.length;
-                  const history = await saveHistory(
-                    session.userId,
-                    body,
-                    images,
-                    result.usage ?? null,
-                  );
+                  const history = deferPatchHistory
+                    ? []
+                    : await saveHistory(
+                        session.userId,
+                        body,
+                        images,
+                        result.usage ?? null,
+                      );
                   images.forEach((image, index) =>
                     send("final", {
                       sampleIndex: index,
@@ -627,7 +670,8 @@ export async function POST(request: Request) {
       payload.width = width;
       payload.height = height;
       payload.steps = steps;
-      if (operation !== "generate") payload.novelai_operation = operation;
+      if (operation !== "generate")
+        payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
       else delete payload.novelai_operation;
     }
 
@@ -657,7 +701,17 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ...payload, n: batch, n_samples: batch }),
+        // 分批续传时种子按已完成张数偏移，模拟 NAI 单请求多张的种子序列，
+        // 避免同种子各批生成重复图。
+        body: JSON.stringify({
+          ...payload,
+          n: batch,
+          n_samples: batch,
+          seed:
+            typeof payload.seed === "number"
+              ? (payload.seed + images.length) % 2 ** 32
+              : payload.seed,
+        }),
         cache: "no-store",
         signal: AbortSignal.timeout(180_000),
       }).catch((error: unknown) => {
@@ -735,7 +789,9 @@ export async function POST(request: Request) {
     if (operation === "suggest-tags")
       return NextResponse.json({ tags: lastResult.tags || lastResult, raw: lastResult });
 
-    const history = await saveHistory(session.userId, body, images, usage);
+    const history = deferPatchHistory
+      ? []
+      : await saveHistory(session.userId, body, images, usage);
     return NextResponse.json({
       images,
       image: images[0],

@@ -53,3 +53,18 @@ love-for-nai-*.tar
 
 # 测试数据残渣（1.3MB 无引用）
 aff-test.json
+
+# local runtime and temporary files
+*.log
+*.tmp
+*.temp
+.tmp/
+.temp/
+.cache/
+.turbo/
+.npm/
+
+# 本地打包产物（.gz 变体）与 ZCode 会话文件
+*.tar.gz
+.zcode/
+.mimosa/

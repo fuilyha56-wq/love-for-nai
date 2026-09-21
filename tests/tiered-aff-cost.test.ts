@@ -56,6 +56,16 @@ describe("两档计费档内判定", () => {
         operation: "img2img",
       }),
     ).toBe(true);
+    expect(
+      isInFreeEnvelope({
+        model: "nai-v5-inpaint",
+        width: 832,
+        height: 1216,
+        steps: 28,
+        samples: 1,
+        operation: "outpainting",
+      }),
+    ).toBe(true);
   });
 });
 

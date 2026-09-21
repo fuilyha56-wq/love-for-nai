@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { findHistory, historyImagePath } from "@/lib/history";
+import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { grantAffOnce } from "@/lib/aff";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 
@@ -124,7 +125,10 @@ export async function publishFromHistory(
     const id = randomUUID();
     const file = `${id}.${path.extname(history.imagePath).replace(/^\./, "") || "png"}`;
     await mkdir(root(), { recursive: true });
-    const source = await readFile(historyImagePath(ownerId, history.imagePath));
+    const source = history.remote
+      ? (await getRemoteHistoryImage(ownerId, history.imagePath))?.data
+      : await readFile(historyImagePath(ownerId, history.imagePath));
+    if (!source) throw new Error("历史图片读取失败");
     await writeFile(imagePath(file), source);
     const item: GalleryItem = {
       id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",

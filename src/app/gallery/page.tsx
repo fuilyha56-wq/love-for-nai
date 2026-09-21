@@ -14,9 +14,7 @@ type GalleryItem = {
 type LoadState = "loading" | "loaded" | "error";
 
 function importHref(item: GalleryItem): string {
-  const params = new URLSearchParams({ reuse: "1" });
-  for (const [key, value] of Object.entries(item.parameters)) params.set(key, String(value));
-  return `/image?${params}`;
+  return `/image?galleryId=${encodeURIComponent(item.id)}`;
 }
 
 const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r18: "R18", sensitive: "R13" };
@@ -152,7 +150,7 @@ export default function GalleryPage() {
               <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h2 className="line-clamp-2 font-semibold" title={item.title}>{item.title}</h2><p className="mt-1 text-xs text-[var(--muted)]">作者：{item.authorName || item.ownerName}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">上传者：{item.ownerName} · {ratingLabel(item.rating)} · {item.source}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => share(item)} className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--rose)]" title="复制分享链接" aria-label={`分享作品：${item.title}`}><Link2 size={15} aria-hidden="true" /></button><button type="button" onClick={() => like(item.id)} className="flex items-center gap-1 text-xs text-[var(--rose)]" aria-label={`点赞作品：${item.title}`}><Heart size={15} aria-hidden="true" />{item.likes}</button></div></div>
               <div className="mt-3 flex min-h-[26px] flex-wrap gap-1">{item.tags.map((tag) => <span key={tag} className="rounded bg-[#f1eee7] px-2 py-1 text-[10px]">{tag}</span>)}</div>
               <div className="mt-auto pt-4">
-                {Object.keys(item.parameters).length > 0 ? <Link href={importHref(item)} className="flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"><RotateCcw size={14} />导入全部参数</Link> : <p className="flex h-9 items-center justify-center rounded border border-dashed border-[var(--line)] text-xs text-[var(--muted)]">作者未公开详细参数</p>}
+                <Link href={importHref(item)} className="flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"><RotateCcw size={14} />导入图片到工作台</Link>
               </div>
             </div>
           </article>

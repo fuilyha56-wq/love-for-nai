@@ -54,6 +54,10 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
+function importHref(item: GalleryItem): string {
+  return `/image?galleryId=${encodeURIComponent(item.id)}`;
+}
+
 export default function GalleryItemPage({
   params,
 }: {
@@ -230,20 +234,17 @@ export default function GalleryItemPage({
                   ))}
                 </div>
               )}
+              <div className="flex gap-2">
+                <Link
+                  href={importHref(item)}
+                  className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"
+                >
+                  <RotateCcw size={14} />
+                  导入图片到工作台
+                </Link>
+              </div>
               {Object.keys(item.parameters).length > 0 && (
                 <>
-                  <Link
-                    href={`/image?reuse=1&${new URLSearchParams(
-                      Object.entries(item.parameters).map(([key, value]) => [
-                        key,
-                        String(value),
-                      ]),
-                    )}`}
-                    className="flex h-10 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"
-                  >
-                    <RotateCcw size={14} />
-                    导入全部参数
-                  </Link>
                   {item.prompt && (
                     <div className="rounded-md border border-[var(--line)] bg-white p-3 text-xs">
                       <b>正面提示词</b>

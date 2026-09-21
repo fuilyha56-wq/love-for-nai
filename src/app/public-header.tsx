@@ -20,13 +20,13 @@ const links = [
 export function PublicHeader({
   current,
   actionLabel = "登录 / 进入工作台",
-  actionHref = "/sign-in",
+  actionHref = "/image",
   extraActions,
 }: PublicHeaderProps) {
   return (
     <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-[var(--panel)]/95 backdrop-blur">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-3 px-4 sm:px-7">
-        <Link href="/sign-in" className="flex min-w-0 shrink-0 items-center gap-2 text-sm font-bold">
+        <Link href="/image" prefetch={false} className="flex min-w-0 shrink-0 items-center gap-2 text-sm font-bold">
           <Brush size={19} className="shrink-0 text-[var(--rose)]" />
           <span className="hidden sm:inline">LOVE FOR NAI</span>
           <span className="sm:hidden">LFN</span>
@@ -46,11 +46,12 @@ export function PublicHeader({
         {extraActions}
         <Link
           href={actionHref}
+          prefetch={actionHref === "/image" ? false : undefined}
           className="flex h-9 shrink-0 items-center gap-1.5 rounded border border-[var(--rose)] px-2.5 text-xs font-semibold text-[var(--rose)] hover:bg-[var(--rose)] hover:text-white sm:px-3"
         >
           <LogIn size={14} />
           <span className="hidden sm:inline">{actionLabel}</span>
-          <span className="sm:hidden">登录</span>
+          <span className="sm:hidden">工作台</span>
         </Link>
       </div>
     </header>

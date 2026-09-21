@@ -30,10 +30,7 @@ type HistoryItem = {
 };
 
 function reuseHref(item: HistoryItem) {
-  const params = new URLSearchParams({ reuse: "1" });
-  for (const [key, value] of Object.entries(item.parameters))
-    params.set(key, String(value));
-  return `/image?${params}`;
+  return `/image?historyId=${encodeURIComponent(item.id)}`;
 }
 
 export default function HistoryPage() {
@@ -276,7 +273,7 @@ export default function HistoryPage() {
                     <Link
                       href={reuseHref(item)}
                       className="history-action"
-                      title="复用参数"
+                      title="导入图片到工作台"
                     >
                       <RotateCcw size={15} />
                     </Link>

@@ -6,7 +6,7 @@ const modelAliases: Record<string, string> = {
   "nai-v4.5-inpaint": "nai-diffusion-4-5-full-inpainting",
   "nai-v5-full": "nai-diffusion-5-full",
   "nai-v5-curated": "nai-diffusion-5-curated",
-  "nai-v5-inpaint": "nai-diffusion-5-inpainting",
+  "nai-v5-inpaint": "nai-diffusion-5-full-inpainting",
   "nai-v4-full": "nai-diffusion-4-full",
   "nai-v4-curated": "nai-diffusion-4-curated-preview",
   "nai-v3": "nai-diffusion-3",
@@ -37,8 +37,18 @@ export function naiUpstreamModel(model: string): string {
 
 function actionFor(operation: string): string {
   if (operation === "img2img") return "img2img";
-  if (operation === "inpainting" || operation === "edits") return "infill";
+  if (operation === "inpainting" || operation === "edits" || operation === "outpainting") return "infill";
   return "generate";
+}
+
+function modelForAction(model: string, action: string): string {
+  const upstream = naiUpstreamModel(model);
+  if (action !== "infill") return upstream;
+  if (upstream.startsWith("nai-diffusion-5"))
+    return "nai-diffusion-5-full-inpainting";
+  if (upstream.startsWith("nai-diffusion-4-5"))
+    return "nai-diffusion-4-5-full-inpainting";
+  return upstream;
 }
 
 function characterCaptions(characters: unknown): Array<Record<string, unknown>> {
@@ -78,8 +88,10 @@ export function naiNativeGenerationBody(
         ? body.negativePrompt
         : "";
   const samples = options.samples ?? (typeof body.n === "number" ? body.n : 1);
+  const action = actionFor(operation);
+  const upstreamModel = modelForAction(String(body.model || ""), action);
   const parameters: Record<string, unknown> = {
-    params_version: 3,
+    params_version: upstreamModel.startsWith("nai-diffusion-5") ? 4 : 3,
     width: body.width,
     height: body.height,
     scale: body.scale ?? 5,
@@ -163,8 +175,8 @@ export function naiNativeGenerationBody(
   }
   return {
     input: prompt,
-    model: naiUpstreamModel(String(body.model || "")),
-    action: actionFor(operation),
+    model: upstreamModel,
+    action,
     parameters,
   };
 }
