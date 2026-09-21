@@ -1,6 +1,6 @@
 import { privateKey, SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 
-export const MAX_IMAGE_SAMPLES = 6;
+export const MAX_IMAGE_SAMPLES = 30;
 export const MAX_IMAGE_STEPS = 50;
 export const MIN_IMAGE_DIMENSION = 64;
 export const MAX_IMAGE_DIMENSION = 1600;

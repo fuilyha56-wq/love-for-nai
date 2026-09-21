@@ -1,5 +1,5 @@
 import { runTool, summarizeToolResult, toolCatalog } from "@/lib/agent-tools";
-import { newApiBaseUrl } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 
 type MessageContent =
   | string
@@ -45,9 +45,10 @@ ${toolCatalog()}
 {"action":"工具名","args":{"参数名":"参数值"}}
 
 完成后输出：
-{"final":{"message":"用简体中文对用户说的一小段话（≤120字：说明这次理解了什么、检索/取舍了什么、有什么建议），语气自然","prompt":"逗号分隔的完整提示词（描述整体场景，不含单角色细节）","negativePrompt":"负面提示词","tags":["tag_1","tag_2"],"characters":[{"prompt":"该角色专属提示词","center":{"x":0.3,"y":0.5}}],"parameters":{"width":832,"height":1216,"steps":28,"scale":5,"sampler":"k_euler_ancestral","noiseSchedule":"karras"}}}
+{"final":{"message":"用简体中文对用户说的一小段话（≤120字：说明这次理解了什么、检索/取舍了什么、有什么建议），语气自然","englishDescription":"1–3 natural English sentences describing the visible action, style, characters, and scene; never mention an artist, illustrator, or artist information","prompt":"逗号分隔的完整提示词（描述整体场景，不含单角色细节）","negativePrompt":"负面提示词","tags":["tag_1","tag_2"],"characters":[{"prompt":"该角色专属提示词","center":{"x":0.3,"y":0.5}}],"parameters":{"width":832,"height":1216,"steps":28,"scale":5,"sampler":"k_euler_ancestral","noiseSchedule":"karras"}}}
 
 对用户想说的话只能放在 final.message 字段里，不要在 JSON 之外输出文字。
+englishDescription 必须是 1–3 句英文自然语言，只描述图片可见内容，明确排除 artist/画师信息；缺省时可省略。
 
 tags 只能包含已通过工具确认存在的标签。parameters 可省略字段。
 characters（多角色）规则：仅当用户需求明确包含多个角色（如"两个女孩""一男一女"）时输出；每个角色一条 prompt（角色外貌服饰，不含场景），center 是该角色在画面中的位置（x 左右、y 上下，0–1 归一化，多个角色左右分开摆放）；主 prompt 只写场景与整体氛围。单角色或场景类需求省略 characters。最多 6 个角色。`;
@@ -120,37 +121,31 @@ export async function runTagAgent(
   maxRounds = 8,
   options?: {
     onStep?: (step: AgentStep) => void;
+    // 兼容旧调用方的单图字段；新调用方可传最多 4 张图。
     image?: string;
+    images?: string[];
     // 之前轮次的 {需求, 最终 JSON}，注入为 user/assistant 消息对，
     // 让模型带着历史上下文延续对话。
     history?: Array<{ request: string; answer: string }>;
   },
 ): Promise<{ content: string; steps: AgentStep[] }> {
-  const baseUrl = newApiBaseUrl();
+  const baseUrl = await resolvedNewApiBaseUrl();
+  const images = [
+    ...(options?.images ?? []),
+    ...(options?.image ? [options.image] : []),
+  ].filter(Boolean).slice(0, 4);
   const requestText = JSON.stringify({
     request: userRequest,
     currentPrompt: context.currentPrompt || "",
     currentNegativePrompt: context.currentNegativePrompt || "",
-    hasImage: Boolean(options?.image),
+    hasImage: images.length > 0,
+    imageCount: images.length,
   });
-  const messages: Message[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    // 附图时首条消息用多模态内容；OpenAI 兼容格式由 NewAPI 转换。
-    options?.image
-      ? {
-          role: "user",
-          content: [
-            { type: "text", text: requestText },
-            { type: "image_url", image_url: { url: options.image } },
-          ],
-        }
-      : { role: "user", content: requestText },
-  ];
-  // 历史对话插在系统提示之后、本轮请求之前，模型可查看之前的上下文并延续结论。
-  const historyBase = 1;
+  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  // 历史必须按时间顺序追加；逐条 splice(1, ...) 会把多轮历史倒序。
   for (const turn of options?.history ?? []) {
     if (!turn.request || !turn.answer) continue;
-    messages.splice(historyBase, 0, {
+    messages.push({
       role: "user",
       content: JSON.stringify({
         request: turn.request,
@@ -159,11 +154,18 @@ export async function runTagAgent(
         hasImage: false,
       }),
     });
-    messages.splice(historyBase + 1, 0, {
-      role: "assistant",
-      content: turn.answer,
-    });
+    messages.push({ role: "assistant", content: turn.answer });
   }
+  const currentContent: MessageContent = images.length
+    ? [
+        { type: "text", text: requestText },
+        ...images.map((image) => ({
+          type: "image_url" as const,
+          image_url: { url: image },
+        })),
+      ]
+    : requestText;
+  messages.push({ role: "user", content: currentContent });
   const steps: AgentStep[] = [];
 
   for (let round = 0; round < maxRounds; round += 1) {

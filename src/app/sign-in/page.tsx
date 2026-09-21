@@ -150,7 +150,10 @@ export default function SignInPage() {
       });
       const result = await readAuthResult(response);
       if (result.twoFactorRequired) setTwoFactor(true);
-      else if (response.ok) router.push("/image");
+      else if (response.ok) {
+        router.replace("/image");
+        router.refresh();
+      }
       else setError(result.message || "登录失败");
     } catch (submitError) {
       setError(authRequestError(submitError, "登录失败"));
@@ -170,8 +173,10 @@ export default function SignInPage() {
         body: JSON.stringify({ token }),
       });
       const result = await readAuthResult(response);
-      if (response.ok) router.push("/image");
-      else setError(result.message || "令牌登录失败");
+      if (response.ok) {
+        router.replace("/image");
+        router.refresh();
+      } else setError(result.message || "令牌登录失败");
     } catch (submitError) {
       setError(authRequestError(submitError, "令牌登录失败"));
     } finally {
@@ -245,8 +250,10 @@ export default function SignInPage() {
         body: JSON.stringify({ code }),
       });
       const result = await readAuthResult(response);
-      if (response.ok) router.push("/image");
-      else setError(result.message || "验证失败");
+      if (response.ok) {
+        router.replace("/image");
+        router.refresh();
+      } else setError(result.message || "验证失败");
     } catch (verifyError) {
       setError(authRequestError(verifyError, "验证失败"));
     } finally {
