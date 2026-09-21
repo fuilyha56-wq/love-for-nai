@@ -50,13 +50,13 @@ afterEach(() => {
 });
 
 describe("公开模型与价格目录", () => {
-  it("匿名读取时只返回脱敏模型和人民币价格字段", async () => {
+  it("匿名读取时只返回脱敏模型和美元价格字段", async () => {
     const { GET } = await import("@/app/api/public/catalog/route");
     const response = await GET();
     const result = await response.json();
 
     expect(response.status).toBe(200);
-    expect(result.currency).toBe("CNY");
+    expect(result.currency).toBe("USD");
     expect(result.models).toHaveLength(3);
     expect(result.models.map((item: { id: string }) => item.id)).toEqual([
       "nai-chat",
@@ -68,11 +68,11 @@ describe("公开模型与价格目录", () => {
       pricing: {
         billingMode: "live",
         liveType: "tiered",
-        liveCnyPerRequest: 0.0096,
-        liveCnyPerUsageToken: 0.0012,
+        liveUsdPerRequest: 1.92,
+        liveUsdPerUsageToken: 0.24,
         privatePointReference: {
           tokensPerPoint: 50,
-          pointPriceCny: 0.06,
+          pointPriceUsd: 0.03,
           version: "V5",
         },
       },
@@ -81,13 +81,13 @@ describe("公开模型与价格目录", () => {
       pricing: {
         billingMode: "live",
         liveType: "per_request",
-        liveCnyPerRequest: 0.03,
+        liveUsdPerRequest: 6,
       },
     });
     const serialized = JSON.stringify(result);
     expect(result.conversion).toContain("1 积分 = 50 token");
-    expect(result.conversion).toContain("V4.5 每积分 ¥0.04");
-    expect(result.conversion).toContain("V5 每积分 ¥0.06");
+    expect(result.conversion).toContain("每积分 $0.03");
+    expect(result.conversion).toContain("V5 限制档 $0.06");
     expect(serialized).not.toContain("server-admin-token");
     expect(serialized).not.toContain("secret");
     expect(serialized).not.toContain("billing_expr");

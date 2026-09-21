@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import {
   ArrowLeft,
   Code2,
@@ -260,7 +262,7 @@ export default function ResourcesPage() {
   const assistantModels = models.filter((item) => item.kind !== "图像模型");
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4 backdrop-blur sm:px-7">
         <div className="flex items-center gap-3">
           <Sparkles size={20} className="text-[var(--rose)]" />
@@ -270,6 +272,7 @@ export default function ResourcesPage() {
           <ArrowLeft size={16} /> 返回工作台
         </Link>
       </header>
+      <WorkspaceNav />
       <section className="mx-auto max-w-6xl space-y-6 p-4 sm:p-8">
         {expired && <SessionExpiredNotice message={expired} />}
         {message && (

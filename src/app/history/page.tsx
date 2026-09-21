@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import {
   ArrowLeft,
   Check,
@@ -144,7 +146,7 @@ export default function HistoryPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
         <div className="flex items-center gap-3">
           <History size={20} className="text-[var(--rose)]" />
@@ -175,6 +177,7 @@ export default function HistoryPage() {
               <ArrowLeft size={16} /> 返回工作台
             </Link>
           </header>
+      <WorkspaceNav />
           {selectMode && (
             <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--panel)] px-4 py-2 sm:px-7">
               <div className="flex items-center gap-3 text-xs text-[var(--muted)]">

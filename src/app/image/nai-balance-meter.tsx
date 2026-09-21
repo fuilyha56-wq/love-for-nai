@@ -28,7 +28,7 @@ export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
         aria-valuemax={100}
         aria-valuenow={Math.round(preview.percent)}
         aria-valuetext={`预计消耗 ${format(preview.required)}，剩余 ${format(preview.remaining)}`}
-        title={`预计消耗 ${format(preview.required)}，剩余 ${format(preview.remaining)}`}
+        title={`预计消耗 ${format(preview.required)}，剩余 ${format(preview.remaining)}${unit === "USD" ? "；标准预估，实际以 NewAPI 账单为准" : ""}`}
         className="nai-balance-track"
       ><span style={{ width: `${preview.percent}%` }} /></div>
     </div>

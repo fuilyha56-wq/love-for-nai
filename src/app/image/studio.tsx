@@ -52,7 +52,6 @@ function clampPanel(value: number, min: number, max: number): number {
 
 import {
   estimateNewApiCost,
-  newApiBalanceToCny,
   affCost as estimateAff,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
@@ -2152,6 +2151,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           samples: operation === "upscale" ? 1 : count,
           characterPromptCount: activeCharacterCount,
         });
+  const estimatedNewApiCost = ["annotate", "suggest-tags", "upscale"].includes(operation) ? null : estimateNewApiCost(modelPricing, {
+    model, operation, sequential: batchMode === "sequential", maxSamplesPerRequest: 4, width: upscaleDims?.width ?? width,
+    height: upscaleDims?.height ?? height, steps,
+    samples: operation === "upscale" ? 1 : count,
+    strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
+    referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
+  });
   const packageRateImages = Math.min(
     operation === "upscale" ? 1 : count,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
@@ -2673,7 +2679,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           signedIn={signedIn}
           unit={canUseAffEstimate ? "AFF" : "USD"}
           balance={canUseAffEstimate ? wallet?.aff?.totalBalance : me?.user?.balance}
-          cost={canUseAffEstimate ? estimatedAffCost : modelPricing ? estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount }) : null}
+          cost={canUseAffEstimate ? estimatedAffCost : estimatedNewApiCost}
         />
       )}
       <div className="nai-generation-action">
@@ -2684,7 +2690,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             canUseAffEstimate
               ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
               : modelPricing
-                ? `${modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率 · 按 NewAPI 余额计费`
+                ? `$上游 {modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率；实际以账单为准 · 按 NewAPI 余额计费`
                 : undefined
           }
           className="nai-generate-button"
@@ -2701,12 +2707,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ? `生成 ${count} 张图像`
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
-          {!generating && (canUseAffEstimate || modelPricing) && (
-            <span className="nai-cost-badge">
+          {!generating && (canUseAffEstimate || estimatedNewApiCost != null) && (
+            <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "标准美元预估，实际扣费以 NewAPI 配置为准"}>
               {canUseAffEstimate
                 ? `${estimatedAffCost} AFF`
-                : modelPricing
-                  ? `¥${newApiBalanceToCny(estimateNewApiCost(modelPricing, { model, operation, width, height, steps, samples: count, characterPromptCount: activeCharacterCount })).toFixed(2)}`
+                : estimatedNewApiCost != null
+                  ? `预计 $${estimatedNewApiCost.toFixed(2)}`
                   : null}
             </span>
           )}
@@ -2996,24 +3002,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       <div>
                         预计消耗{" "}
                         <b className="text-[var(--ink)]">
-                          ¥
-                          {newApiBalanceToCny(
-                            estimateNewApiCost(modelPricing, {
-                              model,
-                              operation,
-                              width,
-                              height,
-                              steps,
-                              samples: count,
-                              characterPromptCount: activeCharacterCount,
-                            }),
-                          ).toFixed(2)}
+                          {estimatedNewApiCost == null ? "暂不可估算" : `$${estimatedNewApiCost.toFixed(2)}`}
                         </b>
                       </div>
                       {modelPricing && (
                         <div>
-                          {modelPricing.effectiveGroup} ×{" "}
-                          {modelPricing.groupRatio} 倍率
+                          上游 {modelPricing.effectiveGroup} ×{" "}
+                          {modelPricing.groupRatio} 倍率；实际以账单为准
                         </div>
                       )}
                       <div>
