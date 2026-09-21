@@ -7,6 +7,8 @@ export type SuggestedCharacter = {
 export type TagSuggestion = {
   // 助手想对用户说的自然语言（≤500 字），缺省表示本轮没有留言。
   message?: string;
+  // 1–3 句英文自然语言描述；不包含 artist/画师信息。
+  englishDescription?: string;
   prompt: string;
   negativePrompt: string;
   tags: string[];
@@ -36,6 +38,25 @@ function finiteNumber(value: unknown): number | undefined {
 
 function limitedString(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.slice(0, maxLength) : "";
+}
+
+function parseEnglishDescription(value: unknown): string | undefined {
+  const description = limitedString(value, 1_000).trim();
+  if (!description || !/[a-z]/i.test(description)) return undefined;
+  // 不尝试保留或改写画师归属；发现 artist 信息时直接丢弃该字段。
+  if (
+    /\b(?:artist|illustrator)\b|\b(?:drawn|painted|illustrated)\s+by\b|\bin\s+the\s+style\s+of\b/i.test(
+      description,
+    )
+  )
+    return undefined;
+  const sentences = description.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [];
+  const normalized = sentences
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ");
+  return normalized || undefined;
 }
 
 // 多角色建议解析：prompt 必填，center 缺省 0.5，坐标钳位到 0–1。
@@ -91,6 +112,8 @@ export function parseTagSuggestion(content: string): TagSuggestion {
 
   return {
     message: limitedString(raw.message, 500).trim() || undefined,
+    englishDescription:
+      parseEnglishDescription(raw.englishDescription),
     prompt: limitedString(raw.prompt, 10_000),
     negativePrompt: limitedString(raw.negativePrompt, 10_000),
     tags,

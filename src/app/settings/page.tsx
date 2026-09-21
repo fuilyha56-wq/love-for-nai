@@ -6,6 +6,9 @@ import {
   ArrowLeft,
   Check,
   CircleHelp,
+  ChevronDown,
+  ChevronUp,
+  GripVertical,
   Grid3X3,
   History,
   Image as ImageIcon,
@@ -23,10 +26,17 @@ import { useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
 import {
   isSafeHexColor,
+  loadCustomLayout,
+  parseCustomLayout,
+  resetCustomLayout,
+  saveCustomLayout,
+  type CustomLayoutModule,
+  type CustomLayoutPreferences,
   type AccentPreset,
   type AppearanceDensity,
   type AppearanceMotion,
   type AppearanceTheme,
+  type WorkspaceLayout,
   type HexColor,
 } from "@/lib/appearance-store";
 
@@ -318,6 +328,109 @@ function Switch({
   );
 }
 
+function CustomLayoutEditor({
+  layout,
+  onChange,
+  onSave,
+  onReset,
+}: {
+  layout: CustomLayoutPreferences;
+  onChange: (next: CustomLayoutPreferences) => void;
+  onSave: () => void;
+  onReset: () => void;
+}) {
+  const labels: Record<CustomLayoutModule, { label: string; detail: string }> = {
+    prompt: { label: "提示词", detail: "正向与负向提示词" },
+    model: { label: "模型与模式", detail: "模型、内容模式与相关选项" },
+    image: { label: "图像设置", detail: "尺寸、比例与图片来源" },
+    sampling: { label: "采样参数", detail: "步数、相关性、种子与采样器" },
+    references: { label: "参考图片", detail: "角色、Vibe 与精准参考" },
+    operations: { label: "生成操作", detail: "生成、图生图与局部重绘" },
+    history: { label: "会话历史", detail: "当前工作区的结果历史" },
+    agent: { label: "Agent", detail: "提示词助手与建议" },
+    director: { label: "Director", detail: "图片控制与导演工具" },
+  };
+
+  function move(module: CustomLayoutModule, direction: -1 | 1) {
+    const index = layout.moduleOrder.indexOf(module);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= layout.moduleOrder.length) return;
+    const moduleOrder = [...layout.moduleOrder];
+    [moduleOrder[index], moduleOrder[nextIndex]] = [moduleOrder[nextIndex], moduleOrder[index]];
+    onChange({ ...layout, moduleOrder });
+  }
+
+  return (
+    <div className="mt-5 border-t border-[var(--line)] pt-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold">自定义模块顺序与显示</p>
+          <p className="mt-1 text-[10px] text-[var(--muted)]">使用上下按钮调整顺序，必需模块不能隐藏。</p>
+        </div>
+        <span className="rounded bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] px-2 py-1 text-[10px] font-mono text-[var(--rose)]">安全配置 v{layout.version}</span>
+      </div>
+      <div className="space-y-2">
+        {layout.moduleOrder.map((module, index) => {
+          const item = labels[module];
+          const required = module === "prompt" || module === "model" || module === "operations";
+          return (
+            <div key={module} className="flex items-center gap-2 rounded-md border border-[var(--line)] bg-white p-2">
+              <GripVertical size={15} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <b className="block text-xs">{item.label}</b>
+                <span className="block truncate text-[10px] text-[var(--muted)]">{item.detail}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => move(module, -1)}
+                disabled={index === 0}
+                aria-label={`上移${item.label}`}
+                className="grid h-7 w-7 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-30"
+              ><ChevronUp size={14} /></button>
+              <button
+                type="button"
+                onClick={() => move(module, 1)}
+                disabled={index === layout.moduleOrder.length - 1}
+                aria-label={`下移${item.label}`}
+                className="grid h-7 w-7 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-30"
+              ><ChevronDown size={14} /></button>
+              <Switch
+                checked={layout.visibleModules[module]}
+                onChange={(visible) => onChange({
+                  ...layout,
+                  visibleModules: { ...layout.visibleModules, [module]: required ? true : visible },
+                })}
+                label={layout.visibleModules[module] ? "显示" : "隐藏"}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="text-xs font-semibold" htmlFor="custom-layout-left-width">
+          左栏宽度 <output className="float-right font-mono text-[var(--rose)]">{layout.leftWidth}px</output>
+          <input id="custom-layout-left-width" type="range" min="240" max="520" step="1" value={layout.leftWidth} onChange={(event) => onChange({ ...layout, leftWidth: Number(event.target.value) })} className="range mt-2 w-full" />
+        </label>
+        <label className="text-xs font-semibold" htmlFor="custom-layout-right-width">
+          右栏宽度 <output className="float-right font-mono text-[var(--rose)]">{layout.rightWidth}px</output>
+          <input id="custom-layout-right-width" type="range" min="200" max="460" step="1" value={layout.rightWidth} onChange={(event) => onChange({ ...layout, rightWidth: Number(event.target.value) })} className="range mt-2 w-full" />
+        </label>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <Switch
+          checked={layout.rightCollapsed}
+          onChange={(rightCollapsed) => onChange({ ...layout, rightCollapsed })}
+          label="默认折叠右栏"
+        />
+        <div className="flex gap-2">
+          <button type="button" onClick={onReset} className="h-9 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:border-[var(--rose)]">恢复默认</button>
+          <button type="button" onClick={onSave} className="h-9 rounded bg-[var(--rose)] px-4 text-xs font-semibold text-white hover:bg-[var(--rose-dark)]">保存自定义布局</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPageContent() {
   const {
     preferences,
@@ -332,6 +445,8 @@ function SettingsPageContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [customLayout, setCustomLayout] = useState<CustomLayoutPreferences>(() => loadCustomLayout());
+  const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
   const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const [customAccentInput, setCustomAccentInput] = useState(
     preferences.customAccent || "",
@@ -565,6 +680,63 @@ function SettingsPageContent() {
               detail="在大屏和移动设备上都保持清晰的间距。"
             />
             <div className="mt-5 space-y-5">
+              {preferences.theme !== "nai" && (
+                <>
+                  <div>
+                    <p className="mb-2 text-xs font-semibold">生图工作台布局</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["lfn", "nlw", "custom"] as WorkspaceLayout[]).map((layout) => (
+                        <ChoiceButton
+                          key={layout}
+                          selected={preferences.workspaceLayout === layout}
+                          onClick={() => updatePreferences({ workspaceLayout: layout })}
+                          className="py-2.5"
+                        >
+                          <b className="text-xs">{layout === "lfn" ? "LFN 布局" : layout === "nlw" ? "NovelAI Local" : "自定义布局"}</b>
+                          <span className="mt-1 block text-[10px] text-[var(--muted)]">
+                            {layout === "lfn" ? "完整工作台" : layout === "nlw" ? "参数侧栏优先" : "使用你保存的模块编排"}
+                          </span>
+                        </ChoiceButton>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--rose)_3%,transparent)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold">自定义布局</p>
+                        <p className="mt-1 text-[10px] text-[var(--muted)]">按你的工作流排列模块，并调整左右栏宽度。</p>
+                      </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomLayoutOpen(true);
+                        setMessage("请在编辑器中保存自定义布局后使用。");
+                      }}
+                      aria-expanded={customLayoutOpen}
+                      className="h-9 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
+                    >
+                        {customLayoutOpen ? "收起编辑器" : "编辑自定义布局"}
+                      </button>
+                    </div>
+                    {customLayoutOpen && (
+                      <CustomLayoutEditor
+                        layout={customLayout}
+                        onChange={(next) => setCustomLayout(parseCustomLayout(next))}
+                        onSave={() => {
+                          setCustomLayout(saveCustomLayout(customLayout));
+                          updatePreferences({ workspaceLayout: "custom" });
+                          setMessage("自定义布局已保存到本机浏览器。");
+                        }}
+                        onReset={() => {
+                          const defaults = resetCustomLayout();
+                          setCustomLayout(defaults);
+                          setMessage("自定义布局已恢复默认值。");
+                        }}
+                      />
+                    )}
+                  </div>
+                </>
+              )}
               <Switch
                 checked={preferences.grid}
                 onChange={(grid) => updatePreferences({ grid })}

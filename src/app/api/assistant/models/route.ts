@@ -3,7 +3,7 @@ import { getSession } from "@/lib/session";
 import {
   isNaiImageModel,
   isUpstreamAuthError,
-  newApiBaseUrl,
+  resolvedNewApiBaseUrl,
   userHeaders,
 } from "@/lib/newapi";
 
@@ -32,7 +32,7 @@ export async function GET() {
     );
 
   try {
-    const response = await fetch(`${newApiBaseUrl()}/api/user/models`, {
+    const response = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/models`, {
       headers: userHeaders(session),
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),

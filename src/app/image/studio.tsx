@@ -9,14 +9,18 @@ import {
   ExternalLink,
   Download,
   Eraser,
+  Eye,
   FileUp,
   ImagePlus,
+  ImageIcon,
   Images,
   Megaphone,
   Menu,
+  Maximize2,
   Paintbrush,
   PawPrint,
   Plus,
+  Redo2,
   Search,
   RotateCcw,
   Save,
@@ -24,6 +28,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  Undo2,
   UserRound,
   Users,
   WandSparkles,
@@ -33,16 +38,47 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
+import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
-import { NaiImageSettings } from "./nai-image-settings";
+import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
+import { GalleryPicker } from "./gallery-picker";
+import {
+  clearEditorPromptHandoff,
+  clearImageStudioForm,
+  loadEditorPromptHandoff,
+  loadImageStudioForm,
+  saveImageStudioForm,
+  syncEditorPromptToStudioForm,
+  type ImageStudioFormSnapshot,
+} from "@/lib/image-studio-form";
+import {
+  loadCustomLayout,
+} from "@/lib/appearance-store";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  clampPoint,
+  normalizeRect,
+  selectionToPatch,
+  type Rect,
+} from "@/lib/image-roi";
+import {
+  createEditorDocument,
+  createRgbaImage,
+} from "@/lib/image-editor";
+import {
+  createEditorDraft,
+  deleteEditorDraft,
+  loadEditorDraft,
+  saveEditorDraft,
+} from "@/lib/image-editor-store";
 
 type Props = { userName: string; authenticated: boolean };
 
@@ -96,6 +132,13 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string };
+type SessionResult = {
+  id: string;
+  image: string;
+  historyId?: string;
+  operation: Operation;
+  createdAt: number;
+};
 
 async function consumeImageStream(
   response: Response,
@@ -103,6 +146,7 @@ async function consumeImageStream(
     expected: number;
     onPreview: (images: string[]) => void;
     onProgress: (label: string) => void;
+    onComplete?: (historyIds: string[]) => void;
   },
 ): Promise<string[]> {
   if (!response.body) throw new Error("上游未返回流式响应");
@@ -161,6 +205,10 @@ async function consumeImageStream(
           const images = Array.isArray(payload.images)
             ? payload.images.filter((item): item is string => typeof item === "string")
             : [];
+          const historyIds = Array.isArray(payload.historyIds)
+            ? payload.historyIds.filter((item): item is string => typeof item === "string")
+            : [];
+          options.onComplete?.(historyIds);
           if (images.length) doneImages = images;
         }
       }
@@ -188,6 +236,7 @@ type DanbooruTag = {
 };
 type AssistantSuggestion = {
   message?: string;
+  englishDescription?: string;
   prompt: string;
   negativePrompt: string;
   tags: DanbooruTag[];
@@ -214,6 +263,7 @@ type ConversationTurnUi = {
   request: string;
   createdAt: string;
   message?: string;
+  englishDescription?: string;
   prompt: string;
   negativePrompt: string;
   parameters: Record<string, unknown>;
@@ -399,8 +449,8 @@ export function validateGenerationParameters({
     return "采样步数必须是 1–50 之间的整数。";
   if (!Number.isFinite(scale) || scale < 0 || scale > 10)
     return "提示词相关性必须是 0–10 之间的有效数字。";
-  if (!Number.isInteger(count) || count < 1 || count > 6)
-    return "生成张数必须是 1–6 之间的整数。";
+  if (!Number.isInteger(count) || count < 1 || count > MAX_NAI_IMAGE_COUNT)
+    return `生成张数必须是 1-${MAX_NAI_IMAGE_COUNT} 之间的整数。`;
   if (!Number.isFinite(cfgRescale) || cfgRescale < 0 || cfgRescale > 1)
     return "CFG 重缩放必须是 0–1 之间的有效数字。";
   if (!Number.isFinite(strength) || strength < 0 || strength > 1)
@@ -430,14 +480,29 @@ export function validateUploadFile(
   return null;
 }
 
-// 超分只收 PNG：把任意受支持格式按原始尺寸重编码为 PNG data URL。
-async function toPngDataUrl(dataUrl: string): Promise<string> {
+async function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
   const image = new window.Image();
   await new Promise<void>((resolve, reject) => {
     image.onload = () => resolve();
-    image.onerror = () => reject(new Error("源图解码失败，请重新上传"));
+    image.onerror = () => reject(new Error("图片解码失败，请重新上传"));
     image.src = dataUrl;
   });
+  return image;
+}
+
+function editorImageDataUrl(image: { width: number; height: number; data: Uint8ClampedArray }): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("当前浏览器不支持 Canvas");
+  context.putImageData(new ImageData(new Uint8ClampedArray(image.data), image.width, image.height), 0, 0);
+  return canvas.toDataURL("image/png");
+}
+
+// 超分只收 PNG：把任意受支持格式按原始尺寸重编码为 PNG data URL。
+async function toPngDataUrl(dataUrl: string): Promise<string> {
+  const image = await loadImageElement(dataUrl);
   const canvas = document.createElement("canvas");
   canvas.width = image.naturalWidth;
   canvas.height = image.naturalHeight;
@@ -475,6 +540,8 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
 export default function ImageStudio({ userName, authenticated }: Props) {
   const { preferences } = useAppearance();
   const naiLayout = preferences.theme === "nai";
+  const nlwLayout = !naiLayout && (preferences.workspaceLayout === "nlw" || preferences.workspaceLayout === "custom");
+  const sidebarPromptLayout = naiLayout || nlwLayout;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
@@ -493,6 +560,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [seed, setSeed] = useState("");
   const [strength, setStrength] = useState(0.7);
+  const [vibeStrength, setVibeStrength] = useState(0.6);
+  const [vibeInformationExtracted, setVibeInformationExtracted] = useState(1);
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [negative, setNegative] = useState(defaultNegative);
   const [source, setSource] = useState<Upload | null>(null);
@@ -506,7 +575,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [dropActive, setDropActive] = useState(false);
   // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
   const [paramsOpen, setParamsOpen] = useState(false);
-  const [referenceOpen, setReferenceOpen] = useState(false);
   // 站内菜单抽屉（账号、创作入口与外链）。
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuDirectorOpen, setMenuDirectorOpen] = useState(false);
@@ -518,6 +586,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     null,
   );
   const [notice, setNotice] = useState("");
+  const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
@@ -527,6 +596,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+  const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return loadCustomLayout().rightCollapsed;
+  });
+  const rightPanelCloseTimer = useRef<number | null>(null);
   const [streamProgress, setStreamProgress] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
 
@@ -564,6 +640,323 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const leftWidth = naiLayout ? naiLeftWidth : classicLeftWidth;
   const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
+  const [, setCustomLayout] = useState(() => loadCustomLayout());
+  const [formCacheReady, setFormCacheReady] = useState(false);
+
+  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation) {
+    if (!nextImages.length || sourceOperation === "suggest-tags") return;
+    const now = Date.now();
+    setSessionHistory((current) => [
+      ...nextImages.map((image, index) => ({
+        id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        image,
+        historyId: historyIds[index],
+        operation: sourceOperation,
+        createdAt: now + index,
+      })),
+      ...current,
+    ]);
+  }
+
+  async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
+    if (!image) {
+      setNotice("请先导入或生成一张图片。");
+      return;
+    }
+    try {
+      const decoded = await loadImageElement(image);
+      const canvas = document.createElement("canvas");
+      canvas.width = decoded.naturalWidth;
+      canvas.height = decoded.naturalHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) throw new Error("当前浏览器不支持 Canvas");
+      context.drawImage(decoded, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      const editorDocument = createEditorDocument(
+        createRgbaImage(canvas.width, canvas.height, pixels.data),
+        { x: 0, y: 0, width: canvas.width, height: canvas.height },
+        {
+          prompt,
+          negativePrompt: negative,
+          seed: seed || null,
+          source: { name: source?.name || "工作区图片.png", mimeType: "image/png" },
+          generation: { model, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
+        },
+      );
+      const random = new Uint32Array(2);
+      crypto.getRandomValues(random);
+      const draftId = `editor-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
+      syncEditorPromptToStudioForm(draftId, prompt, negative);
+      await saveEditorDraft(createEditorDraft(draftId, mode, editorDocument));
+      router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${mode}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "无法打开图像编辑器");
+    }
+  }
+
+  function applyImageAsSource(image: string, nextOperation: Operation = "img2img") {
+    setSource({ data: image, name: "工作区图片.png" });
+    setMask(null);
+    setUpscaleSource(null);
+    if (nextOperation === "inpainting" || nextOperation === "edits") {
+      const inpaintModel = models.find(({ value }) =>
+        value.includes("inpaint") &&
+        (model.includes("v4.5") ? value.includes("v4.5") : model.includes("v3") ? value.includes("v3") : value.includes("v5")),
+      )?.value || models.find(({ value }) => value.includes("inpaint"))?.value;
+      if (inpaintModel) setModel(inpaintModel);
+    }
+    setOperation(nextOperation);
+    setSelectedImageIndex(0);
+    if (window.matchMedia("(max-width: 1023px)").matches) setMobilePanel(true);
+    setNotice("已将当前图片载入工作台。");
+  }
+
+  function selectOperation(nextOperation: Operation) {
+    if (nextOperation !== "generate" && !source && images[0]) {
+      applyImageAsSource(images[0], nextOperation);
+      return;
+    }
+    if (nextOperation === "inpainting" || nextOperation === "edits") {
+      const inpaintModel = models.find(({ value }) =>
+        value.includes("inpaint") &&
+        (model.includes("v4.5") ? value.includes("v4.5") : model.includes("v3") ? value.includes("v3") : value.includes("v5")),
+      )?.value || models.find(({ value }) => value.includes("inpaint"))?.value;
+      if (inpaintModel) setModel(inpaintModel);
+    }
+    setOperation(nextOperation);
+    setNotice("");
+  }
+
+  async function preciseRedraw(selection: Rect) {
+    if (!source) return;
+    if (!signedIn) {
+      setNotice("请先登录后再进行精确重绘。");
+      return;
+    }
+    setGenerating(true);
+    setNotice("正在裁切选区并提交精确重绘…");
+    try {
+      const original = await loadImageElement(source.data);
+      const imageSize = { width: original.naturalWidth, height: original.naturalHeight };
+      const patch = selectionToPatch({ selectionRect: selection, imageSize, context: 64 });
+      const patchCanvas = document.createElement("canvas");
+      patchCanvas.width = patch.width;
+      patchCanvas.height = patch.height;
+      const patchContext = patchCanvas.getContext("2d");
+      if (!patchContext) throw new Error("当前浏览器不支持 Canvas");
+      patchContext.drawImage(
+        original,
+        patch.cropRect.x,
+        patch.cropRect.y,
+        patch.cropRect.width,
+        patch.cropRect.height,
+        0,
+        0,
+        patch.width,
+        patch.height,
+      );
+      const maskCanvas = document.createElement("canvas");
+      maskCanvas.width = patch.width;
+      maskCanvas.height = patch.height;
+      const maskContext = maskCanvas.getContext("2d");
+      if (!maskContext) throw new Error("当前浏览器不支持 Canvas");
+      maskContext.fillStyle = "#000";
+      maskContext.fillRect(0, 0, patch.width, patch.height);
+      maskContext.fillStyle = "#fff";
+      maskContext.fillRect(
+        patch.selectionInPatch.x,
+        patch.selectionInPatch.y,
+        patch.selectionInPatch.width,
+        patch.selectionInPatch.height,
+      );
+      const inpaintModel = models.find(({ value }) => value === model.replace(/-limit$/, "-inpaint"))?.value
+        || models.find(({ value }) => value.includes("inpaint") && value.includes("v5"))?.value
+        || "nai-v5-inpaint";
+      const response = await fetch("/api/images/operate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operation: "inpainting",
+          model: inpaintModel,
+          prompt,
+          negative_prompt: negative,
+          width: patch.width,
+          height: patch.height,
+          steps,
+          scale,
+          n: 1,
+          sampler,
+          noise_schedule: schedule,
+          strength,
+          image: patchCanvas.toDataURL("image/png"),
+          mask: maskCanvas.toDataURL("image/png"),
+          response_format: "b64_json",
+        }),
+      });
+      const contentType = response.headers.get("content-type") || "";
+      let patchImage = "";
+      let patchHistoryIds: string[] = [];
+      if (contentType.includes("text/event-stream") && response.body) {
+        const streamed = await consumeImageStream(response, {
+          expected: 1,
+          onPreview: (next) => setPreviewDrafts(next),
+          onProgress: setStreamProgress,
+          onComplete: (ids) => { patchHistoryIds = ids; },
+        });
+        patchImage = streamed[0] || "";
+      } else {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "精确重绘失败");
+        patchImage = result.images?.[0] || result.image || "";
+        patchHistoryIds = Array.isArray(result.historyIds) ? result.historyIds : [];
+      }
+      if (!patchImage) throw new Error("上游未返回重绘结果");
+      const generated = await loadImageElement(patchImage);
+      const composite = document.createElement("canvas");
+      composite.width = imageSize.width;
+      composite.height = imageSize.height;
+      const compositeContext = composite.getContext("2d");
+      if (!compositeContext) throw new Error("当前浏览器不支持 Canvas");
+      compositeContext.drawImage(original, 0, 0);
+      compositeContext.save();
+      compositeContext.beginPath();
+      compositeContext.rect(
+        patch.selectionInPatch.x + patch.cropRect.x,
+        patch.selectionInPatch.y + patch.cropRect.y,
+        patch.selectionInPatch.width,
+        patch.selectionInPatch.height,
+      );
+      compositeContext.clip();
+      compositeContext.drawImage(
+        generated,
+        0,
+        0,
+        generated.naturalWidth,
+        generated.naturalHeight,
+        patch.cropRect.x,
+        patch.cropRect.y,
+        patch.cropRect.width,
+        patch.cropRect.height,
+      );
+      compositeContext.restore();
+      const finalImage = composite.toDataURL("image/png");
+      setImages([finalImage]);
+      setPreviewDrafts([]);
+      setSelectedImageIndex(0);
+      addSessionResults(
+        [finalImage],
+        patchHistoryIds,
+        "inpainting",
+      );
+      setSource({ data: finalImage, name: "精确重绘结果.png" });
+      setMask(null);
+      setMaskEditorOpen(false);
+      setNotice("精确重绘完成，已将修改区域合成回原图。");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "精确重绘失败");
+    } finally {
+      setGenerating(false);
+    }
+  }
+  function openRightPanel() {
+    if (rightPanelCloseTimer.current !== null) {
+      window.clearTimeout(rightPanelCloseTimer.current);
+      rightPanelCloseTimer.current = null;
+    }
+    setRightPanelCollapsed(false);
+  }
+
+  function scheduleRightPanelClose() {
+    if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
+    rightPanelCloseTimer.current = window.setTimeout(() => setRightPanelCollapsed(true), 220);
+  }
+
+  useLayoutEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const handoff = loadEditorPromptHandoff(params.get("editorResult"));
+    if (!handoff) return;
+    void Promise.resolve().then(() => {
+      setPrompt(handoff.prompt);
+      setNegative(handoff.negative);
+      clearEditorPromptHandoff();
+    });
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const saved = loadImageStudioForm();
+      setOperation(saved.operation as Operation);
+      setContentMode(saved.contentMode);
+      setModel(saved.model);
+      setWidth(saved.width);
+      setHeight(saved.height);
+      setSteps(saved.steps);
+      setScale(saved.scale);
+      setCount(saved.count);
+      setBatchMode(saved.batchMode);
+      setSampler(saved.sampler);
+      setSchedule(saved.schedule);
+      setCfgRescale(saved.cfgRescale);
+      setSeed(saved.seed);
+      setStrength(saved.strength);
+      setVibeStrength(saved.vibeStrength);
+      setVibeInformationExtracted(saved.vibeInformationExtracted);
+      setPrompt(saved.prompt);
+      setNegative(saved.negative);
+      setReferenceType(saved.referenceType);
+      setControlModel(saved.controlModel);
+      setUpscaleModel(saved.upscaleModel);
+      setCharactersEnabled(saved.charactersEnabled);
+      setCharacters(saved.characters.map((character, index) => ({
+        id: `char-${index}-${Date.now()}`,
+        ...character,
+      })));
+      setFormCacheReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!formCacheReady) return;
+    const timer = window.setTimeout(() => {
+      const snapshot: ImageStudioFormSnapshot = {
+        version: 1,
+        operation,
+        contentMode,
+        model,
+        prompt,
+        negative,
+        width,
+        height,
+        steps,
+        scale,
+        count,
+        batchMode,
+        sampler,
+        schedule,
+        cfgRescale,
+        seed,
+        strength,
+        vibeStrength,
+        vibeInformationExtracted,
+        referenceType,
+        controlModel,
+        upscaleModel,
+        charactersEnabled,
+        characters: characters.map(({ prompt: characterPrompt, centerX, centerY }) => ({
+          prompt: characterPrompt,
+          centerX,
+          centerY,
+        })),
+      };
+      saveImageStudioForm(snapshot);
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [
+    formCacheReady, operation, contentMode, model, prompt, negative, width, height,
+    steps, scale, count, batchMode, sampler, schedule, cfgRescale, seed, strength,
+    vibeStrength, vibeInformationExtracted, referenceType, controlModel, upscaleModel, charactersEnabled, characters,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -618,6 +1011,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    if (naiLayout || preferences.workspaceLayout !== "custom") return;
+    const saved = loadCustomLayout();
+    const timer = window.setTimeout(() => {
+      setCustomLayout(saved);
+      setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
+      setRightWidth(clampPanel(saved.rightWidth, 200, 460));
+      setRightPanelCollapsed(saved.rightCollapsed);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [naiLayout, preferences.workspaceLayout]);
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("lfn-nai-left-width"));
     if (!saved) return;
@@ -814,6 +1218,56 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const resultId = params.get("editorResult");
+    const editorHistory = params.get("editorHistory") || "";
+    if (!resultId || !/^editor-[a-z0-9-]+$/i.test(resultId)) return;
+    let active = true;
+    void loadEditorDraft(resultId)
+      .then(async (resultDraft) => {
+        if (!active || !resultDraft) throw new Error("编辑器结果已过期，请重新打开编辑器。");
+        const result = editorImageDataUrl(resultDraft.document.image);
+        setPrompt(resultDraft.document.prompt || "");
+        setNegative(resultDraft.document.negativePrompt || "");
+        applyImageAsSource(result, "inpainting");
+        setImages([result]);
+        addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting");
+        await deleteEditorDraft(resultId);
+        window.history.replaceState(null, "", "/image");
+      })
+      .catch((error) => {
+        if (active) setNotice(error instanceof Error ? error.message : "无法读取编辑器结果");
+      });
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // galleryId/historyId 只作为一次性入口参数，图片加载后交给统一导入流程。
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const galleryId = params.get("galleryId");
+    const historyId = params.get("historyId");
+    const id = galleryId || historyId;
+    if (!id || !/^[a-zA-Z0-9-]{1,100}$/.test(id)) return;
+    const endpoint = galleryId
+      ? `/api/gallery/${encodeURIComponent(id)}/image`
+      : `/api/history/${encodeURIComponent(id)}/image`;
+    let active = true;
+    void fetch(endpoint, { cache: "no-store" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("无法读取要导入的图片");
+        const blob = await response.blob();
+        if (!active) return;
+        const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
+        await importImageAndParameters(new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type }));
+      })
+      .catch((error) => {
+        if (active) setNotice(error instanceof Error ? error.message : "导入图片失败");
+      });
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   function appendTag(tag: string) {
     setPrompt((value) => `${value}${value.trim() ? ", " : ""}${tag}`);
   }
@@ -958,6 +1412,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     controller.abort("cancel");
   }
 
+  function inputImagesForAgent(): string[] {
+    const selected = sessionHistory.slice(0, agentImage ? 3 : 4).map((item) => item.image);
+    return agentImage ? [...selected, agentImage] : selected;
+  }
   async function askTagAssistant(request: string) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
@@ -984,7 +1442,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           request,
           currentPrompt: prompt,
           currentNegativePrompt: negative,
-          image: agentImage || undefined,
+          images: inputImagesForAgent(),
+          image: undefined,
         }),
         signal: controller.signal,
       });
@@ -1067,6 +1526,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const metadata = parseNaiImageMetadata(bytes);
       setSource({ data, name: file.name });
+      setMask(null);
+      setUpscaleSource(null);
       if (operation === "generate" || operation === "suggest-tags")
         setOperation("img2img");
       if (!metadata) {
@@ -1218,22 +1679,6 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         : "已应用助手的全部建议。",
     );
   }
-
-  const imageImport = (
-    <label className="flex h-11 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]">
-      <FileUp size={15} />
-      <span className="truncate">导入图片与 NAI 参数（可拖入）</span>
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={(event) => {
-          void importImageAndParameters(event.target.files?.[0]);
-          event.target.value = "";
-        }}
-      />
-    </label>
-  );
 
   const promptFields = (promptModes.has(operation) ||
     operation === "suggest-tags") && (
@@ -1401,26 +1846,24 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         <div className="nai-parameter-summary">
           <label>
             <small>步数</small>
-            <input
-              type="number"
-              aria-label="采样步数"
+            <WheelNumberInput
+              ariaLabel="采样步数"
               min={1}
               max={50}
               step={1}
               value={steps}
-              onChange={(event) => setSteps(Number(event.target.value))}
+              setValue={setSteps}
             />
           </label>
           <label>
             <small>引导强度</small>
-            <input
-              type="number"
-              aria-label="提示词相关性"
+            <WheelNumberInput
+              ariaLabel="提示词相关性"
               min={0}
               max={10}
               step={0.1}
               value={scale}
-              onChange={(event) => setScale(Number(event.target.value))}
+              setValue={setScale}
             />
           </label>
           <span>
@@ -1513,6 +1956,36 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     </div>
   );
 
+  const modelModeControls = (
+    <div className="nai-model-mode-row">
+      <Control label="模型">
+        <PopupSelect
+          value={model}
+          options={models}
+          onChange={setModel}
+          ariaLabel="模型"
+          searchable
+        />
+      </Control>
+      <Control label="模式">
+        <button
+          type="button"
+          className="nai-mode-button"
+          aria-label={`当前为 ${contentMode === "anime" ? "动漫" : "兽人"} 模式，点击切换`}
+          onClick={() => {
+            const next = contentMode === "anime" ? "furry" : "anime";
+            setContentMode(next);
+            if (model === "nai-v3") setModel("nai-v3-furry");
+            if (model === "nai-v3-furry") setModel("nai-v3");
+          }}
+        >
+          <PawPrint size={14} />
+          <span>{contentMode === "anime" ? "动漫" : "兽人"}</span>
+        </button>
+      </Control>
+    </div>
+  );
+
   const controls = (
     <>
       <div
@@ -1551,6 +2024,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             setCfgRescale(0);
             setSeed("");
             setStrength(0.7);
+            setVibeStrength(0.6);
+            setVibeInformationExtracted(1);
             setPrompt(defaultPrompt);
             setNegative(defaultNegative);
             setOperation("generate");
@@ -1564,6 +2039,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             ]);
             setReferenceType("character&style");
             setControlModel("hed");
+            setUpscaleModel("nai-diffusion-5-curated");
+            clearImageStudioForm();
+            setFormCacheReady(true);
             setAdvancedOpen(false);
             setSuggestedTags([]);
             setImages([]);
@@ -1607,103 +2085,29 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </>
         )}
       </div>
-      <div className="settings-scroll space-y-5 p-4">
-        {!naiLayout && imageImport}
-        <div className="nai-model-mode-row">
-          <Control label="模型">
-            <PopupSelect
-              value={model}
-              options={models}
-              onChange={setModel}
-              ariaLabel="模型"
-              searchable
-            />
-          </Control>
-          <Control label="模式">
-            <button
-              type="button"
-              className="nai-mode-button"
-              aria-label={`当前为 ${contentMode === "anime" ? "动漫" : "兽人"} 模式，点击切换`}
-              onClick={() => {
-                const next = contentMode === "anime" ? "furry" : "anime";
-                setContentMode(next);
-                if (model === "nai-v3") setModel("nai-v3-furry");
-                if (model === "nai-v3-furry") setModel("nai-v3");
-              }}
-            >
-              <PawPrint size={14} />
-              <span>{contentMode === "anime" ? "动漫" : "兽人"}</span>
-            </button>
-          </Control>
-        </div>
-        {naiLayout && promptFields}
-
-        {naiLayout && characterControls}
-
-        {naiLayout && (
-          <section className="nai-reference-section">
-            <div className="nai-section-heading">参考图片</div>
-            <button type="button" className="nai-reference-card nai-reference-toggle" aria-expanded={referenceOpen} onClick={() => setReferenceOpen(!referenceOpen)}>
-              <ImagePlus size={22} /><span><b>{operation === "generate" ? "图生图" : modes.find((item) => item.id === operation)?.label}</b><small>{source?.name || "上传图片，转换画面或参考风格。"}</small></span><Plus size={20} />
-            </button>
-            {referenceOpen && imageImport}
+      <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
+        {naiLayout ? (
+          <section className="nai-model-mode-persistent" aria-label="模型与模式">
+            <div className="nai-section-heading">模型与模式</div>
+            {modelModeControls}
           </section>
+        ) : (
+          <PanelSection title="模型与模式" icon={<SlidersHorizontal size={16} />}>
+            {modelModeControls}
+          </PanelSection>
         )}
-        {(!naiLayout || referenceOpen) && <>
-        <section className="nai-reference-section">
-          <div className="nai-section-heading">参考图片</div>
-          <button
-            type="button"
-            className={`nai-reference-card ${operation === "generate" ? "is-active" : ""}`}
-            onClick={() => {
-              setOperation("generate");
-              setNotice("");
-            }}
-          >
-            <ImagePlus size={18} />
-            <span>
-              <b>文生图</b>
-              <small>根据提示词生成图片。</small>
-            </span>
-          </button>
-          {referenceOperations.map((item) => (
-            <button
-              type="button"
-              className={`nai-reference-card ${operation === item.id ? "is-active" : ""}`}
-              key={item.id}
-              onClick={() => {
-                setOperation(item.id);
-                setNotice("");
-              }}
-            >
-              <ImagePlus size={18} />
-              <span>
-                <b>{item.label}</b>
-                <small>{item.detail}</small>
-              </span>
-            </button>
-          ))}
-        </section>
-        <Control label="图片工具">
-          <PopupSelect
-            value={
-              toolOperations.some(({ value }) => value === operation)
-                ? operation
-                : "generate"
-            }
-            options={[
-              { value: "generate", label: "不使用工具" },
-              ...toolOperations,
-            ]}
-            onChange={(value) => {
-              setOperation(value as Operation);
-              setNotice("");
-            }}
-            ariaLabel="图片工具"
-          />
-        </Control>
-        </>}
-        {naiLayout ? <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : (
+        {sidebarPromptLayout && (
+          <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
+            {promptFields}
+            {characterControls}
+          </PanelSection>
+        )}
+
+        {naiLayout ? (
+          <PanelSection title="图像设置" icon={<Images size={16} />}>
+            <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+          </PanelSection>
+        ) : (
         <Control label="自定义分辨率 · 64–1600">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
             <NumberField
@@ -1757,15 +2161,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </div>
         </Control>
         )}
-        {!naiLayout && generationParameters}
+        {!sidebarPromptLayout && generationParameters}
+        {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
+        {nlwLayout && <div className="nlw-inline-generation-parameters">{generationParameters}</div>}
         {generationModes.has(operation) && (
           <div>
-            <Control label={naiLayout ? "提交方式" : "生成张数 · 1–6"}>
+            <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
               {!naiLayout && <NumberField
                 value={count}
                 setValue={setCount}
                 min={1}
-                max={6}
+                max={MAX_NAI_IMAGE_COUNT}
                 step={1}
               />}
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1796,14 +2202,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  每 0.5 秒发送一张（n=1），逐张出图。
+                  最多 3 路并发、每路 4 张，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
           </div>
         )}
 
-        {!naiLayout && characterControls}
+        {!naiLayout && !nlwLayout && characterControls}
         {["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
             <input
@@ -1857,20 +2263,51 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 : "源图片"
             }
             value={source}
-            onChange={setSource}
+            onChange={(nextSource) => {
+              setSource(nextSource);
+              setMask(null);
+              setUpscaleSource(null);
+            }}
             onError={setNotice}
           />
         )}
+        {operation === "vibe-transfer" && (
+          <div className="reference-parameter-card">
+            <b>Vibe 参考强度</b>
+            <NumericSlider label="参考强度" value={vibeStrength} setValue={setVibeStrength} min={0} max={1} step={0.05} />
+            <NumericSlider label="信息提取" value={vibeInformationExtracted} setValue={setVibeInformationExtracted} min={0} max={1} step={0.05} />
+          </div>
+        )}
         {["inpainting", "edits"].includes(operation) && (
           <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded bg-[#17191f] px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!source}
+                onClick={() => void openImageEditor("inpaint")}
+              >
+                <Brush size={15} />
+                {mask ? "继续重绘" : "独立重绘编辑器"}
+              </button>
+              <button
+                type="button"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={!source}
+                onClick={() => void openImageEditor("canvas")}
+              >
+                <Maximize2 size={15} />
+                无限画布
+              </button>
+            </div>
             <button
               type="button"
-              className="flex h-11 w-full items-center justify-center gap-2 rounded bg-[#17191f] px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
+              className="flex h-10 w-full items-center justify-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-45"
               disabled={!source}
               onClick={() => setMaskEditorOpen(true)}
             >
               <Brush size={15} />
-              {mask ? "继续编辑蒙版" : "绘制蒙版"}
+              旧版蒙版编辑器
             </button>
             <UploadField
               label={mask ? "蒙版已绘制，也可重新上传" : "或上传蒙版图片"}
@@ -1913,6 +2350,70 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             计费映射，当前只展示完整入口并阻止零费用提交。
           </p>
         )}
+        <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
+            <div className="nai-reference-grid">
+              <button
+                type="button"
+                className={`nai-reference-card ${operation === "generate" ? "is-active" : ""}`}
+                onClick={() => {
+                  setOperation("generate");
+                  setNotice("");
+                }}
+              >
+                <ImagePlus size={18} />
+                <span><b>文生图</b><small>根据提示词生成图片。</small></span>
+              </button>
+              {referenceOperations.map((item) => (
+                <button
+                  type="button"
+                  className={`nai-reference-card ${operation === item.id ? "is-active" : ""}`}
+                  key={item.id}
+                  onClick={() => {
+                    selectOperation(item.id);
+                    setNotice("");
+                  }}
+                >
+                  <ImagePlus size={18} />
+                  <span><b>{item.label}</b><small>{item.detail}</small></span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" className="nai-inline-tool-button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
+              <button type="button" className="nai-inline-tool-button" disabled={!source} onClick={() => void openImageEditor("canvas")}><Maximize2 size={15} /> 无限画布</button>
+              <label className="nai-inline-tool-button"><FileUp size={15} /> 导入图片<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { void importImageAndParameters(event.target.files?.[0]); event.target.value = ""; }} /></label>
+            </div>
+            <div className="mt-3">
+              <Control label="图片工具">
+                <PopupSelect
+                  value={toolOperations.some(({ value }) => value === operation) ? operation : "generate"}
+                  options={[{ value: "generate", label: "不使用工具" }, ...toolOperations]}
+                  onChange={(value) => {
+                    selectOperation(value as Operation);
+                    setNotice("");
+                  }}
+                  ariaLabel="图片工具"
+                />
+              </Control>
+            </div>
+            <div className="mt-3">
+              <div className="nai-section-heading">导演工具</div>
+              <div className="nai-director-grid">
+                {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`nai-director-button${operation === item.id ? " is-active" : ""}`}
+                    aria-pressed={operation === item.id}
+                    onClick={() => selectOperation(item.id)}
+                  >
+                    <WandSparkles size={14} />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </PanelSection>
       </div>
     </>
   );
@@ -1941,6 +2442,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     });
     if (validationError) {
       setNotice(validationError);
+      return;
+    }
+    // 一次性提交走单请求，网关侧单请求上限 8 张；更多张数请用分批次并发。
+    if (batchMode === "once" && count > 8) {
+      setNotice("一次性提交最多 8 张；更多张数请改用分批次并发。");
       return;
     }
     setGenerating(true);
@@ -1985,8 +2491,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     if (["inpainting", "edits"].includes(operation)) base.mask = mask?.data;
     if (operation === "vibe-transfer") {
       base.reference_image = source?.data;
-      base.reference_strength = 0.6;
-      base.reference_information_extracted = 1;
+      base.reference_strength = vibeStrength;
+      base.reference_information_extracted = vibeInformationExtracted;
     }
     if (operation === "character-reference")
       base.characters = [
@@ -2026,32 +2532,142 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       base.defry = 1;
     }
     try {
-      // 分批次：每 0.5 秒发送一张（n=1），逐张出图；一次性保持单请求 n 张。
+      // 分批次：并发分片请求（每片 ≤4 张、最多 3 路在途、错峰 0.5s 启动），
+      // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && count > 1 && operation !== "upscale";
-      const total = sequential ? count : 1;
       const collected: string[] = [];
+      const collectedHistoryIds: string[] = [];
+      const chunkImagesByIndex: string[][] = [];
+      const chunkHistoryByIndex: string[][] = [];
       let usedNewApi = false;
       let failures = 0;
       let lastError = "";
       let partialMessage = "";
-      for (let index = 0; index < total; index += 1) {
-        if (index > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+      if (sequential) {
+        const BATCH_CHUNK = 4;
+        const BATCH_PARALLEL = 3;
+        const chunkSizes: number[] = [];
+        const chunkStarts: number[] = [];
+        for (let rest = count; rest > 0; ) {
+          chunkStarts.push(count - rest);
+          const size = Math.min(BATCH_CHUNK, rest);
+          chunkSizes.push(size);
+          rest -= size;
         }
-        if (total > 1) setBatchProgress(`${index + 1}/${total}`);
+        // 各分片携带“基础种子 + 片内起始偏移”，与 NAI 单请求多张的种子序列
+        // 语义一致；不填种子时客户端随机一个基础种子，避免分片间重复出图。
+        const baseSeed = seed.trim()
+          ? Number(seed.trim())
+          : Math.floor(Math.random() * 2 ** 32);
+        const previewMap = new Map<string, string>();
+        let doneImages = 0;
+        let nextChunk = 0;
+        const runChunk = async (chunkIndex: number) => {
+          const size = chunkSizes[chunkIndex];
+          const response = await fetch("/api/images/operate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...base,
+              n: size,
+              n_samples: size,
+              seed: (baseSeed + chunkStarts[chunkIndex]) % 2 ** 32,
+            }),
+          });
+          const contentType = response.headers.get("content-type") || "";
+          let chunkImages: string[] = [];
+          let chunkHistoryIds: string[] = [];
+          if (contentType.includes("text/event-stream") && response.body) {
+            if (response.headers.get("x-lfn-payment-source") === "newapi")
+              usedNewApi = true;
+            chunkImages = await consumeImageStream(response, {
+              expected: size,
+              onPreview(next) {
+                next.forEach((image, index) =>
+                  previewMap.set(`${chunkIndex}:${index}`, image),
+                );
+                setPreviewDrafts([...collected, ...previewMap.values()]);
+              },
+              onProgress(label) {
+                setStreamProgress(label);
+              },
+              onComplete(historyIds) {
+                chunkHistoryIds = historyIds;
+              },
+            });
+          } else {
+            const result = await response.json();
+            if (!response.ok && !result.images)
+              throw new Error(result.message || "操作失败");
+            chunkImages = result.images || (result.image ? [result.image] : []);
+            if (result.payment === "newapi") usedNewApi = true;
+            chunkHistoryIds = Array.isArray(result.historyIds)
+              ? result.historyIds.filter((item: unknown): item is string => typeof item === "string")
+              : [];
+            if (result.partial)
+              partialMessage = result.message || "部分批次生成失败。";
+          }
+          chunkImagesByIndex[chunkIndex] = chunkImages;
+          chunkHistoryByIndex[chunkIndex] = chunkHistoryIds;
+          collected.splice(0, collected.length, ...chunkImagesByIndex.flat());
+          collectedHistoryIds.splice(0, collectedHistoryIds.length, ...chunkHistoryByIndex.flat());
+          for (let index = 0; index < size; index += 1)
+            previewMap.delete(`${chunkIndex}:${index}`);
+          doneImages += chunkImages.length;
+          setPreviewDrafts([...previewMap.values()]);
+          setImages([...collected]);
+          setSelectedImageIndex(0);
+          setBatchProgress(`${Math.min(doneImages, count)}/${count}`);
+          if (!chunkImages.length) throw new Error("上游未返回最终图片");
+        };
+        await Promise.all(
+          Array.from(
+            { length: Math.min(BATCH_PARALLEL, chunkSizes.length) },
+            async () => {
+              while (nextChunk < chunkSizes.length) {
+                const chunkIndex = nextChunk;
+                nextChunk += 1;
+                // 按片序号错峰启动，避免瞬时并发挤满网关队列。
+                await new Promise((resolve) =>
+                  setTimeout(resolve, 500 * chunkIndex),
+                );
+                try {
+                  await runChunk(chunkIndex);
+                } catch (error) {
+                  failures += 1;
+                  lastError =
+                    error instanceof Error ? error.message : "生成失败";
+                }
+              }
+            },
+          ),
+        );
+        setPreviewDrafts([]);
+        if (failures) {
+          if (!collected.length)
+            throw new Error(lastError || "分批生成全部失败");
+          setNotice(
+            `分批生成完成 ${collected.length}/${count} 张${lastError ? `：${lastError}` : ""}。`,
+          );
+        }
+        addSessionResults(collected, collectedHistoryIds, operation);
+      } else {
         const response = await fetch("/api/images/operate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(sequential ? { ...base, n: 1 } : base),
+          body: JSON.stringify(base),
         });
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("text/event-stream") && response.body) {
+          let batchHistoryIds: string[] = [];
           const batchImages = await consumeImageStream(response, {
-            expected: sequential ? 1 : count,
+            expected: count,
             onPreview(next) {
-              if (sequential) setPreviewDrafts([...collected, ...next]);
-              else setPreviewDrafts(next);
+              setPreviewDrafts(next);
+            },
+            onComplete(historyIds) {
+              batchHistoryIds = historyIds;
             },
             onProgress(label) {
               setStreamProgress(label);
@@ -2060,62 +2676,58 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           if (response.headers.get("x-lfn-payment-source") === "newapi")
             usedNewApi = true;
           if (!batchImages.length) throw new Error("上游未返回最终图片");
-          if (sequential) {
-            collected.push(...batchImages);
-            setImages([...collected]);
-            setPreviewDrafts([]);
-          } else {
-            collected.push(...batchImages);
-            setImages(batchImages);
-            setPreviewDrafts([]);
-          }
-          continue;
-        }
-        const result = await response.json();
-        if (!response.ok && !result.images) throw new Error(result.message || "操作失败");
-        if (operation === "suggest-tags") {
-          const tags = Array.isArray(result.tags) ? result.tags : [];
-          setSuggestedTags(
-            tags
-              .map((item: unknown) =>
-                typeof item === "string"
-                  ? item
-                  : (item as { tag?: string }).tag || "",
-              )
-              .filter(Boolean),
-          );
-          return;
-        }
-        const newImages: string[] = result.images || (result.image ? [result.image] : []);
-        if (sequential) {
-          collected.push(...newImages);
-          // 逐批上屏，先出先显示。
-          setImages([...collected]);
+          collected.push(...batchImages);
+          setImages(batchImages);
+          setSelectedImageIndex(0);
+          setPreviewDrafts([]);
+          addSessionResults(batchImages, batchHistoryIds, operation);
         } else {
+          const result = await response.json();
+          if (!response.ok && !result.images)
+            throw new Error(result.message || "操作失败");
+          if (operation === "suggest-tags") {
+            const tags = Array.isArray(result.tags) ? result.tags : [];
+            setSuggestedTags(
+              tags
+                .map((item: unknown) =>
+                  typeof item === "string"
+                    ? item
+                    : (item as { tag?: string }).tag || "",
+                )
+                .filter(Boolean),
+            );
+            return;
+          }
+          const newImages: string[] =
+            result.images || (result.image ? [result.image] : []);
           setImages(newImages);
-        }
-        if (result.payment === "newapi") usedNewApi = true;
-        if (result.partial) partialMessage = result.message || "部分批次生成失败。";
-        if (sequential && !newImages.length) {
-          failures += 1;
-          lastError = result.message || "生成失败";
+          setSelectedImageIndex(0);
+          addSessionResults(
+            newImages,
+            Array.isArray(result.historyIds)
+              ? result.historyIds.filter((item: unknown): item is string => typeof item === "string")
+              : [],
+            operation,
+          );
+          if (result.payment === "newapi") usedNewApi = true;
+          if (result.partial)
+            partialMessage = result.message || "部分批次生成失败。";
         }
       }
       await refreshWallet();
-      if (sequential && failures) {
-        if (!collected.length) throw new Error(lastError || "分批生成全部失败");
-        setNotice(`分批生成完成 ${collected.length}/${total} 张${lastError ? `：${lastError}` : ""}。`);
-      } else if (partialMessage) {
-        setNotice(partialMessage);
-      } else if (usedNewApi) {
-        setNotice("AFF 余额不足，本次已使用 NewAPI 余额支付。");
-        // NewAPI 余额已变动，拉取最新数值让底部余额区立即更新。
-        fetch("/api/me")
-          .then((response) => response.json())
-          .then((latest: Me & { authenticated?: boolean }) => {
-            if (latest?.authenticated !== false) setMe(latest);
-          })
-          .catch(() => undefined);
+      if (!(sequential && failures)) {
+        if (partialMessage) {
+          setNotice(partialMessage);
+        } else if (usedNewApi) {
+          setNotice("AFF 余额不足，本次已使用 NewAPI 余额支付。");
+          // NewAPI 余额已变动，拉取最新数值让底部余额区立即更新。
+          fetch("/api/me")
+            .then((response) => response.json())
+            .then((latest: Me & { authenticated?: boolean }) => {
+              if (latest?.authenticated !== false) setMe(latest);
+            })
+            .catch(() => undefined);
+        }
       }
     } catch (error) {
       setNotice(
@@ -2182,8 +2794,39 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
+  const sessionHistoryPanel = (
+    <section className="session-history-panel" aria-label="本次会话历史">
+      <div className="flex items-center justify-between gap-2">
+        <b className="text-xs">本次历史</b>
+        <span className="text-[10px] text-[var(--muted)]">{sessionHistory.length} 张</span>
+      </div>
+      <div className="session-history-list">
+        {sessionHistory.length ? sessionHistory.map((item) => (
+            <div key={item.id} className="session-history-entry">
+              <button
+                type="button"
+                className="session-history-thumb"
+                aria-label="使用本次历史图片"
+                onClick={() => applyImageAsSource(item.image, "img2img")}
+              >
+                <Image src={item.image} alt="本次生成图片" width={96} height={96} unoptimized />
+              </button>
+              <div className="session-history-actions">
+                <button type="button" onClick={() => applyImageAsSource(item.image, "img2img")} aria-label="历史图片用于图生图" title="图生图"><ImagePlus size={13} /></button>
+                <button type="button" onClick={() => applyImageAsSource(item.image, "inpainting")} aria-label="历史图片用于局部重绘" title="局部重绘"><Brush size={13} /></button>
+                <button type="button" onClick={() => applyImageAsSource(item.image, "director-lineart")} aria-label="历史图片用于导演工具" title="导演工具"><WandSparkles size={13} /></button>
+                <button type="button" onClick={() => applyImageAsSource(item.image, "vibe-transfer")} aria-label="历史图片用于氛围迁移" title="氛围迁移"><Eye size={13} /></button>
+                <button type="button" onClick={() => applyImageAsSource(item.image, "upscale")} aria-label="历史图片用于超分" title="超分"><Aperture size={13} /></button>
+              </div>
+            </div>
+        )) : <span className="text-[10px] text-[var(--muted)]">生成后的图片会出现在这里</span>}
+      </div>
+    </section>
+  );
+
   const toolsPanel = (
     <>
+          {sessionHistoryPanel}
           {!naiLayout && (
             <div className="border-b border-[var(--line)] p-4">
               <b className="text-sm">创作中心</b>
@@ -2525,6 +3168,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       <p>{assistantSuggestion.message.slice(0, ASSISTANT_MESSAGE_MAX)}</p>
                     </div>
                   )}
+                  {assistantSuggestion.englishDescription && (
+                    <PreviewRow
+                      label="英文画面描述"
+                      value={assistantSuggestion.englishDescription}
+                    />
+                  )}
                   {assistantSuggestion.prompt && (
                     <PreviewRow
                       label="正向提示词"
@@ -2673,7 +3322,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   const naiGenerationFooter = (
     <div className="nai-generation-footer">
-      {generationParameters}
+      {!sidebarPromptLayout && generationParameters}
       {operation !== "suggest-tags" && (
         <NaiBalanceMeter
           signedIn={signedIn}
@@ -2721,9 +3370,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     </div>
   );
 
+  const displayedImages = images.length ? images : previewDrafts;
+
   return (
     <main
       data-studio-layout={naiLayout ? "nai" : "classic"}
+      data-workspace-layout={!naiLayout ? preferences.workspaceLayout : undefined}
       className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
     >
       {!naiLayout && (
@@ -2786,8 +3438,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </div>
         </header>
       )}
-      <div
-        className="studio-layout grid min-h-0 flex-1"
+      <div className={`studio-layout grid min-h-0 flex-1${preferences.workspaceLayout === "custom" && !naiLayout ? " is-custom-layout" : ""}`}
         style={
           {
             "--lfn-left": `${leftWidth}px`,
@@ -2797,7 +3448,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       >
         <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
-          {naiLayout && naiGenerationFooter}
+          {sidebarPromptLayout && naiGenerationFooter}
         </aside>
         <div
           role="separator"
@@ -2834,7 +3485,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               功能区
             </button>
           </div>
-          {!naiLayout &&
+          {!sidebarPromptLayout &&
             (promptModes.has(operation) || operation === "suggest-tags") && (
               <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
                 <Prompt
@@ -2875,63 +3526,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </button>
                 ))}
               </div>
-            ) : images.length || previewDrafts.length ? (
-              <div
-                className={`grid w-full gap-3 overflow-auto ${
-                  (images.length || previewDrafts.length) === 1
-                    ? "h-full max-w-none grid-cols-1 place-content-center place-items-center"
-                    : "max-h-full max-w-5xl grid-cols-1 sm:grid-cols-2 xl:grid-cols-3"
-                }`}
-              >
-                {(images.length ? images : previewDrafts).map((image, index) => (
-                  <div
-                    key={`${image.slice(-24)}-${index}`}
-                    className={`relative overflow-hidden border border-[var(--line)] bg-white ${
-                      (images.length || previewDrafts.length) === 1
-                        ? "flex h-full max-h-full w-full max-w-full items-center justify-center"
-                        : ""
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setLightboxIndex(index)}
-                      className={`block w-full cursor-zoom-in ${
-                        (images.length || previewDrafts.length) === 1
-                          ? "flex h-full max-h-full items-center justify-center"
-                          : ""
-                      }`}
-                      title="点击放大查看"
-                    >
-                      <Image
-                        src={image}
-                        alt={`NAI 结果 ${index + 1}`}
-                        width={width}
-                        height={height}
-                        unoptimized
-                        className={
-                          (images.length || previewDrafts.length) === 1
-                            ? "h-full max-h-full w-auto max-w-full object-contain"
-                            : "h-auto w-full object-contain"
-                        }
-                      />
-                    </button>
-                    {generating && !images.length && (
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2 text-xs text-white">
-                        {streamProgress || "正在生成预览…"}
-                      </div>
-                    )}
-                    {images.length ? (
-                    <a
-                      href={image}
-                      download={`lfn-${index + 1}.png`}
-                      title="下载图片"
-                      className="absolute bottom-2 right-2 grid h-9 w-9 place-items-center rounded bg-black/70 text-white"
-                    >
-                      <Download size={17} />
-                    </a>
-                    ) : null}
-                  </div>
-                ))}
+            ) : displayedImages.length ? (
+              <div className="workspace-results-scroll">
+                <div className="workspace-result-hero">
+                  <button type="button" onClick={() => setLightboxIndex(0)} title="点击放大查看" className="workspace-result-image">
+                    <Image src={displayedImages[0]} alt="NAI 主结果" width={width} height={height} unoptimized />
+                  </button>
+                  {generating && !images.length && <div className="workspace-result-progress">{streamProgress || "正在生成预览…"}</div>}
+                  {images.length > 0 && <div className="workspace-result-actions">
+                    <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "img2img")} aria-label="将主图用于图生图" title="用于图生图"><ImagePlus size={15} /></button>
+                    <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "inpainting")} aria-label="将主图用于局部重绘" title="用于局部重绘"><Brush size={15} /></button>
+                    <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "director-lineart")} aria-label="将主图用于导演工具" title="用于导演工具"><WandSparkles size={15} /></button>
+                    <a href={displayedImages[0]} download="lfn-1.png" title="下载主图"><Download size={15} /></a>
+                  </div>}
+                </div>
+                {displayedImages.length > 1 && <div className="workspace-result-list">
+                  {displayedImages.slice(1).map((image, index) => (
+                    <div key={`${image.slice(-24)}-${index}`} className={`workspace-result-item${selectedImageIndex === index + 1 ? " is-selected" : ""}`}>
+                      <button type="button" onClick={() => { setSelectedImageIndex(index + 1); setLightboxIndex(index + 1); }} title={`查看第 ${index + 2} 张`}>
+                        <Image src={image} alt={`NAI 结果 ${index + 2}`} width={width} height={height} unoptimized />
+                      </button>
+                      {images.length > 0 && <button type="button" onClick={() => applyImageAsSource(image, "img2img")} aria-label={`第 ${index + 2} 张用于图生图`} title="用于图生图"><ImagePlus size={14} /></button>}
+                    </div>
+                  ))}
+                </div>}
               </div>
             ) : (
               <div className="pointer-events-none flex max-w-md flex-col items-center px-5 text-center">
@@ -2961,7 +3579,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             </div>
           )}
-          {!naiLayout && (
+          {!sidebarPromptLayout && (
             <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
               {operation !== "suggest-tags" && signedIn && (
                 <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
@@ -3052,15 +3670,38 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           className="panel-resizer hidden lg:block"
           onPointerDown={(event) => startResize("right", event)}
           onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
-          onDoubleClick={() => setRightWidth(230)}
+          onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
         />
-        <aside className="studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex">
-          {toolsPanel}
+        <aside
+          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${rightPanelCollapsed ? " is-collapsed" : ""}`}
+          onMouseEnter={openRightPanel}
+          onMouseLeave={scheduleRightPanelClose}
+          onFocus={openRightPanel}
+          onBlur={scheduleRightPanelClose}
+        >
+          <button
+            type="button"
+            className="tools-panel-collapse"
+            aria-label={rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
+            aria-expanded={!rightPanelCollapsed}
+            onClick={() => setRightPanelCollapsed((current) => !current)}
+          >
+            {rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+          </button>
+          {rightPanelCollapsed ? (
+            <div className="collapsed-history-rail" aria-label="本次历史缩略图">
+              {sessionHistory.map((item) => (
+                <button type="button" key={item.id} onClick={() => { openRightPanel(); applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">
+                  <Image src={item.image} alt="历史图片" width={38} height={38} unoptimized />
+                </button>
+              ))}
+            </div>
+          ) : toolsPanel}
         </aside>
       </div>
-      {lightboxIndex !== null && images[lightboxIndex] && (
+      {lightboxIndex !== null && displayedImages[lightboxIndex] && (
         <Lightbox
-          images={images}
+          images={displayedImages}
           index={lightboxIndex}
           onClose={closeLightbox}
           onNavigate={setLightboxIndex}
@@ -3101,7 +3742,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             </div>
             {controls}
-            {naiLayout && naiGenerationFooter}
+            {sidebarPromptLayout && naiGenerationFooter}
           </aside>
         </div>
       )}
@@ -3242,7 +3883,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                       type="button"
                       className="nai-menu-item"
                       onClick={() => {
-                        setOperation(item.id);
+                        selectOperation(item.id);
                         setNotice("");
                         setMenuOpen(false);
                       }}
@@ -3307,6 +3948,23 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </aside>
         </div>
       )}
+      {galleryPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={() => setGalleryPickerOpen(false)}>
+          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-lg bg-[var(--panel)] p-4" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <b>从公开图库选择图片</b>
+              <button type="button" aria-label="关闭图库选择器" onClick={() => setGalleryPickerOpen(false)}><X size={18} /></button>
+            </div>
+            <GalleryPicker
+              returnDataUrl
+              onSelect={(dataUrl) => {
+                applyImageAsSource(dataUrl, "img2img");
+                setGalleryPickerOpen(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
       {maskEditorOpen && source && (
         <MaskEditor
           source={source}
@@ -3316,6 +3974,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             setMask(nextMask);
             setMaskEditorOpen(false);
           }}
+          onReplaceSource={(nextSource) => {
+            setSource(nextSource);
+            setMask(null);
+          }}
+          onPreciseRedraw={preciseRedraw}
         />
       )}
       {dropActive && !maskEditorOpen && (
@@ -3363,100 +4026,435 @@ function FeatureLink({
   );
 }
 
+// —— 蒙版编辑器（交互特性移植自 novelai_local_web InpaintWorkspace，AGPL-3.0）——
+// NAI 语义：白色（不透明）= 重绘区。笔迹始终以白色存入蒙版画布，
+// 颜色/不透明度仅影响预览渲染；导出前可按“扩张像素”做圆形印章扩张。
+type MaskStroke = {
+  size: number;
+  erase: boolean;
+  points: Array<{ x: number; y: number }>;
+};
+
+const MASK_COLORS = ["#ff4d4f", "#ffb300", "#4dabf7", "#f783ac", "#51cf66"];
+
+function renderMaskStrokes(
+  context: CanvasRenderingContext2D,
+  strokes: MaskStroke[],
+) {
+  for (const stroke of strokes) {
+    context.save();
+    context.globalCompositeOperation = stroke.erase
+      ? "destination-out"
+      : "source-over";
+    context.strokeStyle = "#fff";
+    context.fillStyle = "#fff";
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(stroke.size, 1);
+    if (stroke.points.length === 1) {
+      const point = stroke.points[0];
+      context.beginPath();
+      context.arc(
+        point.x,
+        point.y,
+        Math.max(stroke.size / 2, 1),
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+    } else {
+      context.beginPath();
+      stroke.points.forEach((point, index) => {
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+      });
+      context.stroke();
+    }
+    context.restore();
+  }
+}
+
+// 圆形印章式扩张（移植自 novelai_local_web dilateWhiteMask）。
+function dilateMask(
+  source: HTMLCanvasElement,
+  radius: number,
+): HTMLCanvasElement {
+  if (!radius) return source;
+  const expanded = document.createElement("canvas");
+  expanded.width = source.width;
+  expanded.height = source.height;
+  const context = expanded.getContext("2d");
+  if (!context) return source;
+  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      if (offsetX * offsetX + offsetY * offsetY > radius * radius) continue;
+      context.drawImage(source, offsetX, offsetY);
+    }
+  }
+  return expanded;
+}
+
+// 旧版编辑器导出的是黑色笔迹；检测到深色为主的蒙版时反相为白色语义。
+function normalizeMaskImage(
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+): HTMLCanvasElement | null {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  context.drawImage(image, 0, 0, width, height);
+  const data = context.getImageData(0, 0, width, height);
+  let dark = 0;
+  let light = 0;
+  for (let index = 0; index < data.data.length; index += 4) {
+    if (data.data[index + 3] < 128) continue;
+    if (
+      data.data[index] + data.data[index + 1] + data.data[index + 2] >=
+      384
+    )
+      light += 1;
+    else dark += 1;
+  }
+  if (dark > light) {
+    for (let index = 0; index < data.data.length; index += 4) {
+      if (data.data[index + 3] >= 128) {
+        data.data[index] = 255;
+        data.data[index + 1] = 255;
+        data.data[index + 2] = 255;
+        data.data[index + 3] = 255;
+      } else {
+        data.data[index + 3] = 0;
+      }
+    }
+    context.putImageData(data, 0, 0);
+  }
+  return canvas;
+}
+
 function MaskEditor({
   source,
   initialMask,
   onClose,
   onSave,
+  onReplaceSource,
+  onPreciseRedraw,
 }: {
   source: Upload;
   initialMask: Upload | null;
   onClose: () => void;
   onSave: (mask: Upload) => void;
+  onReplaceSource: (upload: Upload) => void;
+  onPreciseRedraw?: (selection: Rect) => Promise<void>;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [brushSize, setBrushSize] = useState(32);
-  const [tool, setTool] = useState<"brush" | "eraser">("brush");
-  const [imageRatio, setImageRatio] = useState(1);
+  const displayRef = useRef<HTMLCanvasElement>(null);
+  const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement | null>(null);
+  const strokesRef = useRef<MaskStroke[]>([]);
+  const historyRef = useRef<{
+    past: MaskStroke[][];
+    future: MaskStroke[][];
+  }>({ past: [], future: [] });
   const drawingRef = useRef(false);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-
+  const currentStrokeRef = useRef<MaskStroke | null>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [baseImage, setBaseImage] = useState<HTMLCanvasElement | null>(null);
+  const [imageRatio, setImageRatio] = useState(1);
+  const [tool, setTool] = useState<"brush" | "eraser" | "rectangle">("brush");
+  const [selection, setSelection] = useState<Rect | null>(null);
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [brushSize, setBrushSize] = useState(32);
+  const [maskColor, setMaskColor] = useState("#ff4d4f");
+  const [maskOpacity, setMaskOpacity] = useState(0.4);
+  const [expandPixels, setExpandPixels] = useState(8);
+  const [showMaskPreview, setShowMaskPreview] = useState(false);
+  const [bgMode, setBgMode] = useState<"checker" | "white">("checker");
+  const [strokes, setStrokes] = useState<MaskStroke[]>([]);
+  const [historyFlags, setHistoryFlags] = useState({
+    undo: false,
+    redo: false,
+  });
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    strokesRef.current = strokes;
+  }, [strokes]);
+
+  // 载入源图：按原始尺寸建离屏蒙版/着色画布，并归一化已有蒙版。
+  useEffect(() => {
+    let cancelled = false;
     const image = new window.Image();
     image.onload = () => {
-      canvas.width = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-      setImageRatio(image.naturalWidth / image.naturalHeight);
-      if (!initialMask) return;
-      const existingMask = new window.Image();
-      existingMask.onload = () => {
-        canvas
-          .getContext("2d")
-          ?.drawImage(existingMask, 0, 0, canvas.width, canvas.height);
+      if (cancelled) return;
+      const width = image.naturalWidth;
+      const height = image.naturalHeight;
+      setImageRatio(width / height);
+      setCanvasSize({ width, height });
+      const mask = document.createElement("canvas");
+      mask.width = width;
+      mask.height = height;
+      maskCanvasRef.current = mask;
+      const overlay = document.createElement("canvas");
+      overlay.width = width;
+      overlay.height = height;
+      overlayRef.current = overlay;
+      setStrokes([]);
+      historyRef.current = { past: [], future: [] };
+      setHistoryFlags({ undo: false, redo: false });
+      if (!initialMask) {
+        setBaseImage(null);
+        return;
+      }
+      const existing = new window.Image();
+      existing.onload = () => {
+        if (cancelled) return;
+        setBaseImage(normalizeMaskImage(existing, width, height));
       };
-      existingMask.src = initialMask.data;
+      existing.onerror = () => {
+        if (!cancelled) setBaseImage(null);
+      };
+      existing.src = initialMask.data;
     };
     image.src = source.data;
+    return () => {
+      cancelled = true;
+    };
   }, [initialMask, source.data]);
 
+  // 把着色后的蒙版合成到预览层（或显示黑白原始蒙版）。
+  const compose = useCallback(() => {
+    const display = displayRef.current;
+    const mask = maskCanvasRef.current;
+    const overlay = overlayRef.current;
+    if (!display || !mask || !overlay) return;
+    const context = display.getContext("2d");
+    const overlayContext = overlay.getContext("2d");
+    if (!context || !overlayContext) return;
+    context.clearRect(0, 0, display.width, display.height);
+    if (showMaskPreview) {
+      context.fillStyle = "#000";
+      context.fillRect(0, 0, display.width, display.height);
+      context.drawImage(mask, 0, 0);
+      return;
+    }
+    overlayContext.globalCompositeOperation = "source-over";
+    overlayContext.clearRect(0, 0, overlay.width, overlay.height);
+    overlayContext.drawImage(mask, 0, 0);
+    overlayContext.globalCompositeOperation = "source-in";
+    overlayContext.fillStyle = maskColor;
+    overlayContext.fillRect(0, 0, overlay.width, overlay.height);
+    overlayContext.globalCompositeOperation = "source-over";
+    context.globalAlpha = maskOpacity;
+    context.drawImage(overlay, 0, 0);
+    context.globalAlpha = 1;
+  }, [maskColor, maskOpacity, showMaskPreview]);
+
+  // 笔迹/底图变化时重建蒙版画布（撤销、重做、清空共用此路径）。
+  useEffect(() => {
+    const mask = maskCanvasRef.current;
+    if (!mask) return;
+    const context = mask.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, mask.width, mask.height);
+    if (baseImage) context.drawImage(baseImage, 0, 0, mask.width, mask.height);
+    renderMaskStrokes(context, strokes);
+    compose();
+  }, [baseImage, compose, strokes]);
+
+  const commitHistory = (previous: MaskStroke[]) => {
+    historyRef.current.past.push(previous);
+    historyRef.current.future = [];
+    setHistoryFlags({ undo: true, redo: false });
+  };
+
+  const undo = useCallback(() => {
+    const previous = historyRef.current.past.pop();
+    if (previous === undefined) return;
+    historyRef.current.future.push(strokesRef.current);
+    strokesRef.current = previous;
+    setStrokes(previous);
+    setHistoryFlags({
+      undo: historyRef.current.past.length > 0,
+      redo: true,
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    const next = historyRef.current.future.pop();
+    if (next === undefined) return;
+    historyRef.current.past.push(strokesRef.current);
+    strokesRef.current = next;
+    setStrokes(next);
+    setHistoryFlags({
+      undo: true,
+      redo: historyRef.current.future.length > 0,
+    });
+  }, []);
+
+  // 快捷键：Ctrl+Z / Ctrl+Y（或 Ctrl+Shift+Z）撤销重做，[ ] 调笔刷，B/E 切工具。
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const target = document.activeElement as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      )
+        return;
+      const key = event.key.toLowerCase();
+      if ((event.ctrlKey || event.metaKey) && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) redo();
+        else undo();
+      } else if ((event.ctrlKey || event.metaKey) && key === "y") {
+        event.preventDefault();
+        redo();
+      } else if (key === "[") {
+        setBrushSize((size) => Math.max(4, size - 4));
+      } else if (key === "]") {
+        setBrushSize((size) => Math.min(200, size + 4));
+      } else if (key === "b") {
+        setTool("brush");
+      } else if (key === "e") {
+        setTool("eraser");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [redo, undo]);
+
   function pointFromEvent(event: React.PointerEvent<HTMLCanvasElement>) {
-    const canvas = canvasRef.current;
+    const canvas = displayRef.current;
     if (!canvas) return null;
     const bounds = canvas.getBoundingClientRect();
-    return {
+    return clampPoint({
       x: ((event.clientX - bounds.left) / bounds.width) * canvas.width,
       y: ((event.clientY - bounds.top) / bounds.height) * canvas.height,
-    };
+    }, { width: canvas.width, height: canvas.height });
+  }
+
+  function strokeSegment(
+    stroke: MaskStroke,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+  ) {
+    const mask = maskCanvasRef.current;
+    const context = mask?.getContext("2d");
+    if (!mask || !context) return;
+    context.save();
+    context.globalCompositeOperation = stroke.erase
+      ? "destination-out"
+      : "source-over";
+    context.strokeStyle = "#fff";
+    context.fillStyle = "#fff";
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    context.lineWidth = Math.max(stroke.size, 1);
+    if (from.x === to.x && from.y === to.y) {
+      // 单击落点：零长度线段在部分浏览器不渲染，用圆点补齐。
+      context.beginPath();
+      context.arc(to.x, to.y, Math.max(stroke.size / 2, 1), 0, Math.PI * 2);
+      context.fill();
+    } else {
+      context.beginPath();
+      context.moveTo(from.x, from.y);
+      context.lineTo(to.x, to.y);
+      context.stroke();
+    }
+    context.restore();
   }
 
   function draw(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (!drawingRef.current) return;
-    const canvas = canvasRef.current;
     const point = pointFromEvent(event);
+    if (tool === "rectangle" && selectionStartRef.current && point) {
+      setSelection(normalizeRect(selectionStartRef.current, point));
+      return;
+    }
+    if (!drawingRef.current || !currentStrokeRef.current) return;
+    const canvas = displayRef.current;
     const previous = lastPointRef.current;
     if (!canvas || !point || !previous) return;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    const scale = canvas.width / canvas.getBoundingClientRect().width;
-    context.save();
-    context.globalCompositeOperation =
-      tool === "eraser" ? "destination-out" : "source-over";
-    context.strokeStyle = "#000";
-    context.lineWidth = brushSize * scale;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-    context.beginPath();
-    context.moveTo(previous.x, previous.y);
-    context.lineTo(point.x, point.y);
-    context.stroke();
-    context.restore();
+    strokeSegment(currentStrokeRef.current, previous, point);
+    currentStrokeRef.current.points.push(point);
     lastPointRef.current = point;
+    compose();
   }
 
   function startDrawing(event: React.PointerEvent<HTMLCanvasElement>) {
+    const canvas = displayRef.current;
+    const point = pointFromEvent(event);
+    if (!canvas || !point) return;
+    if (tool === "rectangle") {
+      selectionStartRef.current = point;
+      setSelection({ x: point.x, y: point.y, width: 0, height: 0 });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     drawingRef.current = true;
-    lastPointRef.current = pointFromEvent(event);
+    // 笔刷大小按显示像素输入，存储时换算成画布像素，窗口缩放后仍一致。
+    const scale = canvas.width / canvas.getBoundingClientRect().width;
+    currentStrokeRef.current = {
+      size: brushSize * scale,
+      erase: tool === "eraser",
+      points: [point],
+    };
+    strokeSegment(currentStrokeRef.current, point, point);
+    lastPointRef.current = point;
     event.currentTarget.setPointerCapture(event.pointerId);
-    draw(event);
+    compose();
   }
 
-  function stopDrawing() {
+  function stopDrawing(event?: React.PointerEvent<HTMLCanvasElement>) {
+    if (tool === "rectangle") {
+      const start = selectionStartRef.current;
+      const end = event ? pointFromEvent(event) : null;
+      selectionStartRef.current = null;
+      drawingRef.current = false;
+      if (start && end) {
+        const next = normalizeRect(start, end);
+        if (next.width >= 8 && next.height >= 8) setSelection(next);
+      }
+      return;
+    }
+    if (currentStrokeRef.current) {
+      commitHistory(strokesRef.current);
+      setStrokes((current) => [...current, currentStrokeRef.current!]);
+    }
+    currentStrokeRef.current = null;
     drawingRef.current = false;
     lastPointRef.current = null;
   }
 
   function clearMask() {
-    const canvas = canvasRef.current;
-    if (canvas)
-      canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+    if (!strokesRef.current.length && !baseImage) return;
+    commitHistory(strokesRef.current);
+    strokesRef.current = [];
+    setStrokes([]);
+    setBaseImage(null);
+    setHistoryFlags({
+      undo: historyRef.current.past.length > 0,
+      redo: false,
+    });
   }
 
   function saveMask() {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    onSave({ data: canvas.toDataURL("image/png"), name: "绘制蒙版.png" });
+    const mask = maskCanvasRef.current;
+    if (!mask) return;
+    const expanded = dilateMask(mask, Math.max(0, Math.round(expandPixels)));
+    onSave({ data: expanded.toDataURL("image/png"), name: "绘制蒙版.png" });
+  }
+
+  function replaceSource(file?: File) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string")
+        onReplaceSource({ data: reader.result, name: file.name });
+    };
+    reader.readAsDataURL(file);
   }
 
   return createPortal(
@@ -3472,24 +4470,68 @@ function MaskEditor({
             type="button"
             className={tool === "brush" ? "is-active" : ""}
             onClick={() => setTool("brush")}
-            title="画笔"
+            title="画笔（B）"
           >
             <Brush size={18} /> <span>画笔</span>
           </button>
+          <button
+            type="button"
+            className={tool === "eraser" ? "is-active" : ""}
+            onClick={() => setTool("eraser")}
+            title="橡皮擦（E）"
+          >
+            <Eraser size={18} /> <span>橡皮</span>
+          </button>
+          <button
+            type="button"
+            className={tool === "rectangle" ? "is-active" : ""}
+            onClick={() => setTool("rectangle")}
+            title="矩形选区：用于精确重绘"
+          >
+            <span aria-hidden="true">▣</span> <span>精确选区</span>
+          </button>
           <label>
             <span>笔刷大小：{brushSize}</span>
-            <input
-              type="range"
-              min="4"
-              max="120"
+            <WheelNumberInput
+              className="mask-editor-number"
+              ariaLabel="笔刷大小"
+              min={4}
+              max={200}
+              step={2}
               value={brushSize}
-              onChange={(event) => setBrushSize(Number(event.target.value))}
+              setValue={setBrushSize}
             />
           </label>
         </div>
         <div className="mask-editor-actions">
+          <button
+            type="button"
+            onClick={() => replaceInputRef.current?.click()}
+            title="替换源图片"
+          >
+            <FileUp size={17} /> <span>替换源图</span>
+          </button>
+          <input
+            ref={replaceInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(event) => {
+              replaceSource(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
           <button type="button" onClick={saveMask} className="primary">
             <Save size={17} /> 保存并关闭
+          </button>
+          <button
+            type="button"
+            onClick={() => selection && onPreciseRedraw?.(selection)}
+            disabled={!selection || selection.width < 8 || selection.height < 8 || !onPreciseRedraw}
+            className="primary"
+            title="只重绘矩形选区并合成回原图"
+          >
+            <WandSparkles size={17} /> 精确重绘选区
           </button>
           <button type="button" onClick={onClose} title="关闭蒙版编辑器">
             <X size={20} />
@@ -3498,7 +4540,7 @@ function MaskEditor({
       </div>
       <div className="mask-editor-stage">
         <div
-          className="mask-editor-canvas-wrap"
+          className={`mask-editor-canvas-wrap${bgMode === "white" ? " plain" : ""}`}
           style={{
             aspectRatio: imageRatio,
             width: `min(86vw, calc(76vh * ${imageRatio}))`,
@@ -3512,38 +4554,143 @@ function MaskEditor({
             className="object-contain"
           />
           <canvas
-            ref={canvasRef}
+            ref={displayRef}
+            width={canvasSize.width}
+            height={canvasSize.height}
             onPointerDown={startDrawing}
             onPointerMove={draw}
             onPointerUp={stopDrawing}
-            onPointerCancel={stopDrawing}
+            onPointerCancel={() => stopDrawing()}
             aria-label="蒙版绘制画布"
           />
+          {selection && selection.width > 0 && selection.height > 0 && (
+            <div
+              className="mask-editor-selection"
+              style={{
+                left: `${(selection.x / Math.max(canvasSize.width, 1)) * 100}%`,
+                top: `${(selection.y / Math.max(canvasSize.height, 1)) * 100}%`,
+                width: `${(selection.width / Math.max(canvasSize.width, 1)) * 100}%`,
+                height: `${(selection.height / Math.max(canvasSize.height, 1)) * 100}%`,
+              }}
+            />
+          )}
         </div>
       </div>
       <div className="mask-editor-bottombar">
-        <button
-          type="button"
-          className={tool === "brush" ? "is-active" : ""}
-          onClick={() => setTool("brush")}
-          title="画笔"
-        >
-          <Brush size={18} />
-        </button>
-        <button
-          type="button"
-          className={tool === "eraser" ? "is-active" : ""}
-          onClick={() => setTool("eraser")}
-          title="橡皮擦"
-        >
-          <Eraser size={18} />
-        </button>
-        <button type="button" onClick={clearMask} title="清空蒙版">
-          <Trash2 size={18} />
-        </button>
+        <div className="mask-editor-tools">
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!historyFlags.undo}
+            title="撤销（Ctrl+Z）"
+          >
+            <Undo2 size={17} /> <span>撤销</span>
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!historyFlags.redo}
+            title="重做（Ctrl+Y）"
+          >
+            <Redo2 size={17} /> <span>重做</span>
+          </button>
+          <button
+            type="button"
+            onClick={clearMask}
+            title="清空蒙版"
+          >
+            <Trash2 size={17} /> <span>清空</span>
+          </button>
+          <button
+            type="button"
+            className={showMaskPreview ? "is-active" : ""}
+            onClick={() => setShowMaskPreview((current) => !current)}
+            title="显示上游实际收到的黑白蒙版"
+          >
+            <Eye size={17} /> <span>蒙版预览</span>
+          </button>
+          <button
+            type="button"
+            className={bgMode === "white" ? "is-active" : ""}
+            onClick={() =>
+              setBgMode((current) =>
+                current === "white" ? "checker" : "white",
+              )
+            }
+            title="切换白色/棋盘背景"
+          >
+            <ImageIcon size={17} /> <span>背景</span>
+          </button>
+        </div>
+        <div className="mask-editor-tools">
+          {MASK_COLORS.map((color) => (
+            <button
+              type="button"
+              key={color}
+              className={`mask-editor-color-swatch${maskColor === color ? " is-active" : ""}`}
+              style={{ backgroundColor: color }}
+              onClick={() => setMaskColor(color)}
+              aria-label={`蒙版颜色 ${color}`}
+            />
+          ))}
+          <label>
+            <span>不透明度</span>
+            <WheelNumberInput
+              className="mask-editor-number"
+              ariaLabel="蒙版不透明度"
+              min={0.05}
+              max={1}
+              step={0.05}
+              value={maskOpacity}
+              setValue={setMaskOpacity}
+            />
+          </label>
+          <label>
+            <span>扩张像素</span>
+            <WheelNumberInput
+              className="mask-editor-number"
+              ariaLabel="蒙版扩张像素"
+              min={0}
+              max={64}
+              step={1}
+              value={expandPixels}
+              setValue={setExpandPixels}
+            />
+          </label>
+        </div>
       </div>
     </div>,
     document.body,
+  );
+}
+
+// 左侧参数面板的折叠分区，视觉对齐 novelai_local_web 的手风琴分区。
+function PanelSection({
+  title,
+  icon,
+  children,
+  defaultOpen = true,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={`panel-section${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="panel-section-head"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="panel-section-icon">{icon}</span>
+        <b>{title}</b>
+        <ChevronRight size={14} className="panel-section-chev" />
+      </button>
+      {open && <div className="panel-section-body">{children}</div>}
+    </section>
   );
 }
 
@@ -3589,15 +4736,14 @@ function NumericSlider({
     <div className="nai-slider-control">
       <span className="nai-control-label">{label}</span>
       <div className="nai-slider-row">
-        <input
+        <WheelNumberInput
           className="nai-number-input"
-          aria-label={label}
-          type="number"
+          ariaLabel={label}
           value={value}
+          setValue={setValue}
           min={min}
           max={max}
           step={step}
-          onChange={(event) => setValue(Number(event.target.value))}
         />
         <input
           className="range min-w-0 flex-1"
@@ -3726,14 +4872,13 @@ function NumberField({
   step: number;
 }) {
   return (
-    <input
+    <WheelNumberInput
       className="field h-10 px-2 text-center"
-      type="number"
       value={value}
+      setValue={setValue}
       min={min}
       max={max}
       step={step}
-      onChange={(event) => setValue(Number(event.target.value))}
     />
   );
 }
@@ -3750,7 +4895,8 @@ function UploadField({
 }) {
   async function read(file?: File) {
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
+  const nextType = file.type as string;
+    if (!acceptedUploadTypes.has(nextType)) {
       onError?.("仅支持 PNG/JPEG/WebP 图片");
       return;
     }
@@ -3772,16 +4918,31 @@ function UploadField({
     }
   }
   return (
-    <label className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs">
-      <ImagePlus size={16} />
-      <span className="truncate">{value?.name || label}</span>
-      <input
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={(event) => read(event.target.files?.[0])}
-      />
-    </label>
+    <div className="upload-field-stack">
+      {value && (
+        <div className="image-source-preview upload-preview">
+          <Image src={value.data} alt={`${label}预览`} width={96} height={96} unoptimized />
+          <div className="min-w-0 flex-1">
+            <b className="block truncate text-xs">{value.name}</b>
+            <span className="text-[10px] text-[var(--muted)]">已载入参考图</span>
+          </div>
+          <button type="button" aria-label={`移除${label}`} title="移除" onClick={() => onChange(null)}><X size={15} /></button>
+        </div>
+      )}
+      <label className="flex min-h-12 cursor-pointer items-center justify-center gap-2 rounded border border-dashed border-[var(--line)] bg-white px-3 text-xs">
+        <ImagePlus size={16} />
+        <span className="truncate">{value?.name ? `更换：${value.name}` : label}</span>
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(event) => {
+            void read(event.target.files?.[0]);
+            event.target.value = "";
+          }}
+        />
+      </label>
+    </div>
   );
 }
 function Prompt({

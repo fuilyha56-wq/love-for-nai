@@ -1,6 +1,9 @@
 import { getSession } from "@/lib/session";
 import ImageStudio from "./studio";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function ImagePage() {
   const session = await getSession();
   return (

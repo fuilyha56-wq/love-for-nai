@@ -20,9 +20,13 @@ const deleteRemote = vi.fn(async (userId: number, fileName: string) => {
   remoteObjects.delete(`${userId}/${fileName}`);
   return true;
 });
+const getRemote = vi.fn(async (userId: number, fileName: string) => {
+  const data = remoteObjects.get(`${userId}/${fileName}`);
+  return data ? { data, contentType: "image/png" } : null;
+});
 vi.mock("@/lib/remote-history", () => ({
   putRemoteHistoryImage: putRemote,
-  getRemoteHistoryImage: vi.fn(),
+  getRemoteHistoryImage: getRemote,
   deleteRemoteHistoryImage: deleteRemote,
 }));
 
@@ -36,6 +40,7 @@ beforeEach(async () => {
   remoteObjects.clear();
   putRemote.mockClear();
   deleteRemote.mockClear();
+  getRemote.mockClear();
 });
 
 afterEach(async () => {
@@ -48,7 +53,7 @@ function body() {
 }
 
 // 整套并行跑时 FS/fetch mock 会拖慢 120 张的写入循环，放宽超时避免偶发超时。
-describe("历史分层保留", { timeout: 30_000 }, () => {
+describe("历史分层保留", { timeout: 90_000 }, () => {
   it("前 40 张全部留在本地磁盘", async () => {
     const { saveHistory, listHistory } = await import("@/lib/history");
     for (let i = 0; i < 40; i += 1) {
@@ -110,5 +115,25 @@ describe("历史分层保留", { timeout: 30_000 }, () => {
     expect(await deleteHistory(1, remoteItem!.id)).toBe(true);
     expect(remoteObjects.has(`1/${remoteItem!.imagePath}`)).toBe(false);
     expect((await listHistory(1))).toHaveLength(49);
+  });
+
+  it("图库投稿从远程历史对象读取图片", async () => {
+    const { saveHistory, listHistory } = await import("@/lib/history");
+    const { publishFromHistory } = await import("@/lib/gallery");
+    for (let i = 0; i < 41; i += 1) {
+      await saveHistory(1, body(), [PNG_1PX], null);
+    }
+    const remoteItem = (await listHistory(1)).find((item) => item.remote);
+    expect(remoteItem).toBeTruthy();
+    const item = await publishFromHistory(1, "owner", remoteItem!.id, {
+      title: "远程历史投稿",
+      authorName: "artist",
+      rating: "general",
+      source: "lfn",
+      tags: [],
+      exposeParameters: true,
+    });
+    expect(item.prompt).toBe("test");
+    expect(getRemote).toHaveBeenCalledWith(1, remoteItem!.imagePath);
   });
 });

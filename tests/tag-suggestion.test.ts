@@ -104,12 +104,38 @@ describe("parseTagSuggestion", () => {
     const result = parseTagSuggestion(
       JSON.stringify({
         message: "我先检索了白发和雨夜相关标签，挑了图片数较多的通用标签。",
+        englishDescription:
+          "A girl walks through a rainy neon street. The painterly anime scene uses cool blue lighting.",
         prompt: "1girl",
       }),
     );
     expect(result.message).toBe(
       "我先检索了白发和雨夜相关标签，挑了图片数较多的通用标签。",
     );
+    expect(result.englishDescription).toBe(
+      "A girl walks through a rainy neon street. The painterly anime scene uses cool blue lighting.",
+    );
+  });
+
+  it("bounds englishDescription and keeps legacy output compatible", () => {
+    const longDescription = "x".repeat(1_100);
+    const result = parseTagSuggestion(
+      JSON.stringify({ prompt: "1girl", englishDescription: longDescription }),
+    );
+    expect(result.englishDescription).toHaveLength(1_000);
+    expect(parseTagSuggestion(JSON.stringify({ prompt: "1girl" })).englishDescription)
+      .toBeUndefined();
+  });
+
+  it("drops descriptions that contain artist attribution", () => {
+    expect(
+      parseTagSuggestion(
+        JSON.stringify({
+          prompt: "scene",
+          englishDescription: "A scene in the style of a famous artist.",
+        }),
+      ).englishDescription,
+    ).toBeUndefined();
   });
 
   it("message 缺省或为空白时保持 undefined", () => {
