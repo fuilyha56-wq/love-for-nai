@@ -1,3 +1,4 @@
+import { MAX_IMAGE_REQUEST_SAMPLES, splitImageBatches } from "@/lib/image-batches";
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import {
@@ -50,9 +51,9 @@ const unifiedOperations = new Set([
   "director-emotion",
 ]);
 // 缓冲路径每次上游请求的张数上限（网关 OpenAI 兼容路径同为 8）。
-const MAX_SAMPLES_PER_REQUEST = 8;
+const MAX_SAMPLES_PER_REQUEST = MAX_IMAGE_REQUEST_SAMPLES;
 // 流式路径单请求张数上限；更多张数由客户端分批并发。
-const MAX_STREAM_SAMPLES = 8;
+const MAX_STREAM_SAMPLES = MAX_IMAGE_REQUEST_SAMPLES;
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 
 // NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
@@ -232,16 +233,6 @@ function referenceImageCount(
 function parseSamplesLimit(raw: string): number | null {
   const match = raw.match(/maximum number of images[^]*?is (\d+)/i);
   return match ? Number(match[1]) : null;
-}
-
-function splitBatches(total: number, perRequest: number): number[] {
-  const batches: number[] = [];
-  let remaining = total;
-  while (remaining > 0) {
-    batches.push(Math.min(perRequest, remaining));
-    remaining -= perRequest;
-  }
-  return batches;
 }
 
 function explainUpstreamFailure(
@@ -676,7 +667,7 @@ export async function POST(request: Request) {
     }
 
     let perRequest = Math.min(MAX_SAMPLES_PER_REQUEST, totalSamples);
-    const remaining = splitBatches(totalSamples, perRequest);
+    const remaining = splitImageBatches(totalSamples, perRequest);
     const images: string[] = [];
     let usage: unknown = null;
     let vibe: unknown = null;
@@ -750,7 +741,7 @@ export async function POST(request: Request) {
           (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
         const limit = parseSamplesLimit(raw);
         if (limit && limit >= 1 && limit < batch) {
-          remaining.unshift(...splitBatches(batch, limit));
+          remaining.unshift(...splitImageBatches(batch, limit));
           perRequest = Math.min(perRequest, limit);
           continue;
         }
