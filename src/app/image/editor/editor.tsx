@@ -1,5 +1,8 @@
 "use client";
 
+import { inpaintModelFor } from "@/lib/inpaint-model";
+import { saveEditorComposite } from "@/lib/editor-composite-history";
+
 import {
   ArrowLeft,
   Check,
@@ -69,6 +72,8 @@ const MASK_COLORS = ["#a83a4c", "#2d7567", "#6c7fff", "#b47c2a", "#f783ac"];
 const INPAINT_MODELS = [
   ["nai-v5-inpaint", "V5 局部重绘"],
   ["nai-v4.5-inpaint", "V4.5 局部重绘"],
+  ["nai-v5-inpaint-limit", "V5 局部重绘 · 受限"],
+  ["nai-v4.5-inpaint-limit", "V4.5 局部重绘 · 受限"],
   ["nai-v3-inpaint", "V3 动漫局部重绘"],
   ["nai-v3-furry-inpaint", "V3 兽人局部重绘"],
 ] as const;
@@ -376,9 +381,11 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         setPrompt(nextDocument.prompt || "");
         setNegative(nextDocument.negativePrompt || "");
         syncEditorPromptToStudioForm(loaded.id, nextDocument.prompt || "", nextDocument.negativePrompt || "");
-        setModel(generation?.model?.includes("inpaint") ? generation.model : "nai-v5-inpaint");
+        const nextModel = inpaintModelFor(generation?.model || "nai-v5-full");
+        if (!nextModel) throw new Error(`当前模型 ${generation?.model} 没有对应的重绘模型，请返回工作台选择支持重绘的模型。`);
+        setModel(nextModel);
         setSteps(generation?.steps || 28);
-        setScale(generation?.scale || 5);
+        setScale(generation?.scale ?? 5);
         setStrength(generation?.strength ?? 0.7);
         setSampler(generation?.sampler || "k_euler_ancestral");
         setSeed(nextDocument.seed == null ? "" : String(nextDocument.seed));
@@ -741,30 +748,16 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       const applied = applyReviewSession(review).document;
       const nextDraft = await saveEditorDraft(createDraftPayload(applied));
       const finalImage = rgbaToDataUrl(applied.image);
-      const historyResponse = await fetch("/api/history/editor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image: finalImage,
-          model,
-          prompt,
-          negative_prompt: negative,
-          width: applied.image.width,
-          height: applied.image.height,
-          steps,
-          scale,
-          sampler,
-          strength,
-          ...(seed.trim() ? { seed: Number(seed) } : {}),
-        }),
-      });
       let historyId = "";
-      if (!historyResponse.ok) {
-        const result = await historyResponse.json().catch(() => ({})) as { message?: string };
-        setNotice(`${result.message || "完整合成图未写入历史"}，结果仍会返回工作台。`);
-      } else {
-        const result = await historyResponse.json() as { id?: string };
-        historyId = typeof result.id === "string" ? result.id : "";
+      try {
+        historyId = await saveEditorComposite({
+          image: finalImage, model, prompt, negative_prompt: negative,
+          width: applied.image.width, height: applied.image.height,
+          steps, scale, sampler, strength,
+          ...(seed.trim() ? { seed: Number(seed) } : {}),
+        });
+      } catch (error) {
+        setNotice(`${error instanceof Error ? error.message : "完整合成图未写入历史"}，结果仍会返回工作台。`);
       }
       const historyQuery = historyId ? `&editorHistory=${encodeURIComponent(historyId)}` : "";
       syncEditorPromptToStudioForm(nextDraft.id, prompt, negative);

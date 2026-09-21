@@ -1,5 +1,9 @@
 "use client";
 
+import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
+import { inpaintModelFor } from "@/lib/inpaint-model";
+import { saveEditorComposite } from "@/lib/editor-composite-history";
+
 import {
   Aperture,
   Brush,
@@ -699,10 +703,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     setMask(null);
     setUpscaleSource(null);
     if (nextOperation === "inpainting" || nextOperation === "edits") {
-      const inpaintModel = models.find(({ value }) =>
-        value.includes("inpaint") &&
-        (model.includes("v4.5") ? value.includes("v4.5") : model.includes("v3") ? value.includes("v3") : value.includes("v5")),
-      )?.value || models.find(({ value }) => value.includes("inpaint"))?.value;
+      const inpaintModel = inpaintModelFor(model);
       if (inpaintModel) setModel(inpaintModel);
     }
     setOperation(nextOperation);
@@ -717,10 +718,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       return;
     }
     if (nextOperation === "inpainting" || nextOperation === "edits") {
-      const inpaintModel = models.find(({ value }) =>
-        value.includes("inpaint") &&
-        (model.includes("v4.5") ? value.includes("v4.5") : model.includes("v3") ? value.includes("v3") : value.includes("v5")),
-      )?.value || models.find(({ value }) => value.includes("inpaint"))?.value;
+      const inpaintModel = inpaintModelFor(model);
       if (inpaintModel) setModel(inpaintModel);
     }
     setOperation(nextOperation);
@@ -769,14 +767,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         patch.selectionInPatch.width,
         patch.selectionInPatch.height,
       );
-      const inpaintModel = models.find(({ value }) => value === model.replace(/-limit$/, "-inpaint"))?.value
-        || models.find(({ value }) => value.includes("inpaint") && value.includes("v5"))?.value
-        || "nai-v5-inpaint";
+      const inpaintModel = inpaintModelFor(model);
+      if (!inpaintModel) throw new Error(`当前模型 ${model} 没有对应的重绘模型，请先选择支持重绘的模型。`);
       const response = await fetch("/api/images/operate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           operation: "inpainting",
+          editor_composite: true,
           model: inpaintModel,
           prompt,
           negative_prompt: negative,
@@ -795,20 +793,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       });
       const contentType = response.headers.get("content-type") || "";
       let patchImage = "";
-      let patchHistoryIds: string[] = [];
       if (contentType.includes("text/event-stream") && response.body) {
         const streamed = await consumeImageStream(response, {
           expected: 1,
           onPreview: (next) => setPreviewDrafts(next),
           onProgress: setStreamProgress,
-          onComplete: (ids) => { patchHistoryIds = ids; },
         });
         patchImage = streamed[0] || "";
       } else {
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || "精确重绘失败");
         patchImage = result.images?.[0] || result.image || "";
-        patchHistoryIds = Array.isArray(result.historyIds) ? result.historyIds : [];
       }
       if (!patchImage) throw new Error("上游未返回重绘结果");
       const generated = await loadImageElement(patchImage);
@@ -843,15 +838,25 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       setImages([finalImage]);
       setPreviewDrafts([]);
       setSelectedImageIndex(0);
-      addSessionResults(
-        [finalImage],
-        patchHistoryIds,
-        "inpainting",
-      );
+
       setSource({ data: finalImage, name: "精确重绘结果.png" });
       setMask(null);
       setMaskEditorOpen(false);
-      setNotice("精确重绘完成，已将修改区域合成回原图。");
+      let historyId: string | undefined;
+      let historyError = "";
+      try {
+        historyId = await saveEditorComposite({
+          image: finalImage, model: inpaintModel, prompt, negative_prompt: negative,
+          width: imageSize.width, height: imageSize.height, steps, scale, sampler, strength,
+        });
+      } catch (error) {
+        historyError = error instanceof Error ? error.message : "历史保存失败";
+      }
+      addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting");
+      setNotice(historyError
+        ? `精确重绘已完成，但${historyError}。完整图片已保留在工作台，请及时下载。`
+        : "精确重绘完成，完整合成图已保存到图片历史。");
+      await refreshWallet();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "精确重绘失败");
     } finally {
@@ -2545,16 +2550,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       let lastError = "";
       let partialMessage = "";
       if (sequential) {
-        const BATCH_CHUNK = 4;
+        const BATCH_CHUNK = studioBatchSize(batchMode);
         const BATCH_PARALLEL = 3;
-        const chunkSizes: number[] = [];
-        const chunkStarts: number[] = [];
-        for (let rest = count; rest > 0; ) {
-          chunkStarts.push(count - rest);
-          const size = Math.min(BATCH_CHUNK, rest);
-          chunkSizes.push(size);
-          rest -= size;
-        }
+        const chunkSizes = splitImageBatches(count, BATCH_CHUNK);
+        let chunkOffset = 0;
+        const chunkStarts = chunkSizes.map((size) => {
+          const start = chunkOffset;
+          chunkOffset += size;
+          return start;
+        });
         // 各分片携带“基础种子 + 片内起始偏移”，与 NAI 单请求多张的种子序列
         // 语义一致；不填种子时客户端随机一个基础种子，避免分片间重复出图。
         const baseSeed = seed.trim()
@@ -2764,7 +2768,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           characterPromptCount: activeCharacterCount,
         });
   const estimatedNewApiCost = ["annotate", "suggest-tags", "upscale"].includes(operation) ? null : estimateNewApiCost(modelPricing, {
-    model, operation, sequential: batchMode === "sequential", maxSamplesPerRequest: 4, width: upscaleDims?.width ?? width,
+    model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: operation === "upscale" ? 1 : count,
     strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
