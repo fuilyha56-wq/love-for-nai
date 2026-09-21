@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { RectangleHorizontal, RectangleVertical, Square } from "lucide-react";
 import { PopupSelect } from "@/app/ui/popup-select";
+import { WheelNumberInput } from "@/app/ui/wheel-number";
 
 const sizes = {
   small: [512, 768],
@@ -10,6 +11,8 @@ const sizes = {
   large: [1024, 1536],
 } as const;
 type SizePreset = keyof typeof sizes;
+
+export const MAX_NAI_IMAGE_COUNT = 30;
 
 export function NaiImageSettings({
   width,
@@ -43,14 +46,13 @@ export function NaiImageSettings({
         <div className="nai-resolution-heading">
           <b>分辨率</b>
           <div className="nai-dimbox">
-            <input
-              type="number"
-              aria-label="图片宽度"
+            <WheelNumberInput
+              ariaLabel="图片宽度"
               min={64}
               max={1600}
               step={64}
               value={width}
-              onChange={(event) => setWidth(Number(event.target.value))}
+              setValue={setWidth}
             />
             <button
               type="button"
@@ -63,14 +65,13 @@ export function NaiImageSettings({
             >
               ×
             </button>
-            <input
-              type="number"
-              aria-label="图片高度"
+            <WheelNumberInput
+              ariaLabel="图片高度"
               min={64}
               max={1600}
               step={64}
               value={height}
-              onChange={(event) => setHeight(Number(event.target.value))}
+              setValue={setHeight}
             />
           </div>
         </div>
@@ -107,8 +108,19 @@ export function NaiImageSettings({
           </div>
         </div>
       </div>
-      <b>图像数量</b>
-      <div className="nai-segmented" role="group" aria-label="生成张数">
+      <div className="nai-count-heading">
+        <b>图像数量</b>
+        <WheelNumberInput
+          className="nai-count-input"
+          ariaLabel="生成张数"
+          min={1}
+          max={MAX_NAI_IMAGE_COUNT}
+          step={1}
+          value={count}
+          setValue={setCount}
+        />
+      </div>
+      <div className="nai-segmented" role="group" aria-label="生成张数快捷选择">
         {[1, 2, 3, 4, 5, 6].map((value) => (
           <button
             type="button"

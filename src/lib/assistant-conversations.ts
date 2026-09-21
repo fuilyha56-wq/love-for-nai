@@ -19,6 +19,8 @@ export type ConversationTurn = {
   createdAt: string;
   // 助手本轮对用户说的话（final.message），可选。
   message?: string;
+  // 兼容旧记录：旧会话可能没有该字段。
+  englishDescription?: string;
   prompt: string;
   negativePrompt: string;
   parameters: Record<string, unknown>;
@@ -73,11 +75,25 @@ function normalize(value: unknown): AssistantConversation {
   const record = value as Record<string, unknown>;
   const turns = Array.isArray(record.turns)
     ? record.turns.filter(
-        (turn): turn is ConversationTurn =>
-          !!turn && typeof turn === "object" &&
-          typeof (turn as ConversationTurn).request === "string" &&
-          typeof (turn as ConversationTurn).answer === "string",
-      )
+        (turn): turn is ConversationTurn => {
+          if (!turn || typeof turn !== "object") return false;
+          const candidate = turn as Partial<ConversationTurn>;
+          return typeof candidate.request === "string" && typeof candidate.answer === "string";
+        },
+      ).map((turn) => ({
+        ...turn,
+        id: typeof turn.id === "string" ? turn.id : randomUUID(),
+        createdAt: typeof turn.createdAt === "string" ? turn.createdAt : new Date(0).toISOString(),
+        message: typeof turn.message === "string" ? turn.message : undefined,
+        englishDescription: typeof turn.englishDescription === "string" ? turn.englishDescription : undefined,
+        prompt: typeof turn.prompt === "string" ? turn.prompt : "",
+        negativePrompt: typeof turn.negativePrompt === "string" ? turn.negativePrompt : "",
+        parameters: turn.parameters && typeof turn.parameters === "object" ? turn.parameters : {},
+        tags: Array.isArray(turn.tags) ? turn.tags.filter(isTag) : [],
+        rejectedTags: Array.isArray(turn.rejectedTags) ? turn.rejectedTags.filter((tag): tag is string => typeof tag === "string") : [],
+        unverifiedTags: Array.isArray(turn.unverifiedTags) ? turn.unverifiedTags.filter((tag): tag is string => typeof tag === "string") : [],
+        steps: Array.isArray(turn.steps) ? turn.steps : [],
+      }))
     : [];
   const tagPool = Array.isArray(record.tagPool)
     ? record.tagPool.filter(isTag)

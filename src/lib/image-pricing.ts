@@ -230,7 +230,7 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
   const operation = generation.operation ?? "generate";
   const referenceCount = generation.referenceImageCount ?? 0;
   return (
-    ["generate", "img2img", "inpainting", "edits"].includes(operation) &&
+    ["generate", "img2img", "inpainting", "edits", "outpainting"].includes(operation) &&
     operation !== "precise-reference" &&
     generation.samples === 1 &&
     generation.steps >= 1 &&

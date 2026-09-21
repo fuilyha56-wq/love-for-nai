@@ -7,6 +7,8 @@ export type AssistantJobResult = {
   suggestion: {
     // 助手对用户说的自然语言（final.message），缺省表示本轮没有留言。
     message?: string;
+    // 1–3 句英文自然语言描述，不含 artist 信息。
+    englishDescription?: string;
     prompt: string;
     negativePrompt: string;
     parameters: Record<string, unknown>;

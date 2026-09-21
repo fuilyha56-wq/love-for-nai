@@ -87,6 +87,7 @@ const novelAiModelAliases: Record<string, string> = {
   "nai-diffusion-5-curated": "nai-v5-curated",
   "nai-diffusion-5-full": "nai-v5-full",
   "nai-diffusion-5-inpainting": "nai-v5-inpaint",
+  "nai-diffusion-5-full-inpainting": "nai-v5-inpaint",
   "nai-diffusion-4-full": "nai-v4-full",
   "nai-diffusion-4-curated-preview": "nai-v4-curated",
   "nai-diffusion-3": "nai-v3",

@@ -41,6 +41,45 @@ describe("NAI native stream protocol", () => {
     });
   });
 
+  it("maps infinite-canvas outpainting to NAI infill", () => {
+    const body = naiNativeGenerationBody({
+      operation: "outpainting",
+      model: "nai-v5-inpaint",
+      prompt: "extend the scene",
+      width: 1024,
+      height: 1024,
+      image: "data:image/png;base64,aW1hZ2U=",
+      mask: "data:image/png;base64,bWFzaw==",
+    });
+    expect(body.action).toBe("infill");
+    expect(body.model).toBe("nai-diffusion-5-full-inpainting");
+    expect(body.parameters).toMatchObject({
+      image: "aW1hZ2U=",
+      mask: "bWFzaw==",
+      params_version: 4,
+    });
+  });
+
+  it.each([
+    ["nai-v4.5-full", "nai-diffusion-4-5-full-inpainting", 3],
+    ["nai-v4.5-curated", "nai-diffusion-4-5-full-inpainting", 3],
+    ["nai-v5-full", "nai-diffusion-5-full-inpainting", 4],
+    ["nai-v5-curated", "nai-diffusion-5-full-inpainting", 4],
+  ])("maps %s edits to %s", (model, expected, paramsVersion) => {
+    const body = naiNativeGenerationBody({
+      operation: "edits",
+      model,
+      prompt: "redraw",
+      width: 832,
+      height: 1216,
+      image: "data:image/png;base64,aW1hZ2U=",
+      mask: "data:image/png;base64,bWFzaw==",
+    });
+    expect(body.action).toBe("infill");
+    expect(body.model).toBe(expected);
+    expect(body.parameters).toMatchObject({ params_version: paramsVersion });
+  });
+
   it("parses intermediate and final msgpack events", () => {
     const preview = parseNaiStreamMessage(
       encode({

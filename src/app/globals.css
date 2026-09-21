@@ -66,6 +66,9 @@ html[data-theme="night"] {
   --paper: #1d2022;
   --panel: #272b2d;
   --line: #454b4c;
+  --surface: #2b2f33;
+  --surface-muted: #23262a;
+  --canvas: #1d2022;
 }
 html[data-theme="night"] .bg-white,
 html[data-theme="night"] .field,
@@ -87,7 +90,8 @@ html[data-theme="night"] .bg-\[\#f2f0ea\],
 html[data-theme="night"] .bg-\[\#e9e6de\],
 html[data-theme="night"] .bg-\[\#f5f3ed\],
 html[data-theme="night"] .bg-\[\#fff8e8\],
-html[data-theme="night"] .bg-\[\#fffefa\] {
+html[data-theme="night"] .bg-\[\#fffefa\],
+html[data-theme="night"] .nai-number-input {
   background-color: #2b2f33;
   color: var(--ink);
 }
@@ -499,7 +503,7 @@ html[data-theme="night"] .field::placeholder {
   inset: 0;
   z-index: 20000;
   display: grid;
-  grid-template-rows: 58px minmax(0, 1fr) 52px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--paper);
   color: var(--ink);
 }
@@ -509,6 +513,7 @@ html[data-theme="night"] .field::placeholder {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 8px;
   background: var(--panel);
@@ -603,6 +608,86 @@ html[data-theme="night"] .field::placeholder {
   height: 100%;
   cursor: crosshair;
   touch-action: none;
+}
+
+.mask-editor-canvas-wrap.plain {
+  background-color: #fff;
+  background-image: none;
+}
+.mask-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.mask-editor-color-swatch {
+  width: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+}
+.mask-editor-color-swatch.is-active {
+  border-color: var(--ink);
+}
+.mask-editor .mask-editor-number {
+  width: 64px;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: center;
+  outline: none;
+}
+.mask-editor .mask-editor-number:focus {
+  border-color: var(--rose);
+}
+html[data-theme="night"] .mask-editor-number {
+  background-color: #2b2f33;
+}
+
+/* 左侧参数面板折叠分区（对齐 novelai_local_web 手风琴视觉） */
+.panel-section {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+}
+.panel-section-head {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  padding: 0 10px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+}
+.panel-section-head:hover,
+.panel-section.is-open .panel-section-head {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.panel-section-icon {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0.7;
+}
+.panel-section-chev {
+  margin-left: auto;
+  opacity: 0.6;
+  transition: transform var(--motion-fast) var(--motion-ease);
+}
+.panel-section.is-open .panel-section-chev {
+  transform: rotate(90deg);
+}
+.panel-section-body {
+  display: grid;
+  gap: 10px;
+  padding: 4px 8px 8px;
 }
 
 @media (max-width: 640px) {
@@ -780,6 +865,10 @@ html[data-theme="night"] .field::placeholder {
     grid-template-columns:
       var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
       var(--lfn-right, 230px);
+  }
+  .studio-layout:has(.studio-tools-panel.is-collapsed) {
+    grid-template-columns:
+      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
   }
 }
 .panel-resizer {
@@ -1237,6 +1326,23 @@ html[data-theme="night"] .field::placeholder {
       0.9971 94.1%, 0.9975 94.9%, 0.9978 95.7%, 0.998 96.5%, 0.9981 97.3%,
       0.9982 98%, 0.9981 98.8%, 0.9981 99.4%, 0.9981 100%
     );
+}
+@keyframes lfn-page-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lfn-surface-pop {
+  from { opacity: 0; transform: translateY(4px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+main, .panel, article, .public-header {
+  animation: lfn-page-enter 160ms ease-out both;
+}
+button, a, input, textarea, select {
+  transition: color var(--motion-fast) ease, background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, opacity var(--motion-fast) ease, transform var(--motion-fast) ease;
+}
+.modal, [role="dialog"], .popup-select-menu, .notice {
+  animation: lfn-surface-pop 140ms ease-out both;
 }
 @media (prefers-reduced-motion: reduce) {
   *,

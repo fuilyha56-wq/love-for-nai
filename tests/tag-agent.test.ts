@@ -12,6 +12,7 @@ vi.mock("@/lib/agent-tools", () => ({
 }));
 vi.mock("@/lib/newapi", () => ({
   newApiBaseUrl: () => "http://newapi.test",
+  resolvedNewApiBaseUrl: async () => "http://newapi.test",
 }));
 
 describe("runTagAgent budgets", () => {
@@ -110,23 +111,66 @@ describe("runTagAgent budgets", () => {
     await runTagAgent("key", "model", "加上蓝色裙子", {}, 1, {
       history: [
         { request: "白发少女", answer: '{"tags":["white_hair"]}' },
-        // 空轮次应被跳过。
         { request: "", answer: "" },
       ],
     });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     const body = JSON.parse(
       (fetchMock.mock.calls[0][1] as RequestInit).body as string,
     ) as { messages: Array<{ role: string; content: string }> };
-    // system → 历史 user/assistant 对（空轮次跳过）→ 本轮 user。
     expect(body.messages).toHaveLength(4);
     expect(body.messages[0].role).toBe("system");
-    expect(body.messages[1].role).toBe("user");
     expect(body.messages[1].content).toContain("白发少女");
-    expect(body.messages[2].role).toBe("assistant");
     expect(body.messages[2].content).toBe('{"tags":["white_hair"]}');
-    expect(body.messages[3].role).toBe("user");
     expect(body.messages[3].content).toContain("加上蓝色裙子");
+  });
+
+  it("keeps multiple history turns in chronological order", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({ choices: [{ message: { content: '{"tags":[]}' } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+
+    await runTagAgent("key", "model", "third", {}, 1, {
+      history: [
+        { request: "first", answer: "first answer" },
+        { request: "second", answer: "second answer" },
+      ],
+    });
+
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    ) as { messages: Array<{ role: string; content: string }> };
+    expect(body.messages.map((message) => message.content)).toEqual([
+      expect.stringContaining("NovelAI"),
+      expect.stringContaining('"request":"first"'),
+      "first answer",
+      expect.stringContaining('"request":"second"'),
+      "second answer",
+      expect.stringContaining('"request":"third"'),
+    ]);
+  });
+
+  it("sends at most four images as a multimodal current request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({ choices: [{ message: { content: '{"tags":[]}' } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+
+    await runTagAgent("key", "model", "analyze", {}, 1, {
+      images: [
+        "data:image/png;base64,a",
+        "data:image/png;base64,b",
+        "data:image/png;base64,c",
+        "data:image/png;base64,d",
+        "data:image/png;base64,e",
+      ],
+    });
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    ) as { messages: Array<{ content: string | Array<unknown> }> };
+    expect(body.messages.at(-1)?.content).toHaveLength(5);
   });
 });

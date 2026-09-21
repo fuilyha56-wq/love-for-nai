@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getChatToken, isNaiImageModel } from "@/lib/newapi";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { outboundFetch } from "@/lib/outbound";
+import { findHistory, historyImagePath } from "@/lib/history";
+import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { runTagAgent } from "@/lib/tag-agent";
 import { parseTagSuggestion } from "@/lib/tag-suggestion";
 import {
@@ -24,8 +27,12 @@ type AssistantPayload = {
   request?: string;
   currentPrompt?: string;
   currentNegativePrompt?: string;
-  // data URL（png/jpeg/webp），随需求一起发给视觉模型识图。
+  // 兼容旧客户端的单图 data URL。
   image?: string;
+  // 当前用户可访问的历史 ID；服务端读取图片，不信任客户端 URL。
+  historyIds?: unknown;
+  // data URL 图片数组，最多 4 张。
+  images?: unknown;
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
 
@@ -52,6 +59,76 @@ type ValidationResult =
   | { status: "valid"; tag: ValidatedTag }
   | { status: "rejected" }
   | { status: "unavailable" };
+
+const DATA_IMAGE_RE =
+  /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+const MAX_ASSISTANT_IMAGE_BYTES = 8_000_000;
+const MAX_ASSISTANT_IMAGES = 4;
+const MAX_ASSISTANT_TOTAL_IMAGE_BYTES = 24_000_000;
+
+function validDataImage(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= MAX_ASSISTANT_IMAGE_BYTES &&
+    DATA_IMAGE_RE.test(value)
+  );
+}
+
+async function readHistoryImages(
+  userId: number,
+  ids: unknown,
+): Promise<{ images: string[]; invalid: boolean }> {
+  if (!Array.isArray(ids)) return { images: [], invalid: false };
+  const uniqueIds = [
+    ...new Set(
+      ids.filter(
+        (id): id is string =>
+          typeof id === "string" && /^[a-zA-Z0-9-]{1,100}$/.test(id),
+      ),
+    ),
+  ];
+  const invalidId =
+    ids.length > MAX_ASSISTANT_IMAGES ||
+    ids.some(
+      (id) =>
+        typeof id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(id),
+    );
+  const images: string[] = [];
+  let totalBytes = 0;
+  let invalid = invalidId;
+  for (const id of uniqueIds.slice(0, MAX_ASSISTANT_IMAGES)) {
+    const item = await findHistory(userId, id);
+    if (!item) {
+      invalid = true;
+      continue;
+    }
+    let data: Buffer | null = null;
+    if (item.remote) {
+      data = (await getRemoteHistoryImage(userId, item.imagePath))?.data ?? null;
+    } else {
+      data = await readFile(historyImagePath(userId, item.imagePath)).catch(
+        () => null,
+      );
+    }
+    if (!data || !data.length || data.length > MAX_ASSISTANT_IMAGE_BYTES) {
+      invalid = true;
+      continue;
+    }
+    if (totalBytes + data.length > MAX_ASSISTANT_TOTAL_IMAGE_BYTES) {
+      invalid = true;
+      break;
+    }
+    const extension = item.imagePath.split(".").pop()?.toLowerCase();
+    const mime = extension === "jpg" ? "jpeg" : extension;
+    if (mime !== "png" && mime !== "jpeg" && mime !== "webp") {
+      invalid = true;
+      continue;
+    }
+    images.push(`data:image/${mime};base64,${data.toString("base64")}`);
+    totalBytes += data.length;
+  }
+  return { images, invalid };
+}
 
 async function validateTag(name: string): Promise<ValidationResult> {
   const normalized = normalizeTag(name);
@@ -116,7 +193,7 @@ async function runJob(
   model: string,
   request: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string },
-  image: string,
+  images: string[],
 ) {
   try {
     // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
@@ -129,7 +206,7 @@ async function runJob(
       onStep: (step) => {
         job.steps.push(step);
       },
-      image: image || undefined,
+      images,
       history,
     });
     const suggestion = parseTagSuggestion(content);
@@ -146,6 +223,9 @@ async function runJob(
     job.result = {
       suggestion: {
         ...(suggestion.message ? { message: suggestion.message } : {}),
+        ...(suggestion.englishDescription
+          ? { englishDescription: suggestion.englishDescription }
+          : {}),
         prompt: mergeTagsIntoPrompt(suggestion.prompt, validTags),
         negativePrompt: suggestion.negativePrompt,
         parameters: suggestion.parameters,
@@ -169,6 +249,9 @@ async function runJob(
         answer: content,
         createdAt: new Date().toISOString(),
         ...(suggestion.message ? { message: suggestion.message } : {}),
+        ...(suggestion.englishDescription
+          ? { englishDescription: suggestion.englishDescription }
+          : {}),
         prompt: job.result.suggestion.prompt,
         negativePrompt: job.result.suggestion.negativePrompt,
         parameters: job.result.suggestion.parameters,
@@ -216,20 +299,91 @@ export async function POST(request: Request) {
       { status: 400 },
     );
 
+  if (body.historyIds !== undefined && !Array.isArray(body.historyIds))
+    return NextResponse.json(
+      { message: "historyIds 必须是数组" },
+      { status: 400 },
+    );
+  if (body.images !== undefined && !Array.isArray(body.images))
+    return NextResponse.json(
+      { message: "images 必须是数组" },
+      { status: 400 },
+    );
+  const requestedImageCount =
+    (Array.isArray(body.historyIds) ? body.historyIds.length : 0) +
+    (Array.isArray(body.images) ? body.images.length : 0) +
+    (body.image === undefined ? 0 : 1);
+  if (requestedImageCount > MAX_ASSISTANT_IMAGES)
+    return NextResponse.json(
+      { message: "最多只能分析 4 张图片" },
+      { status: 400 },
+    );
+  if (body.image !== undefined && !validDataImage(body.image))
+    return NextResponse.json(
+      { message: "image 必须是 8MB 以内的 PNG、JPEG 或 WEBP data URL" },
+      { status: 400 },
+    );
+  if (
+    Array.isArray(body.images) &&
+    body.images.some((image) => !validDataImage(image))
+  )
+    return NextResponse.json(
+      { message: "images 只能包含 8MB 以内的 PNG、JPEG 或 WEBP data URL" },
+      { status: 400 },
+    );
+  if (
+    Array.isArray(body.historyIds) &&
+    body.historyIds.some(
+      (id) => typeof id !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(id),
+    )
+  )
+    return NextResponse.json(
+      { message: "historyIds 包含不合法的历史 ID" },
+      { status: 400 },
+    );
+
   try {
+    const directImages = [
+      ...(Array.isArray(body.images) ? (body.images as string[]) : []),
+      ...(typeof body.image === "string" ? [body.image] : []),
+    ];
+    const historyResult = await readHistoryImages(
+      session.userId,
+      body.historyIds,
+    );
+    if (historyResult.invalid)
+      return NextResponse.json(
+        { message: "部分 historyIds 不存在、不可访问或图片不受支持" },
+        { status: 400 },
+      );
+    const historyImages = historyResult.images;
+    const images = [...directImages, ...historyImages].slice(
+      0,
+      MAX_ASSISTANT_IMAGES,
+    );
+    const estimatedTotalBytes = images.reduce(
+      (total, image) => total + Math.ceil((image.length * 3) / 4),
+      0,
+    );
+    if (estimatedTotalBytes > MAX_ASSISTANT_TOTAL_IMAGE_BYTES)
+      return NextResponse.json(
+        { message: "图片总大小不能超过 24MB" },
+        { status: 400 },
+      );
     const key = await getChatToken(session, body.model);
-    // 仅接受 data URL 图片，限制 8MB base64（≈6MB 原图）。
-    const image =
-      typeof body.image === "string" &&
-      /^data:image\/(png|jpeg|webp);base64,/.test(body.image) &&
-      body.image.length <= 8_000_000
-        ? body.image
-        : "";
     const job = createAssistantJob(session.userId);
-    void runJob(job, session.userId, key, body.model, body.request, {
-      currentPrompt: body.currentPrompt,
-      currentNegativePrompt: body.currentNegativePrompt,
-    }, image);
+    void runJob(
+      job,
+      session.userId,
+      key,
+      body.model,
+      body.request,
+      {
+        currentPrompt: body.currentPrompt,
+        currentNegativePrompt: body.currentNegativePrompt,
+      },
+      images,
+    );
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(

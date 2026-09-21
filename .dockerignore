@@ -8,3 +8,5 @@ README.md
 *.backup
 src/lib/compat-api.ts.backup.rsh*.py
 *.tar
+*.tar.gz
+.zcode

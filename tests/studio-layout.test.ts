@@ -5,15 +5,16 @@ import { DEFAULT_APPEARANCE_PREFERENCES } from "@/lib/appearance-store";
 import { balancePreview } from "@/app/image/balance-preview";
 import { NaiBalanceMeter } from "@/app/image/nai-balance-meter";
 
-const appearance = vi.hoisted(() => ({ theme: "paper" }));
+const appearance = vi.hoisted(() => ({ theme: "paper", workspaceLayout: "lfn" }));
 vi.mock("@/app/appearance", () => ({
-  useAppearance: () => ({ preferences: { ...DEFAULT_APPEARANCE_PREFERENCES, theme: appearance.theme } }),
+  useAppearance: () => ({ preferences: { ...DEFAULT_APPEARANCE_PREFERENCES, theme: appearance.theme, workspaceLayout: appearance.workspaceLayout } }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
 import ImageStudio from "@/app/image/studio";
 
-function renderStudio(theme: string) {
+function renderStudio(theme: string, workspaceLayout = "lfn") {
   appearance.theme = theme;
+  appearance.workspaceLayout = workspaceLayout;
   return renderToStaticMarkup(createElement(ImageStudio, { userName: "体验用户", authenticated: false }));
 }
 
@@ -34,6 +35,18 @@ describe("工作台布局按主题隔离", () => {
     expect(left.indexOf("导入图片")).toBeLessThan(left.indexOf('aria-label="模型"'));
     expect(left.indexOf('aria-label="采样步数"')).toBeLessThan(left.indexOf("生成张数"));
     expect(left.indexOf("生成张数")).toBeLessThan(left.indexOf("多角色"));
+  });
+
+  it("NovelAI Local 将提示词和采样参数放在左栏且不重复角色区", () => {
+    const html = renderStudio("paper", "nlw");
+    const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    const canvas = html.slice(html.indexOf('<section class="studio-canvas'), html.indexOf('aria-label="调整右侧面板宽度"'));
+    expect(html).toContain('data-workspace-layout="nlw"');
+    expect(left).toContain("<textarea");
+    expect(left).toContain('aria-label="采样步数"');
+    expect(left.match(/多角色/g)).toHaveLength(1);
+    expect(canvas).not.toContain("<textarea");
+    expect(canvas).not.toContain("执行生成");
   });
 
   it("NAI 只在左侧渲染提示词、紧凑参数和生成区", () => {
