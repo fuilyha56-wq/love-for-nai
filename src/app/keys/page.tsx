@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import {
   ArrowLeft,
   Copy,
@@ -165,7 +167,7 @@ export default function KeysPage() {
     }
   }
   return (
-    <main className="min-h-screen bg-[var(--paper)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
         <div className="flex items-center gap-3">
           <KeyRound size={20} className="text-[var(--rose)]" />
@@ -179,6 +181,7 @@ export default function KeysPage() {
           返回工作台
         </Link>
       </header>
+      <WorkspaceNav />
       <section className="mx-auto max-w-5xl p-4 sm:p-8">
         <form onSubmit={create} className="flex gap-2">
           <input

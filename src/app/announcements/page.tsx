@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import { LoaderCircle, Pin, RotateCcw, Send } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -108,8 +110,9 @@ export default function AnnouncementsPage() {
   const latest = items[0];
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader current="announcements" />
+      <WorkspaceNav />
       <section className="mx-auto max-w-3xl p-4 sm:p-7">
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
         {loadState === "error" ? (

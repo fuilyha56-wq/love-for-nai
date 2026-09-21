@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ListFilter } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -346,7 +348,7 @@ function ProductPage({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
         <div className="flex items-center gap-3 text-[var(--rose)]">
           {icon}
@@ -360,6 +362,7 @@ function ProductPage({
           返回工作台
         </Link>
       </header>
+      <WorkspaceNav />
       <section className="mx-auto max-w-6xl p-4 sm:p-8">{children}</section>
     </main>
   );

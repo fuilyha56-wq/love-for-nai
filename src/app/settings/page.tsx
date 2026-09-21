@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import {
   ArrowLeft,
   Check,
@@ -414,7 +416,7 @@ function SettingsPageContent() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--panel)]/95 px-4 backdrop-blur sm:px-7">
         <div className="flex min-w-0 items-center gap-3">
           <Palette size={20} className="shrink-0 text-[var(--rose)]" />
@@ -430,6 +432,7 @@ function SettingsPageContent() {
           <ArrowLeft size={16} /> 返回工作台
         </Link>
       </header>
+      <WorkspaceNav />
 
       <section className="mx-auto max-w-5xl space-y-6 p-4 sm:p-7">
         {!ready && (

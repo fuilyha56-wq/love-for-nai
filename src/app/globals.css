@@ -1246,3 +1246,44 @@ html[data-theme="night"] .field::placeholder {
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* Shared secondary pages: theme-aware surfaces and a persistent route map. */
+.workspace-page > header { background: var(--panel); min-height: 64px; height: auto; padding-block: 12px; gap: 16px; }
+.workspace-page > header > div { flex-wrap: wrap; }
+.workspace-page > header > a { flex-shrink: 0; font-size: 12px; }
+.workspace-heading { max-width: 1200px; margin: 0 auto; padding: 24px 28px 0; }
+.workspace-tabs { display: flex; gap: 4px; overflow-x: auto; padding: 5px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.workspace-tabs a { display: flex; align-items: center; justify-content: center; flex: 1 0 auto; gap: 8px; padding: 11px 14px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--muted); transition: background 150ms, color 150ms; }
+.workspace-tabs a:hover { background: var(--surface-muted); color: var(--ink); }
+.workspace-tabs a[aria-current="page"] { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); }
+.workspace-tabs a:focus-visible, .workspace-help:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+.workspace-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 34px 0 12px; }
+.workspace-eyebrow { font-size: 10px; letter-spacing: .16em; font-weight: 700; color: var(--rose); }
+.workspace-eyebrow span { color: var(--muted); letter-spacing: .06em; margin-left: 8px; }
+.workspace-intro h1 { margin-top: 9px; font-size: clamp(26px, 4vw, 34px); line-height: 1.3; font-weight: 650; letter-spacing: -.03em; }
+.workspace-description { margin-top: 9px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.workspace-help { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--muted); font-size: 12px; }
+.workspace-help:hover { color: var(--rose); }
+.workspace-page > section { max-width: 1200px; padding: 20px 28px 56px; }
+.workspace-page .panel { border-radius: 16px; border: 1px solid var(--line); box-shadow: 0 4px 20px rgb(0 0 0 / .025); }
+.workspace-page .field { border-radius: 9px; min-height: 42px; background: var(--surface); }
+.workspace-page table th { font-size: 11px; letter-spacing: .04em; padding-block: 14px; }
+.workspace-page table td { padding-block: 14px; }
+html[data-theme="night"] { --surface: #272b2d; --surface-muted: #222628; }
+@media (max-width: 640px) {
+  .workspace-heading { padding: 16px 16px 0; }
+  .workspace-tabs a { padding: 10px 12px; font-size: 12px; }
+  .workspace-intro { padding-top: 25px; align-items: flex-start; }
+  .workspace-help { margin-top: 3px; font-size: 11px; }
+  .workspace-page > section { padding: 16px 16px 36px; }
+  .workspace-page > header { align-items: flex-start; }
+}
+/* Give the drawer's nested tools the same hierarchy as secondary pages. */
+html[data-theme="nai"] .nai-menu { padding: 8px 8px 16px; box-shadow: -20px 0 60px #0004; }
+html[data-theme="nai"] .nai-menu-label { margin-top: 22px; margin-bottom: 8px; font-size: 10px; letter-spacing: .14em; }
+html[data-theme="nai"] .nai-menu-item { min-height: 42px; border-radius: 9px; font-size: 13px; }
+html[data-theme="nai"] .nai-menu-item:focus-visible { outline: 2px solid var(--nai-action); outline-offset: -2px; }
+html[data-theme="nai"] .nai-menu-item[aria-expanded="true"] { background: var(--nai-raise); }
+html[data-theme="nai"] .nai-menu-sub { margin: 5px 18px 8px 27px; padding: 5px 0 5px 12px; border-left: 2px solid var(--line); }
+html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-size: 12px; color: var(--muted); }

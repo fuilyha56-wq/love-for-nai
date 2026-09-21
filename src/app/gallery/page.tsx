@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import { Eye, EyeOff, Heart, Link2, RotateCcw, Send } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -107,13 +109,14 @@ export default function GalleryPage() {
     } catch { setMessage("分享链接：" + url); }
   }
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader
         current="gallery"
         actionLabel="进入工作台"
         actionHref="/image"
         extraActions={<button type="button" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })} className="flex h-9 shrink-0 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-2.5 text-xs font-semibold text-[var(--rose)] sm:px-3"><Send size={14} /><span className="hidden sm:inline">投稿作品</span><span className="sm:hidden">投稿</span></button>}
       />
+      <WorkspaceNav />
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
         {expired && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{expired}</p>}
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}

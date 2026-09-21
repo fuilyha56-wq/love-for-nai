@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceNav } from "@/app/workspace-nav";
+
 import { ArrowLeft, CalendarCheck, Copy, Save, UserRound } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -178,7 +180,7 @@ export default function ProfilePage() {
   }
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
         <div className="flex items-center gap-3">
           <UserRound size={20} className="text-[var(--rose)]" />
@@ -191,6 +193,7 @@ export default function ProfilePage() {
           <ArrowLeft size={16} /> 返回工作台
         </Link>
       </header>
+      <WorkspaceNav />
       {expired && (
         <div className="mx-auto max-w-4xl px-4 pt-4 sm:px-8">
           <SessionExpiredNotice message={expired} />

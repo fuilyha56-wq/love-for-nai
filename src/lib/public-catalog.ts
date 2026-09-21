@@ -1,9 +1,7 @@
 import { adminHeaders, adminToken } from "@/lib/admin-auth";
 import { newApiBaseUrl } from "@/lib/newapi";
 import {
-  NEWAPI_BALANCE_PER_CNY,
-  newApiBalanceToCny,
-  pointPriceCny,
+  pointPriceUsd,
   snapshotFromRawPricing,
   TOKENS_PER_POINT,
   type RawModelPricing,
@@ -14,13 +12,13 @@ export type PublicModelKind = "image" | "chat";
 export type PublicModelPricing = {
   billingMode: "live" | "private_reference" | "unknown";
   liveType: "per_request" | "per_token" | "tiered" | "unknown";
-  liveCnyPerRequest?: number;
-  liveCnyPerUsageToken?: number;
+  liveUsdPerRequest?: number;
+  liveUsdPerUsageToken?: number;
   liveGroupName?: string;
   liveGroupRatio?: number;
   privatePointReference: {
     tokensPerPoint: number;
-    pointPriceCny: number;
+    pointPriceUsd: number;
     version: "V5" | "V4.5/旧版";
   } | null;
   note: string;
@@ -40,7 +38,7 @@ export type PublicCatalog = {
   asOf: string;
   stale: boolean;
   source: "upstream" | "fallback" | "snapshot";
-  currency: "CNY";
+  currency: "USD";
   conversion: string;
   message?: string;
 };
@@ -75,7 +73,7 @@ const FALLBACK_MODEL_IDS = [
 ] as const;
 
 const fallbackPricingNotes =
-  "当前未读取到上游实时价格，积分价格仅作私立参考；登录后以 NewAPI 实时价格为准。";
+  "当前未读取到上游实时价格，积分价格仅作标准预估；登录后以 NewAPI 实时价格为准。";
 let cached: { value: PublicCatalog; expiresAt: number } | null = null;
 let lastVerified: PublicCatalog | null = null;
 
@@ -124,11 +122,11 @@ function modelCapabilities(id: string, kind: PublicModelKind): string[] {
 }
 
 function privateReference(id: string): PublicModelPricing["privatePointReference"] {
-  const price = pointPriceCny(id);
+  const price = pointPriceUsd(id);
   if (price == null) return null;
   return {
     tokensPerPoint: TOKENS_PER_POINT,
-    pointPriceCny: price,
+    pointPriceUsd: price,
     version: id.toLowerCase().includes("nai-v5") ? "V5" : "V4.5/旧版",
   };
 }
@@ -151,10 +149,8 @@ function livePricing(
     return {
       billingMode: "live",
       liveType: "tiered",
-      liveCnyPerRequest: newApiBalanceToCny(snapshot.inEnvelopeUsd ?? 0),
-      liveCnyPerUsageToken: newApiBalanceToCny(
-        snapshot.outOfEnvelopeBalancePerUsageToken ?? 0,
-      ),
+      liveUsdPerRequest: (snapshot.inEnvelopeUsd ?? 0),
+      liveUsdPerUsageToken: (snapshot.outOfEnvelopeBalancePerUsageToken ?? 0),
       liveGroupName: groupName,
       liveGroupRatio: ratio,
       privatePointReference,
@@ -185,7 +181,7 @@ function livePricing(
     return {
       billingMode: "live",
       liveType: "per_request",
-      liveCnyPerRequest: newApiBalanceToCny(price * ratio),
+      liveUsdPerRequest: price * ratio,
       liveGroupName: groupName,
       liveGroupRatio: ratio,
       privatePointReference,
@@ -197,7 +193,7 @@ function livePricing(
   return {
     billingMode: "live",
     liveType: "per_token",
-    liveCnyPerUsageToken: newApiBalanceToCny(modelRatio * 2e-6 * ratio),
+    liveUsdPerUsageToken: modelRatio * 2e-6 * ratio,
     liveGroupName: groupName,
     liveGroupRatio: ratio,
     privatePointReference,
@@ -212,7 +208,7 @@ function fallbackImagePricing(id: string): PublicModelPricing | null {
     billingMode: "private_reference",
     liveType: "unknown",
     privatePointReference: reference,
-    note: "当前暂无 NewAPI 实时数据，这里只显示你提供的私立积分参考价，不代表 NewAPI 实际扣费。",
+    note: "当前暂无 NewAPI 实时数据，这里显示标准积分预估价，不代表 NewAPI 实际扣费。",
   };
 }
 
@@ -234,8 +230,8 @@ function fallbackCatalog(message?: string): PublicCatalog {
     asOf: new Date().toISOString(),
     stale: true,
     source: "fallback",
-    currency: "CNY",
-    conversion: `实时价格不可用。私立参考：1 积分 = ${TOKENS_PER_POINT} token；V4.5 每积分 ¥0.04；V5 每积分 ¥0.06。${fallbackPricingNotes}`,
+    currency: "USD",
+    conversion: `实时价格不可用。标准预估：1 积分 = ${TOKENS_PER_POINT} token；每积分 $0.03；V5 限制档 $0.06；V4.5 限制档免费。${fallbackPricingNotes}`,
     ...(message ? { message } : {}),
   };
 }
@@ -299,8 +295,8 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
     asOf: new Date().toISOString(),
     stale: false,
     source: "upstream",
-    currency: "CNY",
-    conversion: `实时价格来自 NewAPI；${NEWAPI_BALANCE_PER_CNY} NewAPI 余额单位 = 1 元人民币。私立参考：1 积分 = ${TOKENS_PER_POINT} token，V4.5 每积分 ¥0.04，V5 每积分 ¥0.06。`,
+    currency: "USD",
+    conversion: `实时价格来自 NewAPI；500000 quota = 1 美元。标准预估：1 积分 = ${TOKENS_PER_POINT} token，每积分 $0.03，V5 限制档 $0.06，V4.5 限制档免费。`,
   };
 }
 
@@ -329,5 +325,3 @@ export async function getPublicCatalog(): Promise<PublicCatalog> {
     return value;
   }
 }
-
-export { NEWAPI_BALANCE_PER_CNY };
