@@ -43,6 +43,14 @@ describe("runtime platform config", () => {
     expect(kept.newApiAdminToken).toBe("live-secret-token-5678");
   });
 
+  it("ignores legacy or edited registration groups and keeps ikun", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-runtime-group-"));
+    process.env.LFN_REGISTER_GROUP = "Draw";
+    resetRuntimeConfigCache();
+    expect((await getRuntimeSettings()).registerGroup).toBe("ikun");
+    expect((await updateRuntimeSettings({ registerGroup: "default" })).registerGroup).toBe("ikun");
+  });
+
   it("upserts endpoints without overwriting a masked token", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "lfn-runtime-ep-"));
     process.env.LFN_DATA_DIR = dir;

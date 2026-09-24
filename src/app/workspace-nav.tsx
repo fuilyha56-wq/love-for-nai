@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   ArrowUpRight,
   BookOpen,
+  BookText,
   Coins,
   History,
   Images,
@@ -15,6 +16,13 @@ import {
 } from "lucide-react";
 
 const destinations = [
+  {
+    href: "/stories",
+    label: "故事工作台",
+    detail: "续写、分支并管理你的长篇故事。",
+    icon: BookText,
+    group: "创作",
+  },
   {
     href: "/account",
     label: "我的账号",
@@ -71,7 +79,7 @@ export function WorkspaceNav() {
   const current =
     destinations.find((item) => item.href === pathname) ??
     (pathname === "/keys"
-      ? { ...destinations[4], label: "API 密钥" }
+      ? { ...destinations[5], label: "API 密钥" }
       : destinations[0]);
   return (
     <div className="workspace-heading">

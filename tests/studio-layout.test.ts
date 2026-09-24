@@ -18,11 +18,16 @@ function renderStudio(theme: string, workspaceLayout = "lfn") {
   return renderToStaticMarkup(createElement(ImageStudio, { userName: "体验用户", authenticated: false }));
 }
 
+function studioCanvas(html: string): string {
+  const start = html.indexOf('<section class="studio-canvas');
+  return html.slice(start, html.indexOf("</section>", start) + "</section>".length);
+}
+
 describe("工作台布局按主题隔离", () => {
   it.each(["paper", "dusk", "night"])("%s 保留顶部品牌、中央提示词和中央生成按钮", (theme) => {
     const html = renderStudio(theme);
     const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
-    const canvas = html.slice(html.indexOf('<section class="studio-canvas'), html.indexOf('aria-label="调整右侧面板宽度"'));
+    const canvas = studioCanvas(html);
     expect(html).toContain('data-studio-layout="classic"');
     expect(html).toContain("<header");
     expect(left).not.toContain("<textarea");
@@ -40,7 +45,7 @@ describe("工作台布局按主题隔离", () => {
   it("NovelAI Local 将提示词和采样参数放在左栏且不重复角色区", () => {
     const html = renderStudio("paper", "nlw");
     const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
-    const canvas = html.slice(html.indexOf('<section class="studio-canvas'), html.indexOf('aria-label="调整右侧面板宽度"'));
+    const canvas = studioCanvas(html);
     expect(html).toContain('data-workspace-layout="nlw"');
     expect(left).toContain("<textarea");
     expect(left).toContain('aria-label="采样步数"');
@@ -52,7 +57,7 @@ describe("工作台布局按主题隔离", () => {
   it("NAI 只在左侧渲染提示词、紧凑参数和生成区", () => {
     const html = renderStudio("nai");
     const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
-    const canvas = html.slice(html.indexOf('<section class="studio-canvas'), html.indexOf('aria-label="调整右侧面板宽度"'));
+    const canvas = studioCanvas(html);
     expect(html).toContain('data-studio-layout="nai"');
     expect(html).not.toContain("<header");
     expect(left).toContain("<textarea");

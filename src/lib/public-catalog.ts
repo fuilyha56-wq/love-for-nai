@@ -134,14 +134,14 @@ function privateReference(id: string): PublicModelPricing["privatePointReference
 function livePricing(
   entry: RawPricing,
   modelId: string,
-  drawRatio: number,
-  hasDrawRatio: boolean,
+  ikunRatio: number,
+  hasIkunRatio: boolean,
 ): PublicModelPricing {
-  const ratio = boundedNumber(drawRatio, 1_000_000);
-  const groupName = "Draw";
-  const baseNote = hasDrawRatio
-    ? "实时读取 NewAPI 的公开 Draw 分组倍率。"
-    : "未读取到 Draw 分组倍率，登录后以账号实际结算为准。";
+  const ratio = boundedNumber(ikunRatio, 1_000_000);
+  const groupName = "ikun";
+  const baseNote = hasIkunRatio
+    ? "实时读取 NewAPI 的公开 ikun 分组倍率。"
+    : "未读取到 ikun 分组倍率，登录后以账号实际结算为准。";
   const privatePointReference = privateReference(modelId);
   const snapshot = snapshotFromRawPricing(modelId, entry, ratio, groupName);
 
@@ -257,8 +257,8 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
     (entry): entry is RawPricing => Boolean(entry) && typeof entry === "object",
   );
 
-  let drawRatio = 1;
-  let hasDrawRatio = false;
+  let ikunRatio = 1;
+  let hasIkunRatio = false;
   try {
     const groupsResponse = await fetch(`${baseUrl}/api/user/self/groups`, {
       headers,
@@ -269,12 +269,12 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
       const groupsPayload = (await readJson(groupsResponse)) as {
         data?: Record<string, unknown>;
       };
-      const draw = groupsPayload.data?.Draw || groupsPayload.data?.draw;
-      if (draw && typeof draw === "object") {
-        const ratio = finiteNumber((draw as { ratio?: unknown }).ratio, -1);
+      const ikun = groupsPayload.data?.ikun || groupsPayload.data?.Ikun;
+      if (ikun && typeof ikun === "object") {
+        const ratio = finiteNumber((ikun as { ratio?: unknown }).ratio, -1);
         if (ratio >= 0 && ratio <= 1_000_000) {
-          drawRatio = ratio;
-          hasDrawRatio = true;
+          ikunRatio = ratio;
+          hasIkunRatio = true;
         }
       }
     }
@@ -286,7 +286,7 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
   for (const entry of rawEntries.slice(0, MAX_MODELS)) {
     const id = cleanText(entry.model_name);
     if (!MODEL_PATTERN.test(id) || byId.has(id)) continue;
-    byId.set(id, makeModel(id, livePricing(entry, id, drawRatio, hasDrawRatio)));
+    byId.set(id, makeModel(id, livePricing(entry, id, ikunRatio, hasIkunRatio)));
   }
   if (!byId.size) throw new Error("上游没有可展示的 NAI 模型");
 

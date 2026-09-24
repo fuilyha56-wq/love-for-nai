@@ -165,7 +165,7 @@ export default function PricingPage() {
           <section className="mt-10 grid gap-4 lg:grid-cols-3">
             <article className="panel rounded-xl p-5 lg:col-span-2">
               <div className="flex items-start justify-between gap-4"><div><p className="text-xs font-bold uppercase tracking-[0.15em] text-[var(--rose)]">NewAPI live price</p><h2 className="mt-2 font-[var(--font-display)] text-2xl">实时 NewAPI 价格</h2></div><WandSparkles className="text-[var(--rose)]" size={24} /></div>
-              <p className="mt-4 text-sm leading-7 text-[var(--muted)]">模型卡中的实时价格直接来自 NewAPI 当前公开计价接口，并按当前公开 Draw 分组倍率换算成美元。按次模型按每张显示；分档/按 token 模型会注明实际结算方式。</p>
+              <p className="mt-4 text-sm leading-7 text-[var(--muted)]">模型卡中的实时价格直接来自 NewAPI 当前公开计价接口，并按当前公开 ikun 分组倍率换算成美元。按次模型按每张显示；分档/按 token 模型会注明实际结算方式。</p>
               <p className="mt-3 rounded-lg bg-[var(--surface-muted)] p-3 text-xs leading-5 text-[var(--muted)]">NewAPI 原始余额、美元和模型价格单位不会与标准积分混算。真实扣费以请求发生时的 NewAPI / LFN 服务端结算为准。</p>
             </article>
             <article className="rounded-xl bg-[#292d2c] p-5 text-white shadow-sm"><p className="text-xs font-bold uppercase tracking-[0.15em] text-[#d9c9a5]">Pricing standard</p><h2 className="mt-2 font-[var(--font-display)] text-2xl">标准积分规则</h2><div className="mt-4 space-y-2 text-sm leading-6 text-white/75"><p><b className="text-white">1 积分 = {TOKENS_PER_POINT} token</b></p><p>动态消耗：<b className="text-white">$0.03 / 积分</b></p><p>限制档：<b className="text-white">V5 $0.06 · V4.5 免费</b></p></div><p className="mt-4 text-xs leading-5 text-white/50">500,000 quota = $1。AFF 与 Anlas 分别计算；标准预估不修改上游计费配置。</p></article>

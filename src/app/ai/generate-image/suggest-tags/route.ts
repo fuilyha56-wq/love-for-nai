@@ -2,8 +2,10 @@ import {
   bearerAuthorization,
   modelAlias,
   proxyNewApi,
+  requireIkunExternalIdentity,
 } from "@/lib/compat-api";
 import { resolvedNaiImageUpstream } from "@/lib/newapi";
+import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 
 export async function GET(request: Request): Promise<Response> {
   const authorization = bearerAuthorization(request);
@@ -35,13 +37,22 @@ async function suggestTags(
 ): Promise<Response> {
   if (typeof prompt !== "string" || !prompt.trim())
     return Response.json({ message: "prompt is required" }, { status: 400 });
+  const authorization = bearerAuthorization(request);
+  if (authorization instanceof Response) return authorization;
+  const identity = await requireIkunExternalIdentity(authorization).catch(() => null);
+  if (!identity)
+    return Response.json(
+      { error: { message: "暂时无法连接账号服务，请稍后重试", code: "lfn_account_service_unavailable" } },
+      { status: 502 },
+    );
+  if (identity instanceof Response) return identity;
   const native = await resolvedNaiImageUpstream();
   if (native) {
     const params = new URLSearchParams({
       prompt: prompt.trim(),
       model: String(model || "nai-diffusion-3"),
     });
-    const upstream = await fetch(
+    const upstream = await fetchWithModelConcurrency(
       `${native.baseUrl}/ai/generate-image/suggest-tags?${params.toString()}`,
       {
         method: "GET",

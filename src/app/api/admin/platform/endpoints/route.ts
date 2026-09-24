@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { registry } from "@/lib/adapters/registry";
-import type { EndpointConfig } from "@/lib/adapters/types";
+import { parseRuntimeEndpoint } from "@/lib/platform-config-input";
 import {
   InvalidJsonError,
   invalidJsonResponse,
-  optionalNumber,
   optionalString,
   parseJsonBody,
 } from "@/lib/request";
@@ -15,33 +14,6 @@ import {
   publicEndpoint,
   upsertRuntimeEndpoint,
 } from "@/lib/runtime-config";
-
-const TYPES = new Set(["auth", "image", "wallet"]);
-const ADAPTERS = new Set(["newapi", "local", "openai_compat", "gateway"]);
-
-function parseEndpoint(raw: Record<string, unknown>, partial = false): Partial<EndpointConfig> {
-  const type = optionalString(raw.type);
-  const adapterType = optionalString(raw.adapterType);
-  if (type && !TYPES.has(type)) throw new Error("端点类型不合法");
-  if (adapterType && !ADAPTERS.has(adapterType)) throw new Error("适配器类型不合法");
-  if (!partial && (!type || !adapterType || !optionalString(raw.name)?.trim()))
-    throw new Error("请填写端点类型、适配器和名称");
-  const configRaw = raw.config && typeof raw.config === "object" && !Array.isArray(raw.config)
-    ? (raw.config as Record<string, unknown>)
-    : {};
-  return {
-    id: optionalString(raw.id),
-    type: type as EndpointConfig["type"] | undefined,
-    adapterType,
-    name: optionalString(raw.name),
-    enabled: typeof raw.enabled === "boolean" ? raw.enabled : undefined,
-    priority: optionalNumber(raw.priority),
-    config: {
-      baseUrl: optionalString(configRaw.baseUrl) ?? optionalString(raw.baseUrl),
-      token: optionalString(configRaw.token) ?? optionalString(raw.token),
-    },
-  };
-}
 
 export async function GET() {
   const gate = await requireAdmin();
@@ -63,7 +35,7 @@ export async function POST(request: Request) {
   let raw: Record<string, unknown>;
   try {
     raw = await parseJsonBody(request);
-    const endpoint = await upsertRuntimeEndpoint(parseEndpoint(raw));
+    const endpoint = await upsertRuntimeEndpoint(parseRuntimeEndpoint(raw));
     await registry.reload();
     return NextResponse.json({ endpoint: publicEndpoint(endpoint) });
   } catch (error) {
@@ -83,7 +55,7 @@ export async function PUT(request: Request) {
     const raw = await parseJsonBody<Record<string, unknown>>(request);
     const id = optionalString(raw.id);
     if (!id) return NextResponse.json({ message: "缺少端点 id" }, { status: 400 });
-    const endpoint = await upsertRuntimeEndpoint({ id, ...parseEndpoint(raw, true) });
+    const endpoint = await upsertRuntimeEndpoint({ id, ...parseRuntimeEndpoint(raw, true) });
     await registry.reload();
     return NextResponse.json({ endpoint: publicEndpoint(endpoint) });
   } catch (error) {

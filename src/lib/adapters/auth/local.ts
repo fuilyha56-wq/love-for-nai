@@ -5,7 +5,7 @@
 
 import type { AuthAdapter, AuthUserInfo, EndpointConfig } from "../types";
 import { db } from "@/lib/db";
-import { createHash, randomBytes, timingSafeEqual } from "crypto";
+import { pbkdf2, randomBytes } from "node:crypto";
 
 // 使用 Node.js 内置 crypto 实现密码哈希（PBKDF2）
 const SALT_LENGTH = 16;
@@ -15,7 +15,7 @@ const DIGEST = "sha512";
 
 function hashPassword(password: string, salt: Buffer): Promise<string> {
   return new Promise((resolve, reject) => {
-    require("crypto").pbkdf2(
+    pbkdf2(
       password,
       salt,
       HASH_ITERATIONS,
@@ -149,7 +149,7 @@ export function createLocalAuthAdapter(config: EndpointConfig): AuthAdapter {
 
     async listUsers(filters) {
       let query = "SELECT id, username, email, display_name, role, status FROM lfn_users WHERE 1=1";
-      const params: any[] = [];
+      const params: unknown[] = [];
       if (filters?.role !== undefined) {
         params.push(filters.role);
         query += ` AND role = $${params.length}`;
@@ -177,7 +177,7 @@ export function createLocalAuthAdapter(config: EndpointConfig): AuthAdapter {
 
     async updateUser(id: number | string, updates: Partial<AuthUserInfo>) {
       const sets: string[] = [];
-      const params: any[] = [];
+      const params: unknown[] = [];
       if (updates.email !== undefined) {
         params.push(updates.email);
         sets.push(`email = $${params.length}`);

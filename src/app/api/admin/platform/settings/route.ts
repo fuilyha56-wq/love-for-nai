@@ -1,25 +1,16 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { registry } from "@/lib/adapters/registry";
+import { parseRuntimeSettingsPatch } from "@/lib/platform-config-input";
 import {
   invalidJsonResponse,
-  optionalNumber,
-  optionalString,
   parseJsonBody,
 } from "@/lib/request";
 import {
   getRuntimeSettings,
   publicSettings,
   updateRuntimeSettings,
-  type RuntimeSettings,
 } from "@/lib/runtime-config";
-
-function parseBoolean(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return undefined;
-}
 
 export async function GET() {
   const gate = await requireAdmin();
@@ -37,36 +28,14 @@ export async function PUT(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  const authProvider = optionalString(raw.authProvider);
-  if (authProvider && authProvider !== "newapi" && authProvider !== "local")
-    return NextResponse.json({ message: "账号提供者只能是 newapi 或 local" }, { status: 400 });
-  const quotaPerUnit = optionalNumber(raw.quotaPerUnit);
-  if (quotaPerUnit !== undefined && (!Number.isInteger(quotaPerUnit) || quotaPerUnit <= 0))
-    return NextResponse.json({ message: "余额单位必须是正整数" }, { status: 400 });
-  const patch: Partial<RuntimeSettings> = {
-    authProvider: authProvider as RuntimeSettings["authProvider"] | undefined,
-    newApiBaseUrl: optionalString(raw.newApiBaseUrl),
-    newApiAdminToken: optionalString(raw.newApiAdminToken),
-    newApiAdminUserId: optionalString(raw.newApiAdminUserId),
-    registerGroup: optionalString(raw.registerGroup),
-    quotaPerUnit,
-    affGatewayUrl: optionalString(raw.affGatewayUrl),
-    affGatewayToken: optionalString(raw.affGatewayToken),
-    naiApiUrl: optionalString(raw.naiApiUrl),
-    naiApiToken: optionalString(raw.naiApiToken),
-    naiImageApiUrl: optionalString(raw.naiImageApiUrl),
-    naiImageApiToken: optionalString(raw.naiImageApiToken),
-    imageProviderUrl: optionalString(raw.imageProviderUrl),
-    imageProviderToken: optionalString(raw.imageProviderToken),
-    publicUrl: optionalString(raw.publicUrl),
-    sourceCodeUrl: optionalString(raw.sourceCodeUrl),
-    outboundProxy: optionalString(raw.outboundProxy),
-    trustProxy: parseBoolean(raw.trustProxy),
-    cookieSecure: parseBoolean(raw.cookieSecure),
-    remoteHistoryUrl: optionalString(raw.remoteHistoryUrl),
-    remoteHistoryToken: optionalString(raw.remoteHistoryToken),
-  };
-  const settings = await updateRuntimeSettings(patch);
-  await registry.reload();
-  return NextResponse.json({ settings: publicSettings(settings) });
+  try {
+    const settings = await updateRuntimeSettings(parseRuntimeSettingsPatch(raw));
+    await registry.reload();
+    return NextResponse.json({ settings: publicSettings(settings) });
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "保存失败" },
+      { status: 400 },
+    );
+  }
 }

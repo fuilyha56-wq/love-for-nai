@@ -40,8 +40,8 @@ function jsonResponse(payload: unknown, ok = true) {
   return { ok, json: async () => payload, status: ok ? 200 : 400 };
 }
 
-describe("图像密钥分组选择", () => {
-  it("UserUsableGroups 缺少 Draw 时仍按渠道分组创建密钥", async () => {
+describe("模型密钥分组选择", () => {
+  it("所有图像调用都使用 ikun 渠道创建密钥", async () => {
     selfMock.mockResolvedValue(
       jsonResponse({ success: true, data: { user: { group: "default" } } }),
     );
@@ -51,14 +51,13 @@ describe("图像密钥分组选择", () => {
         data: [
           {
             model_name: "nai-v4.5-full",
-            enable_groups: ["Draw", "Draw-Limit"],
+            enable_groups: ["ikun", "Draw"],
           },
         ],
       }),
     );
-    // 关键场景：可用分组里没有 Draw。
     groupsMock.mockResolvedValue(
-      jsonResponse({ success: true, data: ["default", "vip"] }),
+      jsonResponse({ success: true, data: ["default", "ikun"] }),
     );
     tokenListMock.mockResolvedValue(
       jsonResponse({ success: true, data: { items: [] } }),
@@ -75,7 +74,7 @@ describe("图像密钥分组选择", () => {
         success: true,
         data: {
           items: [
-            { id: 9, name: "lfn-image-studio-draw", status: 1, group: "Draw" },
+            { id: 9, name: "lfn-image-studio-ikun", status: 1, group: "ikun" },
           ],
         },
       });
@@ -93,17 +92,17 @@ describe("图像密钥分组选择", () => {
     const body = JSON.parse(
       tokenCreateMock.mock.calls[0][0].body as string,
     ) as Record<string, unknown>;
-    expect(body.group).toBe("Draw");
+    expect(body.group).toBe("ikun");
   });
 
   it("已有同分组密钥时直接复用，不再创建", async () => {
     selfMock.mockResolvedValue(
-      jsonResponse({ success: true, data: { user: { group: "vip" } } }),
+      jsonResponse({ success: true, data: { user: { group: "ikun" } } }),
     );
     pricingMock.mockResolvedValue(
       jsonResponse({
         success: true,
-        data: [{ model_name: "nai-v5-full", enable_groups: ["Draw"] }],
+        data: [{ model_name: "nai-v5-full", enable_groups: ["ikun", "Draw"] }],
       }),
     );
     groupsMock.mockResolvedValue(jsonResponse({ success: true, data: [] }));
@@ -112,7 +111,7 @@ describe("图像密钥分组选择", () => {
         success: true,
         data: {
           items: [
-            { id: 7, name: "lfn-image-studio-draw", status: 1, group: "Draw" },
+            { id: 7, name: "lfn-image-studio-ikun", status: 1, group: "ikun" },
           ],
         },
       }),

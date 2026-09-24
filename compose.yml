@@ -19,7 +19,7 @@ services:
       LFN_TRUST_PROXY: ${LFN_TRUST_PROXY:-false}
       LFN_ADMIN_TOKEN: ${LFN_ADMIN_TOKEN:-}
       LFN_ADMIN_USER_ID: ${LFN_ADMIN_USER_ID:-1}
-      LFN_REGISTER_GROUP: ${LFN_REGISTER_GROUP:-Draw}
+      LFN_REGISTER_GROUP: ikun
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

@@ -8,6 +8,7 @@ import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import {
   assertBodySize,
   assertImageModel,
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
       key = await getImageToken(session, body.model);
     }
     upstreamAttempted = true;
-    const upstream = await fetch(`${upstreamBaseUrl}/v1/images/generations`, {
+    const upstream = await fetchWithModelConcurrency(`${upstreamBaseUrl}/v1/images/generations`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${key}`,

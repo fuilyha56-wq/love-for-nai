@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { getSession } from "@/lib/session";
 import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
 import type { Session } from "@/lib/newapi";
@@ -48,11 +49,31 @@ export async function requireAdmin(): Promise<
   return { session, role };
 }
 
+export async function requireAdminRequest(request: Request): Promise<
+  { source: "session" | "token" } | { error: string }
+> {
+  const authorization = request.headers.get("authorization")?.trim() || "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  if (match) {
+    const supplied = Buffer.from(match[1].trim());
+    const expectedValue = await resolvedAdminTokenValue();
+    const expected = Buffer.from(expectedValue || "");
+    if (
+      supplied.length > 0 &&
+      supplied.length === expected.length &&
+      timingSafeEqual(supplied, expected)
+    ) return { source: "token" };
+    return { error: "管理令牌无效" };
+  }
+  const gate = await requireAdmin();
+  return "error" in gate ? gate : { source: "session" };
+}
+
 export function isAdminRole(role: number | null | undefined): boolean {
   return typeof role === "number" && role >= ROLE_ADMIN;
 }
 
-// LFN 服务级管理令牌：用于注册后把新用户划入 Draw 分组等
+// LFN 服务级管理令牌：用于注册后把新用户划入 ikun 分组等
 // 需要管理员权限的操作。对应 NewAPI root 用户的系统访问令牌。
 export function adminToken(): string | null {
   const token = process.env.LFN_ADMIN_TOKEN?.trim();

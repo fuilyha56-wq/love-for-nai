@@ -3,7 +3,19 @@
  * 支持 OpenAI 标准图像生成接口（包括 gateway 和其他兼容服务）
  */
 
-import type { ImageAdapter, ImageGenerationRequest, ImageGenerationResponse, EndpointConfig } from "../types";
+import type { EndpointConfig, ImageAdapter, ImageGenerationRequest } from "../types";
+import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
+
+type ImageResult = {
+  data?: Array<{ url?: string; b64_json?: string }>;
+  usage?: { model: string; width: number; height: number; samples: number; cost?: number };
+  error?: { message?: string };
+  message?: string;
+};
+
+type ModelResult = {
+  data?: Array<{ id?: string; capabilities?: string[] }>;
+};
 
 export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAdapter {
   const baseUrl = config.config.baseUrl?.replace(/\/+$/, "") || "";
@@ -14,6 +26,7 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
     name: config.name,
 
     async generate(request: ImageGenerationRequest, _userToken?: string) {
+      void _userToken;
       const payload: Record<string, unknown> = {
         model: request.model,
         prompt: request.prompt,
@@ -44,7 +57,7 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
         Authorization: `Bearer ${token}`,
       };
 
-      const response = await fetch(`${baseUrl}/v1/images/generations`, {
+      const response = await fetchWithModelConcurrency(`${baseUrl}/v1/images/generations`, {
         method: "POST",
         headers,
         body: JSON.stringify(payload),
@@ -53,14 +66,14 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
       });
 
       if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: { message: "图像生成失败" } }));
+        const error = await response.json().catch(() => ({ error: { message: "图像生成失败" } })) as ImageResult;
         throw new Error(error.error?.message || error.message || "图像生成失败");
       }
 
-      const result = await response.json();
+      const result = await response.json() as ImageResult;
       return {
         images: Array.isArray(result.data)
-          ? result.data.map((item: any) => ({
+          ? result.data.map((item) => ({
               url: item.url,
               b64_json: item.b64_json,
             }))
@@ -76,13 +89,13 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
           cache: "no-store",
         });
         if (!response.ok) return [];
-        const result = await response.json();
+        const result = await response.json() as ModelResult;
         return Array.isArray(result.data)
-          ? result.data.map((model: any) => ({
+          ? result.data.flatMap((model) => model.id ? [{
               id: model.id,
               name: model.id,
               capabilities: model.capabilities || ["generate"],
-            }))
+            }] : [])
           : [];
       } catch {
         return [];

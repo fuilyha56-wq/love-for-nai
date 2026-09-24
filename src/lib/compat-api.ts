@@ -35,6 +35,9 @@ import {
 } from "@/lib/image-request";
 import { registry } from "@/lib/adapters/registry";
 import type { ImageGenerationRequest } from "@/lib/adapters/types";
+import {
+  fetchWithModelConcurrency,
+} from "@/lib/model-concurrency";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -61,6 +64,23 @@ const droppedRequestHeaders = new Set([
 ]);
 
 type JsonRecord = Record<string, unknown>;
+
+export async function requireIkunExternalIdentity(authorization: string) {
+  const identity = await resolveExternalApiIdentity(authorization);
+  if (identity.group?.toLowerCase() !== "ikun") {
+    return Response.json(
+      {
+        error: {
+          message: "模型请求仅允许使用 ikun 分组密钥",
+          type: "invalid_request_error",
+          code: "ikun_group_required",
+        },
+      },
+      { status: 403 },
+    );
+  }
+  return identity;
+}
 
 /** 外部 API（source=api）请求的上游日志：用户名缺失时退化为掩码 key。 */
 function externalLogMeta(
@@ -129,6 +149,10 @@ export async function proxyNewApi(
   if (authorization instanceof Response) return authorization;
 
   try {
+    if (pathname.startsWith("/v1/images/")) {
+      const identity = await requireIkunExternalIdentity(authorization);
+      if (identity instanceof Response) return identity;
+    }
     assertBodySize(request);
     const headers = new Headers();
     const isFormDataBody = body instanceof FormData;
@@ -143,7 +167,7 @@ export async function proxyNewApi(
     const requestContentType = contentType ?? request.headers.get("content-type");
     if (requestContentType && !isFormDataBody)
       headers.set("Content-Type", requestContentType);
-    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}${pathname}`, {
+    const upstream = await fetchWithModelConcurrency(`${await resolvedNewApiBaseUrl()}${pathname}`, {
       method: request.method,
       headers,
       body:
@@ -237,21 +261,9 @@ export async function proxyImageWithCredits(
       { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
 
-  // 尝试从适配器获取图像服务
-  const imageAdapter = await registry.getImageAdapter();
-  
-  // 向后兼容：如果没有适配器，使用环境变量配置
-  const platformUpstream = await resolvedImageUpstream();
-  if (!imageAdapter && !platformUpstream) {
-    gatewayLogStart(
-      externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
-    )(-1);
-    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
-  }
-
-  let apiIdentity: { userId: number | null; username: string | null };
+  let apiIdentity: Awaited<ReturnType<typeof requireIkunExternalIdentity>>;
   try {
-    apiIdentity = await resolveExternalApiIdentity(authorization);
+    apiIdentity = await requireIkunExternalIdentity(authorization);
   } catch {
     return Response.json(
       {
@@ -264,20 +276,20 @@ export async function proxyImageWithCredits(
       { status: 502 },
     );
   }
+  if (apiIdentity instanceof Response) return apiIdentity;
+
+  // 尝试从适配器获取图像服务
+  const imageAdapter = await registry.getImageAdapter();
+  const platformUpstream = await resolvedImageUpstream();
+  if (!imageAdapter && !platformUpstream) {
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
+    )(-1);
+    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+  }
   const userId = apiIdentity.userId;
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
-  if (userId == null) {
-    gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
-    return paymentResponse(
-      await proxyNewApi(
-        request,
-        pathname,
-        imageRequest.body,
-        imageRequest.contentType,
-      ),
-      "newapi",
-    );
-  }
+  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -361,7 +373,7 @@ export async function proxyImageWithCredits(
       const finishUpstreamLog = gatewayLogStart(
         externalLogMeta(logUser, imageRequest, pathname),
       );
-      const upstream = await fetch(`${platformUpstream.baseUrl}${pathname}`, {
+      const upstream = await fetchWithModelConcurrency(`${platformUpstream.baseUrl}${pathname}`, {
         method: request.method,
         headers,
         body: imageRequest.body,
@@ -530,6 +542,17 @@ export async function proxyNaiNativeWithCredits(
       { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
 
+  let apiIdentity: Awaited<ReturnType<typeof requireIkunExternalIdentity>>;
+  try {
+    apiIdentity = await requireIkunExternalIdentity(authorization);
+  } catch {
+    return Response.json(
+      { error: { message: "暂时无法连接账号服务，请稍后重试", code: "lfn_account_service_unavailable" } },
+      { status: 502 },
+    );
+  }
+  if (apiIdentity instanceof Response) return apiIdentity;
+
   const preferImage = IMAGE_NATIVE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   const nativeUpstream = preferImage
     ? (await resolvedNaiImageUpstream()) || (await resolvedNaiAccountUpstream())
@@ -546,21 +569,6 @@ export async function proxyNaiNativeWithCredits(
     return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
   }
 
-  let apiIdentity: { userId: number | null; username: string | null };
-  try {
-    apiIdentity = await resolveExternalApiIdentity(authorization);
-  } catch {
-    return Response.json(
-      {
-        error: {
-          message: "暂时无法连接账号服务，请稍后重试",
-          type: "api_error",
-          code: "lfn_account_service_unavailable",
-        },
-      },
-      { status: 502 },
-    );
-  }
   const userId = apiIdentity.userId;
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
   // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
@@ -568,15 +576,7 @@ export async function proxyNaiNativeWithCredits(
     newApiFallback && newApiFallback !== "unsupported"
       ? newApiFallback.pathname
       : pathname;
-  if (userId == null) {
-    gatewayLogStart(
-      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
-    )(-1);
-    return paymentResponse(
-      await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
-      "newapi",
-    );
-  }
+  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -608,7 +608,7 @@ export async function proxyNaiNativeWithCredits(
     const finishNativeLog = gatewayLogStart(
       externalLogMeta(logUser, imageRequest, pathname),
     );
-    const upstream = await fetch(`${nativeUpstream.baseUrl}${pathname}`, {
+    const upstream = await fetchWithModelConcurrency(`${nativeUpstream.baseUrl}${pathname}`, {
       method: request.method,
       headers,
       body: imageRequest.body,

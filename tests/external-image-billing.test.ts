@@ -40,7 +40,7 @@ const charge = {
 };
 
 beforeEach(() => {
-  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null, username: null });
+  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null, username: null, group: null });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
   mocks.affGateway.mockReturnValue({
@@ -82,25 +82,18 @@ afterEach(() => {
 });
 
 describe("外部 LFN 图像入口计费", () => {
-  it("key 无法识别时透明代理到 NewAPI，不扣任何 AFF", async () => {
+  it("key 无法识别时拒绝模型请求，不透明绕过 ikun", async () => {
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
+    const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get("x-lfn-payment-source")).toBe("newapi");
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("ikun_group_required");
     expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
-    const calls = vi.mocked(fetch).mock.calls;
-    expect(
-      calls.some(
-        ([url, init]) =>
-          url === "http://newapi.test/v1/images/generations" &&
-          new Headers(init?.headers).get("Authorization") === "Bearer sk-test-key",
-      ),
-    ).toBe(true);
   });
 
   it("有效 key 自动识别用户且图包足够时走 Gateway，不把用户 key 发给上游", async () => {
-    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
 
@@ -121,7 +114,7 @@ describe("外部 LFN 图像入口计费", () => {
   });
 
   it("有效 key 但本地额度不足时透传到 NewAPI", async () => {
-    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
     mocks.trySpendImageCredits.mockResolvedValue(null);
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
@@ -136,6 +129,17 @@ describe("外部 LFN 图像入口计费", () => {
           new Headers(init?.headers).get("Authorization") === "Bearer sk-test-key",
       ),
     ).toBe(true);
+  });
+
+  it("非 ikun 分组密钥返回 403", async () => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
+    const { POST } = await import("@/app/v1/images/generations/route");
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("ikun_group_required");
+    expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
   });
 
   it("数据库故障时返回 502，不透传也不扣图包", async () => {

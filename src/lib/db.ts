@@ -27,11 +27,11 @@ function getPool(): Pool {
 }
 
 export const db = {
-  async query<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<{ rows: T[] }> {
+  async query<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<{ rows: T[] }> {
     return getPool().query<T>(text, params);
   },
 
-  async one<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<T> {
+  async one<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T> {
     const result = await getPool().query<T>(text, params);
     if (result.rows.length === 0) {
       throw new Error("No rows returned");
@@ -39,17 +39,17 @@ export const db = {
     return result.rows[0];
   },
 
-  async oneOrNone<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<T | null> {
+  async oneOrNone<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T | null> {
     const result = await getPool().query<T>(text, params);
     return result.rows.length > 0 ? result.rows[0] : null;
   },
 
-  async any<T extends QueryResultRow = any>(text: string, params?: any[]): Promise<T[]> {
+  async any<T extends QueryResultRow = QueryResultRow>(text: string, params?: unknown[]): Promise<T[]> {
     const result = await getPool().query<T>(text, params);
     return result.rows;
   },
 
-  async none(text: string, params?: any[]): Promise<void> {
+  async none(text: string, params?: unknown[]): Promise<void> {
     await getPool().query(text, params);
   },
 };
