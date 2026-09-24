@@ -44,7 +44,7 @@ const charge = {
 };
 
 beforeEach(() => {
-  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41" });
+  mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
   mocks.affGateway.mockResolvedValue({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { encode } from "@msgpack/msgpack";
 import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { parseNaiStreamMessage, readNaiMsgpackStream } from "@/lib/nai-stream";
@@ -130,5 +130,20 @@ describe("NAI native stream protocol", () => {
     for await (const event of readNaiMsgpackStream(stream)) events.push(event);
     expect(events.map((item) => item.eventType)).toEqual(["intermediate", "final"]);
     expect(Array.from(events[1].image || [])).toEqual([2]);
+  });
+
+  it("cancels the source after an error event ends parsing early", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(framed({ event_type: "error", message: "upstream failed" }));
+      },
+      cancel,
+    });
+    const events = [];
+    for await (const event of readNaiMsgpackStream(stream)) events.push(event);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ eventType: "error", message: "upstream failed" });
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });

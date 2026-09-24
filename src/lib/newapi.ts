@@ -193,21 +193,13 @@ async function readModelGroups(
   return entry?.enable_groups?.filter((item) => typeof item === "string") ?? [];
 }
 
-// 图像模型的渠道统一挂在 Draw 分组；UserUsableGroups 可能没收录它，
-// 所以密钥分组优先精确命中 Draw，而不是拿交集的第一个。
-const IMAGE_TOKEN_GROUP = "draw";
-
-function pickImageGroup(modelGroups: string[]): string | undefined {
-  const byLower = new Map(
-    modelGroups.map((group) => [group.toLowerCase(), group]),
-  );
-  return byLower.get(IMAGE_TOKEN_GROUP) ?? modelGroups[0];
-}
+const LFN_MODEL_GROUP = "ikun";
 
 async function resolveToken(
   session: Session,
   model: string,
   prefix: string,
+  requiredGroup?: string,
 ): Promise<string> {
   const baseUrl = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
@@ -231,22 +223,24 @@ async function resolveToken(
   const owned = new Set(
     [...(selfGroup ? [selfGroup] : []), ...usableGroups].filter(Boolean),
   );
-  // 图像模型：渠道分组就是密钥该用的分组（Draw），账号可用分组交集只用于校验。
-  const isImageKey = prefix === LFN_TOKEN_PREFIX;
-  const group = isImageKey
-    ? pickImageGroup(modelGroups)
+  const requiredGroupMatch = requiredGroup
+    ? modelGroups.find((item) => item.toLowerCase() === requiredGroup.toLowerCase())
+    : undefined;
+  const group = requiredGroup
+    ? requiredGroupMatch && owned.has(requiredGroupMatch)
+      ? requiredGroupMatch
+      : undefined
     : modelGroups.filter((item) => owned.has(item))[0];
   if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
+    if (requiredGroup && !requiredGroupMatch)
+      throw new Error(`模型 ${model} 未配置 ${requiredGroup} 渠道`);
+    if (requiredGroupMatch && !owned.has(requiredGroupMatch))
+      throw new Error(`当前账号没有 ${requiredGroupMatch} 分组权限，无法使用 ${model}`);
     throw new Error(
       `当前账号没有 ${modelGroups.join(" / ")} 分组权限，无法使用 ${model}`,
     );
   }
-  if (isImageKey && !owned.has(group)) {
-    // Draw 不在 UserUsableGroups 时 NewAPI 仍会按渠道分组放行，这里只提示不打断。
-    console.warn(`[lfn] 分组 ${group} 不在账号可用分组列表，继续尝试`);
-  }
-
   const listTokens = async (): Promise<Token[]> => {
     const response = await fetch(`${baseUrl}/api/token/?p=1&size=100`, {
       headers,
@@ -314,8 +308,9 @@ function tokenCacheKey(
   model: string,
   prefix: string,
   baseUrl: string,
+  requiredGroup?: string,
 ): string {
-  return `${baseUrl}|${session.userId}|${prefix}|${model}`;
+  return `${baseUrl}|${session.userId}|${prefix}|${model}|${requiredGroup || "auto"}`;
 }
 
 function pruneTokenCache(now: number): void {
@@ -333,10 +328,11 @@ async function cachedToken(
   session: Session,
   model: string,
   prefix: string,
+  requiredGroup?: string,
 ): Promise<string> {
   // baseUrl 也放进 key，运行时切换 NewAPI 后不会误用旧实例密钥。
   const baseUrl = await resolvedNewApiBaseUrl();
-  const key = tokenCacheKey(session, model, prefix, baseUrl);
+  const key = tokenCacheKey(session, model, prefix, baseUrl, requiredGroup);
   const now = Date.now();
   const existing = tokenCache.get(key);
   if (existing?.pending) return existing.pending;
@@ -345,7 +341,7 @@ async function cachedToken(
 
   pruneTokenCache(now);
   const entry: TokenCacheEntry = { expiresAt: now + TOKEN_CACHE_TTL_MS };
-  const pending = resolveToken(session, model, prefix);
+  const pending = resolveToken(session, model, prefix, requiredGroup);
   entry.pending = pending;
   tokenCache.set(key, entry);
   void pending.then(
@@ -366,14 +362,21 @@ export function getImageToken(
   session: Session,
   model: string,
 ): Promise<string> {
-  return cachedToken(session, model, LFN_TOKEN_PREFIX);
+  return cachedToken(session, model, LFN_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
 export function getChatToken(
   session: Session,
   model: string,
 ): Promise<string> {
-  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX);
+  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
+}
+
+export function getStoryToken(
+  session: Session,
+  model: string,
+): Promise<string> {
+  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
 // 上游会话过期时消息是英文的，前端需要据此提示重新登录而不是展示原文。

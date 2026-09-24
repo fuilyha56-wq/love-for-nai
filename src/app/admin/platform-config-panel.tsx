@@ -74,7 +74,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   newApiBaseUrl: "",
   newApiAdminToken: "",
   newApiAdminUserId: "1",
-  registerGroup: "Draw",
+  registerGroup: "ikun",
   quotaPerUnit: 500000,
   affGatewayUrl: "",
   affGatewayToken: "",
@@ -266,7 +266,8 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
             </div>
           </label>
           <label className="block text-sm font-semibold">注册默认分组
-            <input value={settings.registerGroup} onChange={(event) => setSettings({ ...settings, registerGroup: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+            <input value="ikun" readOnly aria-readonly="true" className="field mt-1.5 h-10 w-full cursor-not-allowed px-3 text-sm opacity-70" />
+            <span className="mt-1 block text-[10px] font-normal text-[var(--muted)]">模型调用固定使用 ikun 渠道，不可修改。</span>
           </label>
           <label className="block text-sm font-semibold">NewAPI 地址
             <input value={settings.newApiBaseUrl} onChange={(event) => setSettings({ ...settings, newApiBaseUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="http://host.docker.internal:3000" />

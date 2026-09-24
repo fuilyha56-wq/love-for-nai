@@ -56,10 +56,10 @@ export async function GET(request: Request) {
       };
       groupName = self.data?.user?.group ?? self.data?.group ?? "";
     }
-    // 密钥分组逻辑与 newapi.ts 一致：图像模型优先渠道 Draw 分组。
+    // 密钥分组逻辑与 newapi.ts 一致：所有模型固定使用 ikun 渠道。
     const modelGroups = entry.enable_groups ?? [];
     const effectiveGroup =
-      modelGroups.find((group) => group.toLowerCase() === "draw") ||
+      modelGroups.find((group) => group.toLowerCase() === "ikun") ||
       groupName ||
       modelGroups[0] ||
       "default";

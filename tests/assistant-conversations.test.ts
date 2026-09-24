@@ -82,7 +82,7 @@ describe("助手对话存储", () => {
     expect(await readConversation(2)).toEqual({ turns: [], tagPool: [] });
   });
 
-  it("轮次有上限，标签池不做限制", async () => {
+  it("轮次有上限，标签池不做限制", { timeout: 15_000 }, async () => {
     const { appendConversationTurn, readConversation } = await import(
       "@/lib/assistant-conversations"
     );

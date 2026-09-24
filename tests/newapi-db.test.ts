@@ -68,7 +68,7 @@ describe("resolveExternalApiUser", () => {
   it("数据库直连时走 SQL，有效 token 返回 user_id 并带缓存", async () => {
     process.env.NEWAPI_DB_URL = "postgresql://test";
     // pg 驱动把 bigint 序列化成字符串，模拟真实返回形态。
-    poolMocks.query.mockResolvedValue({ rows: [{ user_id: "41" }] });
+    poolMocks.query.mockResolvedValue({ rows: [{ user_id: "41", group: "ikun" }] });
 
     await expect(resolveExternalApiUser("Bearer sk-abc")).resolves.toBe(41);
     await expect(resolveExternalApiUser("Bearer sk-abc")).resolves.toBe(41);
@@ -95,7 +95,7 @@ describe("resolveExternalApiUser", () => {
     runtimeMocks.getRuntimeSettings.mockResolvedValue({ newApiAdminUserId: "3" });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
-        data: { items: [{ user_id: 41, key: "x", status: 1, expired_time: -1, allow_ips: "" }] },
+        data: { items: [{ user_id: 41, key: "x", status: 1, expired_time: -1, allow_ips: "", group: "ikun" }] },
       }))
       .mockResolvedValueOnce(jsonResponse({ data: { status: 1 } }));
     vi.stubGlobal("fetch", fetchMock);
@@ -124,7 +124,7 @@ describe("resolveExternalApiUser", () => {
     runtimeMocks.getRuntimeSettings.mockResolvedValue({ newApiAdminUserId: "3" });
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
-        data: { items: [{ user_id: 41, key: "x", status: 1, expired_time: -1, allow_ips: "" }] },
+        data: { items: [{ user_id: 41, key: "x", status: 1, expired_time: -1, allow_ips: "", group: "ikun" }] },
       }))
       .mockResolvedValueOnce(jsonResponse({ data: { status: 2 } }));
     vi.stubGlobal("fetch", fetchMock);

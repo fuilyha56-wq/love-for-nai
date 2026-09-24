@@ -224,8 +224,8 @@ export async function POST(request: Request) {
   if (!registered.ok) return registered;
 
   // new-api 的注册接口会丢弃 group 字段（服务端白名单），新用户一律落到
-  // default 分组而无法调用 Draw 渠道。注册成功后用 LFN 管理令牌把用户
-  // 划入 Draw 分组，这是目前唯一的可靠途径。
+  // default 分组而无法调用 ikun 渠道。注册成功后用 LFN 管理令牌把用户
+  // 划入 ikun 分组，这是目前唯一的可靠途径。
   try {
     const { resolvedAdminTokenValue, resolvedAdminHeaders } = await import("@/lib/admin-auth");
     const token = await resolvedAdminTokenValue();

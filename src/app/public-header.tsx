@@ -1,15 +1,16 @@
 import type { ReactNode } from "react";
-import { Brush, LogIn, Sparkles } from "lucide-react";
+import { BookOpen, Brush, LogIn, Sparkles } from "lucide-react";
 import Link from "next/link";
 
 type PublicHeaderProps = {
-  current?: "pricing" | "docs" | "models" | "gallery" | "announcements";
+  current?: "pricing" | "docs" | "models" | "gallery" | "announcements" | "stories";
   actionLabel?: string;
   actionHref?: string;
   extraActions?: ReactNode;
 };
 
 const links = [
+  ["stories", "故事", "/stories"],
   ["pricing", "价格", "/pricing"],
   ["docs", "API", "/docs"],
   ["models", "模型", "/models"],
@@ -44,6 +45,12 @@ export function PublicHeader({
           ))}
         </nav>
         {extraActions}
+        <Link
+          href="/stories"
+          className="hidden h-9 shrink-0 items-center gap-1.5 rounded px-2.5 text-xs font-semibold text-[var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--rose)] md:flex"
+        >
+          <BookOpen size={14} /> 写故事
+        </Link>
         <Link
           href={actionHref}
           prefetch={actionHref === "/image" ? false : undefined}

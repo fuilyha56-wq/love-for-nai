@@ -14,7 +14,13 @@ import {
 // 透明代理（仅按 NewAPI 余额计费）。数据库配置存在但故障时抛错，
 // 避免静默跳过图包扣费。
 
-type ApiKeyCacheEntry = { userId: number | null; username: string | null; expiresAt: number };
+export type ExternalApiIdentity = {
+  userId: number | null;
+  username: string | null;
+  group: string | null;
+};
+
+type ApiKeyCacheEntry = ExternalApiIdentity & { expiresAt: number };
 
 const globalStore = globalThis as typeof globalThis & {
   __lfnNewApiDbPool?: Pool;
@@ -48,6 +54,7 @@ type HttpTokenRow = {
   status?: number | string;
   expired_time?: number | string;
   allow_ips?: string | null;
+  group?: string | null;
 };
 
 // HTTP 兜底：数据库不可直连时，用管理令牌调 NewAPI 的 token 搜索接口，
@@ -55,10 +62,10 @@ type HttpTokenRow = {
 async function resolveUserViaHttp(
   key: string,
   nowSeconds: number,
-): Promise<{ userId: number | null; username: string | null }> {
+): Promise<ExternalApiIdentity> {
   const base = await runtimeNewApiBaseUrl();
   const adminToken = await runtimeAdminToken();
-  if (!base || !adminToken) return { userId: null, username: null };
+  if (!base || !adminToken) return { userId: null, username: null, group: null };
   const settings = await getRuntimeSettings().catch(() => null);
   const adminUser =
     settings?.newApiAdminUserId || process.env.LFN_ADMIN_USER_ID || "1";
@@ -72,7 +79,7 @@ async function resolveUserViaHttp(
     `${base}/api/token/?p=1&size=10&keyword=${encodeURIComponent(key)}`,
     { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) },
   );
-  if (!search.ok) return { userId: null, username: null };
+  if (!search.ok) return { userId: null, username: null, group: null };
   const payload = (await search.json()) as {
     data?: { items?: HttpTokenRow[] } | HttpTokenRow[];
   };
@@ -87,23 +94,26 @@ async function resolveUserViaHttp(
     const expiredTime = Number(row.expired_time);
     return expiredTime === -1 || expiredTime > nowSeconds;
   });
-  if (!match) return { userId: null, username: null };
+  if (!match) return { userId: null, username: null, group: null };
 
   const userId = Number(match.user_id);
   if (!Number.isInteger(userId) || userId <= 0)
-    return { userId: null, username: null };
+    return { userId: null, username: null, group: null };
+  const group = typeof match.group === "string" && match.group.trim()
+    ? match.group.trim()
+    : null;
   const userResponse = await fetch(`${base}/api/user/${userId}`, {
     headers,
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!userResponse.ok) return { userId, username: null };
+  if (!userResponse.ok) return { userId, username: null, group };
   const userPayload = (await userResponse.json()) as {
     data?: { status?: number | string; username?: string };
   };
-  if (Number(userPayload.data?.status) !== 1) return { userId, username: null };
+  if (Number(userPayload.data?.status) !== 1) return { userId, username: null, group };
   const username = userPayload.data?.username;
-  return { userId, username: username ? String(username) : null };
+  return { userId, username: username ? String(username) : null, group };
 }
 
 export function normalizeNewApiKey(authorization: string): string {
@@ -115,14 +125,14 @@ export function normalizeNewApiKey(authorization: string): string {
 
 export async function resolveExternalApiIdentity(
   authorization: string,
-): Promise<{ userId: number | null; username: string | null }> {
+): Promise<ExternalApiIdentity> {
   const key = normalizeNewApiKey(authorization);
-  if (!key) return { userId: null, username: null };
+  if (!key) return { userId: null, username: null, group: null };
   const now = Date.now();
   const cache = apiKeyCache();
   const cached = cache.get(key);
   if (cached && cached.expiresAt > now)
-    return { userId: cached.userId, username: cached.username };
+    return { userId: cached.userId, username: cached.username, group: cached.group };
   const pool = dbPool();
   if (!pool) {
     // 数据库不可直连（跨服务器部署）：走管理 API 兜底识别，
@@ -130,11 +140,12 @@ export async function resolveExternalApiIdentity(
     const httpIdentity = await resolveUserViaHttp(
       key,
       Math.floor(now / 1000),
-    ).catch(() => ({ userId: null, username: null }));
+    ).catch(() => ({ userId: null, username: null, group: null }));
     if (cache.size >= CACHE_MAX_KEYS) cache.clear();
     cache.set(key, {
       userId: httpIdentity.userId,
       username: httpIdentity.username,
+      group: httpIdentity.group,
       expiresAt: now + (httpIdentity.userId ? CACHE_POSITIVE_MS : CACHE_NEGATIVE_MS),
     });
     return httpIdentity;
@@ -142,9 +153,10 @@ export async function resolveExternalApiIdentity(
 
   let userId: number | null = null;
   let username: string | null = null;
+  let group: string | null = null;
   try {
-    const result = await pool.query<{ user_id: number; username: string }>(
-      `SELECT t.user_id, u.username
+    const result = await pool.query<{ user_id: number; username: string; group: string }>(
+      `SELECT t.user_id, t."group", u.username
          FROM tokens t
          JOIN users u ON u.id = t.user_id
         WHERE t.key = $1
@@ -163,6 +175,7 @@ export async function resolveExternalApiIdentity(
     if (Number.isInteger(parsedUserId) && parsedUserId > 0) {
       userId = parsedUserId;
       username = row.username ? String(row.username) : null;
+      group = row.group ? String(row.group) : null;
     }
   } catch (error) {
     console.error("[lfn] NewAPI 数据库查询失败:", error);
@@ -173,9 +186,10 @@ export async function resolveExternalApiIdentity(
   cache.set(key, {
     userId,
     username,
+    group,
     expiresAt: now + (userId ? CACHE_POSITIVE_MS : CACHE_NEGATIVE_MS),
   });
-  return { userId, username };
+  return { userId, username, group };
 }
 
 export async function resolveExternalApiUser(

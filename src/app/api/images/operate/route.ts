@@ -22,6 +22,7 @@ import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { gatewayLogStart } from "@/lib/gateway-log";
+import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import { sseEvent, sseResponse } from "@/lib/sse";
 import {
   assertBodySize,
@@ -130,7 +131,7 @@ async function handleUpscale(
       model: upscaleModel,
       samples: 1,
     });
-    const upstream = await fetch(`${nativeImage.baseUrl}/ai/upscale`, {
+    const upstream = await fetchWithModelConcurrency(`${nativeImage.baseUrl}/ai/upscale`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${nativeImage.token}`,
@@ -436,7 +437,7 @@ export async function POST(request: Request) {
         model,
         samples,
       });
-      const nativeResponse = await fetch(
+      const nativeResponse = await fetchWithModelConcurrency(
         `${nativeImage.baseUrl}/ai/generate-image-stream`,
         {
           method: "POST",
@@ -458,6 +459,7 @@ export async function POST(request: Request) {
       const streamReady = nativeResponse.ok && Boolean(nativeResponse.body);
       if (!streamReady) {
         clearTimeout(timeout);
+        await nativeResponse.body?.cancel();
         console.warn(
           `[lfn] 流式初始化失败（${nativeResponse.status}），回退缓冲端点生成`,
         );
@@ -562,7 +564,7 @@ export async function POST(request: Request) {
                   samples,
                 });
                 try {
-                  const resp = await fetch(
+                  const resp = await fetchWithModelConcurrency(
                     `${fallbackBase}/v1/images/generations`,
                     {
                       method: "POST",
@@ -686,7 +688,7 @@ export async function POST(request: Request) {
         model,
         samples: batch,
       });
-      const upstream = await fetch(`${baseUrl}${endpoint}`, {
+      const upstream = await fetchWithModelConcurrency(`${baseUrl}${endpoint}`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,

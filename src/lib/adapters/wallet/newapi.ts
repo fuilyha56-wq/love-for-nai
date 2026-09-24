@@ -3,7 +3,7 @@
  * 管理 NewAPI quota 和 LFN 内部 AFF 余额
  */
 
-import type { WalletAdapter, WalletBalance, WalletTransaction, EndpointConfig } from "../types";
+import type { EndpointConfig, WalletAdapter, WalletTransaction } from "../types";
 import { db } from "@/lib/db";
 
 export function createNewApiWalletAdapter(config: EndpointConfig): WalletAdapter {
@@ -60,11 +60,14 @@ export function createNewApiWalletAdapter(config: EndpointConfig): WalletAdapter
     async charge(userId: number | string, amount: number, description: string, metadata?: Record<string, unknown>) {
       const numericUserId = typeof userId === "number" ? userId : Number(userId);
       const txId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const source = (typeof metadata?.source === "string"
+        ? metadata.source
+        : "image_generation") as WalletTransaction["source"];
       
       await db.none(
         `INSERT INTO aff_transactions (id, user_id, amount, type, source, description, metadata, created_at)
          VALUES ($1, $2, $3, 'debit', $4, $5, $6, NOW())`,
-        [txId, numericUserId, -amount, metadata?.source || "image_generation", description, JSON.stringify(metadata || {})]
+        [txId, numericUserId, -amount, source, description, JSON.stringify(metadata || {})]
       );
 
       await db.none(
@@ -77,7 +80,7 @@ export function createNewApiWalletAdapter(config: EndpointConfig): WalletAdapter
         userId: numericUserId,
         amount: -amount,
         type: "debit" as const,
-        source: (metadata?.source as any) || "image_generation",
+        source,
         description,
         createdAt: new Date().toISOString(),
         metadata,

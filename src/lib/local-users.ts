@@ -121,7 +121,7 @@ export async function createLocalUser(input: {
     passwordHash: hashPassword(input.password),
     role: bootstrapAdmin ? 10 : 1,
     status: 1,
-    group: (await runtimeRegisterGroup().catch(() => process.env.LFN_REGISTER_GROUP?.trim())) || "default",
+    group: (await runtimeRegisterGroup().catch(() => "ikun")) || "ikun",
     createdAt: new Date().toISOString(),
   };
   store.nextId += 1;

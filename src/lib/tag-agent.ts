@@ -1,4 +1,5 @@
 import { runTool, summarizeToolResult, toolCatalog } from "@/lib/agent-tools";
+import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 
 type MessageContent =
@@ -59,7 +60,7 @@ async function callModel(
   model: string,
   messages: Message[],
 ): Promise<string> {
-  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+  const response = await fetchWithModelConcurrency(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,

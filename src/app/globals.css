@@ -870,6 +870,9 @@ html[data-theme="night"] .mask-editor-number {
     grid-template-columns:
       var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
   }
+  [data-studio-layout="nai"] .studio-layout {
+    grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
+  }
 }
 .panel-resizer {
   cursor: col-resize;

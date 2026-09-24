@@ -6,6 +6,7 @@ import { saveEditorComposite } from "@/lib/editor-composite-history";
 
 import {
   Aperture,
+  BookOpen,
   Brush,
   ChevronLeft,
   ChevronRight,
@@ -58,6 +59,7 @@ import {
 } from "@/lib/image-studio-form";
 import {
   loadCustomLayout,
+  type CustomLayoutModule,
 } from "@/lib/appearance-store";
 import {
   useCallback,
@@ -593,6 +595,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [naiToolsOpen, setNaiToolsOpen] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
@@ -644,8 +647,21 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const leftWidth = naiLayout ? naiLeftWidth : classicLeftWidth;
   const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
-  const [, setCustomLayout] = useState(() => loadCustomLayout());
+  const [customLayout, setCustomLayout] = useState(() => loadCustomLayout());
   const [formCacheReady, setFormCacheReady] = useState(false);
+
+  const customWorkspace = !naiLayout && preferences.workspaceLayout === "custom";
+  function customModuleOrder(module: CustomLayoutModule) {
+    const rect = customLayout.modulePositions[module];
+    return rect.y * 12 + rect.x;
+  }
+  function customModuleStyle(module: CustomLayoutModule): React.CSSProperties | undefined {
+    if (!customWorkspace) return undefined;
+    return {
+      display: customLayout.visibleModules[module] ? undefined : "none",
+      order: customModuleOrder(module),
+    };
+  }
 
   function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation) {
     if (!nextImages.length || sourceOperation === "suggest-tags") return;
@@ -2091,29 +2107,34 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         )}
       </div>
       <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
-        {naiLayout ? (
-          <section className="nai-model-mode-persistent" aria-label="模型与模式">
-            <div className="nai-section-heading">模型与模式</div>
-            {modelModeControls}
-          </section>
-        ) : (
-          <PanelSection title="模型与模式" icon={<SlidersHorizontal size={16} />}>
-            {modelModeControls}
-          </PanelSection>
-        )}
+        <div data-layout-module="model" style={customModuleStyle("model")}>
+          {naiLayout ? (
+            <section className="nai-model-mode-persistent" aria-label="模型与模式">
+              <div className="nai-section-heading">模型与模式</div>
+              {modelModeControls}
+            </section>
+          ) : (
+            <PanelSection title="模型与模式" icon={<SlidersHorizontal size={16} />}>
+              {modelModeControls}
+            </PanelSection>
+          )}
+        </div>
         {sidebarPromptLayout && (
-          <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
-            {promptFields}
-            {characterControls}
-          </PanelSection>
+          <div data-layout-module="prompt" style={customModuleStyle("prompt")}>
+            <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
+              {promptFields}
+              {characterControls}
+            </PanelSection>
+          </div>
         )}
 
-        {naiLayout ? (
-          <PanelSection title="图像设置" icon={<Images size={16} />}>
-            <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
-          </PanelSection>
-        ) : (
-        <Control label="自定义分辨率 · 64–1600">
+        <div data-layout-module="image" style={customModuleStyle("image")}>
+          {naiLayout ? (
+            <PanelSection title="图像设置" icon={<Images size={16} />}>
+              <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+            </PanelSection>
+          ) : (
+          <Control label="自定义分辨率 · 64–1600">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
             <NumberField
               value={width}
@@ -2164,13 +2185,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             ))}
           </div>
-        </Control>
-        )}
+          </Control>
+          )}
+        </div>
         {!sidebarPromptLayout && generationParameters}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
-        {nlwLayout && <div className="nlw-inline-generation-parameters">{generationParameters}</div>}
-        {generationModes.has(operation) && (
-          <div>
+        {nlwLayout && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{generationParameters}</div>}
+        <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
+          {generationModes.has(operation) && (
+            <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
               {!naiLayout && <NumberField
                 value={count}
@@ -2207,15 +2230,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  最多 3 路并发、每路 4 张，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
+                  最多 2 路并发、每路 4 张，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
-          </div>
-        )}
+            </div>
+          )}
 
-        {!naiLayout && !nlwLayout && characterControls}
-        {["img2img", "inpainting", "edits"].includes(operation) && (
+          {!naiLayout && !nlwLayout && characterControls}
+          {["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
             <input
               className="range w-full"
@@ -2349,13 +2372,21 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </p>
           </>
         )}
-        {operation === "annotate" && (
+          {operation === "annotate" && (
           <p className="rounded border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
             Gateway 端点存在，但尚无可审计的 usage
             计费映射，当前只展示完整入口并阻止零费用提交。
           </p>
-        )}
-        <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
+          )}
+        </div>
+        <div
+          data-layout-module="references"
+          style={customWorkspace ? {
+            display: customLayout.visibleModules.references || customLayout.visibleModules.director ? undefined : "none",
+            order: Math.min(customModuleOrder("references"), customModuleOrder("director")),
+          } : undefined}
+        >
+          <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
             <div className="nai-reference-grid">
               <button
                 type="button"
@@ -2419,6 +2450,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </div>
             </div>
           </PanelSection>
+        </div>
       </div>
     </>
   );
@@ -2537,7 +2569,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       base.defry = 1;
     }
     try {
-      // 分批次：并发分片请求（每片 ≤4 张、最多 3 路在途、错峰 0.5s 启动），
+      // 分批次：并发分片请求（每片 ≤4 张、最多 2 路在途、错峰 0.5s 启动），
       // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && count > 1 && operation !== "upscale";
@@ -2551,7 +2583,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       let partialMessage = "";
       if (sequential) {
         const BATCH_CHUNK = studioBatchSize(batchMode);
-        const BATCH_PARALLEL = 3;
+        const BATCH_PARALLEL = 2;
         const chunkSizes = splitImageBatches(count, BATCH_CHUNK);
         let chunkOffset = 0;
         const chunkStarts = chunkSizes.map((size) => {
@@ -2799,7 +2831,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
   const sessionHistoryPanel = (
-    <section className="session-history-panel" aria-label="本次会话历史">
+    <section className="session-history-panel" style={customModuleStyle("history")} aria-label="本次会话历史">
       <div className="flex items-center justify-between gap-2">
         <b className="text-xs">本次历史</b>
         <span className="text-[10px] text-[var(--muted)]">{sessionHistory.length} 张</span>
@@ -2835,6 +2867,11 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             <div className="border-b border-[var(--line)] p-4">
               <b className="text-sm">创作中心</b>
               <nav className="mt-3 grid grid-cols-2 gap-2">
+                <FeatureLink
+                  href="/stories"
+                  label="故事工作台"
+                  icon={<BookOpen size={15} />}
+                />
                 <FeatureLink
                   href="/history"
                   label="图片历史"
@@ -2880,7 +2917,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </nav>
             </div>
           )}
-          <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+          <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>
@@ -3468,6 +3505,19 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onDoubleClick={() => { setLeftWidth(naiLayout ? 400 : 310); savePanelWidths(naiLayout ? 400 : 310, rightWidth); }}
         />
         <section className="studio-canvas flex min-h-0 flex-col">
+          {naiLayout && (
+            <button
+              type="button"
+              className="studio-tools-trigger hidden lg:flex"
+              aria-label="打开历史与标签助手"
+              aria-expanded={naiToolsOpen}
+              onClick={() => setNaiToolsOpen(true)}
+            >
+              <WandSparkles size={17} />
+              <span>工具</span>
+              {sessionHistory.length > 0 && <i>{sessionHistory.length}</i>}
+            </button>
+          )}
           <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
             <button
               ref={mobilePanelTriggerRef}
@@ -3663,36 +3713,46 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </div>
           )}
         </section>
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整右侧面板宽度"
-          aria-valuenow={rightWidth}
-          aria-valuemin={200}
-          aria-valuemax={460}
-          tabIndex={0}
-          className="panel-resizer hidden lg:block"
-          onPointerDown={(event) => startResize("right", event)}
-          onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
-          onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
-        />
+        {!naiLayout && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整右侧面板宽度"
+            aria-valuenow={rightWidth}
+            aria-valuemin={200}
+            aria-valuemax={460}
+            tabIndex={0}
+            className="panel-resizer hidden lg:block"
+            onPointerDown={(event) => startResize("right", event)}
+            onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
+            onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
+          />
+        )}
         <aside
-          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${rightPanelCollapsed ? " is-collapsed" : ""}`}
-          onMouseEnter={openRightPanel}
-          onMouseLeave={scheduleRightPanelClose}
-          onFocus={openRightPanel}
-          onBlur={scheduleRightPanelClose}
+          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${
+            naiLayout
+              ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
+              : rightPanelCollapsed
+                ? " is-collapsed"
+                : ""
+          }`}
+          onMouseEnter={naiLayout ? undefined : openRightPanel}
+          onMouseLeave={naiLayout ? undefined : scheduleRightPanelClose}
+          onFocus={naiLayout ? undefined : openRightPanel}
+          onBlur={naiLayout ? undefined : scheduleRightPanelClose}
+          aria-hidden={naiLayout ? !naiToolsOpen : undefined}
+          inert={naiLayout && !naiToolsOpen ? true : undefined}
         >
           <button
             type="button"
             className="tools-panel-collapse"
-            aria-label={rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
-            aria-expanded={!rightPanelCollapsed}
-            onClick={() => setRightPanelCollapsed((current) => !current)}
+            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
+            aria-expanded={naiLayout ? naiToolsOpen : !rightPanelCollapsed}
+            onClick={() => naiLayout ? setNaiToolsOpen(false) : setRightPanelCollapsed((current) => !current)}
           >
-            {rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
+            {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
-          {rightPanelCollapsed ? (
+          {!naiLayout && rightPanelCollapsed ? (
             <div className="collapsed-history-rail" aria-label="本次历史缩略图">
               {sessionHistory.map((item) => (
                 <button type="button" key={item.id} onClick={() => { openRightPanel(); applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">
@@ -3859,6 +3919,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             )}
 
             <p className="nai-menu-label">创作</p>
+            <Link href="/stories" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+              <BookOpen size={16} /> 故事工作台
+            </Link>
             <Link href="/history" onClick={() => setMenuOpen(false)} className="nai-menu-item">
               <Images size={16} /> 图片历史
             </Link>

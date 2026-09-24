@@ -1,7 +1,9 @@
 export const APPEARANCE_STORAGE_KEY = "lfn-ui-preferences-v1";
 export const APPEARANCE_PREFERENCES_VERSION = 1 as const;
 export const CUSTOM_LAYOUT_STORAGE_KEY = "lfn-custom-layout-v1";
-export const CUSTOM_LAYOUT_VERSION = 1 as const;
+export const CUSTOM_LAYOUT_VERSION = 2 as const;
+export const CUSTOM_LAYOUT_GRID_COLUMNS = 12 as const;
+export const CUSTOM_LAYOUT_GRID_ROWS = 8 as const;
 export const BACKGROUND_DB_NAME = "lfn-ui-background-v1";
 export const BACKGROUND_STORE_NAME = "images";
 const BACKGROUND_KEY = "current";
@@ -26,11 +28,13 @@ export const CUSTOM_LAYOUT_MODULES = [
   "director",
 ] as const;
 export type CustomLayoutModule = (typeof CUSTOM_LAYOUT_MODULES)[number];
+export type CustomLayoutRect = { x: number; y: number; width: number; height: number };
 
 export type CustomLayoutPreferences = {
   version: typeof CUSTOM_LAYOUT_VERSION;
   moduleOrder: CustomLayoutModule[];
   visibleModules: Record<CustomLayoutModule, boolean>;
+  modulePositions: Record<CustomLayoutModule, CustomLayoutRect>;
   leftWidth: number;
   rightWidth: number;
   rightCollapsed: boolean;
@@ -49,10 +53,24 @@ const DEFAULT_CUSTOM_MODULE_VISIBILITY: Record<CustomLayoutModule, boolean> = {
   director: true,
 };
 
+const DEFAULT_CUSTOM_MODULE_POSITIONS: Record<CustomLayoutModule, CustomLayoutRect> =
+  Object.fromEntries(
+    DEFAULT_CUSTOM_MODULE_ORDER.map((moduleId, index) => [
+      moduleId,
+      {
+        x: (index % 3) * 4,
+        y: Math.floor(index / 3) * 2,
+        width: 4,
+        height: 2,
+      },
+    ]),
+  ) as Record<CustomLayoutModule, CustomLayoutRect>;
+
 export const DEFAULT_CUSTOM_LAYOUT: CustomLayoutPreferences = {
   version: CUSTOM_LAYOUT_VERSION,
   moduleOrder: [...DEFAULT_CUSTOM_MODULE_ORDER],
   visibleModules: { ...DEFAULT_CUSTOM_MODULE_VISIBILITY },
+  modulePositions: structuredClone(DEFAULT_CUSTOM_MODULE_POSITIONS),
   leftWidth: 310,
   rightWidth: 230,
   rightCollapsed: false,
@@ -73,6 +91,7 @@ function cloneDefaultCustomLayout(): CustomLayoutPreferences {
     version: CUSTOM_LAYOUT_VERSION,
     moduleOrder: [...DEFAULT_CUSTOM_MODULE_ORDER],
     visibleModules: { ...DEFAULT_CUSTOM_MODULE_VISIBILITY },
+    modulePositions: structuredClone(DEFAULT_CUSTOM_MODULE_POSITIONS),
     leftWidth: DEFAULT_CUSTOM_LAYOUT.leftWidth,
     rightWidth: DEFAULT_CUSTOM_LAYOUT.rightWidth,
     rightCollapsed: DEFAULT_CUSTOM_LAYOUT.rightCollapsed,
@@ -84,13 +103,60 @@ function clampLayoutWidth(value: unknown, fallback: number, min: number, max: nu
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
+function layoutPositionForIndex(index: number): CustomLayoutRect {
+  return {
+    x: (index % 3) * 4,
+    y: Math.floor(index / 3) * 2,
+    width: 4,
+    height: 2,
+  };
+}
+
+function parseLayoutRect(value: unknown, fallback: CustomLayoutRect): CustomLayoutRect {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ...fallback };
+  const record = value as Record<string, unknown>;
+  const width = clampLayoutWidth(record.width, fallback.width, 2, 6);
+  const height = clampLayoutWidth(record.height, fallback.height, 1, 4);
+  const x = clampLayoutWidth(record.x, fallback.x, 0, CUSTOM_LAYOUT_GRID_COLUMNS - width);
+  const y = clampLayoutWidth(record.y, fallback.y, 0, CUSTOM_LAYOUT_GRID_ROWS - height);
+  return { x, y, width, height };
+}
+
+function overlaps(left: CustomLayoutRect, right: CustomLayoutRect): boolean {
+  return !(
+    left.x + left.width <= right.x ||
+    right.x + right.width <= left.x ||
+    left.y + left.height <= right.y ||
+    right.y + right.height <= left.y
+  );
+}
+
+function findAvailableLayoutRect(
+  candidate: CustomLayoutRect,
+  fallback: CustomLayoutRect,
+  accepted: CustomLayoutRect[],
+): CustomLayoutRect {
+  for (const preferred of [candidate, fallback]) {
+    if (!accepted.some((rect) => overlaps(preferred, rect))) return { ...preferred };
+  }
+  for (const size of [candidate, fallback, { width: 2, height: 1 }]) {
+    for (let y = 0; y <= CUSTOM_LAYOUT_GRID_ROWS - size.height; y += 1) {
+      for (let x = 0; x <= CUSTOM_LAYOUT_GRID_COLUMNS - size.width; x += 1) {
+        const next = { x, y, width: size.width, height: size.height };
+        if (!accepted.some((rect) => overlaps(next, rect))) return next;
+      }
+    }
+  }
+  return { ...fallback };
+}
+
 /** Parse untrusted custom layout data with a closed module and numeric whitelist. */
 export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     return cloneDefaultCustomLayout();
   }
   const record = input as Record<string, unknown>;
-  if (record.version !== CUSTOM_LAYOUT_VERSION) return cloneDefaultCustomLayout();
+  if (record.version !== 1 && record.version !== CUSTOM_LAYOUT_VERSION) return cloneDefaultCustomLayout();
 
   const order: CustomLayoutModule[] = [];
   if (Array.isArray(record.moduleOrder)) {
@@ -115,10 +181,26 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
   visibleModules.model = true;
   visibleModules.operations = true;
 
+  const positionValues = record.modulePositions && typeof record.modulePositions === "object" && !Array.isArray(record.modulePositions)
+    ? record.modulePositions as Record<string, unknown>
+    : {};
+  const modulePositions = {} as Record<CustomLayoutModule, CustomLayoutRect>;
+  const accepted: CustomLayoutRect[] = [];
+  order.forEach((moduleId, index) => {
+    const fallback = layoutPositionForIndex(index);
+    const candidate = record.version === CUSTOM_LAYOUT_VERSION
+      ? parseLayoutRect(positionValues[moduleId], fallback)
+      : fallback;
+    const next = findAvailableLayoutRect(candidate, fallback, accepted);
+    modulePositions[moduleId] = { ...next };
+    accepted.push(next);
+  });
+
   return {
     version: CUSTOM_LAYOUT_VERSION,
     moduleOrder: order,
     visibleModules,
+    modulePositions,
     leftWidth: clampLayoutWidth(record.leftWidth, DEFAULT_CUSTOM_LAYOUT.leftWidth, 240, 520),
     rightWidth: clampLayoutWidth(record.rightWidth, DEFAULT_CUSTOM_LAYOUT.rightWidth, 200, 460),
     rightCollapsed:

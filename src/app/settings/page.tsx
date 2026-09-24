@@ -6,13 +6,15 @@ import {
   ArrowLeft,
   Check,
   CircleHelp,
-  ChevronDown,
-  ChevronUp,
-  GripVertical,
+  Eye,
+  EyeOff,
   Grid3X3,
   History,
   Image as ImageIcon,
   ImagePlus,
+  LockKeyhole,
+  Maximize2,
+  Move,
   Palette,
   RotateCcw,
   Sparkles,
@@ -25,6 +27,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
 import {
+  CUSTOM_LAYOUT_GRID_COLUMNS,
+  CUSTOM_LAYOUT_GRID_ROWS,
   isSafeHexColor,
   loadCustomLayout,
   parseCustomLayout,
@@ -339,6 +343,18 @@ function CustomLayoutEditor({
   onSave: () => void;
   onReset: () => void;
 }) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const interactionRef = useRef<{
+    module: CustomLayoutModule;
+    mode: "move" | "resize";
+    pointerId: number;
+    startX: number;
+    startY: number;
+    boardWidth: number;
+    boardHeight: number;
+    origin: CustomLayoutPreferences["modulePositions"][CustomLayoutModule];
+  } | null>(null);
+  const [selectedModule, setSelectedModule] = useState<CustomLayoutModule>("prompt");
   const labels: Record<CustomLayoutModule, { label: string; detail: string }> = {
     prompt: { label: "提示词", detail: "正向与负向提示词" },
     model: { label: "模型与模式", detail: "模型、内容模式与相关选项" },
@@ -351,60 +367,208 @@ function CustomLayoutEditor({
     director: { label: "Director", detail: "图片控制与导演工具" },
   };
 
-  function move(module: CustomLayoutModule, direction: -1 | 1) {
-    const index = layout.moduleOrder.indexOf(module);
-    const nextIndex = index + direction;
-    if (index < 0 || nextIndex < 0 || nextIndex >= layout.moduleOrder.length) return;
-    const moduleOrder = [...layout.moduleOrder];
-    [moduleOrder[index], moduleOrder[nextIndex]] = [moduleOrder[nextIndex], moduleOrder[index]];
-    onChange({ ...layout, moduleOrder });
+  function requiredModule(module: CustomLayoutModule) {
+    return module === "prompt" || module === "model" || module === "operations";
+  }
+
+  function rectsOverlap(
+    left: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
+    right: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
+  ) {
+    return !(
+      left.x + left.width <= right.x ||
+      right.x + right.width <= left.x ||
+      left.y + left.height <= right.y ||
+      right.y + right.height <= left.y
+    );
+  }
+
+  function updateModuleRect(
+    module: CustomLayoutModule,
+    next: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
+  ) {
+    const current = layout.modulePositions[module];
+    if (
+      current.x === next.x &&
+      current.y === next.y &&
+      current.width === next.width &&
+      current.height === next.height
+    ) return;
+    const collides = layout.moduleOrder.some(
+      (other) => other !== module && rectsOverlap(next, layout.modulePositions[other]),
+    );
+    if (collides) return;
+    const modulePositions = { ...layout.modulePositions, [module]: next };
+    const moduleOrder = [...layout.moduleOrder].sort((left, right) => {
+      const leftRect = modulePositions[left];
+      const rightRect = modulePositions[right];
+      return leftRect.y - rightRect.y || leftRect.x - rightRect.x;
+    });
+    onChange({ ...layout, modulePositions, moduleOrder });
+  }
+
+  function beginInteraction(
+    event: React.PointerEvent<HTMLElement>,
+    module: CustomLayoutModule,
+    mode: "move" | "resize",
+  ) {
+    if (event.button !== 0 || !boardRef.current) return;
+    const board = boardRef.current.getBoundingClientRect();
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    interactionRef.current = {
+      module,
+      mode,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      boardWidth: board.width,
+      boardHeight: board.height,
+      origin: { ...layout.modulePositions[module] },
+    };
+    setSelectedModule(module);
+  }
+
+  function continueInteraction(event: React.PointerEvent<HTMLElement>) {
+    const interaction = interactionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    const deltaX = Math.round(
+      (event.clientX - interaction.startX) /
+        (interaction.boardWidth / CUSTOM_LAYOUT_GRID_COLUMNS),
+    );
+    const deltaY = Math.round(
+      (event.clientY - interaction.startY) /
+        (interaction.boardHeight / CUSTOM_LAYOUT_GRID_ROWS),
+    );
+    const { origin } = interaction;
+    if (interaction.mode === "move") {
+      updateModuleRect(interaction.module, {
+        ...origin,
+        x: Math.min(
+          CUSTOM_LAYOUT_GRID_COLUMNS - origin.width,
+          Math.max(0, origin.x + deltaX),
+        ),
+        y: Math.min(
+          CUSTOM_LAYOUT_GRID_ROWS - origin.height,
+          Math.max(0, origin.y + deltaY),
+        ),
+      });
+      return;
+    }
+    updateModuleRect(interaction.module, {
+      ...origin,
+      width: Math.min(
+        6,
+        CUSTOM_LAYOUT_GRID_COLUMNS - origin.x,
+        Math.max(2, origin.width + deltaX),
+      ),
+      height: Math.min(
+        4,
+        CUSTOM_LAYOUT_GRID_ROWS - origin.y,
+        Math.max(1, origin.height + deltaY),
+      ),
+    });
+  }
+
+  function endInteraction(event: React.PointerEvent<HTMLElement>) {
+    if (interactionRef.current?.pointerId === event.pointerId) interactionRef.current = null;
   }
 
   return (
     <div className="mt-5 border-t border-[var(--line)] pt-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold">自定义模块顺序与显示</p>
-          <p className="mt-1 text-[10px] text-[var(--muted)]">使用上下按钮调整顺序，必需模块不能隐藏。</p>
+          <p className="text-xs font-semibold">模拟工作台</p>
+          <p className="mt-1 text-[10px] text-[var(--muted)]">12 × 8 安全网格 · 吸附与边界限制已开启</p>
         </div>
         <span className="rounded bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] px-2 py-1 text-[10px] font-mono text-[var(--rose)]">安全配置 v{layout.version}</span>
       </div>
-      <div className="space-y-2">
-        {layout.moduleOrder.map((module, index) => {
+      <div
+        ref={boardRef}
+        className="relative grid aspect-[3/2] w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-inner select-none"
+        style={{
+          gridTemplateColumns: `repeat(${CUSTOM_LAYOUT_GRID_COLUMNS}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${CUSTOM_LAYOUT_GRID_ROWS}, minmax(0, 1fr))`,
+          backgroundImage: "linear-gradient(to right, color-mix(in srgb, var(--line) 60%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--line) 60%, transparent) 1px, transparent 1px)",
+          backgroundSize: `${100 / CUSTOM_LAYOUT_GRID_COLUMNS}% ${100 / CUSTOM_LAYOUT_GRID_ROWS}%`,
+        }}
+        aria-label="自定义布局模拟工作台"
+      >
+        {layout.moduleOrder.map((module) => {
           const item = labels[module];
-          const required = module === "prompt" || module === "model" || module === "operations";
+          const rect = layout.modulePositions[module];
+          const required = requiredModule(module);
+          const visible = layout.visibleModules[module];
           return (
-            <div key={module} className="flex items-center gap-2 rounded-md border border-[var(--line)] bg-white p-2">
-              <GripVertical size={15} className="shrink-0 text-[var(--muted)]" aria-hidden="true" />
-              <div className="min-w-0 flex-1">
-                <b className="block text-xs">{item.label}</b>
-                <span className="block truncate text-[10px] text-[var(--muted)]">{item.detail}</span>
+            <div
+              key={module}
+              role="group"
+              aria-label={`${item.label}模块`}
+              onPointerDown={(event) => beginInteraction(event, module, "move")}
+              onPointerMove={continueInteraction}
+              onPointerUp={endInteraction}
+              onPointerCancel={endInteraction}
+              onFocus={() => setSelectedModule(module)}
+              tabIndex={0}
+              className={`relative m-1 min-w-0 cursor-move overflow-hidden rounded border p-2 text-left shadow-sm touch-none ${
+                selectedModule === module
+                  ? "z-[2] border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_10%,var(--panel))] ring-1 ring-[var(--rose)]"
+                  : "border-[var(--line)] bg-[var(--panel)]"
+              } ${visible ? "opacity-100" : "border-dashed opacity-45"}`}
+              style={{
+                gridColumn: `${rect.x + 1} / span ${rect.width}`,
+                gridRow: `${rect.y + 1} / span ${rect.height}`,
+              }}
+            >
+              <div className="flex min-w-0 items-start gap-1.5 pr-6">
+                <Move size={13} className="mt-0.5 shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <b className="block truncate text-[11px]">{item.label}</b>
+                  <span className="block truncate text-[9px] text-[var(--muted)]">{rect.width} × {rect.height}</span>
+                </div>
               </div>
               <button
                 type="button"
-                onClick={() => move(module, -1)}
-                disabled={index === 0}
-                aria-label={`上移${item.label}`}
-                className="grid h-7 w-7 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-30"
-              ><ChevronUp size={14} /></button>
+                title={required ? "必需模块" : visible ? "隐藏模块" : "显示模块"}
+                aria-label={required ? `${item.label}是必需模块` : `${visible ? "隐藏" : "显示"}${item.label}`}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (required) return;
+                  onChange({
+                    ...layout,
+                    visibleModules: { ...layout.visibleModules, [module]: !visible },
+                  });
+                }}
+                className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded text-[var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--rose)]"
+              >
+                {required ? <LockKeyhole size={12} /> : visible ? <Eye size={12} /> : <EyeOff size={12} />}
+              </button>
               <button
                 type="button"
-                onClick={() => move(module, 1)}
-                disabled={index === layout.moduleOrder.length - 1}
-                aria-label={`下移${item.label}`}
-                className="grid h-7 w-7 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-30"
-              ><ChevronDown size={14} /></button>
-              <Switch
-                checked={layout.visibleModules[module]}
-                onChange={(visible) => onChange({
-                  ...layout,
-                  visibleModules: { ...layout.visibleModules, [module]: required ? true : visible },
-                })}
-                label={layout.visibleModules[module] ? "显示" : "隐藏"}
-              />
+                title={`缩放${item.label}`}
+                aria-label={`缩放${item.label}`}
+                onPointerDown={(event) => beginInteraction(event, module, "resize")}
+                onPointerMove={continueInteraction}
+                onPointerUp={endInteraction}
+                onPointerCancel={endInteraction}
+                className="absolute bottom-0 right-0 grid h-7 w-7 cursor-nwse-resize place-items-center text-[var(--rose)] touch-none"
+              >
+                <Maximize2 size={12} />
+              </button>
             </div>
           );
         })}
+      </div>
+      <div className="mt-3 flex min-w-0 items-center justify-between gap-3 rounded border border-[var(--line)] bg-[var(--surface)] px-3 py-2">
+        <div className="min-w-0">
+          <b className="block truncate text-xs">{labels[selectedModule].label}</b>
+          <span className="block truncate text-[10px] text-[var(--muted)]">{labels[selectedModule].detail}</span>
+        </div>
+        <span className="shrink-0 font-mono text-[10px] text-[var(--rose)]">
+          {layout.modulePositions[selectedModule].x},{layout.modulePositions[selectedModule].y} · {layout.modulePositions[selectedModule].width}×{layout.modulePositions[selectedModule].height}
+        </span>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="text-xs font-semibold" htmlFor="custom-layout-left-width">

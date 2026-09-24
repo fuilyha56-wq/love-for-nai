@@ -78,10 +78,14 @@ export async function* readNaiMsgpackStream(
   if (!stream) return;
   const reader = stream.getReader();
   let leftover = new Uint8Array(0);
+  let completed = false;
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        completed = true;
+        break;
+      }
       if (!value?.length) continue;
       const merged = new Uint8Array(leftover.length + value.length);
       merged.set(leftover);
@@ -94,10 +98,14 @@ export async function* readNaiMsgpackStream(
         const payload = leftover.subarray(4, 4 + length);
         leftover = leftover.subarray(4 + length);
         const event = parseNaiStreamMessage(payload);
-        if (event) yield event;
+        if (event) {
+          yield event;
+          if (event.eventType === "error") return;
+        }
       }
     }
   } finally {
+    if (!completed) await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
 }

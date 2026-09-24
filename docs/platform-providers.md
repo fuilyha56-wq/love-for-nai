@@ -25,6 +25,68 @@ LFN_IMAGE_PROVIDER_TOKEN=...
 
 `GET /api/health` 和 `GET /api/admin` 会返回当前 `capabilities` 与可扩展管理模块，前端按能力显示，不再写死 NewAPI / Gateway 文案。管理中心「平台配置」把这些值写进 `{LFN_DATA_DIR}/platform/config.json`，覆盖环境变量并立即生效；密钥留脱敏值表示不改。
 
+## 外部批量配置
+
+MCP、部署脚本或其他外部工具可通过一次请求顺序提交多项平台配置：
+
+```http
+POST /api/admin/platform/batch
+Authorization: Bearer <LFN_ADMIN_TOKEN>
+Content-Type: application/json
+```
+
+```json
+{
+	"operations": [
+		{
+			"id": "site",
+			"action": "settings.update",
+			"params": {
+				"publicUrl": "https://lfn.example.com",
+				"naiImageApiUrl": "https://gateway.example.com",
+				"naiImageApiToken": "<gateway-token>"
+			}
+		},
+		{
+			"id": "image-endpoint",
+			"action": "endpoint.upsert",
+			"params": {
+				"id": "primary-image",
+				"type": "image",
+				"adapterType": "gateway",
+				"name": "Primary Gateway",
+				"enabled": true,
+				"priority": 100,
+				"config": {
+					"baseUrl": "https://gateway.example.com",
+					"token": "<gateway-token>"
+				}
+			}
+		},
+		{
+			"id": "billing",
+			"action": "billing.replace",
+			"params": {
+				"modelBilling": {
+					"nai-v5-full": { "mode": "fixed", "fixedCost": 2 }
+				}
+			}
+		}
+	]
+}
+```
+
+支持的 `action`：
+
+- `settings.update`：更新站点设置；`registerGroup` 始终固定为 `ikun`。
+- `endpoint.upsert`：创建端点，或携带 `params.id` 更新端点。
+- `endpoint.delete`：删除 `params.id` 指定的端点。
+- `billing.replace`：替换模型计费配置。
+
+服务端严格按数组顺序执行。全部成功返回 `200`；任一操作失败返回 `207 Multi-Status`，失败前的操作保持已提交，失败项返回完整 `error.name` 与 `error.message`，其后的操作统一标记为 `not_executed`。单批最多 50 项。站内管理员会话也可调用该接口，但外部工具应使用 `LFN_ADMIN_TOKEN`。
+
+所有模型令牌和外部模型执行入口只允许 `ikun` 分组；图像、故事与标签助手共享进程级 FIFO 并发门，最多同时执行 2 个上游模型请求。该限制不影响价格、模型目录等只读接口。
+
 ## 无 NewAPI 最小部署
 
 1. `LFN_AUTH_PROVIDER=local`
