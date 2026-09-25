@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export const STORY_MODELS = ["sol", "luna"] as const;
-export type StoryModel = (typeof STORY_MODELS)[number];
+export type StoryModel = string;
 
 export type StoryBranch = {
   id: string;
@@ -59,7 +59,9 @@ function cleanText(value: unknown, maxLength: number): string {
 }
 
 function isStoryModel(value: unknown): value is StoryModel {
-  return typeof value === "string" && STORY_MODELS.includes(value as StoryModel);
+  return typeof value === "string" && value.length <= 180 &&
+    (STORY_MODELS.includes(value as (typeof STORY_MODELS)[number]) ||
+      /^(newapi|custom):[a-zA-Z0-9_.:/-]{1,150}$/.test(value));
 }
 
 function normalizeBranch(value: unknown): StoryBranch | null {
@@ -186,7 +188,7 @@ export async function updateStory(
     const next: Story = { ...current, branches: current.branches.map((branch) => ({ ...branch })) };
     if (patch.title !== undefined) next.title = cleanText(patch.title, 120) || "未命名故事";
     if (patch.model !== undefined) {
-      if (!isStoryModel(patch.model)) throw new Error("模型只能是 sol 或 luna");
+      if (!isStoryModel(patch.model)) throw new Error("模型标识无效");
       next.model = patch.model;
     }
     if (patch.genre !== undefined) next.genre = cleanText(patch.genre, 80);

@@ -50,6 +50,6 @@ describe("故事存储", () => {
     const created = await createStory(9);
     await expect(
       updateStory(9, created.id, { model: "astra" as "sol" }),
-    ).rejects.toThrow("模型只能是 sol 或 luna");
+    ).rejects.toThrow("模型标识无效");
   });
 });

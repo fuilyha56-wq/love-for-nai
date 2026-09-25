@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkspaceNav } from "@/app/workspace-nav";
+import StoryProviderSettings from "@/app/settings/story-provider-settings";
 
 import {
   ArrowLeft,
@@ -30,10 +31,6 @@ import {
   CUSTOM_LAYOUT_GRID_COLUMNS,
   CUSTOM_LAYOUT_GRID_ROWS,
   isSafeHexColor,
-  loadCustomLayout,
-  parseCustomLayout,
-  resetCustomLayout,
-  saveCustomLayout,
   type CustomLayoutModule,
   type CustomLayoutPreferences,
   type AccentPreset,
@@ -332,7 +329,7 @@ function Switch({
   );
 }
 
-function CustomLayoutEditor({
+export function CustomLayoutEditor({
   layout,
   onChange,
   onSave,
@@ -609,8 +606,6 @@ function SettingsPageContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [customLayout, setCustomLayout] = useState<CustomLayoutPreferences>(() => loadCustomLayout());
-  const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
   const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const [customAccentInput, setCustomAccentInput] = useState(
     preferences.customAccent || "",
@@ -870,34 +865,11 @@ function SettingsPageContent() {
                         <p className="text-xs font-semibold">自定义布局</p>
                         <p className="mt-1 text-[10px] text-[var(--muted)]">按你的工作流排列模块，并调整左右栏宽度。</p>
                       </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomLayoutOpen(true);
-                        setMessage("请在编辑器中保存自定义布局后使用。");
-                      }}
-                      aria-expanded={customLayoutOpen}
-                      className="h-9 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
-                    >
-                        {customLayoutOpen ? "收起编辑器" : "编辑自定义布局"}
-                      </button>
+                    <Link
+                      href="/image?layoutEditor=1"
+                      className="flex h-9 items-center rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
+                    >编辑自定义布局</Link>
                     </div>
-                    {customLayoutOpen && (
-                      <CustomLayoutEditor
-                        layout={customLayout}
-                        onChange={(next) => setCustomLayout(parseCustomLayout(next))}
-                        onSave={() => {
-                          setCustomLayout(saveCustomLayout(customLayout));
-                          updatePreferences({ workspaceLayout: "custom" });
-                          setMessage("自定义布局已保存到本机浏览器。");
-                        }}
-                        onReset={() => {
-                          const defaults = resetCustomLayout();
-                          setCustomLayout(defaults);
-                          setMessage("自定义布局已恢复默认值。");
-                        }}
-                      />
-                    )}
                   </div>
                 </>
               )}
@@ -985,6 +957,8 @@ function SettingsPageContent() {
             />
           </div>
         </article>
+
+        <StoryProviderSettings />
 
         <article className="panel overflow-hidden rounded-md p-5 sm:p-6">
           <SettingHeading
