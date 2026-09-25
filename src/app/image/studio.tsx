@@ -59,6 +59,8 @@ import {
 } from "@/lib/image-studio-form";
 import {
   loadCustomLayout,
+  parseCustomLayout,
+  saveCustomLayout,
   type CustomLayoutModule,
 } from "@/lib/appearance-store";
 import {
@@ -86,7 +88,7 @@ import {
   saveEditorDraft,
 } from "@/lib/image-editor-store";
 
-type Props = { userName: string; authenticated: boolean };
+type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
 
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
@@ -543,11 +545,13 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export default function ImageStudio({ userName, authenticated }: Props) {
-  const { preferences } = useAppearance();
-  const naiLayout = preferences.theme === "nai";
-  const nlwLayout = !naiLayout && (preferences.workspaceLayout === "nlw" || preferences.workspaceLayout === "custom");
-  const sidebarPromptLayout = naiLayout || nlwLayout;
+export default function ImageStudio({ userName, authenticated, layoutEditor = false }: Props) {
+  const { preferences, updatePreferences } = useAppearance();
+  const [layoutEditorOpen, setLayoutEditorOpen] = useState(layoutEditor);
+  const naiLayout = preferences.theme === "nai" && !layoutEditorOpen;
+  const customWorkspace = layoutEditorOpen || (!naiLayout && preferences.workspaceLayout === "custom");
+  const nlwLayout = !naiLayout && preferences.workspaceLayout === "nlw";
+  const sidebarPromptLayout = naiLayout || nlwLayout || customWorkspace;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
@@ -648,19 +652,90 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
   const [customLayout, setCustomLayout] = useState(() => loadCustomLayout());
+  const layoutInteraction = useRef<{
+    module: CustomLayoutModule;
+    mode: "move" | "resize";
+    startX: number;
+    startY: number;
+    origin: (typeof customLayout.modulePositions)[CustomLayoutModule];
+    width: number;
+    height: number;
+  } | null>(null);
   const [formCacheReady, setFormCacheReady] = useState(false);
 
-  const customWorkspace = !naiLayout && preferences.workspaceLayout === "custom";
   function customModuleOrder(module: CustomLayoutModule) {
-    const rect = customLayout.modulePositions[module];
-    return rect.y * 12 + rect.x;
+    return customLayout.moduleOrder.indexOf(module);
   }
   function customModuleStyle(module: CustomLayoutModule): React.CSSProperties | undefined {
     if (!customWorkspace) return undefined;
+    const rect = customLayout.modulePositions[module];
     return {
       display: customLayout.visibleModules[module] ? undefined : "none",
       order: customModuleOrder(module),
+      minHeight: `${rect.height * 26}px`,
     };
+  }
+
+  function updateLayoutModule(module: CustomLayoutModule, next: (typeof customLayout.modulePositions)[CustomLayoutModule]) {
+    const normalized = parseCustomLayout({ ...customLayout, modulePositions: { ...customLayout.modulePositions, [module]: next } });
+    setCustomLayout(normalized);
+  }
+
+  function beginLayoutInteraction(event: React.PointerEvent<HTMLElement>, module: CustomLayoutModule, mode: "move" | "resize") {
+    if (!layoutEditorOpen || event.button !== 0) return;
+    const board = event.currentTarget.querySelector<HTMLElement>(".settings-scroll");
+    if (!board) return;
+    const rect = board.getBoundingClientRect();
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    layoutInteraction.current = {
+      module,
+      mode,
+      startX: event.clientX,
+      startY: event.clientY,
+      origin: { ...customLayout.modulePositions[module] },
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  function continueLayoutInteraction(event: React.PointerEvent<HTMLDivElement>) {
+    const interaction = layoutInteraction.current;
+    if (!interaction) return;
+    const deltaY = Math.round((event.clientY - interaction.startY) / (interaction.height / 8));
+    const origin = interaction.origin;
+    if (interaction.mode === "move") {
+      const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(".settings-scroll [data-layout-module]");
+      const targetModule = hit?.dataset.layoutModule as CustomLayoutModule | undefined;
+      if (targetModule && targetModule !== interaction.module) {
+        setCustomLayout((current) => {
+          const order = current.moduleOrder.filter((moduleId) => moduleId !== interaction.module);
+          order.splice(order.indexOf(targetModule), 0, interaction.module);
+          return { ...current, moduleOrder: order };
+        });
+      }
+    } else {
+      updateLayoutModule(interaction.module, {
+        ...origin,
+        height: Math.min(4, 8 - origin.y, Math.max(1, origin.height + deltaY)),
+      });
+    }
+  }
+
+  function endLayoutInteraction() {
+    layoutInteraction.current = null;
+  }
+
+  function handleLayoutPointerDown(event: React.PointerEvent<HTMLElement>) {
+    if (!layoutEditorOpen) return;
+    const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-layout-module]") : null;
+    const moduleId = target?.dataset.layoutModule as CustomLayoutModule | undefined;
+    if (!target || !moduleId || !target.closest(".settings-scroll")) return;
+    const rect = target.getBoundingClientRect();
+    const resizing = event.clientX >= rect.right - 22 && event.clientY >= rect.bottom - 22;
+    if (!resizing && event.target instanceof HTMLElement && event.target.closest("button, input, textarea, select, a, label, [role='button']")) return;
+    const mode = resizing ? "resize" : "move";
+    beginLayoutInteraction(event, moduleId, mode);
   }
 
   function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation) {
@@ -2106,9 +2181,14 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </>
         )}
       </div>
-      <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
+      <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${customWorkspace ? "custom" : preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
         <div data-layout-module="model" style={customModuleStyle("model")}>
           {naiLayout ? (
+            <section className="nai-model-mode-persistent" aria-label="模型与模式">
+              <div className="nai-section-heading">模型与模式</div>
+              {modelModeControls}
+            </section>
+          ) : customWorkspace ? (
             <section className="nai-model-mode-persistent" aria-label="模型与模式">
               <div className="nai-section-heading">模型与模式</div>
               {modelModeControls}
@@ -2190,7 +2270,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         </div>
         {!sidebarPromptLayout && generationParameters}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
-        {nlwLayout && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{generationParameters}</div>}
+        {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{generationParameters}</div>}
         <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
           {generationModes.has(operation) && (
             <div>
@@ -2382,8 +2462,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         <div
           data-layout-module="references"
           style={customWorkspace ? {
+            ...customModuleStyle("references"),
             display: customLayout.visibleModules.references || customLayout.visibleModules.director ? undefined : "none",
-            order: Math.min(customModuleOrder("references"), customModuleOrder("director")),
           } : undefined}
         >
           <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
@@ -3375,7 +3455,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       <div className="nai-generation-action">
         <button
           onClick={runOperation}
-          disabled={generating}
+          disabled={generating || layoutEditorOpen}
           title={
             canUseAffEstimate
               ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
@@ -3416,16 +3496,16 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   return (
     <main
       data-studio-layout={naiLayout ? "nai" : "classic"}
-      data-workspace-layout={!naiLayout ? preferences.workspaceLayout : undefined}
+      data-workspace-layout={!naiLayout ? (customWorkspace ? "custom" : preferences.workspaceLayout) : undefined}
       className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
     >
       {!naiLayout && (
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
           <div className="flex items-center gap-3">
-            <Aperture className="text-[var(--rose)]" size={23} />
-            <span className="font-[var(--font-display)] text-lg font-bold">
-              Love for NAI
-            </span>
+            <Link href="/" aria-label="返回 Love for NAI 首页" className="flex items-center gap-3">
+              <Aperture className="text-[var(--rose)]" size={23} />
+              <span className="font-[var(--font-display)] text-lg font-bold">Love for NAI</span>
+            </Link>
             <span className="hidden text-[10px] text-[var(--muted)] sm:inline">
               IMAGE STUDIO
             </span>
@@ -3479,7 +3559,13 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </div>
         </header>
       )}
-      <div className={`studio-layout grid min-h-0 flex-1${preferences.workspaceLayout === "custom" && !naiLayout ? " is-custom-layout" : ""}`}
+      <div
+        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}`}
+        data-layout-editor-board={layoutEditorOpen ? "true" : undefined}
+        onPointerDown={handleLayoutPointerDown}
+        onPointerMove={continueLayoutInteraction}
+        onPointerUp={endLayoutInteraction}
+        onPointerCancel={endLayoutInteraction}
         style={
           {
             "--lfn-left": `${leftWidth}px`,
@@ -3487,6 +3573,41 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           } as React.CSSProperties
         }
       >
+        {layoutEditorOpen && (
+          <div className="layout-editor-toolbar" role="toolbar" aria-label="自定义工作台布局编辑器">
+            <span className="layout-editor-title">图片工作台布局</span>
+            <span className="layout-editor-hint">拖动模块调整位置，拖动右下角调整大小</span>
+            <button
+              type="button"
+              onClick={() => {
+                saveCustomLayout(customLayout);
+                updatePreferences({ workspaceLayout: "custom", theme: preferences.theme === "nai" ? "paper" : preferences.theme });
+                setLayoutEditorOpen(false);
+                router.replace("/image");
+              }}
+              className="layout-editor-action is-primary"
+            >
+              <Save size={15} />保存布局
+            </button>
+            <button
+              type="button"
+              onClick={() => setCustomLayout(loadCustomLayout())}
+              className="layout-editor-action"
+            >
+              <RotateCcw size={15} />恢复已保存
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLayoutEditorOpen(false);
+                router.replace("/image");
+              }}
+              className="layout-editor-action"
+            >
+              退出编辑
+            </button>
+          </div>
+        )}
         <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
           {sidebarPromptLayout && naiGenerationFooter}

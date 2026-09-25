@@ -47,6 +47,7 @@ import "./stories.css";
 
 type WorkspaceView = "dashboard" | "create" | "editor";
 type SettingsTab = "story" | "advanced" | "settings";
+type StoryModelOption = { id: string; label: string; source: string };
 
 type JsonResult = {
   items?: Story[];
@@ -144,6 +145,8 @@ export default function StoriesWorkspace({
   const router = useRouter();
   const [view, setView] = useState<WorkspaceView>("dashboard");
   const [stories, setStories] = useState<Story[]>([]);
+  const [models, setModels] = useState<StoryModelOption[]>([]);
+  const [modelWarning, setModelWarning] = useState("");
   const [activeStory, setActiveStory] = useState<Story | null>(null);
   const [loading, setLoading] = useState(authenticated);
   const [busy, setBusy] = useState(false);
@@ -195,6 +198,19 @@ export default function StoriesWorkspace({
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    const controller = new AbortController();
+    void fetch("/api/stories/models", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const result = await response.json() as { items?: StoryModelOption[]; warning?: string; message?: string };
+        if (!response.ok) throw new Error(result.message || "读取模型失败");
+        setModels(result.items || []);
+        setModelWarning(result.warning || "");
+      }).catch((cause) => { if (cause.name !== "AbortError") setModelWarning(cause.message); });
+    return () => controller.abort();
+  }, [authenticated]);
 
   function replaceStory(story: Story) {
     setActiveStory(story);
@@ -502,7 +518,7 @@ export default function StoriesWorkspace({
   }
 
   if (view === "editor" && activeStory && activeBranch) {
-    const modelLabel = activeStory.model === "sol" ? "Sol · 长篇叙事" : "Luna · 灵感写作";
+    const modelLabel = models.find((item) => item.id === activeStory.model)?.label || activeStory.model;
     return (
       <main className={`stories-shell story-editor-shell story-editor-${editorWidth}`}>
         <header className="story-editor-header">
@@ -670,12 +686,14 @@ export default function StoriesWorkspace({
                   <div className="story-mode-value"><BookText size={18} /><b>Storyteller</b></div>
                 </div>
                 <div className="story-setting-section">
-                  <label className="story-setting-label" htmlFor="story-model">AI 模型 <small>仅使用 ikun 渠道</small></label>
+                  <label className="story-setting-label" htmlFor="story-model">AI 模型 <small>选择已配置的文本模型</small></label>
                   <select id="story-model" value={activeStory.model} onChange={(event) => void savePatch({ model: event.target.value as StoryModel })}>
-                    <option value="sol">Sol · 长篇叙事</option>
-                    <option value="luna">Luna · 灵感写作</option>
+                    {!models.some((item) => item.id === activeStory.model) && <option value={activeStory.model}>{activeStory.model} · 当前不可用</option>}
+                    {models.map((item) => <option key={item.id} value={item.id}>{item.source} · {item.label}</option>)}
                   </select>
-                  <p>{modelLabel}，所有文本调用固定路由到 ikun。</p>
+                  <p>{modelLabel}。NewAPI 模型使用 ikun 渠道；自定义模型使用你在外观设置中导入的凭据。</p>
+                  {modelWarning && <p role="status">{modelWarning}</p>}
+                  <Link href="/settings#story-providers">管理模型源</Link>
                 </div>
                 <div className="story-setting-section">
                   <Toggle checked={activeStory.specializedPrompt} onChange={(specializedPrompt) => void savePatch({ specializedPrompt })} label="小说特化提示词" />
@@ -702,7 +720,7 @@ export default function StoriesWorkspace({
                 <div className="story-setting-heading"><Bot size={18} /><span><b>生成行为</b><small>模型参数由 LFN 为小说写作优化</small></span></div>
                 <div className="story-setting-section story-readonly-setting"><span>并发上限</span><b>2</b><small>超过两路的请求会自动排队</small></div>
                 <div className="story-setting-section story-readonly-setting"><span>上下文窗口</span><b>60,000 字符</b><small>优先保留故事末尾的最近内容</small></div>
-                <div className="story-setting-section story-readonly-setting"><span>单次生成</span><b>最多 1,800 tokens</b><small>由 Sol / Luna 根据上下文续写</small></div>
+                <div className="story-setting-section story-readonly-setting"><span>单次生成</span><b>最多 1,800 tokens</b><small>由当前选择的文本模型根据上下文续写</small></div>
                 <div className="story-setting-section">
                   <label className="story-setting-label" htmlFor="generation-instruction">默认写作方向</label>
                   <textarea id="generation-instruction" value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="例如：增加对话，让冲突逐渐升级。" />
