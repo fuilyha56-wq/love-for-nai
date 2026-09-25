@@ -9,6 +9,7 @@ import "@fontsource/eczar/700.css";
 import "./globals.css";
 import { AppearanceProvider } from "./appearance";
 import { LayoutAnnouncements } from "./layout-announcements";
+import { OnboardingGuide } from "./onboarding-guide";
 
 export const metadata: Metadata = {
   title: "Love for NAI",
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <AppearanceProvider>
           {children}
           <LayoutAnnouncements />
+          <OnboardingGuide />
         </AppearanceProvider>
       </body>
     </html>

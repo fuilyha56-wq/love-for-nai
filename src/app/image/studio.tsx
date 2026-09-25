@@ -22,6 +22,7 @@ import {
   Megaphone,
   Menu,
   Maximize2,
+  Move,
   Paintbrush,
   PawPrint,
   Plus,
@@ -58,8 +59,8 @@ import {
   type ImageStudioFormSnapshot,
 } from "@/lib/image-studio-form";
 import {
+  DEFAULT_CUSTOM_LAYOUT,
   loadCustomLayout,
-  parseCustomLayout,
   saveCustomLayout,
   type CustomLayoutModule,
 } from "@/lib/appearance-store";
@@ -548,6 +549,11 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
 export default function ImageStudio({ userName, authenticated, layoutEditor = false }: Props) {
   const { preferences, updatePreferences } = useAppearance();
   const [layoutEditorOpen, setLayoutEditorOpen] = useState(layoutEditor);
+  const [previousLayoutEditor, setPreviousLayoutEditor] = useState(layoutEditor);
+  if (previousLayoutEditor !== layoutEditor) {
+    setPreviousLayoutEditor(layoutEditor);
+    setLayoutEditorOpen(layoutEditor);
+  }
   const naiLayout = preferences.theme === "nai" && !layoutEditorOpen;
   const customWorkspace = layoutEditorOpen || (!naiLayout && preferences.workspaceLayout === "custom");
   const nlwLayout = !naiLayout && preferences.workspaceLayout === "nlw";
@@ -609,11 +615,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return loadCustomLayout().rightCollapsed;
-  });
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const rightPanelCloseTimer = useRef<number | null>(null);
+  const rightPanelResizing = useRef(false);
   const [streamProgress, setStreamProgress] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
 
@@ -651,17 +655,29 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const leftWidth = naiLayout ? naiLeftWidth : classicLeftWidth;
   const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
-  const [customLayout, setCustomLayout] = useState(() => loadCustomLayout());
-  const layoutInteraction = useRef<{
-    module: CustomLayoutModule;
-    mode: "move" | "resize";
-    startX: number;
-    startY: number;
-    origin: (typeof customLayout.modulePositions)[CustomLayoutModule];
-    width: number;
-    height: number;
-  } | null>(null);
+  const [customLayout, setCustomLayout] = useState(() => structuredClone(DEFAULT_CUSTOM_LAYOUT));
+  const draggedModule = useRef<{ id: CustomLayoutModule; element: HTMLElement; startY: number; top: number; pointerY: number } | null>(null);
+  const previousCardPositions = useRef<Map<CustomLayoutModule, number> | null>(null);
   const [formCacheReady, setFormCacheReady] = useState(false);
+
+  useLayoutEffect(() => {
+    const previous = previousCardPositions.current;
+    if (!previous) return;
+    previousCardPositions.current = null;
+    document.querySelectorAll<HTMLElement>("[data-layout-editor-board] [data-layout-module]").forEach((element) => {
+      const id = element.dataset.layoutModule as CustomLayoutModule;
+      const oldTop = previous.get(id);
+      if (oldTop === undefined) return;
+      if (draggedModule.current?.id === id) {
+        const drag = draggedModule.current;
+        const layoutTop = element.getBoundingClientRect().top - new DOMMatrixReadOnly(getComputedStyle(element).transform).m42;
+        element.style.transform = `translateY(${drag.top + drag.pointerY - drag.startY - layoutTop}px)`;
+      } else {
+        const delta = oldTop - element.getBoundingClientRect().top;
+        if (Math.abs(delta) > 1) element.animate([{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }], { duration: 220, easing: "cubic-bezier(.2,.75,.3,1)" });
+      }
+    });
+  }, [customLayout.moduleOrder]);
 
   function customModuleOrder(module: CustomLayoutModule) {
     return customLayout.moduleOrder.indexOf(module);
@@ -672,70 +688,81 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return {
       display: customLayout.visibleModules[module] ? undefined : "none",
       order: customModuleOrder(module),
-      minHeight: `${rect.height * 26}px`,
+      minHeight: `${rect.height * 52}px`,
     };
   }
 
   function updateLayoutModule(module: CustomLayoutModule, next: (typeof customLayout.modulePositions)[CustomLayoutModule]) {
-    const normalized = parseCustomLayout({ ...customLayout, modulePositions: { ...customLayout.modulePositions, [module]: next } });
-    setCustomLayout(normalized);
+    setCustomLayout((current) => ({ ...current, modulePositions: { ...current.modulePositions, [module]: next } }));
   }
 
-  function beginLayoutInteraction(event: React.PointerEvent<HTMLElement>, module: CustomLayoutModule, mode: "move" | "resize") {
-    if (!layoutEditorOpen || event.button !== 0) return;
-    const board = event.currentTarget.querySelector<HTMLElement>(".settings-scroll");
-    if (!board) return;
-    const rect = board.getBoundingClientRect();
+  function moveLayoutModule(source: CustomLayoutModule, target: CustomLayoutModule) {
+    if (source === target) return;
+    previousCardPositions.current = new Map([...document.querySelectorAll<HTMLElement>("[data-layout-editor-board] [data-layout-module]")]
+      .map((element) => [element.dataset.layoutModule as CustomLayoutModule, element.getBoundingClientRect().top]));
+    setCustomLayout((current) => {
+      const order = current.moduleOrder.filter((moduleId) => moduleId !== source);
+      order.splice(order.indexOf(target), 0, source);
+      return { ...current, moduleOrder: order };
+    });
+  }
+
+  function startModuleDrag(event: React.PointerEvent<HTMLButtonElement>, source: CustomLayoutModule) {
+    if (event.button !== 0) return;
     event.preventDefault();
+    const element = event.currentTarget.closest<HTMLElement>("[data-layout-module]");
+    if (!element) return;
+    draggedModule.current = { id: source, element, startY: event.clientY, top: element.getBoundingClientRect().top, pointerY: event.clientY };
+    element.classList.add("is-dragging");
     event.currentTarget.setPointerCapture(event.pointerId);
-    layoutInteraction.current = {
-      module,
-      mode,
-      startX: event.clientX,
-      startY: event.clientY,
-      origin: { ...customLayout.modulePositions[module] },
-      width: rect.width,
-      height: rect.height,
-    };
   }
 
-  function continueLayoutInteraction(event: React.PointerEvent<HTMLDivElement>) {
-    const interaction = layoutInteraction.current;
-    if (!interaction) return;
-    const deltaY = Math.round((event.clientY - interaction.startY) / (interaction.height / 8));
-    const origin = interaction.origin;
-    if (interaction.mode === "move") {
-      const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>(".settings-scroll [data-layout-module]");
-      const targetModule = hit?.dataset.layoutModule as CustomLayoutModule | undefined;
-      if (targetModule && targetModule !== interaction.module) {
-        setCustomLayout((current) => {
-          const order = current.moduleOrder.filter((moduleId) => moduleId !== interaction.module);
-          order.splice(order.indexOf(targetModule), 0, interaction.module);
-          return { ...current, moduleOrder: order };
-        });
+  function continueModuleDrag(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag = draggedModule.current;
+    if (!drag) return;
+    drag.pointerY = event.clientY;
+    const layoutTop = drag.element.getBoundingClientRect().top - new DOMMatrixReadOnly(getComputedStyle(drag.element).transform).m42;
+    drag.element.style.transform = `translateY(${drag.top + drag.pointerY - drag.startY - layoutTop}px)`;
+    const siblings = [...drag.element.parentElement!.querySelectorAll<HTMLElement>(":scope > [data-layout-module]")]
+      .filter((element) => element !== drag.element && getComputedStyle(element).display !== "none");
+    const target = siblings.find((element) => {
+      const rect = element.getBoundingClientRect();
+      return event.clientY >= rect.top && event.clientY <= rect.bottom;
+    });
+    if (target?.dataset.layoutModule && target.dataset.layoutModule !== drag.id) {
+      const from = customLayout.moduleOrder.indexOf(drag.id);
+      const to = customLayout.moduleOrder.indexOf(target.dataset.layoutModule as CustomLayoutModule);
+      if ((to < from && event.clientY < target.getBoundingClientRect().top + target.offsetHeight / 2) ||
+          (to > from && event.clientY > target.getBoundingClientRect().top + target.offsetHeight / 2)) {
+        moveLayoutModule(drag.id, target.dataset.layoutModule as CustomLayoutModule);
       }
-    } else {
-      updateLayoutModule(interaction.module, {
-        ...origin,
-        height: Math.min(4, 8 - origin.y, Math.max(1, origin.height + deltaY)),
-      });
     }
   }
 
-  function endLayoutInteraction() {
-    layoutInteraction.current = null;
+  function finishModuleDrag() {
+    const drag = draggedModule.current;
+    draggedModule.current = null;
+    if (!drag) return;
+    drag.element.classList.remove("is-dragging");
+    drag.element.style.transform = "";
   }
 
-  function handleLayoutPointerDown(event: React.PointerEvent<HTMLElement>) {
-    if (!layoutEditorOpen) return;
-    const target = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>("[data-layout-module]") : null;
-    const moduleId = target?.dataset.layoutModule as CustomLayoutModule | undefined;
-    if (!target || !moduleId || !target.closest(".settings-scroll")) return;
-    const rect = target.getBoundingClientRect();
-    const resizing = event.clientX >= rect.right - 22 && event.clientY >= rect.bottom - 22;
-    if (!resizing && event.target instanceof HTMLElement && event.target.closest("button, input, textarea, select, a, label, [role='button']")) return;
-    const mode = resizing ? "resize" : "move";
-    beginLayoutInteraction(event, moduleId, mode);
+  function toggleLayoutModule(moduleId: CustomLayoutModule) {
+    setCustomLayout((current) => ({ ...current, visibleModules: { ...current.visibleModules, [moduleId]: !current.visibleModules[moduleId] } }));
+  }
+
+  function layoutModuleTools(moduleId: CustomLayoutModule) {
+    if (!layoutEditorOpen) return null;
+    const height = customLayout.modulePositions[moduleId].height;
+    return <div className="layout-module-tools" aria-label={`${moduleId} 布局操作`}>
+      <button type="button" data-layout-drag={moduleId} onPointerDown={(event) => startModuleDrag(event, moduleId)} onPointerMove={continueModuleDrag} onPointerUp={finishModuleDrag} onPointerCancel={finishModuleDrag} aria-label={`拖动${moduleId}`} title="拖动调整顺序" className="layout-module-drag"><Move size={15} /></button>
+      <span>{moduleId}</span>
+      <button type="button" aria-label={`上移${moduleId}`} title="上移模块" onClick={() => { const index = customLayout.moduleOrder.indexOf(moduleId); if (index > 0) moveLayoutModule(moduleId, customLayout.moduleOrder[index - 1]); }}>↑</button>
+      <button type="button" aria-label={`下移${moduleId}`} title="下移模块" onClick={() => { const index = customLayout.moduleOrder.indexOf(moduleId); if (index < customLayout.moduleOrder.length - 1) moveLayoutModule(customLayout.moduleOrder[index + 1], moduleId); }}>↓</button>
+      <button type="button" aria-label={`缩小${moduleId}`} title="缩小模块" disabled={height <= 1} onClick={() => updateLayoutModule(moduleId, { ...customLayout.modulePositions[moduleId], height: height - 1 })}>−</button>
+      <button type="button" aria-label={`放大${moduleId}`} title="放大模块" disabled={height >= 4} onClick={() => updateLayoutModule(moduleId, { ...customLayout.modulePositions[moduleId], height: height + 1 })}>+</button>
+      <button type="button" aria-label={`隐藏${moduleId}`} title="隐藏模块" onClick={() => toggleLayoutModule(moduleId)}><Eye size={14} /></button>
+    </div>;
   }
 
   function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation) {
@@ -963,6 +990,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function scheduleRightPanelClose() {
+    if (rightPanelResizing.current || layoutEditorOpen) return;
     if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
     rightPanelCloseTimer.current = window.setTimeout(() => setRightPanelCollapsed(true), 220);
   }
@@ -1153,6 +1181,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   function startResize(side: "left" | "right", event: React.PointerEvent) {
     event.preventDefault();
+    if (side === "right") {
+      rightPanelResizing.current = true;
+      openRightPanel();
+    }
     const startX = event.clientX;
     const startLeft = leftWidth;
     const startRight = rightWidth;
@@ -1176,6 +1208,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       savePanelWidths(latestLeft, latestRight);
+      if (side === "right") {
+        rightPanelResizing.current = false;
+        if (!document.querySelector(".studio-tools-panel:hover, .panel-resizer[aria-label='调整右侧面板宽度']:hover")) scheduleRightPanelClose();
+      }
     }
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -2183,6 +2219,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       </div>
       <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${customWorkspace ? "custom" : preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
         <div data-layout-module="model" style={customModuleStyle("model")}>
+          {layoutModuleTools("model")}
           {naiLayout ? (
             <section className="nai-model-mode-persistent" aria-label="模型与模式">
               <div className="nai-section-heading">模型与模式</div>
@@ -2201,6 +2238,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         </div>
         {sidebarPromptLayout && (
           <div data-layout-module="prompt" style={customModuleStyle("prompt")}>
+            {layoutModuleTools("prompt")}
             <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
               {promptFields}
               {characterControls}
@@ -2209,6 +2247,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         )}
 
         <div data-layout-module="image" style={customModuleStyle("image")}>
+          {layoutModuleTools("image")}
           {naiLayout ? (
             <PanelSection title="图像设置" icon={<Images size={16} />}>
               <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
@@ -2270,8 +2309,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         </div>
         {!sidebarPromptLayout && generationParameters}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
-        {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{generationParameters}</div>}
+        {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{layoutModuleTools("sampling")}{generationParameters}</div>}
         <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
+          {layoutModuleTools("operations")}
           {generationModes.has(operation) && (
             <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
@@ -2466,6 +2506,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             display: customLayout.visibleModules.references || customLayout.visibleModules.director ? undefined : "none",
           } : undefined}
         >
+          {layoutModuleTools("references")}
           <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
             <div className="nai-reference-grid">
               <button
@@ -2911,7 +2952,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
   const sessionHistoryPanel = (
-    <section className="session-history-panel" style={customModuleStyle("history")} aria-label="本次会话历史">
+    <section className="session-history-panel" data-layout-module="history" style={customModuleStyle("history")} aria-label="本次会话历史">
+      {layoutModuleTools("history")}
       <div className="flex items-center justify-between gap-2">
         <b className="text-xs">本次历史</b>
         <span className="text-[10px] text-[var(--muted)]">{sessionHistory.length} 张</span>
@@ -2998,6 +3040,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
           )}
           <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+            {layoutModuleTools("agent")}
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>
@@ -3559,28 +3602,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
         </header>
       )}
-      <div
-        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}`}
-        data-layout-editor-board={layoutEditorOpen ? "true" : undefined}
-        onPointerDown={handleLayoutPointerDown}
-        onPointerMove={continueLayoutInteraction}
-        onPointerUp={endLayoutInteraction}
-        onPointerCancel={endLayoutInteraction}
-        style={
-          {
-            "--lfn-left": `${leftWidth}px`,
-            "--lfn-right": `${rightWidth}px`,
-          } as React.CSSProperties
-        }
-      >
-        {layoutEditorOpen && (
+      {layoutEditorOpen && (
           <div className="layout-editor-toolbar" role="toolbar" aria-label="自定义工作台布局编辑器">
             <span className="layout-editor-title">图片工作台布局</span>
-            <span className="layout-editor-hint">拖动模块调整位置，拖动右下角调整大小</span>
+            <span className="layout-editor-hint">用模块把手拖动排序；− / + 调整高度，眼睛切换显示</span>
+            <label className="layout-editor-width">左栏 <input aria-label="左栏宽度" type="number" min={240} max={520} value={leftWidth} onChange={(event) => { const value = Number(event.target.value); if (value >= 240 && value <= 520) { setClassicLeftWidth(value); setCustomLayout((current) => ({ ...current, leftWidth: value })); } }} />px</label>
+            <label className="layout-editor-width">右栏 <input aria-label="右栏宽度" type="number" min={200} max={460} value={rightWidth} onChange={(event) => { const value = Number(event.target.value); if (value >= 200 && value <= 460) { setRightWidth(value); setCustomLayout((current) => ({ ...current, rightWidth: value })); } }} />px</label>
+            <div className="layout-editor-visibility" aria-label="模块显隐">
+              {(["model", "prompt", "image", "sampling", "references", "operations", "history", "agent"] as CustomLayoutModule[]).map((moduleId) => (
+                <button key={moduleId} type="button" aria-pressed={customLayout.visibleModules[moduleId]} onClick={() => toggleLayoutModule(moduleId)}>{moduleId}</button>
+              ))}
+            </div>
             <button
               type="button"
               onClick={() => {
-                saveCustomLayout(customLayout);
+                saveCustomLayout({ ...customLayout, leftWidth, rightWidth, rightCollapsed: rightPanelCollapsed });
                 updatePreferences({ workspaceLayout: "custom", theme: preferences.theme === "nai" ? "paper" : preferences.theme });
                 setLayoutEditorOpen(false);
                 router.replace("/image");
@@ -3608,6 +3644,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </button>
           </div>
         )}
+      <div
+        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}`}
+        data-layout-editor-board={layoutEditorOpen ? "true" : undefined}
+        style={
+          {
+            "--lfn-left": `${leftWidth}px`,
+            "--lfn-right": `${rightWidth}px`,
+          } as React.CSSProperties
+        }
+      >
+        {customWorkspace && !layoutEditorOpen && <Link className="layout-editor-entry" href="/image?layoutEditor=1"><Move size={14} />编辑布局</Link>}
         <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
           {sidebarPromptLayout && naiGenerationFooter}
@@ -3844,6 +3891,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-valuemax={460}
             tabIndex={0}
             className="panel-resizer hidden lg:block"
+            onMouseEnter={openRightPanel}
+            onMouseLeave={scheduleRightPanelClose}
+            onFocus={openRightPanel}
+            onBlur={scheduleRightPanelClose}
             onPointerDown={(event) => startResize("right", event)}
             onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
             onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
@@ -3853,7 +3904,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${
             naiLayout
               ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
-              : rightPanelCollapsed
+              : rightPanelCollapsed && !layoutEditorOpen
                 ? " is-collapsed"
                 : ""
           }`}
@@ -3873,7 +3924,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           >
             {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
-          {!naiLayout && rightPanelCollapsed ? (
+          {!naiLayout && rightPanelCollapsed && !layoutEditorOpen ? (
             <div className="collapsed-history-rail" aria-label="本次历史缩略图">
               {sessionHistory.map((item) => (
                 <button type="button" key={item.id} onClick={() => { openRightPanel(); applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">

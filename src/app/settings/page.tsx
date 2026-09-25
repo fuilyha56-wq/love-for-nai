@@ -1,7 +1,6 @@
 "use client";
 
 import { WorkspaceNav } from "@/app/workspace-nav";
-import StoryProviderSettings from "@/app/settings/story-provider-settings";
 
 import {
   ArrowLeft,
@@ -957,8 +956,6 @@ function SettingsPageContent() {
             />
           </div>
         </article>
-
-        <StoryProviderSettings />
 
         <article className="panel overflow-hidden rounded-md p-5 sm:p-6">
           <SettingHeading

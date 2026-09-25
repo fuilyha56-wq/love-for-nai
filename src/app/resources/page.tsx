@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkspaceNav } from "@/app/workspace-nav";
+import StoryProviderSettings from "@/app/settings/story-provider-settings";
 
 import {
   ArrowLeft,
@@ -274,6 +275,11 @@ export default function ResourcesPage() {
       </header>
       <WorkspaceNav />
       <section className="mx-auto max-w-6xl space-y-6 p-4 sm:p-8">
+        <div className="flex flex-wrap gap-2 border-b border-[var(--line)] pb-4 text-sm">
+          <a href="#story-providers" className="rounded border border-[var(--line)] px-3 py-2 hover:border-[var(--rose)]">自定义 API / NovelAI Key</a>
+          <a href="#api-tokens" className="rounded border border-[var(--line)] px-3 py-2 hover:border-[var(--rose)]">LFN 对外密钥</a>
+        </div>
+        <StoryProviderSettings />
         {expired && <SessionExpiredNotice message={expired} />}
         {message && (
           <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
@@ -336,7 +342,7 @@ export default function ResourcesPage() {
         </article>
 
         {/* API 密钥管理 */}
-        <article className="panel rounded-md p-5">
+        <article id="api-tokens" className="panel rounded-md p-5">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
               API KEYS · 密钥管理
