@@ -46,6 +46,8 @@ next-env.d.ts
 .rsh.py
 .rsh2.py
 .rsh*.py
+.upload.py
+.upload*.py
 
 # 本地 docker save 产物，不要入库
 love-for-nai-*.tar
@@ -68,3 +70,17 @@ aff-test.json
 *.tar.gz
 .zcode/
 .mimosa/
+
+# ===== 敏感内容（凭据 / 密钥 / 服务器信息），绝不入库 =====
+# 未跟踪的探针/运维脚本（_probe_*.py、_cleanup_sessions.py 等）与数据库脚本
+_*.py
+.*.sql
+# 服务器连接指南（含敏感 IP 信息）
+SERVER_CONNECTION_GUIDE.md
+# 编辑器本地配置
+.vscode/
+.idea/
+# 证书与密钥库
+*.key
+*.p12
+*.pfx
