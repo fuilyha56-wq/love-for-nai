@@ -691,9 +691,9 @@ export default function StoriesWorkspace({
                     {!models.some((item) => item.id === activeStory.model) && <option value={activeStory.model}>{activeStory.model} · 当前不可用</option>}
                     {models.map((item) => <option key={item.id} value={item.id}>{item.source} · {item.label}</option>)}
                   </select>
-                  <p>{modelLabel}。NewAPI 模型使用 ikun 渠道；自定义模型使用你在外观设置中导入的凭据。</p>
+                  <p>{modelLabel}。NewAPI 模型使用 ikun 渠道；自定义模型使用你在模型与密钥中导入的凭据。</p>
                   {modelWarning && <p role="status">{modelWarning}</p>}
-                  <Link href="/settings#story-providers">管理模型源</Link>
+                  <Link href="/resources#story-providers">管理模型源</Link>
                 </div>
                 <div className="story-setting-section">
                   <Toggle checked={activeStory.specializedPrompt} onChange={(specializedPrompt) => void savePatch({ specializedPrompt })} label="小说特化提示词" />
