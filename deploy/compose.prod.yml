@@ -1,0 +1,66 @@
+services:
+  lfn-web:
+    image: love-for-nai:ikun-compat-20260928
+    pull_policy: never
+    container_name: love-for-nai
+    restart: unless-stopped
+    environment:
+      LFN_AUTH_PROVIDER: ${LFN_AUTH_PROVIDER:-newapi}
+      NEWAPI_DB_URL: ${NEWAPI_DB_URL:-}
+      NEWAPI_BASE_URL: ${NEWAPI_BASE_URL:-http://47.108.250.118:3000}
+      QUOTA_PER_UNIT: ${QUOTA_PER_UNIT:-500000}
+      LFN_SESSION_SECRET: ${LFN_SESSION_SECRET:?LFN_SESSION_SECRET is required}
+      LFN_COOKIE_SECURE: ${LFN_COOKIE_SECURE:-false}
+      LFN_PUBLIC_URL: http://47.116.22.227:41800
+      LFN_DATA_DIR: /app/data
+      SOURCE_CODE_URL: ${SOURCE_CODE_URL:-}
+      LFN_OUTBOUND_PROXY: ${LFN_OUTBOUND_PROXY:-}
+      LFN_TRUST_PROXY: ${LFN_TRUST_PROXY:-false}
+      LFN_REMOTE_HISTORY_URL: ${LFN_REMOTE_HISTORY_URL:-}
+      LFN_REMOTE_HISTORY_TOKEN: ${LFN_REMOTE_HISTORY_TOKEN:-}
+      LFN_ADMIN_TOKEN: ${LFN_ADMIN_TOKEN:-}
+      LFN_ADMIN_USER_ID: ${LFN_ADMIN_USER_ID:-1}
+      LFN_REGISTER_GROUP: ${LFN_REGISTER_GROUP:-Draw}
+      LFN_AFF_GATEWAY_URL: ${LFN_AFF_GATEWAY_URL:-}
+      LFN_AFF_GATEWAY_TOKEN: ${LFN_AFF_GATEWAY_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:41801:3000"
+    volumes:
+      - lfn-data:/app/data
+    mem_limit: 512m
+    cpus: "1.0"
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  lfn-edge:
+    image: nginx:alpine
+    pull_policy: never
+    container_name: lfn-edge
+    restart: unless-stopped
+    depends_on:
+      - lfn-web
+    ports:
+      - "41800:41800"
+    volumes:
+      - ./nginx-lfn.conf:/etc/nginx/conf.d/default.conf:ro
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  lfn-data:
