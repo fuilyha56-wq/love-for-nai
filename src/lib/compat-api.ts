@@ -66,21 +66,14 @@ const droppedRequestHeaders = new Set([
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * 外部图像端点的身份识别：任何有效的 NewAPI key 均可使用，
+ * 分组不限（站点注册用户多在 Draw/default 等分组，NewAPI 上不存在
+ * 全体用户共有的单一分组）。计费自我约束：优先扣 key 所属用户的
+ * 图包/个人 AFF 余额，无余额则透明代理回 NewAPI 按其分组通道计费。
+ */
 export async function requireIkunExternalIdentity(authorization: string) {
-  const identity = await resolveExternalApiIdentity(authorization);
-  if (identity.group?.toLowerCase() !== "ikun") {
-    return Response.json(
-      {
-        error: {
-          message: "模型请求仅允许使用 ikun 分组密钥",
-          type: "invalid_request_error",
-          code: "ikun_group_required",
-        },
-      },
-      { status: 403 },
-    );
-  }
-  return identity;
+  return resolveExternalApiIdentity(authorization);
 }
 
 /** 外部 API（source=api）请求的上游日志：用户名缺失时退化为掩码 key。 */
@@ -290,7 +283,13 @@ export async function proxyImageWithCredits(
   }
   const userId = apiIdentity.userId;
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
-  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
+  if (userId == null) {
+    // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
+    )(-1);
+    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -609,7 +608,13 @@ export async function proxyNaiNativeWithCredits(
     newApiFallback && newApiFallback !== "unsupported"
       ? newApiFallback.pathname
       : pathname;
-  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
+  if (userId == null) {
+    // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+    )(-1);
+    return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)

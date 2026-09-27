@@ -82,14 +82,19 @@ afterEach(() => {
 });
 
 describe("外部 LFN 图像入口计费", () => {
-  it("key 无法识别时拒绝模型请求，不透明绕过 ikun", async () => {
+  it("key 无法识别时透明代理到 NewAPI，不扣图包", async () => {
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
     const body = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(body.error.code).toBe("ikun_group_required");
+    expect(response.status).toBe(200);
+    expect(body.data?.[0]?.b64_json).toBe("abc");
     expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(fetch)
+        .mock.calls.some(([url]) => url === "http://newapi.test/v1/images/generations"),
+    ).toBe(true);
   });
 
   it("有效 key 自动识别用户且图包足够时走 Gateway，不把用户 key 发给上游", async () => {
@@ -131,15 +136,14 @@ describe("外部 LFN 图像入口计费", () => {
     ).toBe(true);
   });
 
-  it("非 ikun 分组密钥返回 403", async () => {
+  it("非 ikun 分组的有效密钥同样扣图包走 Gateway", async () => {
     mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
-    const body = await response.json();
 
-    expect(response.status).toBe(403);
-    expect(body.error.code).toBe("ikun_group_required");
-    expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-lfn-payment-source")).toBe("package");
+    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything());
   });
 
   it("数据库故障时返回 502，不透传也不扣图包", async () => {
