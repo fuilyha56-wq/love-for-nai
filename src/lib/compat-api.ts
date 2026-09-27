@@ -5,6 +5,7 @@
 
 import JSZip from "jszip";
 import {
+  affStatus,
   refundImageCredits,
   trySpendImageCredits,
   type AffGeneration,
@@ -524,6 +525,38 @@ export function forbiddenUserAccount(): Response {
     403,
     "gateway_auth_required",
   );
+}
+
+/**
+ * NovelAI 原生 /user/subscription 兼容响应。
+ *
+ * 第三方客户端（如 Aaalice NAI Launcher）登录时先请求该端点验证 Token：
+ * 404 会触发其降级探测，但 403 等其他 4xx 会被归为"未知错误"导致登录失败。
+ * 因此这里用站内 AFF 账本合成一份订阅信息：Anlas 余额映射为
+ * trainingStepsLeft，订阅等级固定 Paper（tier 0，不影响客户端费用估算），
+ * active 恒为 true 以通过客户端的订阅有效性检查。
+ */
+export async function naiSubscriptionResponse(
+  userId: number,
+): Promise<Response> {
+  const status = await affStatus(userId).catch(() => null);
+  const anlas = status ? Math.max(0, Math.floor(status.totalBalance)) : 0;
+  return Response.json({
+    tier: 0,
+    active: true,
+    trainingStepsLeft: {
+      fixedTrainingStepsLeft: anlas,
+      purchasedTrainingSteps: 0,
+    },
+    perks: {
+      maxPriorityActions: 0,
+      startPriority: 0,
+      moduleTrainingSteps: 0,
+      unlimitedImageGeneration: false,
+      imageGeneration: true,
+      contextTokens: 8000,
+    },
+  });
 }
 
 export async function proxyNaiNativeWithCredits(
