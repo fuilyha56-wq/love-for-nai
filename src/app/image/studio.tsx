@@ -59,6 +59,10 @@ import {
 } from "@/lib/image-studio-form";
 import {
   loadCustomLayout,
+<<<<<<< Updated upstream
+=======
+  saveCustomLayout,
+>>>>>>> Stashed changes
   type CustomLayoutModule,
 } from "@/lib/appearance-store";
 import {
@@ -120,6 +124,13 @@ type WalletState = {
   };
   newApi?: { balance: number; used: number; group: string };
 };
+type ProviderSummary = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: string[];
+};
+type AvailableModel = { id: string; kind?: string };
 type Operation =
   | "generate"
   | "img2img"
@@ -545,12 +556,18 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
 
 export default function ImageStudio({ userName, authenticated }: Props) {
   const { preferences } = useAppearance();
-  const naiLayout = preferences.theme === "nai";
+  const naiLayout = preferences.theme === "nai" && preferences.workspaceLayout !== "custom";
   const nlwLayout = !naiLayout && (preferences.workspaceLayout === "nlw" || preferences.workspaceLayout === "custom");
   const sidebarPromptLayout = naiLayout || nlwLayout;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
+  const [providerId, setProviderId] = useState("newapi");
+  const [newApiModels, setNewApiModels] = useState<SelectOption[]>([]);
+  const [newApiModelsLoaded, setNewApiModelsLoaded] = useState(false);
+  const [customProviders, setCustomProviders] = useState<ProviderSummary[]>([]);
+  const [customProviderModels, setCustomProviderModels] = useState<SelectOption[]>([]);
+  const [novelAiConnected, setNovelAiConnected] = useState(false);
   const [width, setWidth] = useState(832);
   const [height, setHeight] = useState(1216);
   const [steps, setSteps] = useState(28);
@@ -648,7 +665,39 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
   const [rightWidth, setRightWidth] = useState(230);
   const [customLayout, setCustomLayout] = useState(() => loadCustomLayout());
+<<<<<<< Updated upstream
+=======
+  const customLayoutEnabled = !naiLayout && preferences.workspaceLayout === "custom";
+  function layoutSlot(moduleId: CustomLayoutModule, content: React.ReactNode) {
+    if (!customLayoutEnabled) return content;
+    return (
+      <div
+        className="custom-layout-slot"
+        data-layout-module={moduleId}
+        style={{
+          order: customLayout.moduleOrder.indexOf(moduleId),
+          display: customLayout.visibleModules[moduleId] ? undefined : "none",
+        }}
+      >
+        {content}
+      </div>
+    );
+  }
+>>>>>>> Stashed changes
   const [formCacheReady, setFormCacheReady] = useState(false);
+  const selectedProvider = customProviders.find((item) => item.id === providerId);
+  const providerOptions: SelectOption[] = [
+    { value: "newapi", label: "NewAPI 账号" },
+    ...(novelAiConnected ? [{ value: "novelai", label: "NovelAI 官方 Key" }] : []),
+    ...customProviders.map((item) => ({ value: item.id, label: item.name })),
+  ];
+  const modelOptions = providerId === "newapi"
+    ? (newApiModelsLoaded ? newApiModels : models)
+    : providerId === "novelai"
+      ? models.filter((item) => !item.value.endsWith("-limit"))
+      : (customProviderModels.length
+        ? customProviderModels
+        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })));
 
   const customWorkspace = !naiLayout && preferences.workspaceLayout === "custom";
   function customModuleOrder(module: CustomLayoutModule) {
@@ -747,6 +796,10 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       setNotice("请先登录后再进行精确重绘。");
       return;
     }
+    if (providerId !== "newapi" && providerId !== "novelai") {
+      setNotice("精确重绘暂不支持自定义 API，请切换到 NewAPI 或 NovelAI 官方 Key。");
+      return;
+    }
     setGenerating(true);
     setNotice("正在裁切选区并提交精确重绘…");
     try {
@@ -790,6 +843,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           operation: "inpainting",
+          providerId,
           editor_composite: true,
           model: inpaintModel,
           prompt,
@@ -908,6 +962,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       const saved = loadImageStudioForm();
       setOperation(saved.operation as Operation);
       setContentMode(saved.contentMode);
+      setProviderId(saved.providerId);
       setModel(saved.model);
       setWidth(saved.width);
       setHeight(saved.height);
@@ -944,6 +999,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
         version: 1,
         operation,
         contentMode,
+        providerId,
         model,
         prompt,
         negative,
@@ -974,7 +1030,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [
-    formCacheReady, operation, contentMode, model, prompt, negative, width, height,
+    formCacheReady, operation, contentMode, providerId, model, prompt, negative, width, height,
     steps, scale, count, batchMode, sampler, schedule, cfgRescale, seed, strength,
     vibeStrength, vibeInformationExtracted, referenceType, controlModel, upscaleModel, charactersEnabled, characters,
   ]);
@@ -1074,6 +1130,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   function savePanelWidths(left: number, right: number) {
     if (naiLayout) window.localStorage.setItem("lfn-nai-left-width", String(left));
     window.localStorage.setItem("lfn-layout", JSON.stringify({ left: naiLayout ? classicLeftWidth : left, right }));
+    if (customLayoutEnabled) {
+      setCustomLayout(saveCustomLayout({ ...customLayout, leftWidth: left, rightWidth: right }));
+    }
   }
 
   function startResize(side: "left" | "right", event: React.PointerEvent) {
@@ -1179,6 +1238,78 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   useEffect(() => {
     if (!signedIn) return;
+    const controller = new AbortController();
+    async function loadSources() {
+      const [modelsResult, providersResult, novelAiResult] = await Promise.allSettled([
+        fetch("/api/models", { cache: "no-store", signal: controller.signal }).then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || "无法读取 NewAPI 模型");
+          return data as { items?: AvailableModel[] };
+        }),
+        fetch("/api/providers", { cache: "no-store", signal: controller.signal }).then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || "无法读取自定义 API");
+          return data as { items?: ProviderSummary[] };
+        }),
+        fetch("/api/providers/novelai", { cache: "no-store", signal: controller.signal }).then(async (response) => {
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.message || "无法读取 NovelAI 账号");
+          return data as { account?: { connected?: boolean } | null };
+        }),
+      ]);
+      if (controller.signal.aborted) return;
+      if (modelsResult.status === "fulfilled") {
+        const available = (modelsResult.value.items || [])
+          .filter((item) => item.kind === "图像模型" && typeof item.id === "string")
+          .map((item) => ({
+            value: item.id,
+            label: models.find((known) => known.value === item.id)?.label || item.id,
+          }));
+        setNewApiModels(available);
+        setNewApiModelsLoaded(true);
+      }
+      if (providersResult.status === "fulfilled")
+        setCustomProviders(Array.isArray(providersResult.value.items) ? providersResult.value.items : []);
+      if (novelAiResult.status === "fulfilled")
+        setNovelAiConnected(Boolean(novelAiResult.value.account?.connected));
+    }
+    void loadSources();
+    return () => controller.abort();
+  }, [signedIn]);
+
+  useEffect(() => {
+    if (!signedIn || !selectedProvider) return;
+    const controller = new AbortController();
+    fetch(`/api/providers/models?providerId=${encodeURIComponent(selectedProvider.id)}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "读取模型失败");
+        return result as { items?: AvailableModel[] };
+      })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setCustomProviderModels((result.items || [])
+          .filter((item) => typeof item.id === "string")
+          .map((item) => ({ value: item.id, label: item.id })));
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setCustomProviderModels([]);
+      });
+    return () => controller.abort();
+  }, [selectedProvider, signedIn]);
+
+  useEffect(() => {
+    if (!formCacheReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
+    void Promise.resolve().then(() => setModel((current) =>
+      modelOptions.some((item) => item.value === current) ? current : modelOptions[0].value,
+    ));
+  }, [formCacheReady, model, modelOptions]);
+
+  useEffect(() => {
+    if (!signedIn) return;
     fetch("/api/assistant/models")
       .then(async (response) => {
         const result = await response.json();
@@ -1203,7 +1334,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       if (reusedOperation && modes.some(({ id }) => id === reusedOperation))
         setOperation(reusedOperation);
       const reusedModel = params.get("model");
-      if (reusedModel && models.some(({ value }) => value === reusedModel))
+      if (reusedModel && /^[\w][\w.\-/:+]{0,199}$/.test(reusedModel))
         setModel(reusedModel);
       const numericValues = [
         ["width", setWidth, 64, 1600],
@@ -1392,7 +1523,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   useEffect(() => {
     let cancelled = false;
     // 登出态清空计价交给微任务，避免 effect 内同步 setState。
-    if (!signedIn) {
+    if (!signedIn || providerId !== "newapi") {
       void Promise.resolve().then(() => {
         if (!cancelled) setModelPricing(null);
       });
@@ -1412,7 +1543,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [signedIn, model]);
+  }, [signedIn, providerId, model]);
 
   async function clearConversationHistory() {
     const response = await fetch("/api/assistant/tags", { method: "DELETE" });
@@ -1978,32 +2109,63 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   );
 
   const modelModeControls = (
-    <div className="nai-model-mode-row">
-      <Control label="模型">
-        <PopupSelect
-          value={model}
-          options={models}
-          onChange={setModel}
-          ariaLabel="模型"
-          searchable
-        />
-      </Control>
-      <Control label="模式">
-        <button
-          type="button"
-          className="nai-mode-button"
-          aria-label={`当前为 ${contentMode === "anime" ? "动漫" : "兽人"} 模式，点击切换`}
-          onClick={() => {
-            const next = contentMode === "anime" ? "furry" : "anime";
-            setContentMode(next);
-            if (model === "nai-v3") setModel("nai-v3-furry");
-            if (model === "nai-v3-furry") setModel("nai-v3");
-          }}
-        >
-          <PawPrint size={14} />
-          <span>{contentMode === "anime" ? "动漫" : "兽人"}</span>
-        </button>
-      </Control>
+    <div className="space-y-3">
+      <div className="flex items-end gap-2">
+        <div className="min-w-0 flex-1">
+          <Control label="模型来源">
+            <PopupSelect
+              value={providerId}
+              options={providerOptions}
+              onChange={(next) => {
+                setProviderId(next);
+                setCustomProviderModels([]);
+                if (next === "newapi") setModel(newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
+                else if (next === "novelai") setModel(models[0].value);
+                else setModel(customProviders.find((item) => item.id === next)?.models[0] || "");
+                if (next !== "newapi") setOperation("generate");
+              }}
+              ariaLabel="模型来源"
+            />
+          </Control>
+        </div>
+        <Link href="/settings" className="mb-0.5 shrink-0 text-xs font-semibold text-[var(--rose)] hover:underline">
+          管理来源
+        </Link>
+      </div>
+      <div className="nai-model-mode-row">
+        <Control label="模型">
+          <PopupSelect
+            value={modelOptions.some((item) => item.value === model) ? model : ""}
+            options={modelOptions}
+            onChange={(next) => {
+              setModel(next);
+              if (providerId === "newapi" && !/^nai-v(?:3|4(?:\.5)?|5)(?:-|$)/i.test(next))
+                setOperation("generate");
+            }}
+            ariaLabel="模型"
+            searchable
+            emptyText="暂无可用图像模型，请在设置中导入"
+          />
+        </Control>
+        {(providerId === "novelai" || model.startsWith("nai-")) && (
+          <Control label="模式">
+            <button
+              type="button"
+              className="nai-mode-button"
+              aria-label={`当前为 ${contentMode === "anime" ? "动漫" : "兽人"} 模式，点击切换`}
+              onClick={() => {
+                const next = contentMode === "anime" ? "furry" : "anime";
+                setContentMode(next);
+                if (model === "nai-v3") setModel("nai-v3-furry");
+                if (model === "nai-v3-furry") setModel("nai-v3");
+              }}
+            >
+              <PawPrint size={14} />
+              <span>{contentMode === "anime" ? "动漫" : "兽人"}</span>
+            </button>
+          </Control>
+        )}
+      </div>
     </div>
   );
 
@@ -2041,7 +2203,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             setBatchProgress("");
             setSampler("k_euler_ancestral");
             setSchedule("native");
-            setModel(models[0].value);
+            setProviderId("newapi");
+            setModel(newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
             setCfgRescale(0);
             setSeed("");
             setStrength(0.7);
@@ -2106,6 +2269,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           </>
         )}
       </div>
+<<<<<<< Updated upstream
       <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${preferences.workspaceLayout}` : "nai-panel-layout"} space-y-5 p-4`}>
         <div data-layout-module="model" style={customModuleStyle("model")}>
           {naiLayout ? (
@@ -2119,6 +2283,22 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </PanelSection>
           )}
         </div>
+=======
+      <div className={`settings-scroll ${!naiLayout ? `workspace-panel-layout-${preferences.workspaceLayout}` : "nai-panel-layout"} ${customLayoutEnabled ? "custom-layout-control-list" : "space-y-5"} p-4`}>
+        {layoutSlot("model", <>
+        {naiLayout ? (
+          <section className="nai-model-mode-persistent" aria-label="模型与模式">
+            <div className="nai-section-heading">模型与模式</div>
+            {modelModeControls}
+          </section>
+        ) : (
+          <PanelSection title="模型与模式" icon={<SlidersHorizontal size={16} />}>
+            {modelModeControls}
+          </PanelSection>
+        )}
+        </>)}
+        {layoutSlot("prompt", <>
+>>>>>>> Stashed changes
         {sidebarPromptLayout && (
           <div data-layout-module="prompt" style={customModuleStyle("prompt")}>
             <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
@@ -2127,7 +2307,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </PanelSection>
           </div>
         )}
+        </>)}
 
+<<<<<<< Updated upstream
         <div data-layout-module="image" style={customModuleStyle("image")}>
           {naiLayout ? (
             <PanelSection title="图像设置" icon={<Images size={16} />}>
@@ -2135,6 +2317,15 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             </PanelSection>
           ) : (
           <Control label="自定义分辨率 · 64–1600">
+=======
+        {layoutSlot("image", <>
+        {naiLayout ? (
+          <PanelSection title="图像设置" icon={<Images size={16} />}>
+            <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+          </PanelSection>
+        ) : (
+        <Control label="自定义分辨率 · 64–1600">
+>>>>>>> Stashed changes
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
             <NumberField
               value={width}
@@ -2185,9 +2376,16 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </button>
             ))}
           </div>
+<<<<<<< Updated upstream
           </Control>
           )}
         </div>
+=======
+        </Control>
+        )}
+        </>)}
+        {layoutSlot("sampling", <>
+>>>>>>> Stashed changes
         {!sidebarPromptLayout && generationParameters}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
         {nlwLayout && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{generationParameters}</div>}
@@ -2234,11 +2432,21 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 </p>
               )}
             </Control>
+<<<<<<< Updated upstream
             </div>
           )}
 
           {!naiLayout && !nlwLayout && characterControls}
           {["img2img", "inpainting", "edits"].includes(operation) && (
+=======
+          </div>
+        )}
+        </>)}
+
+        {layoutSlot("operations", <>
+        {!naiLayout && !nlwLayout && characterControls}
+        {["img2img", "inpainting", "edits"].includes(operation) && (
+>>>>>>> Stashed changes
           <Control label={`变化强度 · ${strength}`}>
             <input
               className="range w-full"
@@ -2377,6 +2585,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             Gateway 端点存在，但尚无可审计的 usage
             计费映射，当前只展示完整入口并阻止零费用提交。
           </p>
+<<<<<<< Updated upstream
           )}
         </div>
         <div
@@ -2387,6 +2596,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           } : undefined}
         >
           <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
+=======
+        )}
+        </>)}
+        {layoutSlot("references", <>
+        <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
+>>>>>>> Stashed changes
             <div className="nai-reference-grid">
               <button
                 type="button"
@@ -2432,7 +2647,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 />
               </Control>
             </div>
-            <div className="mt-3">
+            {!customLayoutEnabled && <div className="mt-3">
               <div className="nai-section-heading">导演工具</div>
               <div className="nai-director-grid">
                 {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
@@ -2448,9 +2663,31 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                   </button>
                 ))}
               </div>
+            </div>}
+          </PanelSection>
+        </>)}
+        {customLayoutEnabled && layoutSlot("director", (
+          <PanelSection title="导演工具" icon={<WandSparkles size={16} />} defaultOpen={false}>
+            <div className="nai-director-grid">
+              {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={`nai-director-button${operation === item.id ? " is-active" : ""}`}
+                  aria-pressed={operation === item.id}
+                  onClick={() => selectOperation(item.id)}
+                >
+                  <WandSparkles size={14} />
+                  <span>{item.label}</span>
+                </button>
+              ))}
             </div>
           </PanelSection>
+<<<<<<< Updated upstream
         </div>
+=======
+        ))}
+>>>>>>> Stashed changes
       </div>
     </>
   );
@@ -2460,9 +2697,34 @@ export default function ImageStudio({ userName, authenticated }: Props) {
       setNotice(
         authenticated
           ? "登录状态已过期，请重新登录后再提交。"
-          : "体验模式不会发送真实请求。登录后可通过你的 NewAPI 钱包调用。",
+          : "体验模式不会发送真实请求。登录后可以选择模型来源。",
       );
       return;
+    }
+    if (providerId === "novelai" && !novelAiConnected) {
+      setNotice("NovelAI 官方 Key 已移除，请在设置中重新导入。");
+      return;
+    }
+    if (providerId !== "newapi" && providerId !== "novelai" && !selectedProvider) {
+      setNotice("自定义 API 已移除，请重新选择模型来源。");
+      return;
+    }
+    if (!modelOptions.some((item) => item.value === model)) {
+      setNotice("请先选择当前来源可用的图像模型。");
+      return;
+    }
+    if (providerId === "newapi" && !/^nai-v(?:3|4(?:\.5)?|5)(?:-|$)/i.test(model) && operation !== "generate") {
+      setNotice("这个 NewAPI 模型目前只支持文生图，请切换到生成。");
+      return;
+    }
+    if (providerId !== "newapi") {
+      const allowed = providerId === "novelai"
+        ? new Set<Operation>(["generate", "img2img", "inpainting", "edits", "vibe-transfer", "character-reference", "precise-reference"])
+        : new Set<Operation>(["generate"]);
+      if (!allowed.has(operation)) {
+        setNotice("这个操作暂不支持当前模型来源，请切换到 NewAPI 或选择生成。");
+        return;
+      }
     }
     const validationError = validateGenerationParameters({
       operation,
@@ -2494,6 +2756,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     setNotice("");
     const base: Record<string, unknown> = {
       operation,
+      providerId,
       model,
       prompt,
       negative_prompt: negative,
@@ -2799,7 +3062,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           samples: operation === "upscale" ? 1 : count,
           characterPromptCount: activeCharacterCount,
         });
-  const estimatedNewApiCost = ["annotate", "suggest-tags", "upscale"].includes(operation) ? null : estimateNewApiCost(modelPricing, {
+  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags", "upscale"].includes(operation) ? null : estimateNewApiCost(modelPricing, {
     model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: operation === "upscale" ? 1 : count,
@@ -2823,6 +3086,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
   const canUseAffEstimate = Boolean(
+    providerId === "newapi" &&
     wallet?.aff?.enabled &&
       wallet.aff.balance >= estimatedPersonalCost &&
       wallet.aff.packageBalance >= estimatedPackageCost,
@@ -2862,9 +3126,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
 
   const toolsPanel = (
     <>
-          {sessionHistoryPanel}
+          {layoutSlot("history", sessionHistoryPanel)}
           {!naiLayout && (
-            <div className="border-b border-[var(--line)] p-4">
+            <div className="border-b border-[var(--line)] p-4" style={{ order: customLayoutEnabled ? 99 : undefined }}>
               <b className="text-sm">创作中心</b>
               <nav className="mt-3 grid grid-cols-2 gap-2">
                 <FeatureLink
@@ -2917,7 +3181,12 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               </nav>
             </div>
           )}
+<<<<<<< Updated upstream
           <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+=======
+          {layoutSlot("agent", (
+          <div className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+>>>>>>> Stashed changes
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
               <b className="text-sm">标签助手</b>
@@ -3299,7 +3568,8 @@ export default function ImageStudio({ userName, authenticated }: Props) {
               )}
             </div>
           </div>
-          <div className="p-4">
+          ))}
+          <div className="p-4" style={{ order: customLayoutEnabled ? 100 : undefined }}>
             <b className="text-sm">会话状态</b>
             <div className="mt-3 space-y-3 text-xs">
               <div className="flex justify-between">
@@ -3364,7 +3634,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
   const naiGenerationFooter = (
     <div className="nai-generation-footer">
       {!sidebarPromptLayout && generationParameters}
-      {operation !== "suggest-tags" && (
+      {operation !== "suggest-tags" && providerId === "newapi" && (
         <NaiBalanceMeter
           signedIn={signedIn}
           unit={canUseAffEstimate ? "AFF" : "USD"}
@@ -3372,12 +3642,17 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           cost={canUseAffEstimate ? estimatedAffCost : estimatedNewApiCost}
         />
       )}
+      {operation !== "suggest-tags" && providerId !== "newapi" && (
+        <span className="text-xs text-[var(--muted)]">个人 Key · 费用以提供方账单为准</span>
+      )}
       <div className="nai-generation-action">
         <button
           onClick={runOperation}
           disabled={generating}
           title={
-            canUseAffEstimate
+            providerId !== "newapi"
+              ? "使用个人 API Key；费用以提供方账单为准"
+              : canUseAffEstimate
               ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
               : modelPricing
                 ? `$上游 {modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率；实际以账单为准 · 按 NewAPI 余额计费`
@@ -3397,7 +3672,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
                 ? `生成 ${count} 张图像`
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
-          {!generating && (canUseAffEstimate || estimatedNewApiCost != null) && (
+          {!generating && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
             <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "标准美元预估，实际扣费以 NewAPI 配置为准"}>
               {canUseAffEstimate
                 ? `${estimatedAffCost} AFF`
@@ -3637,7 +3912,9 @@ export default function ImageStudio({ userName, authenticated }: Props) {
             <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
               {operation !== "suggest-tags" && signedIn && (
                 <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
-                  {canUseAffEstimate ? (
+                  {providerId !== "newapi" ? (
+                    <span>个人 Key · 费用以提供方账单为准</span>
+                  ) : canUseAffEstimate ? (
                     <>
                       <div>
                         预计消耗{" "}
@@ -3729,6 +4006,7 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           />
         )}
         <aside
+<<<<<<< Updated upstream
           className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${
             naiLayout
               ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
@@ -3742,13 +4020,30 @@ export default function ImageStudio({ userName, authenticated }: Props) {
           onBlur={naiLayout ? undefined : scheduleRightPanelClose}
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
+=======
+          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${rightPanelCollapsed ? " is-collapsed" : ""}`}
+          onMouseEnter={customLayoutEnabled ? undefined : openRightPanel}
+          onMouseLeave={customLayoutEnabled ? undefined : scheduleRightPanelClose}
+          onFocus={customLayoutEnabled ? undefined : openRightPanel}
+          onBlur={customLayoutEnabled ? undefined : scheduleRightPanelClose}
+>>>>>>> Stashed changes
         >
           <button
             type="button"
             className="tools-panel-collapse"
+<<<<<<< Updated upstream
             aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
             aria-expanded={naiLayout ? naiToolsOpen : !rightPanelCollapsed}
             onClick={() => naiLayout ? setNaiToolsOpen(false) : setRightPanelCollapsed((current) => !current)}
+=======
+            aria-label={rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
+            aria-expanded={!rightPanelCollapsed}
+            onClick={() => {
+              const next = !rightPanelCollapsed;
+              setRightPanelCollapsed(next);
+              if (customLayoutEnabled) setCustomLayout(saveCustomLayout({ ...customLayout, rightCollapsed: next }));
+            }}
+>>>>>>> Stashed changes
           >
             {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>

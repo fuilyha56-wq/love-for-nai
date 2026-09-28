@@ -6,15 +6,10 @@ import {
   ArrowLeft,
   Check,
   CircleHelp,
-  Eye,
-  EyeOff,
   Grid3X3,
   History,
   Image as ImageIcon,
   ImagePlus,
-  LockKeyhole,
-  Maximize2,
-  Move,
   Palette,
   RotateCcw,
   Sparkles,
@@ -26,16 +21,9 @@ import {
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
+import ProviderSettings from "./provider-settings";
 import {
-  CUSTOM_LAYOUT_GRID_COLUMNS,
-  CUSTOM_LAYOUT_GRID_ROWS,
   isSafeHexColor,
-  loadCustomLayout,
-  parseCustomLayout,
-  resetCustomLayout,
-  saveCustomLayout,
-  type CustomLayoutModule,
-  type CustomLayoutPreferences,
   type AccentPreset,
   type AppearanceDensity,
   type AppearanceMotion,
@@ -332,269 +320,6 @@ function Switch({
   );
 }
 
-function CustomLayoutEditor({
-  layout,
-  onChange,
-  onSave,
-  onReset,
-}: {
-  layout: CustomLayoutPreferences;
-  onChange: (next: CustomLayoutPreferences) => void;
-  onSave: () => void;
-  onReset: () => void;
-}) {
-  const boardRef = useRef<HTMLDivElement>(null);
-  const interactionRef = useRef<{
-    module: CustomLayoutModule;
-    mode: "move" | "resize";
-    pointerId: number;
-    startX: number;
-    startY: number;
-    boardWidth: number;
-    boardHeight: number;
-    origin: CustomLayoutPreferences["modulePositions"][CustomLayoutModule];
-  } | null>(null);
-  const [selectedModule, setSelectedModule] = useState<CustomLayoutModule>("prompt");
-  const labels: Record<CustomLayoutModule, { label: string; detail: string }> = {
-    prompt: { label: "提示词", detail: "正向与负向提示词" },
-    model: { label: "模型与模式", detail: "模型、内容模式与相关选项" },
-    image: { label: "图像设置", detail: "尺寸、比例与图片来源" },
-    sampling: { label: "采样参数", detail: "步数、相关性、种子与采样器" },
-    references: { label: "参考图片", detail: "角色、Vibe 与精准参考" },
-    operations: { label: "生成操作", detail: "生成、图生图与局部重绘" },
-    history: { label: "会话历史", detail: "当前工作区的结果历史" },
-    agent: { label: "Agent", detail: "提示词助手与建议" },
-    director: { label: "Director", detail: "图片控制与导演工具" },
-  };
-
-  function requiredModule(module: CustomLayoutModule) {
-    return module === "prompt" || module === "model" || module === "operations";
-  }
-
-  function rectsOverlap(
-    left: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
-    right: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
-  ) {
-    return !(
-      left.x + left.width <= right.x ||
-      right.x + right.width <= left.x ||
-      left.y + left.height <= right.y ||
-      right.y + right.height <= left.y
-    );
-  }
-
-  function updateModuleRect(
-    module: CustomLayoutModule,
-    next: CustomLayoutPreferences["modulePositions"][CustomLayoutModule],
-  ) {
-    const current = layout.modulePositions[module];
-    if (
-      current.x === next.x &&
-      current.y === next.y &&
-      current.width === next.width &&
-      current.height === next.height
-    ) return;
-    const collides = layout.moduleOrder.some(
-      (other) => other !== module && rectsOverlap(next, layout.modulePositions[other]),
-    );
-    if (collides) return;
-    const modulePositions = { ...layout.modulePositions, [module]: next };
-    const moduleOrder = [...layout.moduleOrder].sort((left, right) => {
-      const leftRect = modulePositions[left];
-      const rightRect = modulePositions[right];
-      return leftRect.y - rightRect.y || leftRect.x - rightRect.x;
-    });
-    onChange({ ...layout, modulePositions, moduleOrder });
-  }
-
-  function beginInteraction(
-    event: React.PointerEvent<HTMLElement>,
-    module: CustomLayoutModule,
-    mode: "move" | "resize",
-  ) {
-    if (event.button !== 0 || !boardRef.current) return;
-    const board = boardRef.current.getBoundingClientRect();
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    interactionRef.current = {
-      module,
-      mode,
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      boardWidth: board.width,
-      boardHeight: board.height,
-      origin: { ...layout.modulePositions[module] },
-    };
-    setSelectedModule(module);
-  }
-
-  function continueInteraction(event: React.PointerEvent<HTMLElement>) {
-    const interaction = interactionRef.current;
-    if (!interaction || interaction.pointerId !== event.pointerId) return;
-    const deltaX = Math.round(
-      (event.clientX - interaction.startX) /
-        (interaction.boardWidth / CUSTOM_LAYOUT_GRID_COLUMNS),
-    );
-    const deltaY = Math.round(
-      (event.clientY - interaction.startY) /
-        (interaction.boardHeight / CUSTOM_LAYOUT_GRID_ROWS),
-    );
-    const { origin } = interaction;
-    if (interaction.mode === "move") {
-      updateModuleRect(interaction.module, {
-        ...origin,
-        x: Math.min(
-          CUSTOM_LAYOUT_GRID_COLUMNS - origin.width,
-          Math.max(0, origin.x + deltaX),
-        ),
-        y: Math.min(
-          CUSTOM_LAYOUT_GRID_ROWS - origin.height,
-          Math.max(0, origin.y + deltaY),
-        ),
-      });
-      return;
-    }
-    updateModuleRect(interaction.module, {
-      ...origin,
-      width: Math.min(
-        6,
-        CUSTOM_LAYOUT_GRID_COLUMNS - origin.x,
-        Math.max(2, origin.width + deltaX),
-      ),
-      height: Math.min(
-        4,
-        CUSTOM_LAYOUT_GRID_ROWS - origin.y,
-        Math.max(1, origin.height + deltaY),
-      ),
-    });
-  }
-
-  function endInteraction(event: React.PointerEvent<HTMLElement>) {
-    if (interactionRef.current?.pointerId === event.pointerId) interactionRef.current = null;
-  }
-
-  return (
-    <div className="mt-5 border-t border-[var(--line)] pt-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold">模拟工作台</p>
-          <p className="mt-1 text-[10px] text-[var(--muted)]">12 × 8 安全网格 · 吸附与边界限制已开启</p>
-        </div>
-        <span className="rounded bg-[color-mix(in_srgb,var(--rose)_8%,transparent)] px-2 py-1 text-[10px] font-mono text-[var(--rose)]">安全配置 v{layout.version}</span>
-      </div>
-      <div
-        ref={boardRef}
-        className="relative grid aspect-[3/2] w-full overflow-hidden rounded-md border border-[var(--line)] bg-[var(--surface)] shadow-inner select-none"
-        style={{
-          gridTemplateColumns: `repeat(${CUSTOM_LAYOUT_GRID_COLUMNS}, minmax(0, 1fr))`,
-          gridTemplateRows: `repeat(${CUSTOM_LAYOUT_GRID_ROWS}, minmax(0, 1fr))`,
-          backgroundImage: "linear-gradient(to right, color-mix(in srgb, var(--line) 60%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--line) 60%, transparent) 1px, transparent 1px)",
-          backgroundSize: `${100 / CUSTOM_LAYOUT_GRID_COLUMNS}% ${100 / CUSTOM_LAYOUT_GRID_ROWS}%`,
-        }}
-        aria-label="自定义布局模拟工作台"
-      >
-        {layout.moduleOrder.map((module) => {
-          const item = labels[module];
-          const rect = layout.modulePositions[module];
-          const required = requiredModule(module);
-          const visible = layout.visibleModules[module];
-          return (
-            <div
-              key={module}
-              role="group"
-              aria-label={`${item.label}模块`}
-              onPointerDown={(event) => beginInteraction(event, module, "move")}
-              onPointerMove={continueInteraction}
-              onPointerUp={endInteraction}
-              onPointerCancel={endInteraction}
-              onFocus={() => setSelectedModule(module)}
-              tabIndex={0}
-              className={`relative m-1 min-w-0 cursor-move overflow-hidden rounded border p-2 text-left shadow-sm touch-none ${
-                selectedModule === module
-                  ? "z-[2] border-[var(--rose)] bg-[color-mix(in_srgb,var(--rose)_10%,var(--panel))] ring-1 ring-[var(--rose)]"
-                  : "border-[var(--line)] bg-[var(--panel)]"
-              } ${visible ? "opacity-100" : "border-dashed opacity-45"}`}
-              style={{
-                gridColumn: `${rect.x + 1} / span ${rect.width}`,
-                gridRow: `${rect.y + 1} / span ${rect.height}`,
-              }}
-            >
-              <div className="flex min-w-0 items-start gap-1.5 pr-6">
-                <Move size={13} className="mt-0.5 shrink-0 text-[var(--muted)]" aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                  <b className="block truncate text-[11px]">{item.label}</b>
-                  <span className="block truncate text-[9px] text-[var(--muted)]">{rect.width} × {rect.height}</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                title={required ? "必需模块" : visible ? "隐藏模块" : "显示模块"}
-                aria-label={required ? `${item.label}是必需模块` : `${visible ? "隐藏" : "显示"}${item.label}`}
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (required) return;
-                  onChange({
-                    ...layout,
-                    visibleModules: { ...layout.visibleModules, [module]: !visible },
-                  });
-                }}
-                className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded text-[var(--muted)] hover:bg-[var(--surface-muted)] hover:text-[var(--rose)]"
-              >
-                {required ? <LockKeyhole size={12} /> : visible ? <Eye size={12} /> : <EyeOff size={12} />}
-              </button>
-              <button
-                type="button"
-                title={`缩放${item.label}`}
-                aria-label={`缩放${item.label}`}
-                onPointerDown={(event) => beginInteraction(event, module, "resize")}
-                onPointerMove={continueInteraction}
-                onPointerUp={endInteraction}
-                onPointerCancel={endInteraction}
-                className="absolute bottom-0 right-0 grid h-7 w-7 cursor-nwse-resize place-items-center text-[var(--rose)] touch-none"
-              >
-                <Maximize2 size={12} />
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-3 flex min-w-0 items-center justify-between gap-3 rounded border border-[var(--line)] bg-[var(--surface)] px-3 py-2">
-        <div className="min-w-0">
-          <b className="block truncate text-xs">{labels[selectedModule].label}</b>
-          <span className="block truncate text-[10px] text-[var(--muted)]">{labels[selectedModule].detail}</span>
-        </div>
-        <span className="shrink-0 font-mono text-[10px] text-[var(--rose)]">
-          {layout.modulePositions[selectedModule].x},{layout.modulePositions[selectedModule].y} · {layout.modulePositions[selectedModule].width}×{layout.modulePositions[selectedModule].height}
-        </span>
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs font-semibold" htmlFor="custom-layout-left-width">
-          左栏宽度 <output className="float-right font-mono text-[var(--rose)]">{layout.leftWidth}px</output>
-          <input id="custom-layout-left-width" type="range" min="240" max="520" step="1" value={layout.leftWidth} onChange={(event) => onChange({ ...layout, leftWidth: Number(event.target.value) })} className="range mt-2 w-full" />
-        </label>
-        <label className="text-xs font-semibold" htmlFor="custom-layout-right-width">
-          右栏宽度 <output className="float-right font-mono text-[var(--rose)]">{layout.rightWidth}px</output>
-          <input id="custom-layout-right-width" type="range" min="200" max="460" step="1" value={layout.rightWidth} onChange={(event) => onChange({ ...layout, rightWidth: Number(event.target.value) })} className="range mt-2 w-full" />
-        </label>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-        <Switch
-          checked={layout.rightCollapsed}
-          onChange={(rightCollapsed) => onChange({ ...layout, rightCollapsed })}
-          label="默认折叠右栏"
-        />
-        <div className="flex gap-2">
-          <button type="button" onClick={onReset} className="h-9 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:border-[var(--rose)]">恢复默认</button>
-          <button type="button" onClick={onSave} className="h-9 rounded bg-[var(--rose)] px-4 text-xs font-semibold text-white hover:bg-[var(--rose-dark)]">保存自定义布局</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function SettingsPageContent() {
   const {
     preferences,
@@ -609,8 +334,6 @@ function SettingsPageContent() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const [customLayout, setCustomLayout] = useState<CustomLayoutPreferences>(() => loadCustomLayout());
-  const [customLayoutOpen, setCustomLayoutOpen] = useState(false);
   const [showHistoryPicker, setShowHistoryPicker] = useState(false);
   const [customAccentInput, setCustomAccentInput] = useState(
     preferences.customAccent || "",
@@ -700,8 +423,8 @@ function SettingsPageContent() {
         <div className="flex min-w-0 items-center gap-3">
           <Palette size={20} className="shrink-0 text-[var(--rose)]" />
           <div className="min-w-0">
-            <b className="block truncate">外观偏好</b>
-            <span className="hidden text-[10px] text-[var(--muted)] sm:block">APPEARANCE · 仅保存在本机</span>
+            <b className="block truncate">设置</b>
+            <span className="hidden text-[10px] text-[var(--muted)] sm:block">外观偏好与模型接入</span>
           </div>
         </div>
         <Link
@@ -868,36 +591,15 @@ function SettingsPageContent() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold">自定义布局</p>
-                        <p className="mt-1 text-[10px] text-[var(--muted)]">按你的工作流排列模块，并调整左右栏宽度。</p>
+                        <p className="mt-1 text-[10px] text-[var(--muted)]">进入独立工作台，自由拖动模块与控件。</p>
                       </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomLayoutOpen(true);
-                        setMessage("请在编辑器中保存自定义布局后使用。");
-                      }}
-                      aria-expanded={customLayoutOpen}
-                      className="h-9 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
-                    >
-                        {customLayoutOpen ? "收起编辑器" : "编辑自定义布局"}
-                      </button>
+                      <Link
+                        href="/image/setting/layout"
+                        className="flex h-9 items-center rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
+                      >
+                        打开布局编辑器
+                      </Link>
                     </div>
-                    {customLayoutOpen && (
-                      <CustomLayoutEditor
-                        layout={customLayout}
-                        onChange={(next) => setCustomLayout(parseCustomLayout(next))}
-                        onSave={() => {
-                          setCustomLayout(saveCustomLayout(customLayout));
-                          updatePreferences({ workspaceLayout: "custom" });
-                          setMessage("自定义布局已保存到本机浏览器。");
-                        }}
-                        onReset={() => {
-                          const defaults = resetCustomLayout();
-                          setCustomLayout(defaults);
-                          setMessage("自定义布局已恢复默认值。");
-                        }}
-                      />
-                    )}
                   </div>
                 </>
               )}
@@ -951,6 +653,8 @@ function SettingsPageContent() {
             </div>
           </article>
         </div>
+
+        <ProviderSettings />
 
         <article className="panel rounded-md p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1092,7 +796,7 @@ function SettingsPageContent() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
           <p className="flex items-center gap-1.5 text-[11px] text-[var(--muted)]">
-            <CircleHelp size={13} /> 所有偏好仅存于此浏览器的本地存储。
+            <CircleHelp size={13} /> 外观偏好仅存于此浏览器；模型接入信息保存在你的账号下。
           </p>
           <button
             type="button"
