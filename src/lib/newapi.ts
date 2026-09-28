@@ -223,20 +223,19 @@ async function resolveToken(
   const owned = new Set(
     [...(selfGroup ? [selfGroup] : []), ...usableGroups].filter(Boolean),
   );
-  const requiredGroupMatch = requiredGroup
-    ? modelGroups.find((item) => item.toLowerCase() === requiredGroup.toLowerCase())
-    : undefined;
-  const group = requiredGroup
-    ? requiredGroupMatch && owned.has(requiredGroupMatch)
-      ? requiredGroupMatch
-      : undefined
-    : modelGroups.filter((item) => owned.has(item))[0];
+  // 不再硬性要求特定分组（历史上是 ikun，但 NewAPI 上未必存在该分组的
+  // 渠道）：优先取模型确实开放且用户可用的固定分组，否则在模型可用的
+  // 渠道分组里挑一个当前用户有权使用的，保证没有图包余额、走 NewAPI
+  // 计费的用户也能正常生图。
+  const preferred =
+    requiredGroup &&
+    owned.has(requiredGroup) &&
+    modelGroups.some((item) => item.toLowerCase() === requiredGroup.toLowerCase())
+      ? requiredGroup
+      : undefined;
+  const group = preferred ?? modelGroups.find((item) => owned.has(item));
   if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
-    if (requiredGroup && !requiredGroupMatch)
-      throw new Error(`模型 ${model} 未配置 ${requiredGroup} 渠道`);
-    if (requiredGroupMatch && !owned.has(requiredGroupMatch))
-      throw new Error(`当前账号没有 ${requiredGroupMatch} 分组权限，无法使用 ${model}`);
     throw new Error(
       `当前账号没有 ${modelGroups.join(" / ")} 分组权限，无法使用 ${model}`,
     );
