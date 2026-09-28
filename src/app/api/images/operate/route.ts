@@ -24,6 +24,9 @@ import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { gatewayLogStart } from "@/lib/gateway-log";
 import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import { sseEvent, sseResponse } from "@/lib/sse";
+import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
+import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
+import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
   assertImageModel,
@@ -271,14 +274,22 @@ export async function POST(request: Request) {
     typeof body.operation === "string" ? body.operation : "generate";
   const deferPatchHistory = body.editor_composite === true;
   delete body.editor_composite;
+  const providerId = typeof body.providerId === "string" ? body.providerId : "";
+  if (providerId && providerId !== "newapi")
+    return handlePersonalProviderGeneration(request, session, { ...body, editor_composite: deferPatchHistory }, providerId);
   let model: string;
+  let nativeNaiModel = true;
   try {
     model = assertImageModel(body.model);
-  } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "当前模型不允许用于图像生成" },
-      { status: 400 },
-    );
+  } catch {
+    nativeNaiModel = false;
+    try {
+      model = validateModelId(body.model);
+      if (operation !== "generate" || !(await userCanGenerateWithNewApiModel(session, model)))
+        return NextResponse.json({ message: "当前模型不允许用于图像生成" }, { status: 400 });
+    } catch (modelError) {
+      return NextResponse.json({ message: modelError instanceof Error ? modelError.message : "无法验证模型权限" }, { status: 502 });
+    }
   }
   if (operation === "annotate")
     return NextResponse.json(
@@ -370,7 +381,7 @@ export async function POST(request: Request) {
           ? body.characterPrompts.length
           : 0,
       };
-      const platformUpstream = await resolvedImageUpstream();
+      const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
       const credits = platformUpstream
         ? await trySpendImageCredits(session.userId, generation)
         : null;
@@ -386,6 +397,8 @@ export async function POST(request: Request) {
               ? "package"
               : "personal";
       } else if ((await resolvedAuthProviderId()) === "local") {
+        if (!nativeNaiModel)
+          return NextResponse.json({ message: "本地账号不能使用 NewAPI 模型" }, { status: 400 });
         if (!platformUpstream)
           return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
         token = platformUpstream.token;
@@ -403,7 +416,7 @@ export async function POST(request: Request) {
       token = await getImageToken(session, model);
     }
 
-    const nativeImage = await resolvedNaiImageUpstream();
+    const nativeImage = nativeNaiModel ? await resolvedNaiImageUpstream() : null;
     const canStreamNative =
       Boolean(nativeImage) &&
       unifiedOperations.has(operation) &&
@@ -653,19 +666,30 @@ export async function POST(request: Request) {
       operation === "suggest-tags"
         ? "/v1/images/suggest-tags"
         : "/v1/images/generations";
-    const payload = stripDataUrls({ ...body });
+    const payload = nativeNaiModel
+      ? stripDataUrls({ ...body })
+      : {
+          model,
+          prompt: typeof body.prompt === "string" ? body.prompt : "",
+          n: totalSamples,
+          size: `${width}x${height}`,
+          response_format: "b64_json",
+        } as Record<string, unknown>;
     delete payload.operation;
+    delete payload.providerId;
     delete payload.n;
     delete payload.n_samples;
     if (operation !== "suggest-tags") {
       payload.n = totalSamples;
-      payload.n_samples = totalSamples;
-      payload.width = width;
-      payload.height = height;
-      payload.steps = steps;
-      if (operation !== "generate")
-        payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
-      else delete payload.novelai_operation;
+      if (nativeNaiModel) {
+        payload.n_samples = totalSamples;
+        payload.width = width;
+        payload.height = height;
+        payload.steps = steps;
+        if (operation !== "generate")
+          payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
+        else delete payload.novelai_operation;
+      }
     }
 
     let perRequest = Math.min(MAX_SAMPLES_PER_REQUEST, totalSamples);
@@ -696,7 +720,7 @@ export async function POST(request: Request) {
         },
         // 分批续传时种子按已完成张数偏移，模拟 NAI 单请求多张的种子序列，
         // 避免同种子各批生成重复图。
-        body: JSON.stringify({
+        body: JSON.stringify(nativeNaiModel ? {
           ...payload,
           n: batch,
           n_samples: batch,
@@ -704,7 +728,7 @@ export async function POST(request: Request) {
             typeof payload.seed === "number"
               ? (payload.seed + images.length) % 2 ** 32
               : payload.seed,
-        }),
+        } : { ...payload, n: batch }),
         cache: "no-store",
         signal: AbortSignal.timeout(180_000),
       }).catch((error: unknown) => {

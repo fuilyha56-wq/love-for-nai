@@ -196,7 +196,7 @@ export function PopupSelect({
           );
         }}
       >
-        <span>{selected?.label || value}</span>
+        <span>{selected?.label || value || "请选择"}</span>
         <span className="popup-select-chevrons" aria-hidden="true">
           <ChevronsUpDown size={12} />
         </span>

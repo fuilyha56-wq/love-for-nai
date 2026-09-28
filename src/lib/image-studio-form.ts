@@ -20,6 +20,7 @@ export type ImageStudioFormSnapshot = {
   version: typeof IMAGE_STUDIO_FORM_VERSION;
   operation: string;
   contentMode: "anime" | "furry";
+  providerId: string;
   model: string;
   prompt: string;
   negative: string;
@@ -47,6 +48,7 @@ export const DEFAULT_IMAGE_STUDIO_FORM: ImageStudioFormSnapshot = {
   version: IMAGE_STUDIO_FORM_VERSION,
   operation: "generate",
   contentMode: "anime",
+  providerId: "newapi",
   model: "nai-v5-full",
   prompt: "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light",
   negative: "lowres, bad anatomy, blurry, text, watermark",
@@ -76,13 +78,6 @@ const OPERATIONS = new Set([
   "director-declutter", "director-bg-remover", "director-lineart",
   "director-sketch", "director-colorize", "director-emotion", "suggest-tags",
 ]);
-const MODELS = new Set([
-  "nai-v5-full", "nai-v5-curated", "nai-v5-inpaint", "nai-v5-full-limit",
-  "nai-v5-curated-limit", "nai-v5-inpaint-limit", "nai-v4.5-full",
-  "nai-v4.5-curated", "nai-v4.5-inpaint", "nai-v4.5-full-limit",
-  "nai-v4.5-curated-limit", "nai-v4.5-inpaint-limit", "nai-v4-curated",
-  "nai-v3", "nai-v3-furry", "nai-v3-inpaint", "nai-v3-furry-inpaint",
-]);
 const SAMPLERS = new Set(["k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral", "k_dpmpp_2m", "k_dpmpp_2m_sde", "k_dpmpp_sde", "ddim_v3"]);
 const SCHEDULES = new Set(["native", "karras", "exponential", "polyexponential"]);
 const REFERENCE_TYPES = new Set(["character", "style", "character&style"]);
@@ -94,6 +89,17 @@ function stringValue(value: unknown, fallback: string, maxLength = 20_000): stri
 }
 function enumValue(value: unknown, allowed: Set<string>, fallback: string): string {
   return typeof value === "string" && allowed.has(value) ? value : fallback;
+}
+function modelIdentifier(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 &&
+    value.trim().length <= 160 && !/[\u0000-\u001f\u007f]/.test(value)
+    ? value.trim()
+    : fallback;
+}
+function providerIdentifier(value: unknown): string {
+  return typeof value === "string" && /^[\w-]{1,128}$/.test(value)
+    ? value
+    : "newapi";
 }
 function numberValue(value: unknown, fallback: number, min: number, max: number, integer = false): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -122,7 +128,8 @@ export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
     version: IMAGE_STUDIO_FORM_VERSION,
     operation: enumValue(record.operation, OPERATIONS, DEFAULT_IMAGE_STUDIO_FORM.operation),
     contentMode: record.contentMode === "furry" ? "furry" : "anime",
-    model: enumValue(record.model, MODELS, DEFAULT_IMAGE_STUDIO_FORM.model),
+    providerId: providerIdentifier(record.providerId),
+    model: modelIdentifier(record.model, DEFAULT_IMAGE_STUDIO_FORM.model),
     prompt: stringValue(record.prompt, DEFAULT_IMAGE_STUDIO_FORM.prompt),
     negative: stringValue(record.negative, DEFAULT_IMAGE_STUDIO_FORM.negative),
     width: alignedDimension(record.width, DEFAULT_IMAGE_STUDIO_FORM.width),

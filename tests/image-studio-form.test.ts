@@ -87,4 +87,16 @@ describe("ImageStudio 表单缓存", () => {
     expect(parsed.characters[0].prompt).toBe("white hair");
     expect(parsed).not.toHaveProperty("image");
   });
+
+  it("保留用户选择的模型来源和非内置图像模型", () => {
+    const parsed = parseImageStudioForm({
+      version: 1,
+      providerId: "d151ee6f-731a-46a2-b51a-9242efaa783c",
+      model: "vendor/image model",
+    });
+    expect(parsed.providerId).toBe("d151ee6f-731a-46a2-b51a-9242efaa783c");
+    expect(parsed.model).toBe("vendor/image model");
+    expect(parseImageStudioForm({ providerId: "../../secret", model: "\ninvalid" }))
+      .toMatchObject({ providerId: "newapi", model: DEFAULT_IMAGE_STUDIO_FORM.model });
+  });
 });
