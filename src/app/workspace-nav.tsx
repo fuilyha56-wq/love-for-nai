@@ -8,6 +8,7 @@ import {
   BookText,
   Coins,
   History,
+  House,
   Images,
   KeyRound,
   Megaphone,
@@ -16,6 +17,13 @@ import {
 } from "lucide-react";
 
 const destinations = [
+  {
+    href: "/",
+    label: "首页",
+    detail: "返回 Love for NAI 首页。",
+    icon: House,
+    group: "导航",
+  },
   {
     href: "/stories",
     label: "故事工作台",
@@ -79,8 +87,8 @@ export function WorkspaceNav() {
   const current =
     destinations.find((item) => item.href === pathname) ??
     (pathname === "/keys"
-      ? { ...destinations[5], label: "API 密钥" }
-      : destinations[0]);
+      ? { ...destinations[6], label: "API 密钥" }
+      : destinations[1]);
   return (
     <div className="workspace-heading">
       <nav className="workspace-tabs" aria-label="工作台页面导航">

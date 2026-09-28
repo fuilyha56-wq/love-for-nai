@@ -4,13 +4,18 @@
  */
 
 import JSZip from "jszip";
+import { Buffer } from "node:buffer";
 import {
+  affStatus,
   refundImageCredits,
   trySpendImageCredits,
   type AffGeneration,
   type ImageCreditCharge,
 } from "@/lib/aff";
-import { resolveExternalApiIdentity } from "@/lib/newapi-db";
+import {
+  ensureManagedFallbackToken,
+  resolveExternalApiIdentity,
+} from "@/lib/newapi-db";
 import {
   gatewayLogStart,
   maskKeyForLog,
@@ -65,21 +70,14 @@ const droppedRequestHeaders = new Set([
 
 type JsonRecord = Record<string, unknown>;
 
+/**
+ * 外部图像端点的身份识别：任何有效的 NewAPI key 均可使用，
+ * 分组不限（站点注册用户多在 Draw/default 等分组，NewAPI 上不存在
+ * 全体用户共有的单一分组）。计费自我约束：优先扣 key 所属用户的
+ * 图包/个人 AFF 余额，无余额则透明代理回 NewAPI 按其分组通道计费。
+ */
 export async function requireIkunExternalIdentity(authorization: string) {
-  const identity = await resolveExternalApiIdentity(authorization);
-  if (identity.group?.toLowerCase() !== "ikun") {
-    return Response.json(
-      {
-        error: {
-          message: "模型请求仅允许使用 ikun 分组密钥",
-          type: "invalid_request_error",
-          code: "ikun_group_required",
-        },
-      },
-      { status: 403 },
-    );
-  }
-  return identity;
+  return resolveExternalApiIdentity(authorization);
 }
 
 /** 外部 API（source=api）请求的上游日志：用户名缺失时退化为掩码 key。 */
@@ -289,7 +287,13 @@ export async function proxyImageWithCredits(
   }
   const userId = apiIdentity.userId;
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
-  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
+  if (userId == null) {
+    // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
+    )(-1);
+    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -304,6 +308,35 @@ export async function proxyImageWithCredits(
     charge = await trySpendImageCredits(userId, imageRequest.generation);
     if (!charge) {
       gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
+      // 用户分组可能没有该模型的渠道：先尝试托管密钥换组重试。
+      const managedKey = await ensureManagedFallbackToken(
+        userId,
+        imageRequest.generation.model,
+      ).catch(() => null);
+      if (managedKey) {
+        const managedHeaders = new Headers({
+          Authorization: `Bearer sk-${managedKey}`,
+          "Content-Type": imageRequest.contentType || "application/json",
+        });
+        const finishManagedLog = gatewayLogStart(
+          externalLogMeta(logUser, imageRequest, pathname),
+        );
+        const managedUpstream = await fetchWithModelConcurrency(
+          `${await resolvedNewApiBaseUrl()}${pathname}`,
+          {
+            method: request.method,
+            headers: managedHeaders,
+            body: imageRequest.body,
+            cache: "no-store",
+            signal: AbortSignal.timeout(180_000),
+          },
+        ).catch((error: unknown) => {
+          finishManagedLog(0);
+          throw error;
+        });
+        finishManagedLog(managedUpstream.status);
+        return paymentResponse(forwardResponse(managedUpstream), "newapi");
+      }
       return paymentResponse(
         await proxyNewApi(
           request,
@@ -526,6 +559,38 @@ export function forbiddenUserAccount(): Response {
   );
 }
 
+/**
+ * NovelAI 原生 /user/subscription 兼容响应。
+ *
+ * 第三方客户端（如 Aaalice NAI Launcher）登录时先请求该端点验证 Token：
+ * 404 会触发其降级探测，但 403 等其他 4xx 会被归为"未知错误"导致登录失败。
+ * 因此这里用站内 AFF 账本合成一份订阅信息：Anlas 余额映射为
+ * trainingStepsLeft，订阅等级固定 Paper（tier 0，不影响客户端费用估算），
+ * active 恒为 true 以通过客户端的订阅有效性检查。
+ */
+export async function naiSubscriptionResponse(
+  userId: number,
+): Promise<Response> {
+  const status = await affStatus(userId).catch(() => null);
+  const anlas = status ? Math.max(0, Math.floor(status.totalBalance)) : 0;
+  return Response.json({
+    tier: 0,
+    active: true,
+    trainingStepsLeft: {
+      fixedTrainingStepsLeft: anlas,
+      purchasedTrainingSteps: 0,
+    },
+    perks: {
+      maxPriorityActions: 0,
+      startPriority: 0,
+      moduleTrainingSteps: 0,
+      unlimitedImageGeneration: false,
+      imageGeneration: true,
+      contextTokens: 8000,
+    },
+  });
+}
+
 export async function proxyNaiNativeWithCredits(
   request: Request,
   pathname: string,
@@ -576,7 +641,13 @@ export async function proxyNaiNativeWithCredits(
     newApiFallback && newApiFallback !== "unsupported"
       ? newApiFallback.pathname
       : pathname;
-  if (userId == null) return Response.json({ error: { message: "无法确认 ikun 密钥所属用户", code: "invalid_api_key" } }, { status: 403 });
+  if (userId == null) {
+    // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
+    gatewayLogStart(
+      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+    )(-1);
+    return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+  }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
   if (!userRate.allowed)
@@ -593,6 +664,45 @@ export async function proxyNaiNativeWithCredits(
       gatewayLogStart(
         externalLogMeta(logUser, imageRequest, fallbackEndpoint),
       )(-1);
+      // 用户分组可能没有该模型的渠道（如 default 打 NAI 模型）：
+      // 先取一把可用分组的托管密钥重试，取不到再用原 key 透传保留
+      // 原始错误。
+      const managedKey = await ensureManagedFallbackToken(
+        userId,
+        imageRequest.generation.model,
+      ).catch(() => null);
+      if (managedKey) {
+        const managedHeaders = new Headers({
+          Authorization: `Bearer sk-${managedKey}`,
+          "Content-Type": imageRequest.contentType || "application/json",
+        });
+        const accept = request.headers.get("accept");
+        if (accept) managedHeaders.set("Accept", accept);
+        const target = newApiFallback && newApiFallback !== "unsupported"
+          ? newApiFallback
+          : { pathname, body: imageRequest.body, contentType: imageRequest.contentType };
+        const finishManagedLog = gatewayLogStart(
+          externalLogMeta(logUser, imageRequest, target.pathname),
+        );
+        const managedUpstream = await fetchWithModelConcurrency(
+          `${await resolvedNewApiBaseUrl()}${target.pathname}`,
+          {
+            method: request.method,
+            headers: managedHeaders,
+            body: target.body,
+            cache: "no-store",
+            signal: AbortSignal.timeout(180_000),
+          },
+        ).catch((error: unknown) => {
+          finishManagedLog(0);
+          throw error;
+        });
+        finishManagedLog(managedUpstream.status);
+        return paymentResponse(
+          forwardResponse(managedUpstream),
+          "newapi",
+        );
+      }
       return paymentResponse(
         await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
         "newapi",
@@ -660,6 +770,50 @@ async function nativeNewApiFallback(
 
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 解析 NAI 原生生图请求体。官方客户端（含 Aaalice NAI Launcher）把
+ * 请求编码为 multipart/form-data：JSON 放在名为 request 的部件里，
+ * 图片字段（image/mask/参考图等）以二进制部件传输、JSON 内用部件名
+ * 占位（占位符 == 字段名，或列表项的 data 字段）。这里还原为纯 JSON
+ * （图片字段恢复 base64），计费解析与转发均按 JSON 处理；普通 JSON
+ * 请求原样返回。
+ */
+export async function parseNaiGenerationBody(
+  request: Request,
+): Promise<Record<string, unknown>> {
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("multipart/form-data"))
+    return (await request.json()) as Record<string, unknown>;
+  const form = await request.formData();
+  const requestPart = form.get("request");
+  if (!(requestPart instanceof File))
+    throw new Error("multipart 请求缺少 request 部件");
+  const json = JSON.parse(await requestPart.text()) as JsonRecord;
+  const parts = new Map<string, string>();
+  for (const [name, value] of form.entries()) {
+    if (name === "request" || !(value instanceof File)) continue;
+    parts.set(name, Buffer.from(await value.arrayBuffer()).toString("base64"));
+  }
+  if (parts.size) {
+    const substituteIn = (container: JsonRecord): void => {
+      for (const [key, value] of Object.entries(container)) {
+        if (typeof value === "string") {
+          if ((value === key || key === "data") && parts.has(value))
+            container[key] = parts.get(value);
+        } else if (Array.isArray(value)) {
+          value.forEach((item) => {
+            if (isRecord(item)) substituteIn(item);
+          });
+        } else if (isRecord(value)) {
+          substituteIn(value);
+        }
+      }
+    };
+    substituteIn(json);
+  }
+  return json;
 }
 
 export function modelAlias(model: unknown): unknown {

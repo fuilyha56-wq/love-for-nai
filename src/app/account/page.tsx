@@ -312,6 +312,10 @@ export default function AccountPage() {
         </div>
       )}
       <section className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-4">
+          <div><b className="text-sm">创作模型与账户</b><p className="mt-1 text-xs text-[var(--muted)]">NewAPI 使用当前登录账号；也可为故事导入自己的 OpenAI 兼容 API 或 NovelAI 持久 Key。</p></div>
+          <Link href="/resources#story-providers" className="inline-flex items-center gap-2 rounded border border-[var(--rose)] px-3 py-2 text-xs font-semibold text-[var(--rose)]"><WalletCards size={15} />管理自定义 API</Link>
+        </div>
         {message && (
           <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
             {message}

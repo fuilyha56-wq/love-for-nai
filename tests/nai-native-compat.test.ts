@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   resolveExternalApiIdentity: vi.fn(),
   trySpendImageCredits: vi.fn(),
   refundImageCredits: vi.fn(),
+  affStatus: vi.fn(),
   affGateway: vi.fn(),
   naiImageUpstream: vi.fn(),
   naiAccountUpstream: vi.fn(),
@@ -16,6 +17,7 @@ vi.mock("@/lib/newapi-db", () => ({
 vi.mock("@/lib/aff", () => ({
   trySpendImageCredits: mocks.trySpendImageCredits,
   refundImageCredits: mocks.refundImageCredits,
+  affStatus: mocks.affStatus,
 }));
 vi.mock("@/lib/newapi", () => ({
   affGateway: mocks.affGateway,
@@ -47,6 +49,14 @@ beforeEach(() => {
   mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
+  mocks.affStatus.mockResolvedValue({
+    balance: 3,
+    packageBalance: 398,
+    totalBalance: 401,
+    packageRateLimitRemaining: 10,
+    checkedInToday: false,
+    checkInReward: 20,
+  });
   mocks.affGateway.mockResolvedValue({
     baseUrl: "http://gateway.test",
     token: "gateway-token",
@@ -77,10 +87,42 @@ afterEach(() => {
 });
 
 describe("NovelAI 原生兼容层", () => {
-  it("普通用户读取账户接口返回 403，且不请求 Gateway", async () => {
+  it("有效 Key 读取 /user/subscription 返回合成订阅（第三方客户端登录依赖）", async () => {
     const { GET } = await import("@/app/user/subscription/route");
     const response = await GET(
       new Request("http://localhost/user/subscription", {
+        headers: { Authorization: "Bearer sk-user-key" },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as Record<string, unknown>;
+    // Launcher 的 UserSubscription 模型要求这些字段存在：
+    // tier=0(Paper) 不影响费用估算；active=true 通过订阅有效性检查；
+    // trainingStepsLeft 映射站内 AFF 总余额。
+    expect(payload).toMatchObject({
+      tier: 0,
+      active: true,
+      trainingStepsLeft: { fixedTrainingStepsLeft: 401, purchasedTrainingSteps: 0 },
+    });
+    expect(mocks.affStatus).toHaveBeenCalledWith(41);
+  });
+
+  it("无效 Key 读取 /user/subscription 返回 401（客户端映射为 Token 无效）", async () => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null, username: null, group: null });
+    const { GET } = await import("@/app/user/subscription/route");
+    const response = await GET(
+      new Request("http://localhost/user/subscription", {
+        headers: { Authorization: "Bearer sk-bad-key" },
+      }),
+    );
+    expect(response.status).toBe(401);
+    expect(mocks.affStatus).not.toHaveBeenCalled();
+  });
+
+  it("普通用户读取账户明细接口仍返回 403，且不请求 Gateway", async () => {
+    const { GET } = await import("@/app/user/account/route");
+    const response = await GET(
+      new Request("http://localhost/user/account", {
         headers: { Authorization: "Bearer sk-user-key" },
       }),
     );
