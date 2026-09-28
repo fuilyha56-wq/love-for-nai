@@ -1,5 +1,6 @@
 import {
   bearerAuthorization,
+  parseNaiGenerationBody,
   proxyNaiNativeWithCredits,
   unsupportedNaiOperation,
 } from "@/lib/compat-api";
@@ -25,7 +26,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as Record<string, unknown>;
+    body = await parseNaiGenerationBody(request);
   } catch {
     return Response.json({ message: "Request body must be valid JSON" }, { status: 400 });
   }
