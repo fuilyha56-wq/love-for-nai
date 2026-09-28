@@ -24,7 +24,7 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
     newApiBaseUrl: optionalString(raw.newApiBaseUrl),
     newApiAdminToken: optionalString(raw.newApiAdminToken),
     newApiAdminUserId: optionalString(raw.newApiAdminUserId),
-    registerGroup: "ikun",
+    registerGroup: "default",
     quotaPerUnit,
     affGatewayUrl: optionalString(raw.affGatewayUrl),
     affGatewayToken: optionalString(raw.affGatewayToken),
