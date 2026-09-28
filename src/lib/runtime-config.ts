@@ -41,6 +41,9 @@ export type RuntimeConfigStore = {
 };
 
 export const LFN_MODEL_GROUP = "ikun" as const;
+// 注册默认分组：保持 NewAPI 原生 default（用户面板体验正常），
+// 模型渠道权限由 LFN 托管密钥（lfn-managed-<group>）解决。
+export const LFN_REGISTER_GROUP = "default" as const;
 
 const SECRET_KEYS = new Set([
   "newApiAdminToken",
@@ -56,7 +59,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   newApiBaseUrl: "",
   newApiAdminToken: "",
   newApiAdminUserId: "1",
-  registerGroup: LFN_MODEL_GROUP,
+  registerGroup: LFN_REGISTER_GROUP,
   quotaPerUnit: 500000,
   affGatewayUrl: "",
   affGatewayToken: "",
@@ -96,7 +99,7 @@ function envSettings(): RuntimeSettings {
     newApiBaseUrl: process.env.NEWAPI_BASE_URL?.trim() || "",
     newApiAdminToken: process.env.LFN_ADMIN_TOKEN?.trim() || "",
     newApiAdminUserId: process.env.LFN_ADMIN_USER_ID?.trim() || "1",
-    registerGroup: LFN_MODEL_GROUP,
+    registerGroup: LFN_REGISTER_GROUP,
     quotaPerUnit: Number.isFinite(quota) && quota > 0 ? quota : 500000,
     affGatewayUrl: process.env.LFN_AFF_GATEWAY_URL?.trim() || "",
     affGatewayToken: process.env.LFN_AFF_GATEWAY_TOKEN?.trim() || "",
@@ -130,7 +133,7 @@ function mergeSettings(saved?: Partial<RuntimeSettings> | null): RuntimeSettings
     } else if (typeof value === "string") next[key] = value.trim() as never;
   }
   if (next.authProvider !== "local") next.authProvider = "newapi";
-  next.registerGroup = LFN_MODEL_GROUP;
+  next.registerGroup = LFN_REGISTER_GROUP;
   return next;
 }
 
@@ -482,7 +485,7 @@ export async function runtimeQuotaPerUnit(): Promise<number> {
 }
 
 export async function runtimeRegisterGroup(): Promise<string> {
-  return LFN_MODEL_GROUP;
+  return LFN_REGISTER_GROUP;
 }
 
 export async function runtimeRemoteHistory(): Promise<{ baseUrl: string; token: string } | null> {
