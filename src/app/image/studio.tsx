@@ -98,6 +98,7 @@ function clampPanel(value: number, min: number, max: number): number {
 import {
   estimateNewApiCost,
   affCost as estimateAff,
+  usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
   type ModelPricingSnapshot,
@@ -579,9 +580,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [steps, setSteps] = useState(28);
   const [scale, setScale] = useState(5);
   const [count, setCount] = useState(1);
-  // 生成张数提交方式：分批次（默认，每 0.5s 发一张 n=1）或一次性（单请求 n 张）。
+  // 生成张数提交方式：分批次（每个请求 n=1）或一次性（单请求 n 张）。
   const [batchMode, setBatchMode] = useState<"once" | "sequential">("sequential");
   const [batchProgress, setBatchProgress] = useState("");
+  const [generationConfirmation, setGenerationConfirmation] = useState<string | null>(null);
+  const generationInFlight = useRef(false);
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [schedule, setSchedule] = useState("native");
   // 0 表示关闭重缩放；非 0 会被 NovelAI 部分模型拒绝，因此默认不启用。
@@ -1048,8 +1051,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setHeight(saved.height);
       setSteps(saved.steps);
       setScale(saved.scale);
-      setCount(saved.count);
-      setBatchMode(saved.batchMode);
+      // 数量与提交方式会直接影响扣费，每次打开工作台都从单张开始。
+      setCount(1);
+      setBatchMode("sequential");
       setSampler(saved.sampler);
       setSchedule(saved.schedule);
       setCfgRescale(saved.cfgRescale);
@@ -2491,7 +2495,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  最多 2 路并发、每路 4 张，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
+                  每次独立提交 1 张、最多 2 路并发，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
@@ -2717,7 +2721,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </>
   );
 
-  async function runOperation() {
+  async function runOperation(approvedConfirmation?: string) {
+    if (generationInFlight.current) return;
     if (!signedIn) {
       setNotice(
         authenticated
@@ -2768,11 +2773,50 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice(validationError);
       return;
     }
-    // 一次性提交走单请求，网关侧单请求上限 8 张；更多张数请用分批次并发。
+    // 一次性提交走单请求，网关侧单请求上限 8 张；更多张数请逐张提交。
     if (batchMode === "once" && count > 8) {
       setNotice("一次性提交最多 8 张；更多张数请改用分批次并发。");
       return;
     }
+    const multiImage = generationModes.has(operation) && count > 1;
+    const newApiPricedImage = providerId === "newapi" &&
+      !["annotate", "suggest-tags", "upscale"].includes(operation);
+    const requestLeavesLimit =
+      newApiPricedImage &&
+      !usesLimitPricing({
+        model,
+        operation,
+        width,
+        height,
+        steps,
+        samples: batchMode === "sequential" ? 1 : count,
+        characterPromptCount: operation === "generate" && charactersEnabled
+          ? characters.filter((character) => character.prompt.trim()).length
+          : 0,
+        referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
+      });
+    if (newApiPricedImage && !canUseAffEstimate && (multiImage || requestLeavesLimit) && estimatedNewApiCost == null) {
+      setNotice("暂时无法读取 NewAPI 实际价格，请稍后再试，避免意外扣费。");
+      return;
+    }
+    if (multiImage || (requestLeavesLimit && !canUseAffEstimate)) {
+      const payment = providerId !== "newapi"
+        ? "费用以所选 API 的账单为准"
+        : canUseAffEstimate
+          ? `预计消耗 ${estimatedAffCost} AFF`
+          : `预计扣费 $${estimatedNewApiCost?.toFixed(2)}，实际以账单为准`;
+      const requestMode = batchMode === "once" && multiImage
+        ? `一次性请求 ${count} 张，可能进入高价档`
+        : multiImage
+          ? "每张独立请求"
+          : "当前参数可能进入高价档";
+      const confirmation = `将生成 ${count} 张图像（${requestMode}）。\n${payment}`;
+      if (approvedConfirmation !== confirmation) {
+        setGenerationConfirmation(confirmation);
+        return;
+      }
+    }
+    generationInFlight.current = true;
     setGenerating(true);
     setImages([]);
     setPreviewDrafts([]);
@@ -2842,22 +2886,22 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       base.image = source?.data;
       base.model = controlModel;
     }
-    if (operation === "upscale") {
-      if (!source) throw new Error("请先上传要超分的图片");
-      if (!upscaleSource) throw new Error("无法读取源图尺寸，请重新上传");
-      if (upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS)
-        throw new Error("源图超过超分上限 1536×2048（3145728 像素），请缩小后再试");
-      // 上游只收 PNG；JPEG/WEBP 源图在此统一重编码为 PNG。
-      base.image = await toPngDataUrl(source.data);
-      base.upscale_model = upscaleModel;
-      base.n = 1;
-    }
     if (operation.startsWith("director-")) {
       base.image = source?.data;
       base.defry = 1;
     }
     try {
-      // 分批次：并发分片请求（每片 ≤4 张、最多 2 路在途、错峰 0.5s 启动），
+      if (operation === "upscale") {
+        if (!source) throw new Error("请先上传要超分的图片");
+        if (!upscaleSource) throw new Error("无法读取源图尺寸，请重新上传");
+        if (upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS)
+          throw new Error("源图超过超分上限 1536×2048（3145728 像素），请缩小后再试");
+        // 上游只收 PNG；JPEG/WEBP 源图在此统一重编码为 PNG。
+        base.image = await toPngDataUrl(source.data);
+        base.upscale_model = upscaleModel;
+        base.n = 1;
+      }
+      // 分批次：每片 1 张、最多 2 路在途、错峰 0.5s 启动，
       // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && count > 1 && operation !== "upscale";
@@ -3058,6 +3102,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         error instanceof Error ? error.message : "操作失败，请稍后重试",
       );
     } finally {
+      generationInFlight.current = false;
       setBatchProgress("");
       setStreamProgress("");
       setGenerating(false);
@@ -3091,6 +3136,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: operation === "upscale" ? 1 : count,
+    characterPromptCount: activeCharacterCount,
     strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
     referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
   });
@@ -3668,7 +3714,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       )}
       <div className="nai-generation-action">
         <button
-          onClick={runOperation}
+          onClick={() => void runOperation()}
           disabled={generating || layoutEditorOpen}
           title={
             providerId !== "newapi"
@@ -3694,7 +3740,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
           {!generating && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
-            <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "标准美元预估，实际扣费以 NewAPI 配置为准"}>
+            <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "按当前 NewAPI 配置预估，实际以账单为准"}>
               {canUseAffEstimate
                 ? `${estimatedAffCost} AFF`
                 : estimatedNewApiCost != null
@@ -4042,7 +4088,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </div>
               )}
               <button
-                onClick={runOperation}
+                onClick={() => void runOperation()}
                 disabled={generating}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
               >
@@ -4051,7 +4097,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   ? batchProgress
                     ? `生成中 ${batchProgress}…`
                     : "处理中，请稍候..."
-                  : `执行${modes.find((item) => item.id === operation)?.label}`}
+                  : generationModes.has(operation)
+                    ? `生成 ${count} 张图像`
+                    : `执行${modes.find((item) => item.id === operation)?.label}`}
               </button>
             </div>
           )}
@@ -4371,6 +4419,37 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               图片历史、导演工具等创作入口已收入此菜单。
             </p>
           </aside>
+        </div>
+      )}
+      {generationConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setGenerationConfirmation(null)}>
+          <section
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="generation-confirmation-title"
+            aria-describedby="generation-confirmation-details"
+            className="w-full max-w-md rounded-xl bg-[var(--panel)] p-5 shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="generation-confirmation-title" className="text-lg font-semibold">确认生成与费用</h2>
+            <p id="generation-confirmation-details" className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">
+              {generationConfirmation}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" autoFocus onClick={() => setGenerationConfirmation(null)} className="rounded-lg border border-[var(--line)] px-4 py-2 text-sm">取消</button>
+              <button
+                type="button"
+                onClick={() => {
+                  const approved = generationConfirmation;
+                  setGenerationConfirmation(null);
+                  void runOperation(approved);
+                }}
+                className="rounded-lg bg-[var(--rose)] px-4 py-2 text-sm font-semibold text-white"
+              >
+                确认并生成
+              </button>
+            </div>
+          </section>
         </div>
       )}
       {galleryPickerOpen && (

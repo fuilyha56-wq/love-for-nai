@@ -34,7 +34,7 @@ describe("工作台布局按主题隔离", () => {
     expect(left).toContain('aria-label="采样步数"');
     expect(left).not.toContain('aria-label="打开站内菜单"');
     expect(canvas).toContain("<textarea");
-    expect(canvas).toContain("执行生成");
+    expect(canvas).toContain("生成 1 张图像");
     expect(html).toContain("创作中心");
     expect(html).not.toContain('class="nai-generation-footer"');
     expect(left.indexOf("导入图片")).toBeLessThan(left.indexOf('aria-label="模型"'));

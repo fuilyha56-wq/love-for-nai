@@ -193,7 +193,25 @@ async function readModelGroups(
   return entry?.enable_groups?.filter((item) => typeof item === "string") ?? [];
 }
 
-const LFN_MODEL_GROUP = "ikun";
+export const LFN_MODEL_GROUP = "ikun";
+
+export function selectModelGroup(
+  modelGroups: string[],
+  usableGroups: string[],
+  selfGroup?: string,
+  requiredGroup?: string,
+): string | undefined {
+  const owned = new Set(
+    [...(selfGroup ? [selfGroup] : []), ...usableGroups].filter(Boolean),
+  );
+  const preferred =
+    requiredGroup &&
+    owned.has(requiredGroup) &&
+    modelGroups.some((item) => item.toLowerCase() === requiredGroup.toLowerCase())
+      ? requiredGroup
+      : undefined;
+  return preferred ?? modelGroups.find((item) => owned.has(item));
+}
 
 async function resolveToken(
   session: Session,
@@ -220,20 +238,11 @@ async function resolveToken(
     readModelGroups(baseUrl, headers, model),
     readUsableGroups(baseUrl, headers),
   ]);
-  const owned = new Set(
-    [...(selfGroup ? [selfGroup] : []), ...usableGroups].filter(Boolean),
-  );
   // 不再硬性要求特定分组（历史上是 ikun，但 NewAPI 上未必存在该分组的
   // 渠道）：优先取模型确实开放且用户可用的固定分组，否则在模型可用的
   // 渠道分组里挑一个当前用户有权使用的，保证没有图包余额、走 NewAPI
   // 计费的用户也能正常生图。
-  const preferred =
-    requiredGroup &&
-    owned.has(requiredGroup) &&
-    modelGroups.some((item) => item.toLowerCase() === requiredGroup.toLowerCase())
-      ? requiredGroup
-      : undefined;
-  const group = preferred ?? modelGroups.find((item) => owned.has(item));
+  const group = selectModelGroup(modelGroups, usableGroups, selfGroup, requiredGroup);
   if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
     throw new Error(

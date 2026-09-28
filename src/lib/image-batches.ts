@@ -1,5 +1,5 @@
 export const MAX_IMAGE_REQUEST_SAMPLES = 8;
-export const STUDIO_BATCH_SAMPLES = 4;
+export const STUDIO_BATCH_SAMPLES = 1;
 
 export function studioBatchSize(mode: "once" | "sequential"): number {
   return mode === "sequential" ? STUDIO_BATCH_SAMPLES : MAX_IMAGE_REQUEST_SAMPLES;
