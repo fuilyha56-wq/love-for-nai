@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   resolveExternalApiIdentity: vi.fn(),
+  ensureManagedFallbackToken: vi.fn(),
   trySpendImageCredits: vi.fn(),
   refundImageCredits: vi.fn(),
   affGateway: vi.fn(),
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/newapi-db", () => ({
   resolveExternalApiIdentity: mocks.resolveExternalApiIdentity,
+  ensureManagedFallbackToken: mocks.ensureManagedFallbackToken,
 }));
 vi.mock("@/lib/aff", () => ({
   trySpendImageCredits: mocks.trySpendImageCredits,
@@ -41,6 +43,7 @@ const charge = {
 
 beforeEach(() => {
   mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null, username: null, group: null });
+  mocks.ensureManagedFallbackToken.mockResolvedValue(null);
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
   mocks.affGateway.mockReturnValue({
@@ -101,6 +104,7 @@ describe("外部 LFN 图像入口计费", () => {
     mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
+    await response.arrayBuffer();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
@@ -123,6 +127,7 @@ describe("外部 LFN 图像入口计费", () => {
     mocks.trySpendImageCredits.mockResolvedValue(null);
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
+    await response.arrayBuffer();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("newapi");
@@ -140,10 +145,61 @@ describe("外部 LFN 图像入口计费", () => {
     mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
+    await response.arrayBuffer();
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything());
+  });
+
+  it("无余额时直接用托管密钥走 NewAPI 计费（按用户分组自动换组）", async () => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
+    mocks.trySpendImageCredits.mockResolvedValue(null);
+    mocks.ensureManagedFallbackToken.mockResolvedValue("managedkey48hex00000000000000000000");
+    const newapiCalls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.startsWith("http://newapi.test")) {
+          newapiCalls.push(new Headers(init?.headers).get("Authorization") ?? "");
+          return Response.json({ data: [{ b64_json: "abc" }] });
+        }
+        if (url.startsWith("http://gateway.test"))
+          return Response.json({ data: [{ b64_json: "abc" }] });
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    const { POST } = await import("@/app/v1/images/generations/route");
+    const response = await POST(request());
+    await response.arrayBuffer();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-lfn-payment-source")).toBe("newapi");
+    expect(newapiCalls).toEqual(["Bearer sk-managedkey48hex00000000000000000000"]);
+    expect(mocks.ensureManagedFallbackToken).toHaveBeenCalledWith(41, "nai-v5-full");
+  });
+
+  it("托管密钥不可用时回退原 key 透传并保留原始错误", async () => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
+    mocks.trySpendImageCredits.mockResolvedValue(null);
+    mocks.ensureManagedFallbackToken.mockResolvedValue(null);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.startsWith("http://newapi.test"))
+          return Response.json(
+            { error: { code: "model_not_found", message: "No available channel for model nai-v5-full under group default (distributor)", type: "new_api_error" } },
+            { status: 503 },
+          );
+        throw new Error(`unexpected fetch ${url}`);
+      }),
+    );
+    const { POST } = await import("@/app/v1/images/generations/route");
+    const response = await POST(request());
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error.message).toContain("No available channel");
   });
 
   it("数据库故障时返回 502，不透传也不扣图包", async () => {
