@@ -34,11 +34,21 @@ export async function POST(request: Request) {
       flow_token: pending.flowToken,
       code,
     });
-    if (!result.success || !result.data)
+    if (!result.success || !result.data) {
+      // 上游单用户活跃登录会话数上限（默认 50）撞满时返回 409。
+      if (response.status === 409)
+        return NextResponse.json(
+          {
+            message:
+              "该账号的登录会话数已达上限，请稍后再试或联系管理员清理旧会话",
+          },
+          { status: 409 },
+        );
       return NextResponse.json(
         { message: result.message || "验证码不正确" },
         { status: 401 },
       );
+    }
 
     const next = await establishSession(result, response);
     const cookie = await resolvedPendingCookie();

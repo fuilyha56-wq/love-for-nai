@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   try {
     const story = await createStory(session.userId, {
       title: typeof body.title === "string" ? body.title : undefined,
-      model: body.model === "sol" || body.model === "luna" ? body.model : undefined,
+      model: typeof body.model === "string" ? body.model : undefined,
       genre: typeof body.genre === "string" ? body.genre : undefined,
       synopsis: typeof body.synopsis === "string" ? body.synopsis : undefined,
       lorebook: typeof body.lorebook === "string" ? body.lorebook : undefined,

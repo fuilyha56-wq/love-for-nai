@@ -1,6 +1,6 @@
 # LFN 本地构建 + 上传服务器部署脚本
 # 用法：
-#   .\deploy.ps1 -ServerUser root -ServerHost 47.108.250.118 [-Tag <版本>] [-SshPort 22]
+#   .\deploy.ps1 -ServerUser <SSH用户> -ServerHost <服务器IP或域名> [-Tag <版本>] [-SshPort 22]
 # 前置条件：
 #   1. 本地 Docker Desktop 已启动
 #   2. 已配置到服务器的 SSH 免密登录（ssh-copy-id 或手动追加公钥）

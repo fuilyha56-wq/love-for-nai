@@ -1,7 +1,7 @@
 export const APPEARANCE_STORAGE_KEY = "lfn-ui-preferences-v1";
 export const APPEARANCE_PREFERENCES_VERSION = 1 as const;
 export const CUSTOM_LAYOUT_STORAGE_KEY = "lfn-custom-layout-v1";
-export const CUSTOM_LAYOUT_VERSION = 2 as const;
+export const CUSTOM_LAYOUT_VERSION = 3 as const;
 export const CUSTOM_LAYOUT_GRID_COLUMNS = 12 as const;
 export const CUSTOM_LAYOUT_GRID_ROWS = 8 as const;
 export const BACKGROUND_DB_NAME = "lfn-ui-background-v1";
@@ -124,18 +124,12 @@ function parseLayoutRect(value: unknown, fallback: CustomLayoutRect): CustomLayo
 
 function overlaps(left: CustomLayoutRect, right: CustomLayoutRect): boolean {
   return !(
-    left.x + left.width <= right.x ||
-    right.x + right.width <= left.x ||
-    left.y + left.height <= right.y ||
-    right.y + right.height <= left.y
+    left.x + left.width <= right.x || right.x + right.width <= left.x ||
+    left.y + left.height <= right.y || right.y + right.height <= left.y
   );
 }
 
-function findAvailableLayoutRect(
-  candidate: CustomLayoutRect,
-  fallback: CustomLayoutRect,
-  accepted: CustomLayoutRect[],
-): CustomLayoutRect {
+function findAvailableLayoutRect(candidate: CustomLayoutRect, fallback: CustomLayoutRect, accepted: CustomLayoutRect[]): CustomLayoutRect {
   for (const preferred of [candidate, fallback]) {
     if (!accepted.some((rect) => overlaps(preferred, rect))) return { ...preferred };
   }
@@ -156,7 +150,7 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
     return cloneDefaultCustomLayout();
   }
   const record = input as Record<string, unknown>;
-  if (record.version !== 1 && record.version !== CUSTOM_LAYOUT_VERSION) return cloneDefaultCustomLayout();
+  if (record.version !== 1 && record.version !== 2 && record.version !== CUSTOM_LAYOUT_VERSION) return cloneDefaultCustomLayout();
 
   const order: CustomLayoutModule[] = [];
   if (Array.isArray(record.moduleOrder)) {
@@ -176,11 +170,11 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
       if (typeof values[moduleId] === "boolean") visibleModules[moduleId] = values[moduleId];
     }
   }
-  // Keep the minimum useful controls available even when localStorage is tampered with.
-  visibleModules.prompt = true;
-  visibleModules.model = true;
-  visibleModules.operations = true;
-
+  if (record.version !== CUSTOM_LAYOUT_VERSION) {
+    visibleModules.prompt = true;
+    visibleModules.model = true;
+    visibleModules.operations = true;
+  }
   const positionValues = record.modulePositions && typeof record.modulePositions === "object" && !Array.isArray(record.modulePositions)
     ? record.modulePositions as Record<string, unknown>
     : {};
@@ -188,10 +182,10 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
   const accepted: CustomLayoutRect[] = [];
   order.forEach((moduleId, index) => {
     const fallback = layoutPositionForIndex(index);
-    const candidate = record.version === CUSTOM_LAYOUT_VERSION
+    const candidate = record.version !== 1
       ? parseLayoutRect(positionValues[moduleId], fallback)
       : fallback;
-    const next = findAvailableLayoutRect(candidate, fallback, accepted);
+    const next = record.version === CUSTOM_LAYOUT_VERSION ? candidate : findAvailableLayoutRect(candidate, fallback, accepted);
     modulePositions[moduleId] = { ...next };
     accepted.push(next);
   });

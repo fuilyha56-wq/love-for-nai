@@ -40,11 +40,22 @@ export async function POST(request: Request) {
       username,
       password,
     });
-    if (!result.success || !result.data)
+    if (!result.success || !result.data) {
+      // 上游 NewAPI 对单用户活跃登录会话数有上限（默认 50），
+      // 撞满时登录返回 409，message 只有 "Conflict"。
+      if (response.status === 409)
+        return NextResponse.json(
+          {
+            message:
+              "该账号的登录会话数已达上限，请稍后再试或联系管理员清理旧会话",
+          },
+          { status: 409 },
+        );
       return NextResponse.json(
         { message: result.message || "登录失败" },
         { status: 401 },
       );
+    }
 
     if (requiresTwoFactor(result)) {
       const flowToken = result.data.flow_token;

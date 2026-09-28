@@ -1,14 +1,14 @@
 .stories-shell {
-  --story-bg: #13152c;
-  --story-panel: #191b31;
-  --story-raised: #22253f;
-  --story-raised-hover: #292d4b;
-  --story-input: #0e0f21;
-  --story-line: #343858;
-  --story-text: #f9f8ed;
-  --story-muted: #a8abc2;
-  --story-accent: #f5f3c2;
-  --story-pink: #f0a7dc;
+  --story-bg: var(--paper);
+  --story-panel: var(--panel);
+  --story-raised: color-mix(in srgb, var(--panel) 87%, var(--ink));
+  --story-raised-hover: color-mix(in srgb, var(--panel) 78%, var(--ink));
+  --story-input: color-mix(in srgb, var(--paper) 88%, var(--panel));
+  --story-line: var(--line);
+  --story-text: var(--ink);
+  --story-muted: var(--muted);
+  --story-accent: var(--rose);
+  --story-pink: var(--rose);
   min-height: 100dvh;
   overflow: hidden;
   background: var(--story-bg);

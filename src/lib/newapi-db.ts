@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import {
   getRuntimeSettings,
@@ -196,4 +197,154 @@ export async function resolveExternalApiUser(
   authorization: string,
 ): Promise<number | null> {
   return (await resolveExternalApiIdentity(authorization)).userId;
+}
+
+// ── 无渠道分组时的托管密钥回退 ─────────────────────────────────────
+// 外部密钥（Launcher 等）所属分组可能没有目标模型的渠道（如 default
+// 分组打 NAI 模型）。此时用管理权限为该用户建/取一把可用分组的托管
+// 密钥（归属同一用户，仍计其 NewAPI 余额）。需要数据库可直连（建钥
+// 走 SQL）；分组判定走管理 HTTP（模型 enable_groups + 用户分组 +
+// UserUsableGroups），各缓存 5 分钟。
+
+const MANAGED_TOKEN_PREFIX = "lfn-managed";
+const GROUP_CACHE_MS = 5 * 60_000;
+const groupCache = new Map<
+  string,
+  { value: string[] | null; expiresAt: number }
+>();
+
+type AdminApiContext = {
+  base: string;
+  headers: Record<string, string>;
+};
+
+async function adminApiContext(): Promise<AdminApiContext | null> {
+  const base = await runtimeNewApiBaseUrl();
+  const adminToken = await runtimeAdminToken();
+  if (!base || !adminToken) return null;
+  const settings = await getRuntimeSettings().catch(() => null);
+  const adminUser =
+    settings?.newApiAdminUserId || process.env.LFN_ADMIN_USER_ID || "1";
+  return {
+    base,
+    headers: {
+      Authorization: adminToken,
+      "New-Api-User": adminUser,
+      Accept: "application/json",
+    },
+  };
+}
+
+async function cachedValue(
+  key: string,
+  fallback: string[],
+  load: () => Promise<string[] | string>,
+): Promise<string[]> {
+  const now = Date.now();
+  const hit = groupCache.get(key);
+  if (hit && hit.expiresAt > now && hit.value) return hit.value;
+  const value = await load().catch(() => fallback);
+  const list = Array.isArray(value) ? value : value ? [value] : fallback;
+  groupCache.set(key, { value: list, expiresAt: now + GROUP_CACHE_MS });
+  return list;
+}
+
+async function fetchModelGroups(
+  ctx: AdminApiContext,
+  model: string,
+): Promise<string[]> {
+  return cachedValue(`model:${model}`, [], async () => {
+    const response = await fetch(`${ctx.base}/api/pricing`, {
+      headers: ctx.headers,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return [];
+    const result = (await response.json()) as {
+      data?: Array<{ model_name?: string; enable_groups?: string[] }>;
+    };
+    return (
+      result.data?.find((item) => item.model_name === model)?.enable_groups?.filter(
+        (item): item is string => typeof item === "string",
+      ) ?? []
+    );
+  });
+}
+
+async function fetchUserGroup(ctx: AdminApiContext, userId: number): Promise<string[]> {
+  return cachedValue(`user:${userId}`, [""], async () => {
+    const response = await fetch(`${ctx.base}/api/user/${userId}`, {
+      headers: ctx.headers,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return "";
+    const result = (await response.json()) as { data?: { group?: unknown } };
+    return typeof result.data?.group === "string" ? result.data.group : "";
+  });
+}
+
+async function fetchUsableGroups(ctx: AdminApiContext): Promise<string[]> {
+  return cachedValue("usable", [], async () => {
+    const response = await fetch(`${ctx.base}/api/option/`, {
+      headers: ctx.headers,
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return [];
+    const result = (await response.json()) as {
+      data?: Array<{ key?: string; value?: unknown }>;
+    };
+    const entry = result.data?.find((item) => item.key === "UserUsableGroups");
+    const parsed =
+      typeof entry?.value === "string" ? JSON.parse(entry.value) : entry?.value;
+    return parsed && typeof parsed === "object"
+      ? Object.keys(parsed as Record<string, unknown>)
+      : [];
+  });
+}
+
+/**
+ * 为外部无渠道分组的用户取/建一把可用分组的托管密钥，返回原始 key
+ * （不含 sk- 前缀）。分组不可解或数据库不可用时返回 null，调用方保留
+ * 原始上游错误。
+ */
+export async function ensureManagedFallbackToken(
+  userId: number,
+  model: string,
+): Promise<string | null> {
+  const ctx = await adminApiContext();
+  if (!ctx) return null;
+  const pool = dbPool();
+  if (!pool) return null;
+
+  const [modelGroups, userGroups, usable] = await Promise.all([
+    fetchModelGroups(ctx, model),
+    fetchUserGroup(ctx, userId),
+    fetchUsableGroups(ctx),
+  ]);
+  const owned = new Set([...userGroups, ...usable]);
+  const group = modelGroups.find((item) => owned.has(item));
+  if (!group) return null;
+
+  const name = `${MANAGED_TOKEN_PREFIX}-${group.toLowerCase()}`;
+  const existing = await pool.query<{ key: string }>(
+    `SELECT key FROM tokens
+      WHERE user_id = $1 AND name = $2 AND status = 1 AND deleted_at IS NULL
+      LIMIT 1`,
+    [userId, name],
+  );
+  const found = existing.rows[0]?.key;
+  if (found) return String(found);
+
+  const key = randomBytes(24).toString("hex");
+  await pool.query(
+    `INSERT INTO tokens
+       (user_id, key, status, name, created_time, accessed_time, expired_time,
+        remain_quota, unlimited_quota, model_limits_enabled, model_limits,
+        allow_ips, used_quota, "group", cross_group_retry)
+     VALUES ($1, $2, 1, $3, $4, $4, -1, 0, true, false, '', '', 0, $5, false)`,
+    [userId, key, name, Math.floor(Date.now() / 1000), group],
+  );
+  return key;
 }

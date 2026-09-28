@@ -25,7 +25,7 @@ describe("外观偏好解析", () => {
     expect(parsed.theme).toBe("paper");
   });
 
-  it("校验版本、白名单、顺序、宽度并保留必需模块", () => {
+  it("校验新版布局白名单、顺序、宽度与显隐", () => {
     const parsed = parseCustomLayout({
       version: CUSTOM_LAYOUT_VERSION,
       moduleOrder: ["agent", "agent", "unknown", "prompt"],
@@ -39,8 +39,8 @@ describe("外观偏好解析", () => {
       rightCollapsed: true,
     });
     expect(parsed.moduleOrder).toEqual(["agent", "prompt", "model", "image", "sampling", "references", "operations", "history", "director"]);
-    expect(parsed.visibleModules.prompt).toBe(true);
-    expect(parsed.visibleModules.model).toBe(true);
+    expect(parsed.visibleModules.prompt).toBe(false);
+    expect(parsed.visibleModules.model).toBe(false);
     expect(parsed.visibleModules.history).toBe(false);
     expect(parsed.modulePositions.agent).toEqual({ x: 0, y: 7, width: 6, height: 1 });
     expect(parsed.modulePositions.prompt).toEqual({ x: 0, y: 0, width: 4, height: 2 });
@@ -67,10 +67,11 @@ describe("外观偏好解析", () => {
     expect(parsed.modulePositions.model).toEqual({ x: 8, y: 0, width: 4, height: 2 });
   });
 
-  it("重新安置发生重叠的模块", () => {
+  it("迁移 v2 时重新安置发生重叠的模块并保留必需模块", () => {
     const parsed = parseCustomLayout({
-      version: CUSTOM_LAYOUT_VERSION,
+      version: 2,
       moduleOrder: ["prompt", "model"],
+      visibleModules: { prompt: false, model: false },
       modulePositions: {
         prompt: { x: 0, y: 0, width: 4, height: 2 },
         model: { x: 0, y: 0, width: 4, height: 2 },
@@ -78,6 +79,24 @@ describe("外观偏好解析", () => {
     });
     expect(parsed.modulePositions.prompt).toEqual({ x: 0, y: 0, width: 4, height: 2 });
     expect(parsed.modulePositions.model).toEqual({ x: 4, y: 0, width: 4, height: 2 });
+    expect(parsed.visibleModules.prompt).toBe(true);
+    expect(parsed.visibleModules.model).toBe(true);
+  });
+
+  it("新版纵向布局保留隐藏状态与相邻模块高度", () => {
+    const parsed = parseCustomLayout({
+      version: CUSTOM_LAYOUT_VERSION,
+      moduleOrder: ["model", "prompt"],
+      visibleModules: { model: false },
+      modulePositions: {
+        model: { x: 0, y: 0, width: 4, height: 3 },
+        prompt: { x: 0, y: 0, width: 4, height: 2 },
+      },
+    });
+    expect(parsed.visibleModules.model).toBe(false);
+    expect(parsed.moduleOrder.slice(0, 2)).toEqual(["model", "prompt"]);
+    expect(parsed.modulePositions.model.height).toBe(3);
+    expect(parsed.modulePositions.prompt.x).toBe(0);
   });
 
 });

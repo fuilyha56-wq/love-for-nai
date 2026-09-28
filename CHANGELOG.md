@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] - 2026-10-23
+
+### 修复
+
+- **修复登录时 409 Conflict（上游登录会话数上限）**
+  - 根因：LFN 登出只清除自身 cookie，从不撤销上游 NewAPI 的登录会话；每次密码登录都会在上游创建一个会话，累积到上游单用户活跃会话上限（默认 50）后，登录返回 409 Conflict。
+  - 登出时现在会调用上游 `POST /api/user/auth/logout` 撤销对应会话（Bearer access_token 优先、`new_api_refresh` cookie 兜底）；撤销失败不阻塞登出。
+  - 系统访问令牌登录（不创建上游会话）自动跳过撤销。
+  - 登录时若上游返回 409，前端提示改为可操作的中文说明，而非透传 "Conflict"。
+
 ## [Unreleased] - 2026-09-08
 
 ### NovelAI 原生兼容层

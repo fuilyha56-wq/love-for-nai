@@ -224,10 +224,11 @@ export async function POST(request: Request) {
   if (!registered.ok) return registered;
 
   // new-api 的注册接口会丢弃 group 字段（服务端白名单），新用户一律落到
-  // default 分组而无法调用 ikun 渠道。注册成功后用 LFN 管理令牌把用户
-  // 划入 ikun 分组，这是目前唯一的可靠途径。
+  // default 分组。这里保持 default（用户面板体验正常），模型渠道权限由
+  // LFN 托管密钥解决：注册后异步为用户预创建一把可用分组（如 Draw）的
+  // 密钥，与生图时的托管回退共用同一把，NewAPI 余额照常计入本人。
   try {
-    const { resolvedAdminTokenValue, resolvedAdminHeaders } = await import("@/lib/admin-auth");
+    const { resolvedAdminTokenValue } = await import("@/lib/admin-auth");
     const token = await resolvedAdminTokenValue();
     if (token) {
       const loginResult = await callNewApi("/api/user/login", {
@@ -236,19 +237,14 @@ export async function POST(request: Request) {
       });
       const user = loginResult.result.data?.user ?? loginResult.result.data;
       if (loginResult.result.success && typeof user?.id === "number") {
-        const { runtimeRegisterGroup } = await import("@/lib/runtime-config");
-        const groupId = await runtimeRegisterGroup();
-        await fetch(`${await resolvedNewApiBaseUrl()}/api/user/`, {
-          method: "PUT",
-          headers: await resolvedAdminHeaders(),
-          body: JSON.stringify({ id: user.id, group: groupId }),
-          cache: "no-store",
-          signal: AbortSignal.timeout(10_000),
-        });
+        const { ensureManagedFallbackToken } = await import("@/lib/newapi-db");
+        await ensureManagedFallbackToken(user.id, "nai-v4.5-full").catch(
+          () => null,
+        );
       }
     }
   } catch {
-    // 分组调整失败不影响注册本身。
+    // 托管密钥预创建失败不影响注册本身；首次生图时会再次尝试。
   }
 
   if (!inviteCode) return registered;
