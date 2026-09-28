@@ -4,6 +4,7 @@
  */
 
 import JSZip from "jszip";
+import { Buffer } from "node:buffer";
 import {
   affStatus,
   refundImageCredits,
@@ -769,6 +770,50 @@ async function nativeNewApiFallback(
 
 export function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 解析 NAI 原生生图请求体。官方客户端（含 Aaalice NAI Launcher）把
+ * 请求编码为 multipart/form-data：JSON 放在名为 request 的部件里，
+ * 图片字段（image/mask/参考图等）以二进制部件传输、JSON 内用部件名
+ * 占位（占位符 == 字段名，或列表项的 data 字段）。这里还原为纯 JSON
+ * （图片字段恢复 base64），计费解析与转发均按 JSON 处理；普通 JSON
+ * 请求原样返回。
+ */
+export async function parseNaiGenerationBody(
+  request: Request,
+): Promise<Record<string, unknown>> {
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().includes("multipart/form-data"))
+    return (await request.json()) as Record<string, unknown>;
+  const form = await request.formData();
+  const requestPart = form.get("request");
+  if (!(requestPart instanceof File))
+    throw new Error("multipart 请求缺少 request 部件");
+  const json = JSON.parse(await requestPart.text()) as JsonRecord;
+  const parts = new Map<string, string>();
+  for (const [name, value] of form.entries()) {
+    if (name === "request" || !(value instanceof File)) continue;
+    parts.set(name, Buffer.from(await value.arrayBuffer()).toString("base64"));
+  }
+  if (parts.size) {
+    const substituteIn = (container: JsonRecord): void => {
+      for (const [key, value] of Object.entries(container)) {
+        if (typeof value === "string") {
+          if ((value === key || key === "data") && parts.has(value))
+            container[key] = parts.get(value);
+        } else if (Array.isArray(value)) {
+          value.forEach((item) => {
+            if (isRecord(item)) substituteIn(item);
+          });
+        } else if (isRecord(value)) {
+          substituteIn(value);
+        }
+      }
+    };
+    substituteIn(json);
+  }
+  return json;
 }
 
 export function modelAlias(model: unknown): unknown {
