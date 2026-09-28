@@ -11,7 +11,10 @@ import {
   type AffGeneration,
   type ImageCreditCharge,
 } from "@/lib/aff";
-import { resolveExternalApiIdentity } from "@/lib/newapi-db";
+import {
+  ensureManagedFallbackToken,
+  resolveExternalApiIdentity,
+} from "@/lib/newapi-db";
 import {
   gatewayLogStart,
   maskKeyForLog,
@@ -304,6 +307,35 @@ export async function proxyImageWithCredits(
     charge = await trySpendImageCredits(userId, imageRequest.generation);
     if (!charge) {
       gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
+      // 用户分组可能没有该模型的渠道：先尝试托管密钥换组重试。
+      const managedKey = await ensureManagedFallbackToken(
+        userId,
+        imageRequest.generation.model,
+      ).catch(() => null);
+      if (managedKey) {
+        const managedHeaders = new Headers({
+          Authorization: `Bearer sk-${managedKey}`,
+          "Content-Type": imageRequest.contentType || "application/json",
+        });
+        const finishManagedLog = gatewayLogStart(
+          externalLogMeta(logUser, imageRequest, pathname),
+        );
+        const managedUpstream = await fetchWithModelConcurrency(
+          `${await resolvedNewApiBaseUrl()}${pathname}`,
+          {
+            method: request.method,
+            headers: managedHeaders,
+            body: imageRequest.body,
+            cache: "no-store",
+            signal: AbortSignal.timeout(180_000),
+          },
+        ).catch((error: unknown) => {
+          finishManagedLog(0);
+          throw error;
+        });
+        finishManagedLog(managedUpstream.status);
+        return paymentResponse(forwardResponse(managedUpstream), "newapi");
+      }
       return paymentResponse(
         await proxyNewApi(
           request,
@@ -631,6 +663,45 @@ export async function proxyNaiNativeWithCredits(
       gatewayLogStart(
         externalLogMeta(logUser, imageRequest, fallbackEndpoint),
       )(-1);
+      // 用户分组可能没有该模型的渠道（如 default 打 NAI 模型）：
+      // 先取一把可用分组的托管密钥重试，取不到再用原 key 透传保留
+      // 原始错误。
+      const managedKey = await ensureManagedFallbackToken(
+        userId,
+        imageRequest.generation.model,
+      ).catch(() => null);
+      if (managedKey) {
+        const managedHeaders = new Headers({
+          Authorization: `Bearer sk-${managedKey}`,
+          "Content-Type": imageRequest.contentType || "application/json",
+        });
+        const accept = request.headers.get("accept");
+        if (accept) managedHeaders.set("Accept", accept);
+        const target = newApiFallback && newApiFallback !== "unsupported"
+          ? newApiFallback
+          : { pathname, body: imageRequest.body, contentType: imageRequest.contentType };
+        const finishManagedLog = gatewayLogStart(
+          externalLogMeta(logUser, imageRequest, target.pathname),
+        );
+        const managedUpstream = await fetchWithModelConcurrency(
+          `${await resolvedNewApiBaseUrl()}${target.pathname}`,
+          {
+            method: request.method,
+            headers: managedHeaders,
+            body: target.body,
+            cache: "no-store",
+            signal: AbortSignal.timeout(180_000),
+          },
+        ).catch((error: unknown) => {
+          finishManagedLog(0);
+          throw error;
+        });
+        finishManagedLog(managedUpstream.status);
+        return paymentResponse(
+          forwardResponse(managedUpstream),
+          "newapi",
+        );
+      }
       return paymentResponse(
         await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
         "newapi",
