@@ -60,9 +60,9 @@ export default function ModelsPage() {
         />
         <div className="mt-7 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
           <span className={`rounded-full px-2.5 py-1 ${catalog?.stale ? "bg-[#fff3d6] text-[#8a6116]" : "bg-[#e6f3ed] text-[#28664f]"}`}>
-            {catalog ? (catalog.stale ? "目录数据为估算/已验证快照" : "目录数据已更新") : "正在读取目录"}
+            {catalog ? (catalog.source === "fallback" ? "价格不可用" : catalog.source === "snapshot" ? "显示上次价格快照" : "目录数据已更新") : "正在读取目录"}
           </span>
-          {catalog?.asOf && <span>数据时间：{new Date(catalog.asOf).toLocaleString("zh-CN")}</span>}
+          {catalog?.asOf && catalog.source !== "fallback" && <span>数据时间：{new Date(catalog.asOf).toLocaleString("zh-CN")}</span>}
         </div>
 
         {loadState === "loading" && <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle size={17} className="animate-spin" />正在加载模型目录…</div>}
@@ -78,7 +78,7 @@ export default function ModelsPage() {
             </div>
 
             <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {models.map((model) => <ModelCard key={model.id} model={model} />)}
+              {models.map((model) => <ModelCard key={model.id} model={model} source={catalog.source} />)}
             </div>
             {!models.length && <div className="py-20 text-center text-sm text-[var(--muted)]">没有匹配的模型。</div>}
 
@@ -94,19 +94,30 @@ export default function ModelsPage() {
 }
 
 function formatLiveUsd(value: number | undefined, digits?: number): string {
-  if (value == null || !Number.isFinite(value)) return "暂无实时金额";
+  if (value == null || !Number.isFinite(value)) return "价格不可用";
   const places = digits ?? (value > 0 && value < 0.01 ? 4 : 2);
   return `$${value.toFixed(places)}`;
 }
 
-function ModelCard({ model }: { model: PublicModel }) {
+function ModelCard({ model, source }: { model: PublicModel; source: PublicCatalog["source"] }) {
   const image = model.kind === "image";
   const pricing = model.pricing;
+  const priceLabel = source === "snapshot" ? "上次价格快照" : "NewAPI 公开价";
   return <article className="group flex flex-col rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[0_10px_30px_rgba(54,47,39,.04)] transition-transform hover:-translate-y-0.5">
     <div className="flex items-start gap-3"><div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${image ? "bg-[#f8e8e9] text-[var(--rose)]" : "bg-[#e6f3ed] text-[#28664f]"}`}>{image ? <ImageIcon size={20} /> : <MessageCircle size={20} />}</div><div className="min-w-0"><div className="flex items-center gap-2"><h2 className="truncate font-semibold">{model.name}</h2><span className="shrink-0 rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px] text-[var(--muted)]">{image ? "图像" : "聊天"}</span></div><p className="mt-1 truncate text-[11px] text-[var(--muted)]">{model.id}</p></div></div>
     <p className="mt-4 min-h-10 text-sm leading-5 text-[var(--muted)]">{model.summary}</p>
     <div className="mt-4 flex flex-wrap gap-1.5">{model.capabilities.map((capability) => <span key={capability} className="rounded bg-[var(--surface-muted)] px-2 py-1 text-[10px]">{capability}</span>)}</div>
-    <div className="mt-5 space-y-2 border-t border-[var(--line)] pt-4 text-xs">{pricing ? <>{pricing.liveType === "per_request" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveUsd(pricing.liveUsdPerRequest)} / 张</b></div>}{pricing.liveType === "tiered" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveUsd(pricing.liveUsdPerRequest)} / 张起</b></div>}{pricing.liveType === "per_token" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>{formatLiveUsd(pricing.liveUsdPerUsageToken, 4)} / usage token</b></div>}{pricing.liveType === "unknown" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 实时</span><b>暂无实时金额</b></div>}{pricing.privatePointReference ? <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">标准预估</span><b>{model.id.endsWith("-limit") ? model.id.includes("nai-v5") ? "$0.06 / 张" : "免费" : `$${pricing.privatePointReference.pointPriceUsd.toFixed(2)} / 积分`}</b></div> : <p className="text-[var(--muted)]">聊天模型不适用图像积分规则</p>}<p className="text-[10px] leading-5 text-[var(--muted)]">1 积分 = 50 token；标准预估不改变 NewAPI 实际结算。</p></> : <p className="text-[var(--muted)]">当前暂无价格信息。</p>}</div>
+    <div className="mt-5 space-y-2 border-t border-[var(--line)] pt-4 text-xs">
+      {pricing?.liveType === "tiered" && <>
+        <p className="font-semibold">{priceLabel} · 分档计费</p>
+        <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">档内单张</span><b>{formatLiveUsd(pricing.liveUsdPerRequest)} / 张</b></div>
+        <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">档外用量</span><b>{formatLiveUsd(pricing.liveUsdPerUsageToken, 4)} / usage token</b></div>
+      </>}
+      {pricing?.liveType === "per_request" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">{priceLabel}</span><b>{formatLiveUsd(pricing.liveUsdPerRequest)} / 次</b></div>}
+      {pricing?.liveType === "per_token" && <div className="flex justify-between gap-3"><span className="text-[var(--muted)]">{priceLabel}</span><b>{formatLiveUsd(pricing.liveUsdPerUsageToken, 4)} / usage token</b></div>}
+      {(!pricing || pricing.liveType === "unknown") && <p className="font-semibold text-[var(--muted)]">当前价格不可用</p>}
+      {pricing?.note && <p className="text-[10px] leading-5 text-[var(--muted)]">{pricing.note}</p>}
+    </div>
     {image && <Link href="/pricing#calculator" className="mt-5 inline-flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white group-hover:bg-[var(--rose)]">计算这个模型 <ArrowRight size={14} /></Link>}
   </article>;
 }

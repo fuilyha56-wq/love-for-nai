@@ -1,16 +1,14 @@
 import { adminHeaders, adminToken } from "@/lib/admin-auth";
 import { newApiBaseUrl } from "@/lib/newapi";
 import {
-  pointPriceUsd,
   snapshotFromRawPricing,
-  TOKENS_PER_POINT,
   type RawModelPricing,
 } from "@/lib/image-pricing";
 
 export type PublicModelKind = "image" | "chat";
 
 export type PublicModelPricing = {
-  billingMode: "live" | "private_reference" | "unknown";
+  billingMode: "live" | "unknown";
   liveType: "per_request" | "per_token" | "tiered" | "unknown";
   liveUsdPerRequest?: number;
   liveUsdPerUsageToken?: number;
@@ -45,6 +43,7 @@ export type PublicCatalog = {
 
 type RawPricing = RawModelPricing & {
   model_name?: unknown;
+  enable_groups?: unknown;
 };
 
 const CACHE_TTL_MS = 60_000;
@@ -72,8 +71,6 @@ const FALLBACK_MODEL_IDS = [
   "nai-chat",
 ] as const;
 
-const fallbackPricingNotes =
-  "当前未读取到上游实时价格，积分价格仅作标准预估；登录后以 NewAPI 实时价格为准。";
 let cached: { value: PublicCatalog; expiresAt: number } | null = null;
 let lastVerified: PublicCatalog | null = null;
 
@@ -121,40 +118,54 @@ function modelCapabilities(id: string, kind: PublicModelKind): string[] {
   return capabilities;
 }
 
-function privateReference(id: string): PublicModelPricing["privatePointReference"] {
-  const price = pointPriceUsd(id);
-  if (price == null) return null;
-  return {
-    tokensPerPoint: TOKENS_PER_POINT,
-    pointPriceUsd: price,
-    version: id.toLowerCase().includes("nai-v5") ? "V5" : "V4.5/旧版",
-  };
-}
-
 function livePricing(
   entry: RawPricing,
   modelId: string,
-  ikunRatio: number,
-  hasIkunRatio: boolean,
+  groupRatios: Record<string, number>,
 ): PublicModelPricing {
-  const ratio = boundedNumber(ikunRatio, 1_000_000);
-  const groupName = "ikun";
-  const baseNote = hasIkunRatio
-    ? "实时读取 NewAPI 的公开 ikun 分组倍率。"
-    : "未读取到 ikun 分组倍率，登录后以账号实际结算为准。";
-  const privatePointReference = privateReference(modelId);
+  const groups = Array.isArray(entry.enable_groups)
+    ? entry.enable_groups.filter((group): group is string => typeof group === "string")
+    : [];
+  const available = groups.length ? groups : Object.keys(groupRatios);
+  const groupName = available.find((group) => group.toLowerCase() === "ikun" && Object.hasOwn(groupRatios, group))
+    ?? available.find((group) => Object.hasOwn(groupRatios, group));
+  if (!groupName) {
+    return {
+      billingMode: "unknown",
+      liveType: "unknown",
+      privatePointReference: null,
+      note: "未读取到该模型可用分组的公开倍率，无法换算准确价格；请登录后查看账号价格。",
+    };
+  }
+  const ratio = groupRatios[groupName];
+  const baseNote = `按公开 ${groupName} 分组倍率换算。`;
   const snapshot = snapshotFromRawPricing(modelId, entry, ratio, groupName);
 
-  if (snapshot.tiered) {
+  if (
+    snapshot.tiered &&
+    snapshot.inEnvelopeUsd != null &&
+    snapshot.outOfEnvelopeBalancePerUsageToken != null
+  ) {
     return {
       billingMode: "live",
       liveType: "tiered",
-      liveUsdPerRequest: (snapshot.inEnvelopeUsd ?? 0),
-      liveUsdPerUsageToken: (snapshot.outOfEnvelopeBalancePerUsageToken ?? 0),
+      liveUsdPerRequest: snapshot.inEnvelopeUsd,
+      liveUsdPerUsageToken: snapshot.outOfEnvelopeBalancePerUsageToken,
       liveGroupName: groupName,
       liveGroupRatio: ratio,
-      privatePointReference,
-      note: `NewAPI 实时分档价格：限制范围内按张结算，超出后按网关 usage token 结算；${baseNote}`,
+      privatePointReference: null,
+      note: `NewAPI 公开分档价格：档内按张结算，档外按网关 usage token 结算；${baseNote}实际扣费以账号账单为准。`,
+    };
+  }
+
+  if (String(entry.billing_mode || "").trim().toLowerCase() === "tiered_expr") {
+    return {
+      billingMode: "unknown",
+      liveType: "unknown",
+      liveGroupName: groupName,
+      liveGroupRatio: ratio,
+      privatePointReference: null,
+      note: "NewAPI 分档计费配置暂时无法解析，当前价格不可用。",
     };
   }
 
@@ -175,7 +186,7 @@ function livePricing(
         liveType: "unknown",
         liveGroupName: groupName,
         liveGroupRatio: ratio,
-        privatePointReference,
+        privatePointReference: null,
         note: `NewAPI 返回了按次计费类型，但没有返回可展示的价格；${baseNote}`,
       };
     return {
@@ -184,11 +195,21 @@ function livePricing(
       liveUsdPerRequest: price * ratio,
       liveGroupName: groupName,
       liveGroupRatio: ratio,
-      privatePointReference,
+      privatePointReference: null,
       note: `NewAPI 实时按次价格；${baseNote}`,
     };
   }
 
+  if (!snapshot.modelRatioKnown) {
+    return {
+      billingMode: "unknown",
+      liveType: "unknown",
+      liveGroupName: groupName,
+      liveGroupRatio: ratio,
+      privatePointReference: null,
+      note: "NewAPI 未返回可用的按 token 价格，当前价格不可用。",
+    };
+  }
   const modelRatio = boundedNumber(entry.model_ratio, 1_000_000_000);
   return {
     billingMode: "live",
@@ -196,19 +217,17 @@ function livePricing(
     liveUsdPerUsageToken: modelRatio * 2e-6 * ratio,
     liveGroupName: groupName,
     liveGroupRatio: ratio,
-    privatePointReference,
+    privatePointReference: null,
     note: `NewAPI 实时按 usage token 结算；${baseNote}`,
   };
 }
 
-function fallbackImagePricing(id: string): PublicModelPricing | null {
-  const reference = privateReference(id);
-  if (!reference) return null;
+function fallbackImagePricing(): PublicModelPricing {
   return {
-    billingMode: "private_reference",
+    billingMode: "unknown",
     liveType: "unknown",
-    privatePointReference: reference,
-    note: "当前暂无 NewAPI 实时数据，这里显示标准积分预估价，不代表 NewAPI 实际扣费。",
+    privatePointReference: null,
+    note: "当前未取得 NewAPI 价格，也没有可用的价格快照。",
   };
 }
 
@@ -220,7 +239,7 @@ function makeModel(id: string, pricing: PublicModelPricing | null): PublicModel 
     name: modelName(id),
     summary: modelSummary(id, kind),
     capabilities: modelCapabilities(id, kind),
-    pricing: pricing || (kind === "image" ? fallbackImagePricing(id) : null),
+    pricing: pricing || (kind === "image" ? fallbackImagePricing() : null),
   };
 }
 
@@ -231,7 +250,7 @@ function fallbackCatalog(message?: string): PublicCatalog {
     stale: true,
     source: "fallback",
     currency: "USD",
-    conversion: `实时价格不可用。标准预估：1 积分 = ${TOKENS_PER_POINT} token；每积分 $0.03；V5 限制档 $0.06；V4.5 限制档免费。${fallbackPricingNotes}`,
+    conversion: "实时价格不可用，也没有可用的价格快照；请登录后查看账号实际价格。",
     ...(message ? { message } : {}),
   };
 }
@@ -257,8 +276,7 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
     (entry): entry is RawPricing => Boolean(entry) && typeof entry === "object",
   );
 
-  let ikunRatio = 1;
-  let hasIkunRatio = false;
+  const groupRatios: Record<string, number> = {};
   try {
     const groupsResponse = await fetch(`${baseUrl}/api/user/self/groups`, {
       headers,
@@ -269,12 +287,13 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
       const groupsPayload = (await readJson(groupsResponse)) as {
         data?: Record<string, unknown>;
       };
-      const ikun = groupsPayload.data?.ikun || groupsPayload.data?.Ikun;
-      if (ikun && typeof ikun === "object") {
-        const ratio = finiteNumber((ikun as { ratio?: unknown }).ratio, -1);
+      for (const [group, details] of Object.entries(groupsPayload.data ?? {})) {
+        if (!details || typeof details !== "object") continue;
+        const rawRatio = (details as { ratio?: unknown }).ratio;
+        if (rawRatio == null || rawRatio === "") continue;
+        const ratio = finiteNumber(rawRatio, -1);
         if (ratio >= 0 && ratio <= 1_000_000) {
-          ikunRatio = ratio;
-          hasIkunRatio = true;
+          groupRatios[group] = ratio;
         }
       }
     }
@@ -286,7 +305,7 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
   for (const entry of rawEntries.slice(0, MAX_MODELS)) {
     const id = cleanText(entry.model_name);
     if (!MODEL_PATTERN.test(id) || byId.has(id)) continue;
-    byId.set(id, makeModel(id, livePricing(entry, id, ikunRatio, hasIkunRatio)));
+    byId.set(id, makeModel(id, livePricing(entry, id, groupRatios)));
   }
   if (!byId.size) throw new Error("上游没有可展示的 NAI 模型");
 
@@ -296,7 +315,7 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
     stale: false,
     source: "upstream",
     currency: "USD",
-    conversion: `实时价格来自 NewAPI；500000 quota = 1 美元。标准预估：1 积分 = ${TOKENS_PER_POINT} token，每积分 $0.03，V5 限制档 $0.06，V4.5 限制档免费。`,
+    conversion: "展示 NewAPI 最近读取的公开价格配置；实际扣费取决于模型、请求参数和账号分组，以账单为准。",
   };
 }
 
@@ -315,6 +334,7 @@ export async function getPublicCatalog(): Promise<PublicCatalog> {
         ...lastVerified,
         stale: true,
         source: "snapshot",
+        conversion: "实时价格暂不可用，展示最近一次读取的 NewAPI 公开价格配置；实际扣费以账单为准。",
         message: `实时价格暂不可用，显示最近一次数据（${message}）。`,
       };
       cached = { value, expiresAt: now + CACHE_TTL_MS };

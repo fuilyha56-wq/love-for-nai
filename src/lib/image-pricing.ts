@@ -20,9 +20,12 @@ export type ModelPricingSnapshot = {
   model: string;
   modelRatio: number;
   modelPrice: number;
+  modelRatioKnown?: boolean;
+  modelPriceKnown?: boolean;
   quotaType: number;
   effectiveGroup?: string;
   groupRatio: number;
+  billingMode?: string;
   tiered?: boolean;
   inEnvelopeUsd?: number;
   outOfEnvelopeUsdPerMillion?: number;
@@ -72,7 +75,7 @@ export function quotaPerUsd(
 export function usesLimitPricing(generation: ImagePricingGeneration): boolean {
   return (
     /nai-v5|nai-v4\.5|diffusion-5|diffusion-4-5/.test(generation.model) &&
-    isInFreeEnvelope({ ...generation, characterPromptCount: 0 })
+    isInFreeEnvelope(generation)
   );
 }
 
@@ -134,6 +137,12 @@ function finiteNonNegative(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
+function hasFiniteNonNegative(value: unknown): boolean {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0;
+  return typeof value === "string" && value.trim() !== "" &&
+    Number.isFinite(Number(value)) && Number(value) >= 0;
+}
+
 function coeffFromMatch(match: RegExpMatchArray | null): number | null {
   if (!match) return null;
   const value = Number(match[1]);
@@ -160,7 +169,7 @@ export function parseTieredExpr(expr: unknown): ParsedTieredExpr | null {
 }
 
 export function envelopeUsageTokens(model: string): number {
-  return model.toLowerCase().includes("nai-v5") ? 8 : 0;
+  return modelPointVersion(model) === "V5" ? 25 : 0;
 }
 
 export function snapshotFromRawPricing(
@@ -172,18 +181,21 @@ export function snapshotFromRawPricing(
   const ratio = Number.isFinite(groupRatio) && groupRatio >= 0 ? groupRatio : 1;
   const quotaType =
     Math.round(finiteNonNegative(entry.quota_type)) === 1 ? 1 : 0;
-  const snapshot: ModelPricingSnapshot = {
-    model,
-    modelRatio: finiteNonNegative(entry.model_ratio),
-    modelPrice: finiteNonNegative(entry.model_price),
-    quotaType,
-    effectiveGroup,
-    groupRatio: ratio,
-  };
   const mode =
     typeof entry.billing_mode === "string"
       ? entry.billing_mode.trim().toLowerCase()
       : "";
+  const snapshot: ModelPricingSnapshot = {
+    model,
+    modelRatio: finiteNonNegative(entry.model_ratio),
+    modelPrice: finiteNonNegative(entry.model_price),
+    modelRatioKnown: hasFiniteNonNegative(entry.model_ratio),
+    modelPriceKnown: hasFiniteNonNegative(entry.model_price),
+    quotaType,
+    effectiveGroup,
+    groupRatio: ratio,
+    billingMode: mode,
+  };
   const parsed =
     mode === "tiered_expr" ? parseTieredExpr(entry.billing_expr) : null;
   if (!parsed) return snapshot;
@@ -309,12 +321,12 @@ export function affCost(generation: ImagePricingGeneration): number {
   return Math.max(1, Math.ceil(total));
 }
 
-// USD policy estimate. Live NewAPI configuration remains visible in the catalog;
-// changing this function does not change upstream settlement.
+// Estimate the NewAPI balance charge from the effective model/group pricing.
+// An unrecognized NAI price must not be shown as a cheap reference quote.
 export function estimateNewApiCost(
   pricing: ModelPricingSnapshot | null,
   generation: ImagePricingGeneration,
-): number {
+): number | null {
   const batchSize = generation.sequential ? 1 : generation.maxSamplesPerRequest;
   if (
     batchSize != null &&
@@ -327,23 +339,46 @@ export function estimateNewApiCost(
       let remaining = generation.samples;
       remaining > 0;
       remaining -= batchSize
-    )
-      total += estimateNewApiCost(pricing, {
+    ) {
+      const cost = estimateNewApiCost(pricing, {
         ...generation,
         samples: Math.min(remaining, batchSize),
         sequential: false,
         maxSamplesPerRequest: undefined,
       });
+      if (cost === null) return null;
+      total += cost;
+    }
     return Number(total.toFixed(8));
   }
   if (modelPointVersion(generation.model)) {
-    if (usesLimitPricing(generation))
-      return modelPointVersion(generation.model) === "V5" ? V5_LIMIT_USD : 0;
-    return Number((estimatePoints(generation) * USD_PER_POINT).toFixed(8));
+    if (!pricing || pricing.model !== generation.model) return null;
+    const inEnvelope = usesLimitPricing(generation);
+    const usageTokens = inEnvelope
+      ? envelopeUsageTokens(generation.model)
+      : estimateTokens(generation);
+    if (pricing.tiered) {
+      const price = inEnvelope
+        ? pricing.inEnvelopeUsd
+        : pricing.outOfEnvelopeBalancePerUsageToken;
+      if (price == null || !Number.isFinite(price) || price < 0) return null;
+      return Number((inEnvelope ? price : usageTokens * price).toFixed(8));
+    }
+    if (pricing.billingMode === "tiered_expr") return null;
+    if (pricing.quotaType === 1) {
+      if (!pricing.modelPriceKnown) return null;
+      return pricing.modelPrice * pricing.groupRatio * generation.samples;
+    }
+    if (!pricing.modelRatioKnown) return null;
+    return usageTokens * pricing.modelRatio * 2e-6 * pricing.groupRatio;
   }
-  if (!pricing) return 0;
-  if (pricing.quotaType === 1)
+  if (!pricing || pricing.model !== generation.model || pricing.billingMode === "tiered_expr")
+    return null;
+  if (pricing.quotaType === 1) {
+    if (!pricing.modelPriceKnown) return null;
     return pricing.modelPrice * pricing.groupRatio * generation.samples;
+  }
+  if (!pricing.modelRatioKnown) return null;
   return (
     estimateTokens(generation) * pricing.modelRatio * 2e-6 * pricing.groupRatio
   );

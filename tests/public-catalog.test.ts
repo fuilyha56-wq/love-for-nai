@@ -68,13 +68,9 @@ describe("公开模型与价格目录", () => {
       pricing: {
         billingMode: "live",
         liveType: "tiered",
-        liveUsdPerRequest: 1.92,
+        liveUsdPerRequest: 6,
         liveUsdPerUsageToken: 0.24,
-        privatePointReference: {
-          tokensPerPoint: 50,
-          pointPriceUsd: 0.03,
-          version: "V5",
-        },
+        privatePointReference: null,
       },
     });
     expect(result.models.find((item: { id: string }) => item.id === "nai-v5-full-limit")).toMatchObject({
@@ -85,9 +81,9 @@ describe("公开模型与价格目录", () => {
       },
     });
     const serialized = JSON.stringify(result);
-    expect(result.conversion).toContain("1 积分 = 50 token");
-    expect(result.conversion).toContain("每积分 $0.03");
-    expect(result.conversion).toContain("V5 限制档 $0.06");
+    expect(result.conversion).toContain("NewAPI 最近读取的公开价格配置");
+    expect(serialized).not.toContain("$0.03");
+    expect(serialized).not.toContain("$0.06");
     expect(serialized).not.toContain("server-admin-token");
     expect(serialized).not.toContain("secret");
     expect(serialized).not.toContain("billing_expr");
@@ -105,5 +101,37 @@ describe("公开模型与价格目录", () => {
     expect(result.source).toBe("fallback");
     expect(result.models.length).toBeGreaterThan(0);
     expect(result.message).toContain("network down");
+    expect(result.models[0].pricing?.billingMode).toBe("unknown");
+    expect(result.conversion).toContain("价格不可用");
+    expect(JSON.stringify(result)).not.toContain("$0.03");
+  });
+
+  it("分档表达式无法解析时不把 model_price 误显示成实际单次价格", async () => {
+    currentFetch.mockImplementation(async (url: string) => {
+      if (url === "http://newapi.test/api/pricing")
+        return Response.json({ data: [{ model_name: "nai-v5-full", billing_mode: " tiered_expr ", billing_expr: "unsupported()", quota_type: 1, model_price: 200 }] });
+      if (url === "http://newapi.test/api/user/self/groups")
+        return Response.json({ data: { ikun: { ratio: 1 } } });
+      throw new Error(`unexpected ${url}`);
+    });
+    const { GET } = await import("@/app/api/public/catalog/route");
+    const response = await GET();
+    const result = await response.json();
+    expect(result.models[0].pricing).toMatchObject({ billingMode: "unknown", liveType: "unknown" });
+    expect(result.models[0].pricing.liveUsdPerRequest).toBeUndefined();
+  });
+
+  it("模型可用分组没有公开倍率时不按默认倍率报价格", async () => {
+    currentFetch.mockImplementation(async (url: string) => {
+      if (url === "http://newapi.test/api/pricing")
+        return Response.json({ data: [{ model_name: "nai-v5-full", enable_groups: ["Draw"], billing_mode: "tiered_expr", billing_expr: 'tier("base", p * 260000 + c * 0)' }] });
+      if (url === "http://newapi.test/api/user/self/groups")
+        return Response.json({ data: { ikun: { ratio: 1 } } });
+      throw new Error(`unexpected ${url}`);
+    });
+    const { GET } = await import("@/app/api/public/catalog/route");
+    const result = await (await GET()).json();
+    expect(result.models[0].pricing).toMatchObject({ billingMode: "unknown", liveType: "unknown" });
+    expect(result.models[0].pricing.liveUsdPerRequest).toBeUndefined();
   });
 });
