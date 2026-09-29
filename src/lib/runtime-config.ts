@@ -32,6 +32,8 @@ export type RuntimeSettings = {
   cookieSecure: boolean;
   remoteHistoryUrl: string;
   remoteHistoryToken: string;
+  // 会话纪元：管理员「清理全部登录状态」时递增，旧纪元登录 cookie 立即失效。
+  sessionEpoch: number;
 };
 
 export type RuntimeConfigStore = {
@@ -76,6 +78,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   cookieSecure: false,
   remoteHistoryUrl: "",
   remoteHistoryToken: "",
+  sessionEpoch: 1,
 };
 
 let lock: Promise<unknown> = Promise.resolve();
@@ -116,6 +119,7 @@ function envSettings(): RuntimeSettings {
     cookieSecure: process.env.LFN_COOKIE_SECURE === "true",
     remoteHistoryUrl: process.env.LFN_REMOTE_HISTORY_URL?.trim() || "",
     remoteHistoryToken: process.env.LFN_REMOTE_HISTORY_TOKEN?.trim() || "",
+    sessionEpoch: Number(process.env.LFN_SESSION_EPOCH || 1),
   };
 }
 

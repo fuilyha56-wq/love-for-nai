@@ -49,6 +49,14 @@ function dbPool(): Pool | null {
   return globalStore.__lfnNewApiDbPool;
 }
 
+export function newApiDbPool(): Pool | null {
+  return dbPool();
+}
+
+export function newApiDbConfigured(): boolean {
+  return Boolean(process.env.NEWAPI_DB_URL?.trim());
+}
+
 type HttpTokenRow = {
   user_id?: number | string;
   key?: string;

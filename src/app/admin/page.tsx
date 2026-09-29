@@ -355,6 +355,7 @@ function UsersPanel({
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [creating, setCreating] = useState(false);
+  const [clearingAll, setClearingAll] = useState(false);
   const pageSize = 20;
   const localAuth = capabilities?.auth.provider === "local";
   const showUpstream = capabilities?.wallet.upstreamBalance !== false;
@@ -421,6 +422,35 @@ function UsersPanel({
             <Plus size={15} />新建用户
           </button>
         )}
+        <button
+          type="button"
+          disabled={clearingAll}
+          onClick={async () => {
+            if (!window.confirm("确定清理全部用户的登录状态？所有人将被登出并需要重新登录。")) return;
+            setClearingAll(true);
+            setMessage("");
+            try {
+              const response = await fetch("/api/admin/sessions", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ all: true }),
+              });
+              const result = await response.json();
+              setMessage(
+                response.ok
+                  ? `已清理全部登录状态（上游会话 ${result.upstreamRevoked ?? 0} 条，站内会话纪元已递增）。`
+                  : result.message || "清理失败",
+              );
+            } catch {
+              setMessage("清理失败，请检查网络后重试");
+            } finally {
+              setClearingAll(false);
+            }
+          }}
+          className="h-9 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50"
+        >
+          {clearingAll ? "清理中…" : "清理全部登录状态"}
+        </button>
         <span className="ml-auto text-xs text-[var(--muted)]">共 {total} 个用户</span>
       </div>
 
@@ -457,9 +487,37 @@ function UsersPanel({
                 <td className="px-3 py-2.5 tabular-nums">{user.aff?.balance ?? "-"}</td>
                 <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[var(--muted)]">{user.email || "-"}</td>
                 <td className="px-3 py-2.5">
-                  <button type="button" onClick={() => setEditing(user)} className="text-xs font-semibold text-[var(--rose)] hover:underline">
-                    编辑
-                  </button>
+                  <span className="flex items-center gap-2">
+                    <button type="button" onClick={() => setEditing(user)} className="text-xs font-semibold text-[var(--rose)] hover:underline">
+                      编辑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!window.confirm(`确定清理用户 ${user.display_name || user.username}（ID ${user.id}）的全部登录会话？该用户所有设备将被登出。`)) return;
+                        setMessage("");
+                        try {
+                          const response = await fetch("/api/admin/sessions", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ userId: user.id }),
+                          });
+                          const result = await response.json();
+                          setMessage(
+                            response.ok
+                              ? `已清理该用户 ${result.upstreamRevoked ?? 0} 条上游登录会话。`
+                              : result.message || "清理失败",
+                          );
+                        } catch {
+                          setMessage("清理失败，请检查网络后重试");
+                        }
+                      }}
+                      className="text-xs font-semibold text-[var(--muted)] hover:underline"
+                      title="撤销该用户全部登录会话，用于「会话数已达上限，请联系管理员」的情况"
+                    >
+                      清会话
+                    </button>
+                  </span>
                 </td>
               </tr>
             ))}

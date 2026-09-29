@@ -100,6 +100,7 @@ import {
   estimateNewApiCost,
   affCost as estimateAff,
   usesLimitPricing,
+  modelPointVersion,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
   type ModelPricingSnapshot,
@@ -303,24 +304,41 @@ const agentToolLabels: Record<string, string> = {
   web_search: "概念检索",
 };
 
+// 创作中心链接：完整侧栏与折叠图标栏（new-api 式 icon rail）共用。
+const CREATIVE_CENTER_LINKS: Array<{
+  href: string;
+  label: string;
+  icon: React.ReactNode;
+}> = [
+  { href: "/stories", label: "故事工作台", icon: <BookOpen size={15} /> },
+  { href: "/history", label: "图片历史", icon: <Images size={15} /> },
+  { href: "/gallery", label: "图片广场", icon: <Images size={15} /> },
+  { href: "/usage", label: "使用记录", icon: <SlidersHorizontal size={15} /> },
+  { href: "/account", label: "我的账号", icon: <UserRound size={15} /> },
+  { href: "/resources", label: "模型密钥", icon: <Sparkles size={15} /> },
+  { href: "/announcements", label: "公告", icon: <Megaphone size={15} /> },
+  { href: "/settings", label: "外观设置", icon: <Paintbrush size={15} /> },
+];
+
+// 模型名不做内置翻译，直接显示上游真实 ID。
 const models: SelectOption[] = [
-  { value: "nai-v5-full", label: "V5 完整版" },
-  { value: "nai-v5-curated", label: "V5 精选版" },
-  { value: "nai-v5-inpaint", label: "V5 局部重绘" },
-  { value: "nai-v5-full-limit", label: "V5 完整版（受限）" },
-  { value: "nai-v5-curated-limit", label: "V5 精选版（受限）" },
-  { value: "nai-v5-inpaint-limit", label: "V5 局部重绘（受限）" },
-  { value: "nai-v4.5-full", label: "V4.5 完整版" },
-  { value: "nai-v4.5-curated", label: "V4.5 精选版" },
-  { value: "nai-v4.5-inpaint", label: "V4.5 局部重绘" },
-  { value: "nai-v4.5-full-limit", label: "V4.5 完整版（受限）" },
-  { value: "nai-v4.5-curated-limit", label: "V4.5 精选版（受限）" },
-  { value: "nai-v4.5-inpaint-limit", label: "V4.5 局部重绘（受限）" },
-  { value: "nai-v4-curated", label: "V4 精选版" },
-  { value: "nai-v3", label: "V3 动漫" },
-  { value: "nai-v3-furry", label: "V3 兽人" },
-  { value: "nai-v3-inpaint", label: "V3 动漫局部重绘" },
-  { value: "nai-v3-furry-inpaint", label: "V3 兽人局部重绘" },
+  { value: "nai-v5-full", label: "nai-v5-full" },
+  { value: "nai-v5-curated", label: "nai-v5-curated" },
+  { value: "nai-v5-inpaint", label: "nai-v5-inpaint" },
+  { value: "nai-v5-full-limit", label: "nai-v5-full-limit" },
+  { value: "nai-v5-curated-limit", label: "nai-v5-curated-limit" },
+  { value: "nai-v5-inpaint-limit", label: "nai-v5-inpaint-limit" },
+  { value: "nai-v4.5-full", label: "nai-v4.5-full" },
+  { value: "nai-v4.5-curated", label: "nai-v4.5-curated" },
+  { value: "nai-v4.5-inpaint", label: "nai-v4.5-inpaint" },
+  { value: "nai-v4.5-full-limit", label: "nai-v4.5-full-limit" },
+  { value: "nai-v4.5-curated-limit", label: "nai-v4.5-curated-limit" },
+  { value: "nai-v4.5-inpaint-limit", label: "nai-v4.5-inpaint-limit" },
+  { value: "nai-v4-curated", label: "nai-v4-curated" },
+  { value: "nai-v3", label: "nai-v3" },
+  { value: "nai-v3-furry", label: "nai-v3-furry" },
+  { value: "nai-v3-inpaint", label: "nai-v3-inpaint" },
+  { value: "nai-v3-furry-inpaint", label: "nai-v3-furry-inpaint" },
 ];
 const samplers: SelectOption[] = [
   { value: "k_euler", label: "欧拉" },
@@ -566,6 +584,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const naiLayout = preferences.theme === "nai" && !layoutEditorOpen;
   const customWorkspace = layoutEditorOpen || (!naiLayout && preferences.workspaceLayout === "custom");
   const nlwLayout = !naiLayout && preferences.workspaceLayout === "nlw";
+  // 外观设置「关闭右侧栏自动折叠」：功能栏保持展开（NAI 主题本就是
+  // overlay 滑出面板，无自动折叠，不受此开关影响）。
+  const keepRightPanelOpen = !naiLayout && preferences.rightPanelKeepOpen;
   const sidebarPromptLayout = naiLayout || nlwLayout || customWorkspace;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
@@ -633,6 +654,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  // 手动折叠 = 图标栏（new-api 式 icon rail）；自动折叠 = 完全收起（无图标）。
+  const [rightPanelIconRail, setRightPanelIconRail] = useState(false);
+  // 历史停靠栏宽度：面板展开时用它；面板折叠时停靠栏拓宽到面板宽度。
+  const [dockWidth, setDockWidth] = useState(72);
   const rightPanelCloseTimer = useRef<number | null>(null);
   const rightPanelResizing = useRef(false);
   const [streamProgress, setStreamProgress] = useState("");
@@ -1025,9 +1050,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function scheduleRightPanelClose() {
-    if (rightPanelResizing.current || layoutEditorOpen) return;
+    // 外观设置开启「关闭右侧栏自动折叠」后，鼠标离开不再自动收起，
+    // 只保留折叠按钮的手动折叠。
+    if (rightPanelResizing.current || layoutEditorOpen || keepRightPanelOpen) return;
     if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
-    rightPanelCloseTimer.current = window.setTimeout(() => setRightPanelCollapsed(true), 220);
+    rightPanelCloseTimer.current = window.setTimeout(() => {
+      setRightPanelCollapsed(true);
+      setRightPanelIconRail(false);
+    }, 220);
   }
 
   useLayoutEffect(() => {
@@ -1173,6 +1203,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return () => window.clearTimeout(timer);
   }, []);
 
+  // 历史停靠栏宽度：独立于面板宽度，单独调整并持久化。
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("lfn-dock-width"));
+    if (!saved) return;
+    const timer = window.setTimeout(() => setDockWidth(clampPanel(saved, 48, 200)), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (naiLayout || (!layoutEditorOpen && preferences.workspaceLayout !== "custom")) return;
     const saved = loadCustomLayout();
@@ -1181,6 +1219,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
       setRightWidth(clampPanel(saved.rightWidth, 200, 460));
       setRightPanelCollapsed(saved.rightCollapsed);
+      setRightPanelIconRail(saved.rightCollapsed);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [layoutEditorOpen, naiLayout, preferences.workspaceLayout]);
@@ -1221,24 +1260,33 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
   }
 
-  function startResize(side: "left" | "right", event: React.PointerEvent) {
+  function saveDockWidth(width: number) {
+    window.localStorage.setItem("lfn-dock-width", String(width));
+  }
+
+  // side="dock" 调历史停靠栏宽度（画布|历史栏 resizer）；
+  // side="right" 调右侧面板宽度（历史栏|面板 resizer）。互不影响。
+  // 拖拽不再强制展开面板：折叠状态下也只调宽度。
+  function startResize(side: "left" | "right" | "dock", event: React.PointerEvent) {
     event.preventDefault();
-    if (side === "right") {
-      rightPanelResizing.current = true;
-      openRightPanel();
-    }
+    if (side === "right") rightPanelResizing.current = true;
     const startX = event.clientX;
     const startLeft = leftWidth;
     const startRight = rightWidth;
+    const startDock = dockWidth;
 
     let latestLeft = startLeft;
     let latestRight = startRight;
+    let latestDock = startDock;
 
     function move(pointer: PointerEvent) {
       const delta = pointer.clientX - startX;
       if (side === "left") {
         latestLeft = clampPanel(startLeft + delta, 240, 520);
         setLeftWidth(latestLeft);
+      } else if (side === "dock") {
+        latestDock = clampPanel(startDock + delta, 48, 200);
+        setDockWidth(latestDock);
       } else {
         latestRight = clampPanel(startRight - delta, 200, 460);
         setRightWidth(latestRight);
@@ -1250,6 +1298,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       savePanelWidths(latestLeft, latestRight);
+      if (side === "dock") saveDockWidth(latestDock);
       if (side === "right") {
         rightPanelResizing.current = false;
         if (!document.querySelector(".studio-tools-panel:hover, .panel-resizer[aria-label='调整右侧面板宽度']:hover")) scheduleRightPanelClose();
@@ -1262,23 +1311,28 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function resizePanelWithKeyboard(
-    side: "left" | "right",
+    side: "left" | "right" | "dock",
     event: React.KeyboardEvent<HTMLDivElement>,
   ) {
-    const current = side === "left" ? leftWidth : rightWidth;
-    const min = side === "left" ? 240 : 200;
-    const max = side === "left" ? 520 : 460;
+    const bounds = side === "left"
+      ? { min: 240, max: 520 }
+      : side === "dock"
+        ? { min: 48, max: 200 }
+        : { min: 200, max: 460 };
+    const current = side === "left" ? leftWidth : side === "dock" ? dockWidth : rightWidth;
     let next = current;
     if (event.key === "ArrowLeft") next = current - 16;
     if (event.key === "ArrowRight") next = current + 16;
-    if (event.key === "Home") next = min;
-    if (event.key === "End") next = max;
+    if (event.key === "Home") next = bounds.min;
+    if (event.key === "End") next = bounds.max;
     if (next === current) return;
     event.preventDefault();
-    next = clampPanel(next, min, max);
+    next = clampPanel(next, bounds.min, bounds.max);
     if (side === "left") setLeftWidth(next);
+    else if (side === "dock") setDockWidth(next);
     else setRightWidth(next);
-    savePanelWidths(side === "left" ? next : leftWidth, side === "right" ? next : rightWidth);
+    if (side === "dock") saveDockWidth(next);
+    else savePanelWidths(side === "left" ? next : leftWidth, side === "right" ? next : rightWidth);
   }
 
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
@@ -1355,6 +1409,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (modelsResult.status === "fulfilled") {
         const available = (modelsResult.value.items || [])
           .filter((item) => item.kind === "图像模型" && typeof item.id === "string")
+          // 工作台是 NAI 原生参数工作流：上游 NewAPI 上挂在 Draw 分组或
+          // 名字带 image/gpt-image 的非 NAI 模型（gpt-image-2.5、gemini-*-image
+          // 等）不该出现在模型下拉里。
+          .filter((item) => modelPointVersion(item.id) !== null)
           .map((item) => ({
             value: item.id,
             label: models.find((known) => known.value === item.id)?.label || item.id,
@@ -1413,12 +1471,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           label: item,
         }));
         setAssistantModels(options);
-        setAssistantModel((current) => current || options[0]?.value || "");
+        setAssistantModel((current) => {
+          // 助手模型跨会话记忆：上次选中的模型仍然可用时优先恢复。
+          const saved = window.localStorage.getItem("lfn-agent-model");
+          const preferred = current || saved;
+          return options.some((option: { value: string }) => option.value === preferred)
+            ? preferred
+            : (options[0]?.value || "");
+        });
       })
       .catch((error) =>
         setNotice(error instanceof Error ? error.message : "无法读取助手模型"),
       );
   }, [signedIn]);
+
+  useEffect(() => {
+    if (!assistantModel) return;
+    window.localStorage.setItem("lfn-agent-model", assistantModel);
+  }, [assistantModel]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2204,25 +2274,25 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   const modelModeControls = (
     <div className="space-y-3">
-      <div className="flex items-end gap-2">
-        <div className="min-w-0 flex-1">
-          <Control label="模型来源">
-            <PopupSelect
-              value={providerId}
-              options={providerOptions}
-              onChange={(next) => {
-                setProviderId(next);
-                setCustomProviderModels([]);
-                if (next === "newapi") setModel(newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
-                else if (next === "novelai") setModel(models[0].value);
-                else setModel(customProviders.find((item) => item.id === next)?.models[0] || "");
-                if (next !== "newapi") setOperation("generate");
-              }}
-              ariaLabel="模型来源"
-            />
-          </Control>
-        </div>
-        <Link href="/settings" className="mb-0.5 shrink-0 text-xs font-semibold text-[var(--rose)] hover:underline">
+      {/* 与模型行共用同一 grid（minmax(0,1fr) 68px），两个下拉按钮宽度一致 */}
+      <div className="nai-model-mode-row">
+        <Control label="模型来源">
+          <PopupSelect
+            value={providerId}
+            options={providerOptions}
+            onChange={(next) => {
+              setProviderId(next);
+              setCustomProviderModels([]);
+              if (next === "newapi") setModel(newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
+              else if (next === "novelai") setModel(models[0].value);
+              else setModel(customProviders.find((item) => item.id === next)?.models[0] || "");
+              if (next !== "newapi") setOperation("generate");
+            }}
+            ariaLabel="模型来源"
+          />
+        </Control>
+        {/* 与「模式」按钮同占位：占满 68px 列、40px 高、文字居中，与下拉框底对齐 */}
+        <Link href="/settings" className="flex h-10 items-center justify-center self-end text-xs font-semibold text-[var(--rose)] hover:underline">
           管理来源
         </Link>
       </div>
@@ -3865,12 +3935,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
         )}
       <div
-        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}`}
+        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}${
+          !naiLayout && !layoutEditorOpen ? " has-history-dock" : ""
+        }`}
         data-layout-editor-board={layoutEditorOpen ? "true" : undefined}
         style={
           {
             "--lfn-left": `${leftWidth}px`,
             "--lfn-right": `${rightWidth}px`,
+            "--lfn-dock": `${dockWidth}px`,
           } as React.CSSProperties
         }
       >
@@ -4105,6 +4178,37 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
           )}
         </section>
+        {!naiLayout && !layoutEditorOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整历史栏宽度"
+            aria-valuenow={dockWidth}
+            aria-valuemin={48}
+            aria-valuemax={200}
+            tabIndex={0}
+            className="panel-resizer hidden lg:block"
+            onPointerDown={(event) => startResize("dock", event)}
+            onKeyDown={(event) => resizePanelWithKeyboard("dock", event)}
+            onDoubleClick={() => { setDockWidth(72); saveDockWidth(72); }}
+          />
+        )}
+        {!naiLayout && !layoutEditorOpen ? (
+          // 历史缩略栏常驻显示在功能栏左侧（借鉴 Aaalice 历史停靠栏）：
+          // 面板展开与否都可见，不再只在折叠后出现。
+          <div className="collapsed-history-rail is-detached" aria-label="本次历史缩略图">
+            {sessionHistory.map((item) => (
+              <button type="button" key={item.id} onClick={() => { applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">
+                <Image src={item.image} alt="历史图片" width={38} height={38} unoptimized />
+              </button>
+            ))}
+            {!sessionHistory.length && (
+              <span className="rail-empty-hint" aria-hidden="true">
+                <Images size={16} />
+              </span>
+            )}
+          </div>
+        ) : null}
         {!naiLayout && (
           <div
             role="separator"
@@ -4115,10 +4219,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-valuemax={460}
             tabIndex={0}
             className="panel-resizer hidden lg:block"
-            onMouseEnter={openRightPanel}
-            onMouseLeave={scheduleRightPanelClose}
-            onFocus={openRightPanel}
-            onBlur={scheduleRightPanelClose}
             onPointerDown={(event) => startResize("right", event)}
             onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
             onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
@@ -4129,12 +4229,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             naiLayout
               ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
               : rightPanelCollapsed && !layoutEditorOpen
-                ? " is-collapsed"
+                ? rightPanelIconRail
+                  ? " is-icon-rail"
+                  : " is-collapsed"
                 : ""
           }`}
-          onMouseEnter={naiLayout ? undefined : openRightPanel}
+          // 图标栏是用户手动收起的，悬停不再自动弹出。
+          onMouseEnter={naiLayout || rightPanelIconRail ? undefined : openRightPanel}
           onMouseLeave={naiLayout ? undefined : scheduleRightPanelClose}
-          onFocus={naiLayout ? undefined : openRightPanel}
+          onFocus={naiLayout || rightPanelIconRail ? undefined : openRightPanel}
           onBlur={naiLayout ? undefined : scheduleRightPanelClose}
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
@@ -4142,7 +4245,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <button
             type="button"
             className="tools-panel-collapse"
-            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
+            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠为图标栏"}
             aria-expanded={naiLayout ? naiToolsOpen : !rightPanelCollapsed}
             onClick={() => {
               if (naiLayout) {
@@ -4151,6 +4254,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               }
               const next = !rightPanelCollapsed;
               setRightPanelCollapsed(next);
+              // 手动折叠进入图标栏；自动折叠（定时器）保持完全收起。
+              setRightPanelIconRail(next);
               if (customWorkspace) {
                 const nextLayout = { ...customLayout, rightCollapsed: next };
                 setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
@@ -4159,14 +4264,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           >
             {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
-          {!naiLayout && rightPanelCollapsed && !layoutEditorOpen ? (
-            <div className="collapsed-history-rail" aria-label="本次历史缩略图">
-              {sessionHistory.map((item) => (
-                <button type="button" key={item.id} onClick={() => { openRightPanel(); applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">
-                  <Image src={item.image} alt="历史图片" width={38} height={38} unoptimized />
-                </button>
+          {!naiLayout && rightPanelCollapsed && !layoutEditorOpen && rightPanelIconRail ? (
+            // new-api 式图标栏：创作中心入口逐个图标纵向排列。
+            <nav className="tools-icon-rail" aria-label="功能入口">
+              {(isAdmin
+                ? [...CREATIVE_CENTER_LINKS, { href: "/admin", label: "管理", icon: <ShieldCheck size={16} /> }]
+                : CREATIVE_CENTER_LINKS
+              ).map((link) => (
+                <Link key={link.href} href={link.href} className="tools-icon-rail-item" aria-label={link.label} title={link.label}>
+                  {link.icon}
+                </Link>
               ))}
-            </div>
+            </nav>
           ) : toolsPanel}
         </aside>
       </div>
@@ -5472,7 +5581,8 @@ function Prompt({
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-14 w-full resize-none text-sm leading-6 outline-none sm:h-16"
+        // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
+        className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
       />
     </label>
   );

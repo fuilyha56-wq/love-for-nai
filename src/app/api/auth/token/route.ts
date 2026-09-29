@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { encodeSession, resolvedSessionCookie } from "@/lib/session";
+import { encodeSession, keepLoginTtlMs, resolvedSessionCookie } from "@/lib/session";
 import { newApiBaseUrl } from "@/lib/newapi";
 import {
   invalidJsonResponse,
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "请输入访问令牌" }, { status: 400 });
   if (token.length > 200)
     return NextResponse.json({ message: "访问令牌格式不正确" }, { status: 400 });
+  const remember = raw.remember === true;
 
   try {
     // 系统访问令牌可直接鉴权并反查用户，因此不需要用户名。
@@ -49,16 +50,16 @@ export async function POST(request: Request) {
     const response = NextResponse.json({
       user: { id: user.id, name: user.display_name || user.username },
     });
-    const cookie = await resolvedSessionCookie();
+    const cookie = await resolvedSessionCookie(remember);
     response.cookies.set(
       cookie.name,
-      encodeSession({
+      await encodeSession({
         userId: user.id,
         username: user.username,
         displayName: user.display_name || user.username,
         upstreamCookie: "",
         systemToken: token,
-        expiresAt: Date.now() + 604800000,
+        expiresAt: Date.now() + keepLoginTtlMs(remember),
       }),
       cookie.options,
     );
