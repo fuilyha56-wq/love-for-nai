@@ -57,6 +57,17 @@ import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
 import { generateRandomPrompt } from "@/lib/random-prompt";
 import { PromptAutocompleteTextarea } from "@/app/image/prompt-autocomplete";
+import {
+  appendQualityTags,
+  prependUcPreset,
+  qualityTagsForTier,
+  ucPresetContent,
+  isV5Model,
+  QUALITY_TIER_LABELS,
+  UC_PRESET_LABELS,
+  type QualityTier,
+  type UcPresetType,
+} from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
 import { GalleryPicker } from "./gallery-picker";
@@ -640,6 +651,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 文本模式 = 自然语言描述。切换不转换文本，只影响提示与输入辅助。
   const [promptTagMode, setPromptTagMode] = useState(false);
   const [randomPromptLoading, setRandomPromptLoading] = useState(false);
+  // 质量词 / UC 负面预设（移植 Aaalice 等级系统）：默认走 NAI 服务端
+  // 行为（qualityToggle + ucPreset 0）；选轻量/无/自定义时改为本地注入。
+  const [qualityTier, setQualityTier] = useState<QualityTier>("nai-default");
+  const [ucType, setUcType] = useState<Exclude<UcPresetType, "custom"> | "custom">("heavy");
+  const [customQuality, setCustomQuality] = useState("");
+  const [customUc, setCustomUc] = useState("");
   // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
   const [dropActive, setDropActive] = useState(false);
   // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
@@ -1231,11 +1248,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       void Promise.resolve().then(() => setNavRailExpanded(true));
     if (window.localStorage.getItem("lfn-prompt-tag-mode") === "1")
       void Promise.resolve().then(() => setPromptTagMode(true));
+    const savedQuality = window.localStorage.getItem("lfn-quality-tier");
+    if (savedQuality) void Promise.resolve().then(() => setQualityTier(savedQuality as QualityTier));
+    const savedUc = window.localStorage.getItem("lfn-uc-type");
+    if (savedUc) void Promise.resolve().then(() => setUcType(savedUc as typeof ucType));
+    const savedCustomQuality = window.localStorage.getItem("lfn-quality-custom");
+    if (savedCustomQuality) void Promise.resolve().then(() => setCustomQuality(savedCustomQuality));
+    const savedCustomUc = window.localStorage.getItem("lfn-uc-custom");
+    if (savedCustomUc) void Promise.resolve().then(() => setCustomUc(savedCustomUc));
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem("lfn-prompt-tag-mode", promptTagMode ? "1" : "0");
-  }, [promptTagMode]);
+    window.localStorage.setItem("lfn-quality-tier", qualityTier);
+    window.localStorage.setItem("lfn-uc-type", ucType);
+  }, [promptTagMode, qualityTier, ucType]);
 
   async function rollRandomPrompt() {
     if (randomPromptLoading) return;
@@ -2131,6 +2158,38 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           autocomplete
         />
       )}
+      {operation !== "suggest-tags" && (
+        // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="block text-xs font-semibold text-[#4c5052]">
+            <span className="mb-2 block">质量词 <small className="font-normal text-[var(--muted)]">追加到提示词末尾</small></span>
+            <PopupSelect
+              value={qualityTier}
+              options={[
+                { value: "nai-default", label: QUALITY_TIER_LABELS["nai-default"] },
+                ...(isV5Model(model) ? [{ value: "light", label: QUALITY_TIER_LABELS.light }] : []),
+                { value: "none", label: QUALITY_TIER_LABELS.none },
+                ...(customQuality.trim() ? [{ value: "custom", label: `自定义 · ${customQuality.trim().slice(0, 24)}…` }] : []),
+              ]}
+              onChange={(next) => setQualityTier(next as QualityTier)}
+              ariaLabel="质量词等级"
+              emptyText="没有匹配项"
+            />
+          </div>
+          <div className="block text-xs font-semibold text-[#4c5052]">
+            <span className="mb-2 block">负面预设 (UC) <small className="font-normal text-[var(--muted)]">添加到排除内容前缀</small></span>
+            <PopupSelect
+              value={ucType}
+              options={(Object.keys(UC_PRESET_LABELS) as Array<Exclude<UcPresetType, "custom"> | "custom">)
+                .filter((type) => type !== "custom" || customUc.trim())
+                .map((type) => ({ value: type, label: UC_PRESET_LABELS[type] }))}
+              onChange={(next) => setUcType(next as typeof ucType)}
+              ariaLabel="负面提示词预设"
+              emptyText="没有匹配项"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -3025,6 +3084,31 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     };
     if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (seed) base.seed = Number(seed);
+    // 质量词 / UC 预设注入：NAI 默认档交给服务端（qualityToggle + ucPreset），
+    // 其余档位按 Aaalice 语义本地注入（质量词→正向末尾，UC→负向前缀），
+    // 并关闭服务端同名注入避免重复。
+    if (qualityTier === "nai-default") {
+      base.qualityToggle = true;
+    } else {
+      const qualityText =
+        qualityTier === "custom"
+          ? customQuality.trim()
+          : qualityTagsForTier(model, qualityTier);
+      base.prompt = appendQualityTags(prompt, qualityText);
+      base.qualityToggle = false;
+    }
+    if (ucType === "heavy" || ucType === "custom") {
+      base.ucPreset = 0;
+      if (ucType === "custom" && customUc.trim()) {
+        base.negative_prompt = prependUcPreset(negative, customUc.trim());
+      }
+    } else {
+      base.negative_prompt = prependUcPreset(
+        negative,
+        ucPresetContent(model, ucType),
+      );
+      base.ucPreset = 3; // none：UC 已本地注入，关闭服务端追加
+    }
     // 多角色：文生图与图生图/局部重绘（带参考图）都可与角色提示词同请求共存，
     // NAI 原生 API 的 v4_prompt.char_captions 与 image/reference 独立编码。
     if (
