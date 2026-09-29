@@ -56,6 +56,7 @@ import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
 import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
 import { generateRandomPrompt } from "@/lib/random-prompt";
+import { PromptAutocompleteTextarea } from "@/app/image/prompt-autocomplete";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
 import { GalleryPicker } from "./gallery-picker";
@@ -2118,6 +2119,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             : "自然语言描述画面，如 一个白发的女孩穿着和服站在窗边"
         }
         tools={promptToolbar("prompt")}
+        autocomplete
       />
       {operation !== "suggest-tags" && (
         <Prompt
@@ -2126,6 +2128,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onChange={setNegative}
           placeholder="低质量、错误肢体、水印等不希望出现的内容"
           tools={promptToolbar("negative")}
+          autocomplete
         />
       )}
     </div>
@@ -5687,6 +5690,7 @@ function Prompt({
   accent = false,
   placeholder,
   tools,
+  autocomplete = false,
 }: {
   label: string;
   value: string;
@@ -5694,6 +5698,7 @@ function Prompt({
   accent?: boolean;
   placeholder?: string;
   tools?: React.ReactNode;
+  autocomplete?: boolean;
 }) {
   return (
     <label
@@ -5704,10 +5709,11 @@ function Prompt({
         {label}
         {tools && <span className="ml-auto flex items-center gap-1.5 font-normal">{tools}</span>}
       </span>
-      <textarea
+      <PromptAutocompleteTextarea
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={onChange}
         placeholder={placeholder}
+        autocomplete={autocomplete}
         // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
         className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
       />
