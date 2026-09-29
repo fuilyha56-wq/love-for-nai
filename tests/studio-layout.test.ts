@@ -23,10 +23,17 @@ function studioCanvas(html: string): string {
   return html.slice(start, html.indexOf("</section>", start) + "</section>".length);
 }
 
+// 左栏 = 图像设置面板（非 NAI 时最左侧还有导航栏 aside，需按类名精确定位）。
+function studioLeft(html: string): string {
+  const marker = '<aside class="studio-controls-panel';
+  const start = html.indexOf(marker);
+  return html.slice(start, html.indexOf("</aside>", start) + "</aside>".length);
+}
+
 describe("工作台布局按主题隔离", () => {
   it.each(["paper", "dusk", "night"])("%s 保留顶部品牌、中央提示词和中央生成按钮", (theme) => {
     const html = renderStudio(theme);
-    const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    const left = studioLeft(html);
     const canvas = studioCanvas(html);
     expect(html).toContain('data-studio-layout="classic"');
     expect(html).toContain("<header");
@@ -35,7 +42,9 @@ describe("工作台布局按主题隔离", () => {
     expect(left).not.toContain('aria-label="打开站内菜单"');
     expect(canvas).toContain("<textarea");
     expect(canvas).toContain("生成 1 张图像");
-    expect(html).toContain("创作中心");
+    // 创作中心移到最左导航栏（默认折叠为图标栏，data-label 为功能名）。
+    expect(html).toContain('aria-label="功能入口"');
+    expect(html).toContain('data-label="图片广场"');
     expect(html).not.toContain('class="nai-generation-footer"');
     expect(left.indexOf("导入图片")).toBeLessThan(left.indexOf('aria-label="模型"'));
     expect(left.indexOf('aria-label="采样步数"')).toBeLessThan(left.indexOf("生成张数"));
@@ -44,7 +53,7 @@ describe("工作台布局按主题隔离", () => {
 
   it("NovelAI Local 将提示词和采样参数放在左栏且不重复角色区", () => {
     const html = renderStudio("paper", "nlw");
-    const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    const left = studioLeft(html);
     const canvas = studioCanvas(html);
     expect(html).toContain('data-workspace-layout="nlw"');
     expect(left).toContain("<textarea");
@@ -56,7 +65,7 @@ describe("工作台布局按主题隔离", () => {
 
   it("NAI 只在左侧渲染提示词、紧凑参数和生成区", () => {
     const html = renderStudio("nai");
-    const left = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    const left = studioLeft(html);
     const canvas = studioCanvas(html);
     expect(html).toContain('data-studio-layout="nai"');
     expect(html).not.toContain("<header");
