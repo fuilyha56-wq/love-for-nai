@@ -50,7 +50,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const next = await establishSession(result, response);
+    const next = await establishSession(result, response, pending.remember === true);
     const cookie = await resolvedPendingCookie();
     next.cookies.set(cookie.name, "", {
       ...cookie.options,

@@ -870,6 +870,23 @@ html[data-theme="night"] .mask-editor-number {
     grid-template-columns:
       var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
   }
+  /* 常驻历史缩略栏：7 列 = 左|resizer|画布|resizer|历史栏|resizer|面板
+     展开时历史栏用自己的宽度；面板折叠时历史栏拓宽到面板宽度 */
+  .studio-layout.has-history-dock {
+    grid-template-columns:
+      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
+      var(--lfn-dock, 72px) 5px var(--lfn-right, 230px);
+  }
+  .studio-layout.has-history-dock:has(.studio-tools-panel.is-collapsed) {
+    grid-template-columns:
+      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
+      var(--lfn-right, 230px) 5px 48px;
+  }
+  .studio-layout.has-history-dock:has(.studio-tools-panel.is-icon-rail) {
+    grid-template-columns:
+      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
+      var(--lfn-right, 230px) 5px 56px;
+  }
   [data-studio-layout="nai"] .studio-layout {
     grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
   }

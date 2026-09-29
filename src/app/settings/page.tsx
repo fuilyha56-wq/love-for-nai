@@ -881,6 +881,20 @@ function SettingsPageContent() {
                       </div>
                     </div>
                   </div>
+                  <div>
+                    <Switch
+                      checked={preferences.rightPanelKeepOpen}
+                      onChange={(rightPanelKeepOpen) =>
+                        updatePreferences({ rightPanelKeepOpen })
+                      }
+                      label={preferences.rightPanelKeepOpen ? "右侧栏自动折叠已关闭" : "关闭右侧栏自动折叠"}
+                    />
+                    <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
+                      {preferences.rightPanelKeepOpen
+                        ? "开启中（默认）：右侧功能栏保持展开，不随鼠标离开自动收起。手动折叠后变为图标栏，自动收起则完全折叠。"
+                        : "关闭后恢复原行为：鼠标离开右侧功能栏约 0.2 秒自动完全收起，历史缩略栏仍常驻在功能栏左侧。"}
+                    </p>
+                  </div>
                 </>
               )}
               <Switch

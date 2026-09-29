@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { encodeSession, resolvedSessionCookie } from "@/lib/session";
+import { encodeSession, keepLoginTtlMs, resolvedSessionCookie } from "@/lib/session";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 import type { LocalUser } from "@/lib/local-users";
 
@@ -57,6 +57,7 @@ export function requiresTwoFactor(result: NewApiLoginResponse): boolean {
 export async function establishSession(
   result: NewApiLoginResponse,
   response: Response,
+  remember = false,
 ): Promise<NextResponse> {
   const data = result.data;
   const user = data?.user ?? data;
@@ -77,35 +78,38 @@ export async function establishSession(
   const next = NextResponse.json({
     user: { id: user.id, name: user.display_name || user.username },
   });
-  const cookie = await resolvedSessionCookie();
+  const cookie = await resolvedSessionCookie(remember);
   next.cookies.set(
     cookie.name,
-    encodeSession({
+    await encodeSession({
       userId: user.id,
       username: user.username,
       displayName: user.display_name || user.username,
       upstreamCookie,
       accessToken,
-      expiresAt: Date.now() + 604800000,
+      expiresAt: Date.now() + keepLoginTtlMs(remember),
     }),
     cookie.options,
   );
   return next;
 }
 
-export async function establishLocalSession(user: LocalUser): Promise<NextResponse> {
+export async function establishLocalSession(
+  user: LocalUser,
+  remember = false,
+): Promise<NextResponse> {
   const next = NextResponse.json({
     user: { id: user.id, name: user.displayName || user.username },
   });
-  const cookie = await resolvedSessionCookie();
+  const cookie = await resolvedSessionCookie(remember);
   next.cookies.set(
     cookie.name,
-    encodeSession({
+    await encodeSession({
       userId: user.id,
       username: user.username,
       displayName: user.displayName || user.username,
       upstreamCookie: "",
-      expiresAt: Date.now() + 604800000,
+      expiresAt: Date.now() + keepLoginTtlMs(remember),
     }),
     cookie.options,
   );

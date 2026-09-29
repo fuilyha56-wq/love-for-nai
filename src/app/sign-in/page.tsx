@@ -82,6 +82,9 @@ export default function SignInPage() {
   const [galleryBackground, setGalleryBackground] =
     useState<GalleryBackground | null>(null);
   const [backgroundVisible, setBackgroundVisible] = useState(true);
+  // 保持登录：30 天会话；不勾选仍为 7 天。更长的会话减少反复登录
+  // 产生的上游会话，降低撞上游会话数上限（409）的概率。
+  const [rememberLogin, setRememberLogin] = useState(true);
   const headline = useScrambleText("让每一次想象，都有清晰的落点。");
   const sectionRef = useRef<HTMLElement>(null);
   const localBackgroundActive = appearancePreferences.backgroundEnabled && Boolean(backgroundUrl);
@@ -146,6 +149,7 @@ export default function SignInPage() {
         body: JSON.stringify({
           username: form.get("username"),
           password: form.get("password"),
+          remember: rememberLogin,
         }),
       });
       const result = await readAuthResult(response);
@@ -170,7 +174,7 @@ export default function SignInPage() {
       const response = await fetch("/api/auth/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token, remember: rememberLogin }),
       });
       const result = await readAuthResult(response);
       if (response.ok) {
@@ -417,6 +421,15 @@ export default function SignInPage() {
                 />
               </label>
               {notices}
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  className="h-4 w-4 accent-[var(--rose)]"
+                />
+                保持登录 30 天
+              </label>
               <button
                 disabled={loading}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
@@ -544,6 +557,15 @@ export default function SignInPage() {
                 </span>
               </label>
               {notices}
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-[var(--muted)]">
+                <input
+                  type="checkbox"
+                  checked={rememberLogin}
+                  onChange={(event) => setRememberLogin(event.target.checked)}
+                  className="h-4 w-4 accent-[var(--rose)]"
+                />
+                保持登录 30 天
+              </label>
               <button
                 disabled={loading}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"

@@ -28,13 +28,14 @@ export async function POST(request: Request) {
       { message: "请输入用户名和密码" },
       { status: 400 },
     );
+  const remember = raw.remember === true;
 
   try {
     if ((await resolvedAuthProviderId()) === "local") {
       const user = await authenticateLocalUser(username, password);
       if (!user)
         return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
-      return establishLocalSession(user);
+      return establishLocalSession(user, remember);
     }
     const { response, result } = await callNewApi("/api/user/login", {
       username,
@@ -68,16 +69,17 @@ export async function POST(request: Request) {
       const cookie = await resolvedPendingCookie();
       next.cookies.set(
         cookie.name,
-        encodePendingSession({
+        await encodePendingSession({
           flowToken,
           expiresAt: Date.now() + 300_000,
+          remember,
         }),
         cookie.options,
       );
       return next;
     }
 
-    return establishSession(result, response);
+    return establishSession(result, response, remember);
   } catch {
     return NextResponse.json(
       { message: "暂时无法连接账号服务" },

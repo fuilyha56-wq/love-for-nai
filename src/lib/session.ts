@@ -16,11 +16,15 @@ export type LfnSession = {
   // 系统访问令牌长期有效，与登录派发的 access_token 鉴权方式不同。
   systemToken?: string;
   expiresAt: number;
+  // 会话纪元：管理员清理全部登录状态时递增，旧纪元 cookie 立即失效。
+  epoch?: number;
 };
 // 2FA 第一步与第二步之间的临时状态，只保存上游 flow_token。
 export type LfnPendingSession = {
   flowToken: string;
   expiresAt: number;
+  // 登录时勾选「保持登录」后，正式会话延长到 30 天。
+  remember?: boolean;
 };
 const COOKIE_NAME = "lfn_session";
 const PENDING_COOKIE_NAME = "lfn_2fa";
@@ -55,11 +59,15 @@ function secret(): string {
 
 const encryptionKey = () => createHash("sha256").update(secret()).digest();
 
-export function encodeSession(session: LfnSession): string {
+export function encodeSession(session: LfnSession): Promise<string> {
+  return currentSessionEpoch().then((epoch) => encodeWithEpoch(session, epoch));
+}
+
+function encodeWithEpoch(session: LfnSession, epoch: number): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const encrypted = Buffer.concat([
-    cipher.update(JSON.stringify(session), "utf8"),
+    cipher.update(JSON.stringify({ ...session, epoch }), "utf8"),
     cipher.final(),
   ]);
   return [iv, cipher.getAuthTag(), encrypted]
@@ -89,17 +97,46 @@ export function decodeSession(raw?: string): LfnSession | null {
   }
 }
 
-export async function getSession(): Promise<LfnSession | null> {
-  return decodeSession((await cookies()).get(COOKIE_NAME)?.value);
+// 会话纪元默认 1：不带纪元字段的旧 cookie（部署前签发）判定为旧纪元，
+// 部署本版本即等效于清空全部站内登录状态。
+const SESSION_EPOCH_DEFAULT = 1;
+export const SESSION_MAX_AGE = 604_800; // 7 天
+export const KEEP_LOGIN_MAX_AGE = 2_592_000; // 保持登录 30 天
+
+export function keepLoginTtlMs(remember: boolean): number {
+  return remember ? 2_592_000_000 : 604_800_000;
 }
 
-export function encodePendingSession(pending: LfnPendingSession): string {
+async function currentSessionEpoch(): Promise<number> {
+  const settings = await getRuntimeSettings().catch(() => null);
+  const epoch = settings?.sessionEpoch;
+  return typeof epoch === "number" &&
+    Number.isFinite(epoch) &&
+    epoch >= SESSION_EPOCH_DEFAULT
+    ? Math.floor(epoch)
+    : SESSION_EPOCH_DEFAULT;
+}
+
+async function validDecodedSession(raw?: string): Promise<LfnSession | null> {
+  const decoded = decodeSession(raw);
+  if (!decoded) return null;
+  // 纪元不一致（含未带纪元字段的旧 cookie）一律视为已失效。
+  return (decoded.epoch ?? 0) === (await currentSessionEpoch()) ? decoded : null;
+}
+
+export async function getSession(): Promise<LfnSession | null> {
+  return validDecodedSession((await cookies()).get(COOKIE_NAME)?.value);
+}
+
+export function encodePendingSession(pending: LfnPendingSession): Promise<string> {
   return encodeSession(pending as unknown as LfnSession);
 }
 
 export async function getPendingSession(): Promise<LfnPendingSession | null> {
   const raw = (await cookies()).get(PENDING_COOKIE_NAME)?.value;
-  const decoded = decodeSession(raw) as unknown as LfnPendingSession | null;
+  const decoded = (await validDecodedSession(raw)) as unknown as
+    | LfnPendingSession
+    | null;
   return decoded?.flowToken ? decoded : null;
 }
 
@@ -114,7 +151,7 @@ function cookieOptions(secure = process.env.LFN_COOKIE_SECURE === "true") {
 
 export const sessionCookie = {
   name: COOKIE_NAME,
-  options: { ...cookieOptions(), maxAge: 604800 },
+  options: { ...cookieOptions(), maxAge: SESSION_MAX_AGE },
 };
 
 export const pendingCookie = {
@@ -122,11 +159,14 @@ export const pendingCookie = {
   options: { ...cookieOptions(), maxAge: 300 },
 };
 
-export async function resolvedSessionCookie() {
+export async function resolvedSessionCookie(remember = false) {
   const settings = await getRuntimeSettings().catch(() => null);
   return {
     name: COOKIE_NAME,
-    options: { ...cookieOptions(settings?.cookieSecure === true), maxAge: 604800 },
+    options: {
+      ...cookieOptions(settings?.cookieSecure === true),
+      maxAge: remember ? KEEP_LOGIN_MAX_AGE : SESSION_MAX_AGE,
+    },
   };
 }
 
