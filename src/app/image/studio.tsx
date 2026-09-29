@@ -688,8 +688,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
-  // 历史停靠栏宽度：面板展开时用它；面板折叠时停靠栏拓宽到面板宽度。
-  const [dockWidth, setDockWidth] = useState(72);
   const rightPanelCloseTimer = useRef<number | null>(null);
   const rightPanelResizing = useRef(false);
   const [streamProgress, setStreamProgress] = useState("");
@@ -1234,14 +1232,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return () => window.clearTimeout(timer);
   }, []);
 
-  // 历史停靠栏宽度：独立于面板宽度，单独调整并持久化。
-  useEffect(() => {
-    const saved = Number(window.localStorage.getItem("lfn-dock-width"));
-    if (!saved) return;
-    const timer = window.setTimeout(() => setDockWidth(clampPanel(saved, 48, 200)), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
   // 左侧功能导航栏展开/折叠记忆。
   useEffect(() => {
     if (window.localStorage.getItem("lfn-nav-rail-expanded") === "1")
@@ -1325,33 +1315,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
   }
 
-  function saveDockWidth(width: number) {
-    window.localStorage.setItem("lfn-dock-width", String(width));
-  }
-
-  // side="dock" 调历史停靠栏宽度（画布|历史栏 resizer）；
-  // side="right" 调右侧面板宽度（历史栏|面板 resizer）。互不影响。
-  // 拖拽不再强制展开面板：折叠状态下也只调宽度。
-  function startResize(side: "left" | "right" | "dock", event: React.PointerEvent) {
+  // side="right" 调右侧面板宽度。拖拽不再强制展开面板：折叠状态下也只调宽度。
+  function startResize(side: "left" | "right", event: React.PointerEvent) {
     event.preventDefault();
     if (side === "right") rightPanelResizing.current = true;
     const startX = event.clientX;
     const startLeft = leftWidth;
     const startRight = rightWidth;
-    const startDock = dockWidth;
-
     let latestLeft = startLeft;
     let latestRight = startRight;
-    let latestDock = startDock;
 
     function move(pointer: PointerEvent) {
       const delta = pointer.clientX - startX;
       if (side === "left") {
         latestLeft = clampPanel(startLeft + delta, 240, 520);
         setLeftWidth(latestLeft);
-      } else if (side === "dock") {
-        latestDock = clampPanel(startDock + delta, 48, 200);
-        setDockWidth(latestDock);
       } else {
         latestRight = clampPanel(startRight - delta, 200, 460);
         setRightWidth(latestRight);
@@ -1363,7 +1341,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       savePanelWidths(latestLeft, latestRight);
-      if (side === "dock") saveDockWidth(latestDock);
       if (side === "right") {
         rightPanelResizing.current = false;
         if (!document.querySelector(".studio-tools-panel:hover, .panel-resizer[aria-label='调整右侧面板宽度']:hover")) scheduleRightPanelClose();
@@ -1379,12 +1356,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     side: "left" | "right" | "dock",
     event: React.KeyboardEvent<HTMLDivElement>,
   ) {
-    const bounds = side === "left"
-      ? { min: 240, max: 520 }
-      : side === "dock"
-        ? { min: 48, max: 200 }
-        : { min: 200, max: 460 };
-    const current = side === "left" ? leftWidth : side === "dock" ? dockWidth : rightWidth;
+    const bounds = side === "left" ? { min: 240, max: 520 } : { min: 200, max: 460 };
+    const current = side === "left" ? leftWidth : rightWidth;
     let next = current;
     if (event.key === "ArrowLeft") next = current - 16;
     if (event.key === "ArrowRight") next = current + 16;
@@ -1394,10 +1367,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     event.preventDefault();
     next = clampPanel(next, bounds.min, bounds.max);
     if (side === "left") setLeftWidth(next);
-    else if (side === "dock") setDockWidth(next);
     else setRightWidth(next);
-    if (side === "dock") saveDockWidth(next);
-    else savePanelWidths(side === "left" ? next : leftWidth, side === "right" ? next : rightWidth);
+    savePanelWidths(side === "left" ? next : leftWidth, side === "right" ? next : rightWidth);
   }
 
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
@@ -3930,9 +3901,37 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
   );
 
-  // 桌面右侧栏（非 NAI）：只保留标签助手；创作中心与会话状态已移至左侧导航栏。
+  // 桌面右侧栏（非 NAI，Aaalice 式）：历史上半 + 标签助手下，上下分割。
   const desktopRightPanel = (
     <>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-b border-[var(--line)] p-4">
+            <b className="mb-2 text-xs">本次历史</b>
+            {sessionHistory.length ? (
+              <div className="grid grid-cols-2 gap-2">
+                {sessionHistory.map((item) => (
+                  <div key={item.id} className="session-history-entry relative overflow-hidden rounded border border-[var(--line)]">
+                    <button
+                      type="button"
+                      className="block w-full"
+                      aria-label="使用本次历史图片"
+                      onClick={() => applyImageAsSource(item.image, "img2img")}
+                    >
+                      <Image src={item.image} alt="本次生成图片" width={96} height={96} unoptimized className="w-full" />
+                    </button>
+                    <div className="session-history-actions">
+                      <button type="button" onClick={() => applyImageAsSource(item.image, "img2img")} aria-label="历史图片用于图生图" title="图生图"><ImagePlus size={13} /></button>
+                      <button type="button" onClick={() => applyImageAsSource(item.image, "inpainting")} aria-label="历史图片用于局部重绘" title="局部重绘"><Brush size={13} /></button>
+                      <button type="button" onClick={() => applyImageAsSource(item.image, "director-lineart")} aria-label="历史图片用于导演工具" title="导演工具"><WandSparkles size={13} /></button>
+                      <button type="button" onClick={() => applyImageAsSource(item.image, "vibe-transfer")} aria-label="历史图片用于氛围迁移" title="氛围迁移"><Eye size={13} /></button>
+                      <button type="button" onClick={() => applyImageAsSource(item.image, "upscale")} aria-label="历史图片用于超分" title="超分"><Aperture size={13} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span className="text-[10px] text-[var(--muted)]">生成后的图片会出现在这里</span>
+            )}
+          </div>
           {agentBlockInner}
     </>
   );
@@ -4118,15 +4117,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
         )}
       <div
-        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}${
-          !naiLayout && !layoutEditorOpen ? " has-history-dock" : ""
-        }`}
+        className={`studio-layout grid min-h-0 flex-1${customWorkspace ? " is-custom-layout" : ""}`}
         data-layout-editor-board={layoutEditorOpen ? "true" : undefined}
         style={
           {
             "--lfn-left": `${leftWidth}px`,
             "--lfn-right": `${rightWidth}px`,
-            "--lfn-dock": `${dockWidth}px`,
             "--lfn-nav-rail": navRailExpanded ? "196px" : "56px",
           } as React.CSSProperties
         }
@@ -4445,37 +4441,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
           )}
         </section>
-        {!naiLayout && !layoutEditorOpen && (
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整历史栏宽度"
-            aria-valuenow={dockWidth}
-            aria-valuemin={48}
-            aria-valuemax={200}
-            tabIndex={0}
-            className="panel-resizer hidden lg:block"
-            onPointerDown={(event) => startResize("dock", event)}
-            onKeyDown={(event) => resizePanelWithKeyboard("dock", event)}
-            onDoubleClick={() => { setDockWidth(72); saveDockWidth(72); }}
-          />
-        )}
-        {!naiLayout && !layoutEditorOpen ? (
-          // 历史缩略栏常驻显示在功能栏左侧（借鉴 Aaalice 历史停靠栏）：
-          // 面板展开与否都可见，不再只在折叠后出现。
-          <div className="collapsed-history-rail is-detached" aria-label="本次历史缩略图">
-            {sessionHistory.map((item) => (
-              <button type="button" key={item.id} onClick={() => { applyImageAsSource(item.image, "img2img"); }} aria-label="使用历史图片">
-                <Image src={item.image} alt="历史图片" width={38} height={38} unoptimized />
-              </button>
-            ))}
-            {!sessionHistory.length && (
-              <span className="rail-empty-hint" aria-hidden="true">
-                <Images size={16} />
-              </span>
-            )}
-          </div>
-        ) : null}
         {!naiLayout && (
           <div
             role="separator"
