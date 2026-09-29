@@ -1248,19 +1248,6 @@ html[data-theme="nai"] [data-studio-layout="nai"] .session-history-thumb { backg
 .collapsed-history-rail { display: flex; height: 100%; min-height: 0; flex-direction: column; align-items: center; gap: 8px; overflow-y: auto; padding: 42px 5px 8px; }
 .collapsed-history-rail button { display: block; width: 38px; height: 38px; flex: 0 0 38px; overflow: hidden; border: 1px solid var(--line); background: var(--surface); }
 .collapsed-history-rail img { width: 100%; height: 100%; object-fit: cover; }
-/* 关闭自动折叠后手动折叠：独立历史栏显示在功能栏左侧，无需给折叠按钮让位 */
-.collapsed-history-rail.is-detached { border-right: 1px solid var(--line); padding: 8px 8px; }
-.collapsed-history-rail.is-detached button { width: 56px; height: 56px; flex-basis: 56px; }
-.rail-empty-hint { width: 56px; height: 56px; }
-/* 常驻历史栏：空态提示 */
-.rail-empty-hint { display: grid; width: 38px; height: 38px; place-items: center; border: 1px dashed var(--line); color: var(--muted); opacity: 0.55; }
-/* 历史停靠列出现时，桌面侧栏内重复的本次历史区块隐藏（移动抽屉/NAI overlay 不受影响） */
-@media (min-width: 1024px) {
-  .studio-layout.has-history-dock .studio-tools-panel .session-history-panel { display: none; }
-}
-@media (max-width: 1023px) {
-  .collapsed-history-rail.is-detached { display: none; }
-}
 .tools-panel-collapse {
   position: absolute;
   z-index: 3;
