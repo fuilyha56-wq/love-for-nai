@@ -17,14 +17,20 @@ import {
   Eraser,
   Eye,
   FileUp,
+  Dices,
+  Globe,
+  BarChart3,
   ImagePlus,
   ImageIcon,
   Images,
+  KeyRound,
   Megaphone,
   Menu,
   Maximize2,
   Move,
   Paintbrush,
+  PanelLeft,
+  PanelLeftClose,
   PawPrint,
   Plus,
   Redo2,
@@ -34,7 +40,9 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
+  Tags,
   Trash2,
+  Type,
   Undo2,
   UserRound,
   Users,
@@ -47,6 +55,7 @@ import { useRouter } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
 import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
+import { generateRandomPrompt } from "@/lib/random-prompt";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
 import { GalleryPicker } from "./gallery-picker";
@@ -305,6 +314,7 @@ const agentToolLabels: Record<string, string> = {
 };
 
 // 创作中心链接：完整侧栏与折叠图标栏（new-api 式 icon rail）共用。
+// 图标按功能语义选择，图标栏下同名图标不能重复。
 const CREATIVE_CENTER_LINKS: Array<{
   href: string;
   label: string;
@@ -312,10 +322,10 @@ const CREATIVE_CENTER_LINKS: Array<{
 }> = [
   { href: "/stories", label: "故事工作台", icon: <BookOpen size={15} /> },
   { href: "/history", label: "图片历史", icon: <Images size={15} /> },
-  { href: "/gallery", label: "图片广场", icon: <Images size={15} /> },
-  { href: "/usage", label: "使用记录", icon: <SlidersHorizontal size={15} /> },
+  { href: "/gallery", label: "图片广场", icon: <Globe size={15} /> },
+  { href: "/usage", label: "使用记录", icon: <BarChart3 size={15} /> },
   { href: "/account", label: "我的账号", icon: <UserRound size={15} /> },
-  { href: "/resources", label: "模型密钥", icon: <Sparkles size={15} /> },
+  { href: "/resources", label: "模型密钥", icon: <KeyRound size={15} /> },
   { href: "/announcements", label: "公告", icon: <Megaphone size={15} /> },
   { href: "/settings", label: "外观设置", icon: <Paintbrush size={15} /> },
 ];
@@ -625,6 +635,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
   ]);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
+  // 提示词输入模式（借鉴 Aaalice）：tag 模式 = Danbooru 标签（逗号分隔），
+  // 文本模式 = 自然语言描述。切换不转换文本，只影响提示与输入辅助。
+  const [promptTagMode, setPromptTagMode] = useState(false);
+  const [randomPromptLoading, setRandomPromptLoading] = useState(false);
   // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
   const [dropActive, setDropActive] = useState(false);
   // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
@@ -654,8 +668,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
-  // 手动折叠 = 图标栏（new-api 式 icon rail）；自动折叠 = 完全收起（无图标）。
-  const [rightPanelIconRail, setRightPanelIconRail] = useState(false);
+  // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
+  const [navRailExpanded, setNavRailExpanded] = useState(false);
   // 历史停靠栏宽度：面板展开时用它；面板折叠时停靠栏拓宽到面板宽度。
   const [dockWidth, setDockWidth] = useState(72);
   const rightPanelCloseTimer = useRef<number | null>(null);
@@ -1056,7 +1070,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
     rightPanelCloseTimer.current = window.setTimeout(() => {
       setRightPanelCollapsed(true);
-      setRightPanelIconRail(false);
     }, 220);
   }
 
@@ -1211,6 +1224,31 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return () => window.clearTimeout(timer);
   }, []);
 
+  // 左侧功能导航栏展开/折叠记忆。
+  useEffect(() => {
+    if (window.localStorage.getItem("lfn-nav-rail-expanded") === "1")
+      void Promise.resolve().then(() => setNavRailExpanded(true));
+    if (window.localStorage.getItem("lfn-prompt-tag-mode") === "1")
+      void Promise.resolve().then(() => setPromptTagMode(true));
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("lfn-prompt-tag-mode", promptTagMode ? "1" : "0");
+  }, [promptTagMode]);
+
+  async function rollRandomPrompt() {
+    if (randomPromptLoading) return;
+    setRandomPromptLoading(true);
+    try {
+      const generated = await generateRandomPrompt();
+      if (generated) setPrompt(generated);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "随机提示词生成失败");
+    } finally {
+      setRandomPromptLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (naiLayout || (!layoutEditorOpen && preferences.workspaceLayout !== "custom")) return;
     const saved = loadCustomLayout();
@@ -1219,7 +1257,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
       setRightWidth(clampPanel(saved.rightWidth, 200, 460));
       setRightPanelCollapsed(saved.rightCollapsed);
-      setRightPanelIconRail(saved.rightCollapsed);
     }, 0);
     return () => window.clearTimeout(timer);
   }, [layoutEditorOpen, naiLayout, preferences.workspaceLayout]);
@@ -1996,6 +2033,71 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     );
   }
 
+  // 提示词工具条（借鉴 Aaalice）：随机、清空、文本/Tag 模式切换。
+  const promptToolbar = (target: "prompt" | "negative") => (
+    <>
+      {target === "prompt" && generationModes.has(operation) && (
+        <button
+          type="button"
+          onClick={() => void rollRandomPrompt()}
+          disabled={randomPromptLoading}
+          aria-label="随机提示词"
+          title="随机提示词：按 NovelAI 官方词库随机生成一组标签"
+          className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-50"
+        >
+          <Dices size={13} className={randomPromptLoading ? "animate-spin" : ""} />
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          if (target === "prompt") {
+            setPrompt("");
+            setCharacters((current) =>
+              current.map((character) => ({ ...character, prompt: "" })),
+            );
+          } else setNegative("");
+        }}
+        disabled={target === "prompt" ? !prompt.trim() : !negative.trim()}
+        aria-label={target === "prompt" ? "清空提示词" : "清空排除内容"}
+        title={target === "prompt" ? "清空提示词（含角色提示词）" : "清空排除内容"}
+        className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-40"
+      >
+        <Eraser size={13} />
+      </button>
+      {target === "prompt" && (
+        <span
+          className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white p-0.5 text-[10px] font-semibold"
+          role="group"
+          aria-label="输入模式"
+        >
+          <button
+            type="button"
+            aria-pressed={!promptTagMode}
+            title="文本模式：自然语言描述"
+            onClick={() => setPromptTagMode(false)}
+            className={`flex h-5 items-center gap-1 rounded-full px-2 ${
+              !promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
+            }`}
+          >
+            <Type size={10} />文本
+          </button>
+          <button
+            type="button"
+            aria-pressed={promptTagMode}
+            title="Tag 模式：Danbooru 标签，逗号分隔"
+            onClick={() => setPromptTagMode(true)}
+            className={`flex h-5 items-center gap-1 rounded-full px-2 ${
+              promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
+            }`}
+          >
+            <Tags size={10} />Tag
+          </button>
+        </span>
+      )}
+    </>
+  );
+
   const promptFields = (promptModes.has(operation) ||
     operation === "suggest-tags") && (
     <div className="nai-prompts grid gap-3">
@@ -2010,18 +2112,27 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         value={prompt}
         onChange={setPrompt}
         accent
+        placeholder={
+          promptTagMode
+            ? "Danbooru 标签，逗号分隔，如 1girl, white hair, crimson eyes"
+            : "自然语言描述画面，如 一个白发的女孩穿着和服站在窗边"
+        }
+        tools={promptToolbar("prompt")}
       />
       {operation !== "suggest-tags" && (
         <Prompt
           label={naiLayout ? "负面内容" : "排除内容"}
           value={negative}
           onChange={setNegative}
+          placeholder="低质量、错误肢体、水印等不希望出现的内容"
+          tools={promptToolbar("negative")}
         />
       )}
     </div>
   );
 
-  const characterControls = operation === "generate" && (
+  // 多角色：文生图与图生图/局部重绘（带参考图）都可与角色提示词一同使用。
+  const characterControls = ["generate", "img2img", "inpainting"].includes(operation) && (
     <section className="nai-characters rounded-md border border-[var(--line)] bg-white p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -2911,9 +3022,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     };
     if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (seed) base.seed = Number(seed);
-    // 多角色（仅文生图）：映射为 NAI characterPrompts，网关自动构造 v4_prompt.char_captions。
+    // 多角色：文生图与图生图/局部重绘（带参考图）都可与角色提示词同请求共存，
+    // NAI 原生 API 的 v4_prompt.char_captions 与 image/reference 独立编码。
     if (
-      operation === "generate" &&
+      ["generate", "img2img", "inpainting"].includes(operation) &&
       charactersEnabled &&
       characters.some((character) => character.prompt.trim())
     ) {
@@ -3267,63 +3379,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </section>
   );
 
-  const toolsPanel = (
+  // 创作中心入口：左侧独立导航栏（展开态）与移动抽屉共用。
+  const creativeCenterLinks = (
+    <nav className="grid grid-cols-2 gap-2">
+      {CREATIVE_CENTER_LINKS.map((link) => (
+        <FeatureLink key={link.href} href={link.href} label={link.label} icon={link.icon} />
+      ))}
+      {isAdmin && (
+        <FeatureLink href="/admin" label="管理" icon={<ShieldCheck size={15} />} />
+      )}
+    </nav>
+  );
+
+  // 标签助手区块：桌面右侧栏、NAI overlay 与移动抽屉共用。
+  const agentBlockInner = (
     <>
-          {sessionHistoryPanel}
-          {!naiLayout && (
-            <div className="border-b border-[var(--line)] p-4">
-              <b className="text-sm">创作中心</b>
-              <nav className="mt-3 grid grid-cols-2 gap-2">
-                <FeatureLink
-                  href="/stories"
-                  label="故事工作台"
-                  icon={<BookOpen size={15} />}
-                />
-                <FeatureLink
-                  href="/history"
-                  label="图片历史"
-                  icon={<Images size={15} />}
-                />
-                <FeatureLink
-                  href="/gallery"
-                  label="图片广场"
-                  icon={<Images size={15} />}
-                />
-                <FeatureLink
-                  href="/usage"
-                  label="使用记录"
-                  icon={<SlidersHorizontal size={15} />}
-                />
-                <FeatureLink
-                  href="/account"
-                  label="我的账号"
-                  icon={<UserRound size={15} />}
-                />
-                <FeatureLink
-                  href="/resources"
-                  label="模型密钥"
-                  icon={<Sparkles size={15} />}
-                />
-                <FeatureLink
-                  href="/announcements"
-                  label="公告"
-                  icon={<Megaphone size={15} />}
-                />
-                <FeatureLink
-                  href="/settings"
-                  label="外观设置"
-                  icon={<Paintbrush size={15} />}
-                />
-                {isAdmin && (
-                  <FeatureLink
-                    href="/admin"
-                    label="管理"
-                    icon={<ShieldCheck size={15} />}
-                  />
-                )}
-              </nav>
-            </div>
-          )}
           <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             {layoutModuleTools("agent")}
             <div className="flex items-center gap-2">
@@ -3707,6 +3777,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               )}
             </div>
           </div>
+    </>
+  );
+
+  // 会话状态（钱包）：左侧导航栏展开态、NAI overlay 与移动抽屉共用。
+  const walletBlock = (
           <div className="p-4">
             <b className="text-sm">会话状态</b>
             <div className="mt-3 space-y-3 text-xs">
@@ -3766,6 +3841,27 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               </button>
             )}
           </div>
+  );
+
+  // 桌面右侧栏（非 NAI）：只保留标签助手；创作中心与会话状态已移至左侧导航栏。
+  const desktopRightPanel = (
+    <>
+          {agentBlockInner}
+    </>
+  );
+
+  // NAI overlay 与移动抽屉：完整功能区。
+  const toolsPanel = (
+    <>
+      {sessionHistoryPanel}
+      {!naiLayout && (
+        <div className="border-b border-[var(--line)] p-4">
+          <b className="text-sm">创作中心</b>
+          <div className="mt-3">{creativeCenterLinks}</div>
+        </div>
+      )}
+      {agentBlockInner}
+      {walletBlock}
     </>
   );
 
@@ -3944,10 +4040,52 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             "--lfn-left": `${leftWidth}px`,
             "--lfn-right": `${rightWidth}px`,
             "--lfn-dock": `${dockWidth}px`,
+            "--lfn-nav-rail": navRailExpanded ? "196px" : "56px",
           } as React.CSSProperties
         }
       >
         {customWorkspace && !layoutEditorOpen && <Link className="layout-editor-entry" href="/image?layoutEditor=1"><Move size={14} />编辑布局</Link>}
+        {!naiLayout && !layoutEditorOpen && (
+          // 最左侧功能导航栏（new-api/Aaalice 式）：折叠为纯图标，展开显示
+          // 创作中心与会话状态；不随悬停自动收起。
+          <aside
+            className={`studio-nav-rail panel hidden min-h-0 flex-col border-y-0 border-l-0 lg:flex${navRailExpanded ? " is-expanded" : ""}`}
+          >
+            <button
+              type="button"
+              className="tools-panel-collapse"
+              aria-label={navRailExpanded ? "折叠导航栏" : "展开导航栏"}
+              aria-expanded={navRailExpanded}
+              onClick={() => {
+                const next = !navRailExpanded;
+                setNavRailExpanded(next);
+                window.localStorage.setItem("lfn-nav-rail-expanded", next ? "1" : "0");
+              }}
+            >
+              {navRailExpanded ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
+            </button>
+            {navRailExpanded ? (
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                <div className="p-4">
+                  <b className="text-sm">创作中心</b>
+                  <div className="mt-3">{creativeCenterLinks}</div>
+                </div>
+                {walletBlock}
+              </div>
+            ) : (
+              <nav className="tools-icon-rail" aria-label="功能入口">
+                {(isAdmin
+                  ? [...CREATIVE_CENTER_LINKS, { href: "/admin", label: "管理", icon: <ShieldCheck size={16} /> }]
+                  : CREATIVE_CENTER_LINKS
+                ).map((link) => (
+                  <Link key={link.href} href={link.href} className="tools-icon-rail-item" aria-label={link.label} data-label={link.label}>
+                    {link.icon}
+                  </Link>
+                ))}
+              </nav>
+            )}
+          </aside>
+        )}
         <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
           {controls}
           {sidebarPromptLayout && naiGenerationFooter}
@@ -4229,15 +4367,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             naiLayout
               ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
               : rightPanelCollapsed && !layoutEditorOpen
-                ? rightPanelIconRail
-                  ? " is-icon-rail"
-                  : " is-collapsed"
+                ? " is-collapsed"
                 : ""
           }`}
-          // 图标栏是用户手动收起的，悬停不再自动弹出。
-          onMouseEnter={naiLayout || rightPanelIconRail ? undefined : openRightPanel}
+          onMouseEnter={naiLayout ? undefined : openRightPanel}
           onMouseLeave={naiLayout ? undefined : scheduleRightPanelClose}
-          onFocus={naiLayout || rightPanelIconRail ? undefined : openRightPanel}
+          onFocus={naiLayout ? undefined : openRightPanel}
           onBlur={naiLayout ? undefined : scheduleRightPanelClose}
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
@@ -4245,7 +4380,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <button
             type="button"
             className="tools-panel-collapse"
-            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠为图标栏"}
+            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
             aria-expanded={naiLayout ? naiToolsOpen : !rightPanelCollapsed}
             onClick={() => {
               if (naiLayout) {
@@ -4254,8 +4389,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               }
               const next = !rightPanelCollapsed;
               setRightPanelCollapsed(next);
-              // 手动折叠进入图标栏；自动折叠（定时器）保持完全收起。
-              setRightPanelIconRail(next);
               if (customWorkspace) {
                 const nextLayout = { ...customLayout, rightCollapsed: next };
                 setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
@@ -4264,19 +4397,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           >
             {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
-          {!naiLayout && rightPanelCollapsed && !layoutEditorOpen && rightPanelIconRail ? (
-            // new-api 式图标栏：创作中心入口逐个图标纵向排列。
-            <nav className="tools-icon-rail" aria-label="功能入口">
-              {(isAdmin
-                ? [...CREATIVE_CENTER_LINKS, { href: "/admin", label: "管理", icon: <ShieldCheck size={16} /> }]
-                : CREATIVE_CENTER_LINKS
-              ).map((link) => (
-                <Link key={link.href} href={link.href} className="tools-icon-rail-item" aria-label={link.label} title={link.label}>
-                  {link.icon}
-                </Link>
-              ))}
-            </nav>
-          ) : toolsPanel}
+          {!naiLayout ? desktopRightPanel : toolsPanel}
         </aside>
       </div>
       {lightboxIndex !== null && displayedImages[lightboxIndex] && (
@@ -5564,11 +5685,15 @@ function Prompt({
   value,
   onChange,
   accent = false,
+  placeholder,
+  tools,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   accent?: boolean;
+  placeholder?: string;
+  tools?: React.ReactNode;
 }) {
   return (
     <label
@@ -5577,10 +5702,12 @@ function Prompt({
       <span className="mb-2 flex items-center gap-2 text-xs font-semibold">
         {accent && <Sparkles size={13} className="text-[var(--rose)]" />}
         {label}
+        {tools && <span className="ml-auto flex items-center gap-1.5 font-normal">{tools}</span>}
       </span>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
         className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
       />
