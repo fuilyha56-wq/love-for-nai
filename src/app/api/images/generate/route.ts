@@ -8,7 +8,7 @@ import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
-import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
+import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import {
   assertBodySize,
   assertImageModel,
@@ -183,13 +183,14 @@ export async function POST(request: Request) {
         : null,
     });
   } catch (error) {
-    if (!affRefunded && creditCharge && !upstreamAttempted) {
+    const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
+    if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, 0);
     }
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "生成请求失败" },
-      { status: 502 },
+      { message: queueAborted ? "图像请求排队超时，尚未发送到上游。请稍后重试。" : error instanceof Error ? error.message : "生成请求失败" },
+      { status: queueAborted ? 503 : 502 },
     );
   }
 }

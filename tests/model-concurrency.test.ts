@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   fetchWithModelConcurrency,
   MODEL_CONCURRENCY_LIMIT,
+  ModelConcurrencyQueueAbortError,
   withModelConcurrencySlot,
 } from "@/lib/model-concurrency";
 
@@ -86,6 +87,85 @@ describe("模型调用并发门", () => {
       await (await third).text();
     } finally {
       streamReleases.forEach((release) => release.resolve());
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("已取消的请求不会占用槽位，也不会调用 fetch", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    globalThis.fetch = fetchMock;
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        fetchWithModelConcurrency("https://example.test/canceled", {
+          signal: controller.signal,
+        }),
+      ).rejects.toBeInstanceOf(ModelConcurrencyQueueAbortError);
+      expect(fetchMock).not.toHaveBeenCalled();
+      await expect(
+        (await fetchWithModelConcurrency("https://example.test/next")).text(),
+      ).resolves.toBe("ok");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("排队请求取消后从队列移除，后续请求仍可获得槽位", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    globalThis.fetch = fetchMock;
+    const responses: Response[] = [];
+    try {
+      responses.push(await fetchWithModelConcurrency("https://example.test/first"));
+      responses.push(await fetchWithModelConcurrency("https://example.test/second"));
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      const controller = new AbortController();
+      const canceled = fetchWithModelConcurrency("https://example.test/canceled", {
+        signal: controller.signal,
+      });
+      const next = fetchWithModelConcurrency("https://example.test/next");
+      controller.abort();
+      await expect(canceled).rejects.toBeInstanceOf(ModelConcurrencyQueueAbortError);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      await responses[0].text();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      responses.push(await next);
+      await responses[1].text();
+      await responses[2].text();
+
+      const after = await fetchWithModelConcurrency("https://example.test/after");
+      responses.push(after);
+      await expect(after.text()).resolves.toBe("ok");
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+    } finally {
+      await Promise.all(responses.map((response) => response.body?.cancel().catch(() => undefined)));
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("响应体未读取时，超时信号仍释放并发槽", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response("ok"));
+    globalThis.fetch = fetchMock;
+    const responses: Response[] = [];
+    try {
+      const first = new AbortController();
+      responses.push(await fetchWithModelConcurrency("https://example.test/first", { signal: first.signal }));
+      responses.push(await fetchWithModelConcurrency("https://example.test/second"));
+      const next = fetchWithModelConcurrency("https://example.test/next");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      first.abort();
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      responses.push(await next);
+      expect(await responses[2].text()).toBe("ok");
+    } finally {
+      await Promise.all(responses.map((response) => response.body?.cancel().catch(() => undefined)));
       globalThis.fetch = originalFetch;
     }
   });

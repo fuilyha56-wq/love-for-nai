@@ -14,12 +14,39 @@ function state(): ModelConcurrencyState {
   return globalStore.__lfnModelConcurrencyState;
 }
 
-async function acquireModelConcurrencySlot(): Promise<() => void> {
+export class ModelConcurrencyQueueAbortError extends Error {
+  constructor(public readonly reason: unknown) {
+    super("模型请求在排队期间已取消");
+    this.name = "ModelConcurrencyQueueAbortError";
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+}
+
+async function acquireModelConcurrencySlot(signal?: AbortSignal | null): Promise<() => void> {
+  if (signal?.aborted) throw new ModelConcurrencyQueueAbortError(abortReason(signal));
   const current = state();
   if (current.active < MODEL_CONCURRENCY_LIMIT) {
     current.active += 1;
   } else {
-    await new Promise<void>((resolve) => current.queue.push(resolve));
+    await new Promise<void>((resolve, reject) => {
+      const wake = () => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      };
+      const onAbort = () => {
+        const index = current.queue.indexOf(wake);
+        if (index < 0) return; // The slot has already been handed to this waiter.
+        current.queue.splice(index, 1);
+        signal?.removeEventListener("abort", onAbort);
+        reject(new ModelConcurrencyQueueAbortError(abortReason(signal!)));
+      };
+      current.queue.push(wake);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      if (signal?.aborted) onAbort();
+    });
   }
   let released = false;
   return () => {
@@ -77,9 +104,20 @@ export async function fetchWithModelConcurrency(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const release = await acquireModelConcurrencySlot();
+  const releaseSlot = await acquireModelConcurrencySlot(init?.signal);
+  const signal = init?.signal;
+  const onAbort = () => release();
+  const release = () => {
+    signal?.removeEventListener("abort", onAbort);
+    releaseSlot();
+  };
   try {
-    return responseWithRelease(await fetch(input, init), release);
+    const response = responseWithRelease(await fetch(input, init), release);
+    // A caller may leave a response body unread. Its request timeout must still
+    // free the slot, even when there is no reader to observe the abort.
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    return response;
   } catch (error) {
     release();
     throw error;
