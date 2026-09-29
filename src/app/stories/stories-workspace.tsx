@@ -41,6 +41,7 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
+import { PopupSelect } from "@/app/ui/popup-select";
 import type { Story, StoryModel, StoryPatch } from "@/lib/stories";
 import type { StoryGenerationMode } from "@/lib/story-generation";
 import "./stories.css";
@@ -686,12 +687,24 @@ export default function StoriesWorkspace({
                   <div className="story-mode-value"><BookText size={18} /><b>Storyteller</b></div>
                 </div>
                 <div className="story-setting-section">
-                  <label className="story-setting-label" htmlFor="story-model">AI 模型 <small>选择已配置的文本模型</small></label>
-                  <select id="story-model" value={activeStory.model} onChange={(event) => void savePatch({ model: event.target.value as StoryModel })}>
-                    {!models.some((item) => item.id === activeStory.model) && <option value={activeStory.model}>{activeStory.model} · 当前不可用</option>}
-                    {models.map((item) => <option key={item.id} value={item.id}>{item.source} · {item.label}</option>)}
-                  </select>
-                  <p>{modelLabel}。NewAPI 模型使用 ikun 渠道；自定义模型使用你在模型与密钥中导入的凭据。</p>
+                  <span className="story-setting-label">AI 模型 <small>选择已配置的文本模型</small></span>
+                  <PopupSelect
+                    value={activeStory.model}
+                    options={(models.length
+                      ? models
+                      : [{ id: activeStory.model, label: activeStory.model, source: "当前" }]
+                    ).map((item) => ({
+                      value: item.id,
+                      label: item.label,
+                      description: item.source,
+                    }))}
+                    onChange={(next) => void savePatch({ model: next as StoryModel })}
+                    ariaLabel="故事 AI 模型"
+                    searchable
+                    searchPlaceholder="搜索模型"
+                    emptyText="没有匹配的模型"
+                  />
+                  <p>{modelLabel}。模型列表实时读取上游 NewAPI；自定义模型使用你在模型与密钥中导入的凭据。</p>
                   {modelWarning && <p role="status">{modelWarning}</p>}
                   <Link href="/resources#story-providers">管理模型源</Link>
                 </div>
