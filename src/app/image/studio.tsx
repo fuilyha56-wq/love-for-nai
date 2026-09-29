@@ -4235,13 +4235,55 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   value={prompt}
                   onChange={setPrompt}
                   accent
+                  placeholder={
+                    promptTagMode
+                      ? "Danbooru 标签，逗号分隔，如 1girl, white hair, crimson eyes"
+                      : "自然语言描述画面，如 一个白发的女孩穿着和服站在窗边"
+                  }
+                  tools={promptToolbar("prompt")}
+                  autocomplete
                 />
                 {operation !== "suggest-tags" && (
                   <Prompt
                     label="排除内容"
                     value={negative}
                     onChange={setNegative}
+                    placeholder="低质量、错误肢体、水印等不希望出现的内容"
+                    tools={promptToolbar("negative")}
+                    autocomplete
                   />
+                )}
+                {operation !== "suggest-tags" && (
+                  // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
+                  <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
+                    <div className="block text-xs font-semibold text-[#4c5052]">
+                      <span className="mb-2 block">质量词 <small className="font-normal text-[var(--muted)]">追加到提示词末尾</small></span>
+                      <PopupSelect
+                        value={qualityTier}
+                        options={[
+                          { value: "nai-default", label: QUALITY_TIER_LABELS["nai-default"] },
+                          ...(isV5Model(model) ? [{ value: "light", label: QUALITY_TIER_LABELS.light }] : []),
+                          { value: "none", label: QUALITY_TIER_LABELS.none },
+                          ...(customQuality.trim() ? [{ value: "custom", label: `自定义 · ${customQuality.trim().slice(0, 24)}…` }] : []),
+                        ]}
+                        onChange={(next) => setQualityTier(next as QualityTier)}
+                        ariaLabel="质量词等级"
+                        emptyText="没有匹配项"
+                      />
+                    </div>
+                    <div className="block text-xs font-semibold text-[#4c5052]">
+                      <span className="mb-2 block">负面预设 (UC) <small className="font-normal text-[var(--muted)]">添加到排除内容前缀</small></span>
+                      <PopupSelect
+                        value={ucType}
+                        options={(Object.keys(UC_PRESET_LABELS) as Array<Exclude<UcPresetType, "custom"> | "custom">)
+                          .filter((type) => type !== "custom" || customUc.trim())
+                          .map((type) => ({ value: type, label: UC_PRESET_LABELS[type] }))}
+                        onChange={(next) => setUcType(next as typeof ucType)}
+                        ariaLabel="负面提示词预设"
+                        emptyText="没有匹配项"
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
             )}
