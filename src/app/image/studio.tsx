@@ -1,6 +1,7 @@
 "use client";
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
+import { readImageOperationResponse } from "@/lib/image-operation-response";
 import { inpaintModelFor } from "@/lib/inpaint-model";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
 
@@ -953,7 +954,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         });
         patchImage = streamed[0] || "";
       } else {
-        const result = await response.json();
+        const result = await readImageOperationResponse(response);
         if (!response.ok) throw new Error(result.message || "精确重绘失败");
         patchImage = result.images?.[0] || result.image || "";
       }
@@ -2965,7 +2966,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               },
             });
           } else {
-            const result = await response.json();
+            const result = await readImageOperationResponse(response);
             if (!response.ok && !result.images)
               throw new Error(result.message || "操作失败");
             chunkImages = result.images || (result.image ? [result.image] : []);
@@ -3050,7 +3051,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setPreviewDrafts([]);
           addSessionResults(batchImages, batchHistoryIds, operation);
         } else {
-          const result = await response.json();
+          const result = await readImageOperationResponse(response);
           if (!response.ok && !result.images)
             throw new Error(result.message || "操作失败");
           if (operation === "suggest-tags") {

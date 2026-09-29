@@ -24,7 +24,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         headers: { Authorization: `Bearer ${provider.secret}`, Accept: "application/json" },
         cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000),
       });
-      if (!response.ok) throw new Error(`NovelAI 账号信息读取失败 (${response.status})`);
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(`NovelAI 账号信息读取失败 (${response.status})`);
+      }
       return await response.json() as AccountData;
     };
     const [subscription, user] = await Promise.all([read("/user/subscription"), read("/user/data")]);
