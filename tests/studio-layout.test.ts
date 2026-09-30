@@ -41,7 +41,7 @@ describe("工作台布局按主题隔离", () => {
     expect(left).toContain('aria-label="采样步数"');
     expect(left).not.toContain('aria-label="打开站内菜单"');
     expect(canvas).toContain("<textarea");
-    expect(canvas).toContain("生成 1 张图像");
+    expect(canvas).toContain("执行生成");
     // 创作中心移到最左导航栏（默认折叠为图标栏，data-label 为功能名）。
     expect(html).toContain('aria-label="功能入口"');
     expect(html).toContain('data-label="图片广场"');
@@ -74,13 +74,13 @@ describe("工作台布局按主题隔离", () => {
     expect(left).toContain('aria-label="图片宽度"');
     expect(left).toContain('aria-label="交换宽高"');
     expect(left).toContain('class="nai-generation-footer"');
-    expect(left).toContain("生成 1 张图像");
+    expect(left).toContain("执行生成");
     expect(left).toContain('aria-label="采样步数"');
     expect(left).toContain('class="nai-parameter-summary"');
     expect(canvas).not.toContain("<textarea");
     expect(canvas).not.toContain("执行生成");
     expect(html).not.toContain("创作中心");
-    expect(html).toContain("--lfn-left:400px");
+    expect(html).toContain("--lfn-left:447px");
   });
 });
 

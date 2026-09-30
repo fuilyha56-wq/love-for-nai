@@ -257,9 +257,6 @@ export type AppearancePreferences = {
   workspaceLayout: WorkspaceLayout;
   glass: boolean;
   glassStrength: number;
-  // 关闭右侧栏自动折叠：开启后面板保持展开（不因鼠标离开自动收起），
-  // 折叠后的历史缩略栏改为显示在功能栏左侧。默认 false = 保持现状。
-  rightPanelKeepOpen: boolean;
   backgroundEnabled: boolean;
   backgroundPositionX: number; // 0–100，0 居左 100 居右
   backgroundPositionY: number; // 0–100，0 居上 100 居下
@@ -276,8 +273,6 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
   workspaceLayout: "lfn",
   glass: false,
   glassStrength: 42,
-  // 面板常驻（不自动折叠）默认开启：功能栏保持展开，手动折叠变为图标栏。
-  rightPanelKeepOpen: true,
   backgroundEnabled: false,
   backgroundPositionX: 50,
   backgroundPositionY: 50,
@@ -357,10 +352,6 @@ export function parseAppearancePreferences(input: unknown): AppearancePreference
         ? record.glass
         : DEFAULT_APPEARANCE_PREFERENCES.glass,
     glassStrength: clampStrength(record.glassStrength),
-    rightPanelKeepOpen:
-      typeof record.rightPanelKeepOpen === "boolean"
-        ? record.rightPanelKeepOpen
-        : DEFAULT_APPEARANCE_PREFERENCES.rightPanelKeepOpen,
     backgroundEnabled:
       typeof record.backgroundEnabled === "boolean"
         ? record.backgroundEnabled
