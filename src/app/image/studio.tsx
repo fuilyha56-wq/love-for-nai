@@ -57,6 +57,8 @@ import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
 import { generateRandomPrompt } from "@/lib/random-prompt";
 import { PromptAutocompleteTextarea } from "@/app/image/prompt-autocomplete";
+import { TagChipEditor } from "@/app/image/tag-chip-editor";
+import { tagZh } from "@/lib/tag-translations";
 import {
   appendQualityTags,
   prependUcPreset,
@@ -2122,6 +2124,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         }
         tools={promptToolbar("prompt")}
         autocomplete
+        tagMode={promptTagMode}
       />
       {operation !== "suggest-tags" && (
         <Prompt
@@ -2131,6 +2134,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           placeholder="低质量、错误肢体、水印等不希望出现的内容"
           tools={promptToolbar("negative")}
           autocomplete
+          tagMode={promptTagMode}
         />
       )}
       {operation !== "suggest-tags" && (
@@ -5802,6 +5806,7 @@ function Prompt({
   placeholder,
   tools,
   autocomplete = false,
+  tagMode = false,
 }: {
   label: string;
   value: string;
@@ -5810,6 +5815,7 @@ function Prompt({
   placeholder?: string;
   tools?: React.ReactNode;
   autocomplete?: boolean;
+  tagMode?: boolean;
 }) {
   // 外层用 div：工具按钮放进 <label> 时，label 的隐式控件变成第一个
   // button（骰子），点 Tag/清空会被 label 激活行为连带触发骰子。
@@ -5825,15 +5831,21 @@ function Prompt({
         </label>
         {tools && <span className="ml-auto flex items-center gap-1.5 font-normal">{tools}</span>}
       </div>
-      <PromptAutocompleteTextarea
-        id={fieldId}
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        autocomplete={autocomplete}
-        // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
-        className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
-      />
+      {tagMode ? (
+        <div className="rounded border border-[var(--line)] bg-[#faf9f5] p-2 min-h-14">
+          <TagChipEditor value={value} onChange={onChange} zhOf={tagZh} />
+        </div>
+      ) : (
+        <PromptAutocompleteTextarea
+          id={fieldId}
+          value={value}
+          onChange={onChange}
+          placeholder={placeholder}
+          autocomplete={autocomplete}
+          // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
+          className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
+        />
+      )}
     </div>
   );
 }

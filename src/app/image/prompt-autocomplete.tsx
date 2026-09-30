@@ -53,7 +53,7 @@ export function PromptAutocompleteTextarea({
     [],
   );
 
-  function trackCursor(el: HTMLTextAreaElement) {
+  function trackCursor(el: HTMLTextAreaElement, typing = false) {
     if (!autocomplete) return;
     const span = tokenSpanBefore(el.value, el.selectionStart ?? el.value.length);
     const token = span.token.trim().toLowerCase();
@@ -67,6 +67,8 @@ export function PromptAutocompleteTextarea({
       setSuggestions([]);
       return;
     }
+    // 只在实际输入时弹出面板；点进框/移动光标不弹（避免误以为 tooltip）。
+    if (!typing) return;
     const cached = RESULT_CACHE.get(token);
     if (cached) {
       setSuggestions(cached);
@@ -148,11 +150,9 @@ export function PromptAutocompleteTextarea({
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
-          trackCursor(event.target);
+          trackCursor(event.target, true);
         }}
         onKeyDown={onKeyDown}
-        onKeyUp={(event) => trackCursor(event.currentTarget)}
-        onClick={(event) => trackCursor(event.currentTarget)}
         onBlur={() => window.setTimeout(() => setOpen(false), 150)}
         placeholder={placeholder}
         className={className}
