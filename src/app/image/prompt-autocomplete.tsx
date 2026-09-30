@@ -32,6 +32,7 @@ export function PromptAutocompleteTextarea({
   placeholder,
   autocomplete = false,
   id,
+  onContextMenu,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -39,6 +40,7 @@ export function PromptAutocompleteTextarea({
   placeholder?: string;
   autocomplete?: boolean;
   id?: string;
+  onContextMenu?: React.MouseEventHandler<HTMLTextAreaElement>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<number | null>(null);
@@ -154,6 +156,16 @@ export function PromptAutocompleteTextarea({
         }}
         onKeyDown={onKeyDown}
         onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onMouseDown={(event) => {
+          // 右键保护选区（VSCode 同款）：否则 mousedown 先移动光标，选区塌掉，内联菜单没有可操作对象。
+          if (
+            event.button === 2 &&
+            (event.currentTarget.selectionEnd ?? 0) >
+              (event.currentTarget.selectionStart ?? 0)
+          )
+            event.preventDefault();
+        }}
+        onContextMenu={onContextMenu}
         placeholder={placeholder}
         className={className}
       />
