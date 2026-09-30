@@ -162,13 +162,19 @@ export function naiNativeGenerationBody(
       use_coords: true,
       use_order: true,
     };
+    // 每角色负向：角色自带 negative 时进 v4_negative_prompt 对应 caption。
     parameters.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: captions.map((item) => ({
-          ...item,
-          char_caption: "",
-        })),
+        char_captions: captions.map((item, index) => {
+          const record = (body.characterPrompts as Array<Record<string, unknown>>)[index] || {};
+          const charNegative =
+            typeof record.negative === "string" ? record.negative.trim() : "";
+          return {
+            ...item,
+            char_caption: charNegative,
+          };
+        }),
       },
       legacy_uc: false,
     };

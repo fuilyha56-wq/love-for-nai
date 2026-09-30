@@ -11,6 +11,7 @@ export type TagHit = {
   displayName?: string;
   categoryName?: string;
   postCount?: number;
+  zh?: string;
 };
 
 const RESULT_CACHE = new Map<string, TagHit[]>();
@@ -30,12 +31,14 @@ export function PromptAutocompleteTextarea({
   className,
   placeholder,
   autocomplete = false,
+  id,
 }: {
   value: string;
   onChange: (value: string) => void;
   className?: string;
   placeholder?: string;
   autocomplete?: boolean;
+  id?: string;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceRef = useRef<number | null>(null);
@@ -141,6 +144,7 @@ export function PromptAutocompleteTextarea({
     <div className="prompt-autocomplete-wrap">
       <textarea
         ref={textareaRef}
+        id={id}
         value={value}
         onChange={(event) => {
           onChange(event.target.value);
@@ -170,7 +174,12 @@ export function PromptAutocompleteTextarea({
                 onMouseEnter={() => setActive(index)}
                 className={`tag-suggest-item${index === active ? " is-active" : ""}`}
               >
-                <span className="tag-suggest-name">{hit.displayName || hit.name}</span>
+                <span className="tag-suggest-name">
+                  {hit.displayName || hit.name}
+                  {hit.zh && hit.zh !== (hit.displayName || hit.name) && (
+                    <span className="tag-suggest-zh">{hit.zh}</span>
+                  )}
+                </span>
                 <span className="tag-suggest-meta">
                   {hit.categoryName || ""}
                   {hit.postCount != null
