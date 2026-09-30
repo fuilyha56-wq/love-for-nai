@@ -26,7 +26,6 @@ import {
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAppearance } from "@/app/appearance";
-import ProviderSettings from "./provider-settings";
 import {
   CUSTOM_LAYOUT_GRID_COLUMNS,
   CUSTOM_LAYOUT_GRID_ROWS,
@@ -695,8 +694,8 @@ function SettingsPageContent() {
         <div className="flex min-w-0 items-center gap-3">
           <Palette size={20} className="shrink-0 text-[var(--rose)]" />
           <div className="min-w-0">
-            <b className="block truncate">设置</b>
-            <span className="hidden text-[10px] text-[var(--muted)] sm:block">外观偏好与模型接入</span>
+            <b className="block truncate">外观偏好</b>
+            <span className="hidden text-[10px] text-[var(--muted)] sm:block">APPEARANCE · 仅保存在本机</span>
           </div>
         </div>
         <Link
@@ -863,37 +862,13 @@ function SettingsPageContent() {
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold">自定义布局</p>
-                        <p className="mt-1 text-[10px] text-[var(--muted)]">进入独立工作台，自由拖动模块与控件。</p>
+                        <p className="mt-1 text-[10px] text-[var(--muted)]">按你的工作流排列模块，并调整左右栏宽度。</p>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Link
-                          href="/image/setting/layout"
-                          className="flex h-9 items-center rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
-                        >
-                          独立布局编辑器
-                        </Link>
-                        <Link
-                          href="/image?layoutEditor=1"
-                          className="flex h-9 items-center rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
-                        >
-                          在工作台编辑
-                        </Link>
-                      </div>
+                    <Link
+                      href="/image?layoutEditor=1"
+                      className="flex h-9 items-center rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] hover:bg-[color-mix(in_srgb,var(--rose)_6%,transparent)]"
+                    >编辑自定义布局</Link>
                     </div>
-                  </div>
-                  <div>
-                    <Switch
-                      checked={preferences.rightPanelKeepOpen}
-                      onChange={(rightPanelKeepOpen) =>
-                        updatePreferences({ rightPanelKeepOpen })
-                      }
-                      label={preferences.rightPanelKeepOpen ? "右侧栏自动折叠已关闭" : "关闭右侧栏自动折叠"}
-                    />
-                    <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                      {preferences.rightPanelKeepOpen
-                        ? "开启中（默认）：右侧功能栏保持展开，不随鼠标离开自动收起。手动折叠后变为图标栏，自动收起则完全折叠。"
-                        : "关闭后恢复原行为：鼠标离开右侧功能栏约 0.2 秒自动完全收起，历史缩略栏仍常驻在功能栏左侧。"}
-                    </p>
                   </div>
                 </>
               )}
@@ -947,8 +922,6 @@ function SettingsPageContent() {
             </div>
           </article>
         </div>
-
-        <ProviderSettings />
 
         <article className="panel rounded-md p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1090,7 +1063,7 @@ function SettingsPageContent() {
 
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4">
           <p className="flex items-center gap-1.5 text-[11px] text-[var(--muted)]">
-            <CircleHelp size={13} /> 外观偏好仅存于此浏览器；模型接入信息保存在你的账号下。
+            <CircleHelp size={13} /> 所有偏好仅存于此浏览器的本地存储。
           </p>
           <button
             type="button"
