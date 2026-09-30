@@ -120,8 +120,10 @@ export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
   const rawCharacters = Array.isArray(record.characters) ? record.characters : [];
   const characters = rawCharacters.slice(0, 6).map((item) => {
     const character = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    const negative = stringValue(character.negative, "", 4_000);
     return {
       prompt: stringValue(character.prompt, "", 4_000),
+      ...(negative ? { negative } : {}),
       centerX: numberValue(character.centerX, 0.5, 0, 1),
       centerY: numberValue(character.centerY, 0.5, 0, 1),
     };

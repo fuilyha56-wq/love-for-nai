@@ -51,7 +51,7 @@ export async function handlePersonalProviderGeneration(request: Request, session
     const provider = await getProvider(session.userId, providerId);
     if (!provider) return NextResponse.json({ message: "找不到该第三方 API 配置" }, { status: 404 });
     if (operation !== "generate") return NextResponse.json({ message: "第三方 OpenAI 兼容 API 目前仅支持文生图" }, { status: 400 });
-    if (!await providerAllowsModel(provider, model)) return NextResponse.json({ message: "该模型未在此第三方 API 的模型列表中" }, { status: 400 });
+    if (!await providerAllowsModel(session.userId, provider, model)) return NextResponse.json({ message: "该模型未在此第三方 API 的模型列表中" }, { status: 400 });
     runBatch = async (batch) => {
       const response = await safeProviderFetch(provider.baseUrl, "/v1/images/generations", {
         method: "POST",

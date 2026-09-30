@@ -9,6 +9,8 @@ import { getImageToken, imageFromResult, resolvedImageUpstream, resolvedNewApiBa
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
+import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
+import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
   assertImageModel,
@@ -46,8 +48,8 @@ export async function POST(request: Request) {
   let height: number;
   let steps: number;
   let samples: number;
+  let nativeNaiModel = true;
   try {
-    model = assertImageModel(body.model);
     width = normalizeDimension(body.width, "width");
     height = normalizeDimension(body.height, "height");
     validateImageShape(width, height);
@@ -58,6 +60,28 @@ export async function POST(request: Request) {
       { message: error instanceof Error ? error.message : "生成参数无效" },
       { status: error instanceof ImageRequestValidationError ? 400 : 400 },
     );
+  }
+  try {
+    model = assertImageModel(body.model);
+  } catch {
+    nativeNaiModel = false;
+    try {
+      model = validateModelId(body.model);
+    } catch (error) {
+      return NextResponse.json(
+        { message: error instanceof Error ? error.message : "模型 ID 无效" },
+        { status: 400 },
+      );
+    }
+    try {
+      if (!(await userCanGenerateWithNewApiModel(session, model)))
+        return NextResponse.json({ message: "当前模型不允许用于图像生成" }, { status: 400 });
+    } catch (error) {
+      return NextResponse.json(
+        { message: error instanceof Error ? error.message : "无法验证模型权限" },
+        { status: 502 },
+      );
+    }
   }
   const rate = checkImageRateLimit(request, `session:${session.userId}`);
   if (!rate.allowed)
@@ -73,7 +97,7 @@ export async function POST(request: Request) {
     "cfg_rescale",
     "seed",
   ];
-  const platformUpstream = await resolvedImageUpstream();
+  const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
   let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";
@@ -104,12 +128,14 @@ export async function POST(request: Request) {
             ? "package"
             : "personal";
     } else if ((await resolvedAuthProviderId()) === "local") {
+      if (!nativeNaiModel)
+        return NextResponse.json({ message: "本地账号不能使用 NewAPI 模型" }, { status: 400 });
       if (!platformUpstream)
         return NextResponse.json({ message: "未配置图像上游，无法生成" }, { status: 503 });
       key = platformUpstream.token;
       upstreamBaseUrl = platformUpstream.baseUrl;
     } else {
-      key = await getImageToken(session, body.model);
+      key = await getImageToken(session, model);
     }
     upstreamAttempted = true;
     const upstream = await fetchWithModelConcurrency(`${upstreamBaseUrl}/v1/images/generations`, {
@@ -118,7 +144,7 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify(nativeNaiModel ? {
         ...Object.fromEntries(
           forwarded
             .filter((key) => body[key] !== undefined)
@@ -131,6 +157,12 @@ export async function POST(request: Request) {
         n: samples,
         n_samples: samples,
         steps,
+        response_format: "b64_json",
+      } : {
+        model,
+        prompt: body.prompt,
+        size: `${width}x${height}`,
+        n: samples,
         response_format: "b64_json",
       }),
       cache: "no-store",

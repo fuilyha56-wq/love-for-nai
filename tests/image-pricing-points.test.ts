@@ -35,12 +35,12 @@ describe("NewAPI image cost previews", () => {
     expect(tokensToPoints(51)).toBe(1.02);
     expect(estimatePoints(base)).toBe(0);
     expect(estimateTokens(base)).toBe(0);
-    expect(envelopeUsageTokens(base.model)).toBe(25);
+    expect(envelopeUsageTokens(base.model)).toBe(8);
   });
 
-  it("uses the 25-token V5 fixed envelope charge, including the group ratio", () => {
-    expect(liveV5.inEnvelopeUsd).toBe(6.5);
-    expect(estimateNewApiCost(liveV5, base)).toBe(6.5);
+  it("uses the gateway's 8-token V5 envelope marker, including the group ratio", () => {
+    expect(liveV5.inEnvelopeUsd).toBe(2.08);
+    expect(estimateNewApiCost(liveV5, base)).toBe(2.08);
     const halfPrice = snapshotFromRawPricing(
       base.model,
       {
@@ -49,7 +49,7 @@ describe("NewAPI image cost previews", () => {
       },
       0.5,
     );
-    expect(estimateNewApiCost(halfPrice, base)).toBe(3.25);
+    expect(estimateNewApiCost(halfPrice, base)).toBe(1.04);
     expect(estimateNewApiCost(halfPrice, { ...base, samples: 4 })).toBe(1040);
   });
 
@@ -62,17 +62,17 @@ describe("NewAPI image cost previews", () => {
   });
 
   it("prices independent n=1 requests separately from one multi-image request", () => {
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, sequential: true })).toBe(19.5);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, maxSamplesPerRequest: 1 })).toBe(19.5);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, sequential: true })).toBe(6.24);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, maxSamplesPerRequest: 1 })).toBe(6.24);
     expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1560);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(2086.5);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(2082.08);
   });
 
-  it("moves requests with character prompts outside the fixed envelope", () => {
+  it("keeps text-only character prompts inside the fixed envelope", () => {
     const withCharacters = { ...base, characterPromptCount: 2 };
-    expect(usesLimitPricing(withCharacters)).toBe(false);
-    expect(estimatePoints(withCharacters)).toBe(40);
-    expect(estimateNewApiCost(liveV5, withCharacters)).toBe(520);
+    expect(usesLimitPricing(withCharacters)).toBe(true);
+    expect(estimatePoints(withCharacters)).toBe(0);
+    expect(estimateNewApiCost(liveV5, withCharacters)).toBe(2.08);
     expect(usesLimitPricing({ ...base, hasInputImage: true })).toBe(false);
     expect(usesLimitPricing({ ...base, hasInputImage: true, operation: "img2img" })).toBe(true);
   });
@@ -82,7 +82,7 @@ describe("NewAPI image cost previews", () => {
       base.model,
       {
         billing_mode: "tiered_expr",
-        billing_expr: 'p < 100 ? tier("limit", p * 2400) : tier("full", p * 600)',
+        billing_expr: 'p < 100 ? tier("limit", p * 7500) : tier("full", p * 600)',
       },
       1,
     );
@@ -110,7 +110,7 @@ describe("NewAPI image cost previews", () => {
     const perRequest = snapshotFromRawPricing(base.model, { quota_type: 1, model_price: 2 }, 0.5);
     expect(estimateNewApiCost(perRequest, { ...base, samples: 3 })).toBe(3);
     const perToken = snapshotFromRawPricing(base.model, { model_ratio: 100000 }, 1);
-    expect(estimateNewApiCost(perToken, base)).toBe(5);
+    expect(estimateNewApiCost(perToken, base)).toBeCloseTo(1.6);
     const chat = snapshotFromRawPricing("nai-chat", { quota_type: 1, model_price: 2 }, 0.5);
     expect(estimateNewApiCost(chat, { ...base, model: "nai-chat", samples: 3 })).toBe(3);
     const otherImage = { ...base, model: "custom-image" };

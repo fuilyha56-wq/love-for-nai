@@ -35,12 +35,15 @@ export type CustomLayoutPreferences = {
   moduleOrder: CustomLayoutModule[];
   visibleModules: Record<CustomLayoutModule, boolean>;
   modulePositions: Record<CustomLayoutModule, CustomLayoutRect>;
+  moduleWidths?: Partial<Record<CustomLayoutModule, number>>;
   leftWidth: number;
   rightWidth: number;
   rightCollapsed: boolean;
 };
 
-const DEFAULT_CUSTOM_MODULE_ORDER: CustomLayoutModule[] = [...CUSTOM_LAYOUT_MODULES];
+const DEFAULT_CUSTOM_MODULE_ORDER: CustomLayoutModule[] = [
+  "model", "prompt", "references", "image", "operations", "director", "sampling", "history", "agent",
+];
 const DEFAULT_CUSTOM_MODULE_VISIBILITY: Record<CustomLayoutModule, boolean> = {
   prompt: true,
   model: true,
@@ -55,7 +58,7 @@ const DEFAULT_CUSTOM_MODULE_VISIBILITY: Record<CustomLayoutModule, boolean> = {
 
 const DEFAULT_CUSTOM_MODULE_POSITIONS: Record<CustomLayoutModule, CustomLayoutRect> =
   Object.fromEntries(
-    DEFAULT_CUSTOM_MODULE_ORDER.map((moduleId, index) => [
+    CUSTOM_LAYOUT_MODULES.map((moduleId, index) => [
       moduleId,
       {
         x: (index % 3) * 4,
@@ -66,14 +69,19 @@ const DEFAULT_CUSTOM_MODULE_POSITIONS: Record<CustomLayoutModule, CustomLayoutRe
     ]),
   ) as Record<CustomLayoutModule, CustomLayoutRect>;
 
+const DEFAULT_CUSTOM_MODULE_WIDTHS = Object.fromEntries(
+  CUSTOM_LAYOUT_MODULES.map((moduleId) => [moduleId, 100]),
+) as Record<CustomLayoutModule, number>;
+
 export const DEFAULT_CUSTOM_LAYOUT: CustomLayoutPreferences = {
   version: CUSTOM_LAYOUT_VERSION,
   moduleOrder: [...DEFAULT_CUSTOM_MODULE_ORDER],
   visibleModules: { ...DEFAULT_CUSTOM_MODULE_VISIBILITY },
   modulePositions: structuredClone(DEFAULT_CUSTOM_MODULE_POSITIONS),
+  moduleWidths: { ...DEFAULT_CUSTOM_MODULE_WIDTHS },
   leftWidth: 310,
   rightWidth: 230,
-  rightCollapsed: false,
+  rightCollapsed: true,
 };
 
 // Explicit aliases keep the layout API discoverable for small client components.
@@ -92,6 +100,7 @@ function cloneDefaultCustomLayout(): CustomLayoutPreferences {
     moduleOrder: [...DEFAULT_CUSTOM_MODULE_ORDER],
     visibleModules: { ...DEFAULT_CUSTOM_MODULE_VISIBILITY },
     modulePositions: structuredClone(DEFAULT_CUSTOM_MODULE_POSITIONS),
+    moduleWidths: { ...DEFAULT_CUSTOM_MODULE_WIDTHS },
     leftWidth: DEFAULT_CUSTOM_LAYOUT.leftWidth,
     rightWidth: DEFAULT_CUSTOM_LAYOUT.rightWidth,
     rightCollapsed: DEFAULT_CUSTOM_LAYOUT.rightCollapsed,
@@ -158,6 +167,10 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
       if (isOneOf(value, CUSTOM_LAYOUT_MODULES) && !order.includes(value)) order.push(value);
     }
   }
+  // Only migrate the former untouched default; retain deliberate user ordering.
+  if (!order.length || (order.length === CUSTOM_LAYOUT_MODULES.length && order.every((id, index) => id === CUSTOM_LAYOUT_MODULES[index]))) {
+    order.splice(0, order.length, ...DEFAULT_CUSTOM_MODULE_ORDER);
+  }
   for (const moduleId of CUSTOM_LAYOUT_MODULES) {
     if (!order.includes(moduleId)) order.push(moduleId);
   }
@@ -190,11 +203,20 @@ export function parseCustomLayout(input: unknown): CustomLayoutPreferences {
     accepted.push(next);
   });
 
+  const widthValues = record.moduleWidths && typeof record.moduleWidths === "object" && !Array.isArray(record.moduleWidths)
+    ? record.moduleWidths as Record<string, unknown>
+    : {};
+  const moduleWidths = { ...DEFAULT_CUSTOM_MODULE_WIDTHS };
+  for (const moduleId of CUSTOM_LAYOUT_MODULES) {
+    moduleWidths[moduleId] = clampLayoutWidth(widthValues[moduleId], 100, 50, 100);
+  }
+
   return {
     version: CUSTOM_LAYOUT_VERSION,
     moduleOrder: order,
     visibleModules,
     modulePositions,
+    moduleWidths,
     leftWidth: clampLayoutWidth(record.leftWidth, DEFAULT_CUSTOM_LAYOUT.leftWidth, 240, 520),
     rightWidth: clampLayoutWidth(record.rightWidth, DEFAULT_CUSTOM_LAYOUT.rightWidth, 200, 460),
     rightCollapsed:

@@ -839,8 +839,6 @@ function SettingsPageContent() {
               detail="在大屏和移动设备上都保持清晰的间距。"
             />
             <div className="mt-5 space-y-5">
-              {preferences.theme !== "nai" && (
-                <>
                   <div>
                     <p className="mb-2 text-xs font-semibold">生图工作台布局</p>
                     <div className="grid grid-cols-2 gap-2">
@@ -858,12 +856,17 @@ function SettingsPageContent() {
                         </ChoiceButton>
                       ))}
                     </div>
+                    <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">
+                      {preferences.theme === "nai"
+                        ? "NAI 工作台遵循官网布局；自定义布局使用分区排序与固定画布。"
+                        : "NovelAI Local 使用 Aaalice 的左侧提示词与参数、中央画布及右侧历史布局。"}
+                    </p>
                   </div>
                   <div className="rounded-md border border-[var(--line)] bg-[color-mix(in_srgb,var(--rose)_3%,transparent)] p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-xs font-semibold">自定义布局</p>
-                        <p className="mt-1 text-[10px] text-[var(--muted)]">进入独立工作台，自由拖动模块与控件。</p>
+                        <p className="mt-1 text-[10px] text-[var(--muted)]">按你的工作流排列模块、切换显隐，并调整左右栏宽度。画布与生成按钮保持固定。</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Link
@@ -891,12 +894,10 @@ function SettingsPageContent() {
                     />
                     <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
                       {preferences.rightPanelKeepOpen
-                        ? "开启中（默认）：右侧功能栏保持展开，不随鼠标离开自动收起。手动折叠后变为图标栏，自动收起则完全折叠。"
-                        : "关闭后恢复原行为：鼠标离开右侧功能栏约 0.2 秒自动完全收起，历史缩略栏仍常驻在功能栏左侧。"}
+                        ? "进入工作台时默认折叠。展开后不随鼠标离开自动收起，可通过顶部按钮手动折叠。"
+                        : "进入工作台时默认折叠。展开后，鼠标离开功能栏约 0.2 秒自动收起，可从图标栏重新打开。"}
                     </p>
                   </div>
-                </>
-              )}
               <Switch
                 checked={preferences.grid}
                 onChange={(grid) => updatePreferences({ grid })}

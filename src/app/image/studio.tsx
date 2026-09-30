@@ -41,6 +41,7 @@ import {
   Paintbrush,
   PanelLeft,
   PanelLeftClose,
+  PanelRightClose,
   PawPrint,
   Plus,
   Redo2,
@@ -82,6 +83,13 @@ import {
 } from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
+import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference } from "./replica-controls";
+import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
+import { ReplicaPromptEditor } from "./replica-prompt-editor";
+import { ReplicaMedia } from "./replica-media";
+import { ReplicaRightDock } from "./replica-right-dock";
+import { ReplicaHistory, type ReplicaHistoryItem } from "./replica-history";
+import { ReplicaNavigation, ReplicaGenerationFooter } from "./replica-shell";
 import { GalleryPicker } from "./gallery-picker";
 import {
   clearEditorPromptHandoff,
@@ -125,6 +133,10 @@ import {
 } from "@/lib/image-editor-store";
 
 type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
+
+export function shouldCollapseToolsPanel(_customWorkspace: boolean, layoutEditorOpen: boolean, rightPanelCollapsed: boolean) {
+  return rightPanelCollapsed && !layoutEditorOpen;
+}
 
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
@@ -188,6 +200,14 @@ type Upload = { data: string; name: string };
 type SessionResult = {
   id: string;
   image: string;
+  prompt: string;
+  negative: string;
+  seed?: number;
+  width: number;
+  height: number;
+  steps: number;
+  scale: number;
+  sampler: string;
   historyId?: string;
   operation: Operation;
   createdAt: number;
@@ -278,7 +298,7 @@ async function consumeImageStream(
 type CharacterPromptUi = {
   id: string;
   prompt: string;
-  negative: string;
+  negative?: string;
   centerX: number;
   centerY: number;
 };
@@ -617,13 +637,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     setPreviousLayoutEditor(layoutEditor);
     setLayoutEditorOpen(layoutEditor);
   }
-  const naiLayout = preferences.theme === "nai" && !layoutEditorOpen;
+  const naiLayout = preferences.theme === "nai" && preferences.workspaceLayout !== "custom" && !layoutEditorOpen;
   const customWorkspace = layoutEditorOpen || (!naiLayout && preferences.workspaceLayout === "custom");
   const nlwLayout = !naiLayout && preferences.workspaceLayout === "nlw";
   // 外观设置「关闭右侧栏自动折叠」：功能栏保持展开（NAI 主题本就是
   // overlay 滑出面板，无自动折叠，不受此开关影响）。
   const keepRightPanelOpen = !naiLayout && preferences.rightPanelKeepOpen;
-  const sidebarPromptLayout = naiLayout || nlwLayout || customWorkspace;
+  const replicaLayout = naiLayout || nlwLayout;
+  const composedPromptLayout = replicaLayout || customWorkspace;
+  const sidebarPromptLayout = replicaLayout || customWorkspace;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
@@ -654,6 +676,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [vibeInformationExtracted, setVibeInformationExtracted] = useState(1);
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [negative, setNegative] = useState(defaultNegative);
+  const [effectivePrompts, setEffectivePrompts] = useState({ prompt: defaultPrompt, negative: defaultNegative });
   const [source, setSource] = useState<Upload | null>(null);
   const [mask, setMask] = useState<Upload | null>(null);
   const [charactersEnabled, setCharactersEnabled] = useState(false);
@@ -690,6 +713,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
   const [notice, setNotice] = useState("");
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
+  const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [naiToolsOpen, setNaiToolsOpen] = useState(false);
@@ -702,7 +726,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
   // 右侧停靠栏（Aaalice 式）：历史与助手是两块独立界面，各自可折叠成恢复条，上下分割比例记忆。
@@ -719,6 +743,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     contextAfter: string;
   } | null>(null);
   const [inlineChat, setInlineChat] = useState<InlineChatSession | null>(null);
+  const [nlwDockCollapsed, setNlwDockCollapsed] = useState(true);
+  const [replicaAssistantOpenRequest, setReplicaAssistantOpenRequest] = useState(0);
+  const [nlwLeftCollapsed, setNlwLeftCollapsed] = useState(false);
+  const toolsPanelCollapsed = shouldCollapseToolsPanel(customWorkspace, layoutEditorOpen, rightPanelCollapsed);
   const rightPanelCloseTimer = useRef<number | null>(null);
   // 多角色手动定位坐标系（画布叠加层）：拖动圆点更新 centerX/centerY。
   const positionOverlayRef = useRef<HTMLDivElement>(null);
@@ -756,11 +784,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
   const [classicLeftWidth, setClassicLeftWidth] = useState(310);
-  const [naiLeftWidth, setNaiLeftWidth] = useState(400);
-  const leftWidth = naiLayout ? naiLeftWidth : classicLeftWidth;
-  const setLeftWidth = naiLayout ? setNaiLeftWidth : setClassicLeftWidth;
-  const [rightWidth, setRightWidth] = useState(230);
+  const [naiLeftWidth, setNaiLeftWidth] = useState(447);
+  const [nlwLeftWidth, setNlwLeftWidth] = useState(400);
+  const [classicRightWidth, setClassicRightWidth] = useState(230);
+  const [nlwRightWidth, setNlwRightWidth] = useState(280);
+  const leftWidth = naiLayout ? naiLeftWidth : nlwLayout ? nlwLeftWidth : classicLeftWidth;
+  const setLeftWidth = naiLayout ? setNaiLeftWidth : nlwLayout ? setNlwLeftWidth : setClassicLeftWidth;
+  const rightWidth = nlwLayout ? nlwRightWidth : classicRightWidth;
+  const setRightWidth = nlwLayout ? setNlwRightWidth : setClassicRightWidth;
   const [customLayout, setCustomLayout] = useState(() => structuredClone(DEFAULT_CUSTOM_LAYOUT));
+  const [customPromptCollapsed, setCustomPromptCollapsed] = useState(false);
+  const [customReferenceOpen, setCustomReferenceOpen] = useState(true);
+  const [customDirectorOpen, setCustomDirectorOpen] = useState(false);
   const draggedModule = useRef<{ id: CustomLayoutModule; element: HTMLElement; startY: number; top: number; pointerY: number } | null>(null);
   const previousCardPositions = useRef<Map<CustomLayoutModule, number> | null>(null);
   const [formCacheReady, setFormCacheReady] = useState(false);
@@ -800,13 +835,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   function customModuleOrder(module: CustomLayoutModule) {
     return customLayout.moduleOrder.indexOf(module);
   }
-  function customModuleStyle(module: CustomLayoutModule): React.CSSProperties | undefined {
+  function customModuleStyle(module: CustomLayoutModule, collapsed = false): React.CSSProperties | undefined {
     if (!customWorkspace) return undefined;
     const rect = customLayout.modulePositions[module];
     return {
       display: customLayout.visibleModules[module] ? undefined : "none",
       order: customModuleOrder(module),
-      minHeight: `${rect.height * 52}px`,
+      minHeight: collapsed ? 0 : `${rect.height * 52}px`,
+      width: `${customLayout.moduleWidths?.[module] ?? 100}%`,
+      maxWidth: "100%",
+      minWidth: 0,
+      alignSelf: "flex-start",
     };
   }
 
@@ -891,6 +930,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         image,
         historyId: historyIds[index],
+        prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
+        negative: composedPromptLayout ? effectivePrompts.negative : negative,
+        seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
         operation: sourceOperation,
         createdAt: now + index,
       })),
@@ -899,10 +941,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
-    if (!image) {
-      setNotice("请先导入或生成一张图片。");
-      return;
+    if (!image && mode === "canvas") {
+      const blank = document.createElement("canvas");
+      blank.width = width; blank.height = height;
+      const context = blank.getContext("2d");
+      if (!context) { setNotice("当前浏览器不支持 Canvas"); return; }
+      context.fillStyle = "white"; context.fillRect(0, 0, width, height);
+      image = blank.toDataURL("image/png");
     }
+    if (!image) { setNotice("请先导入或生成一张图片。"); return; }
     try {
       const decoded = await loadImageElement(image);
       const canvas = document.createElement("canvas");
@@ -1017,8 +1064,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           providerId,
           editor_composite: true,
           model: inpaintModel,
-          prompt,
-          negative_prompt: negative,
+          prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
+          negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
+          ...(composedPromptLayout ? { qualityToggle: false, ucPreset: 3 } : {}),
           width: patch.width,
           height: patch.height,
           steps,
@@ -1198,7 +1246,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           item.id === target.characterId
             ? target.kind === "character"
               ? { ...item, prompt: apply(item.prompt) }
-              : { ...item, negative: apply(item.negative) }
+              : { ...item, negative: apply(item.negative || "") }
             : item,
         ),
       );
@@ -1207,7 +1255,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   function scheduleRightPanelClose() {
     // 外观设置开启「关闭右侧栏自动折叠」后，鼠标离开不再自动收起，
     // 只保留折叠按钮的手动折叠。
-    if (rightPanelResizing.current || layoutEditorOpen || keepRightPanelOpen) return;
+    if (rightPanelResizing.current || layoutEditorOpen || keepRightPanelOpen || customWorkspace || nlwLayout) return;
     if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
     rightPanelCloseTimer.current = window.setTimeout(() => {
       setRightPanelCollapsed(true);
@@ -1290,8 +1338,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         controlModel,
         upscaleModel,
         charactersEnabled,
-        characters: characters.map(({ prompt: characterPrompt, centerX, centerY }) => ({
+        characters: characters.map(({ prompt: characterPrompt, negative: characterNegative, centerX, centerY }) => ({
           prompt: characterPrompt,
+          ...(characterNegative ? { negative: characterNegative } : {}),
           centerX,
           centerY,
         })),
@@ -1319,6 +1368,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (!mobilePanel && !mobileToolsOpen && !menuOpen) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      if ((event.target as Element).closest?.(".rgs-panel, [data-replica-menu]")) return;
       event.preventDefault();
       setMobilePanel(false);
       setMobileToolsOpen(false);
@@ -1353,7 +1403,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     // 异步应用，避免在 effect 内同步 setState 触发级联渲染。
     const timer = window.setTimeout(() => {
       if (parsed.left) setClassicLeftWidth(clampPanel(parsed.left, 240, 520));
-      if (parsed.right) setRightWidth(clampPanel(parsed.right, 200, 460));
+      if (parsed.right) setClassicRightWidth(clampPanel(parsed.right, 200, 460));
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -1414,7 +1464,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const timer = window.setTimeout(() => {
       setCustomLayout(saved);
       setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
-      setRightWidth(clampPanel(saved.rightWidth, 200, 460));
+      setClassicRightWidth(clampPanel(saved.rightWidth, 200, 460));
       setRightPanelCollapsed(saved.rightCollapsed);
     }, 0);
     return () => window.clearTimeout(timer);
@@ -1422,8 +1472,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("lfn-nai-left-width"));
     if (!saved) return;
-    const timer = window.setTimeout(() => setNaiLeftWidth(clampPanel(saved, 240, 520)), 0);
+    const timer = window.setTimeout(() => setNaiLeftWidth(clampPanel(saved, 320, 560)), 0);
     return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem("lfn-nlw-panel-widths") || "null") as { left?: number; right?: number } | null;
+      if (!saved) return;
+      const timer = window.setTimeout(() => {
+        if (saved.left) setNlwLeftWidth(clampPanel(saved.left, 320, 560));
+        if (saved.right) setNlwRightWidth(clampPanel(saved.right, 200, 520));
+      }, 0);
+      return () => window.clearTimeout(timer);
+    } catch { /* Invalid panel preferences fall back to their defaults. */ }
   }, []);
 
   // 超分：读取源图真实尺寸，用于档位费用展示、超限拦截与 2x 输出尺寸提示。
@@ -1449,7 +1511,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   function savePanelWidths(left: number, right: number) {
     if (naiLayout) window.localStorage.setItem("lfn-nai-left-width", String(left));
-    window.localStorage.setItem("lfn-layout", JSON.stringify({ left: naiLayout ? classicLeftWidth : left, right }));
+    else if (nlwLayout) window.localStorage.setItem("lfn-nlw-panel-widths", JSON.stringify({ left, right }));
+    else window.localStorage.setItem("lfn-layout", JSON.stringify({ left, right }));
     if (customWorkspace) {
       const nextLayout = { ...customLayout, leftWidth: left, rightWidth: right };
       setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
@@ -1494,10 +1557,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     function move(pointer: PointerEvent) {
       const delta = pointer.clientX - startX;
       if (side === "left") {
-        latestLeft = clampPanel(startLeft + delta, 240, 520);
+        latestLeft = clampPanel(startLeft + delta, replicaLayout ? 320 : 240, replicaLayout ? 560 : 520);
         setLeftWidth(latestLeft);
       } else {
-        latestRight = clampPanel(startRight - delta, 200, 460);
+        latestRight = clampPanel(startRight - delta, 200, nlwLayout ? Math.max(200, Math.min(520, window.innerWidth - leftWidth - 400)) : 460);
         setRightWidth(latestRight);
       }
     }
@@ -1545,8 +1608,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     side: "left" | "right" | "dock",
     event: React.KeyboardEvent<HTMLDivElement>,
   ) {
-    const bounds = side === "left" ? { min: 240, max: 520 } : { min: 200, max: 460 };
     const current = side === "left" ? leftWidth : rightWidth;
+    const min = side === "left" ? replicaLayout ? 320 : 240 : 200;
+    const max = side === "left" ? replicaLayout ? 560 : 520 : nlwLayout ? 520 : 460;
+    const bounds = { min, max };
     let next = current;
     if (event.key === "ArrowLeft") next = current - 16;
     if (event.key === "ArrowRight") next = current + 16;
@@ -2668,8 +2733,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   const modelModeControls = (
-    <div className="space-y-3">
-      {/* 与模型行共用同一 grid（minmax(0,1fr) 68px），两个下拉按钮宽度一致 */}
+    <div className="studio-model-controls space-y-3">
       <div className="nai-model-mode-row">
         <Control label="模型来源">
           <PopupSelect
@@ -2686,8 +2750,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             ariaLabel="模型来源"
           />
         </Control>
-        {/* 与「模式」按钮同占位：占满 68px 列、40px 高、文字居中，与下拉框底对齐 */}
-        <Link href="/settings" className="flex h-10 items-center justify-center self-end text-xs font-semibold text-[var(--rose)] hover:underline">
+        <Link href="/settings" className="studio-model-source-management flex h-10 items-center justify-center self-end text-xs font-semibold text-[var(--rose)] hover:underline">
           管理来源
         </Link>
       </div>
@@ -2728,16 +2791,33 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>
   );
 
-  const controls = (
+  const directorTools = (
+    <div className="nai-director-grid">
+      {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
+        <button
+          type="button"
+          key={item.id}
+          className={`nai-director-button${operation === item.id ? " is-active" : ""}`}
+          aria-pressed={operation === item.id}
+          onClick={() => selectOperation(item.id)}
+        >
+          <WandSparkles size={14} />
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+
+  const legacyControls = (
     <>
       <div
         className={
-          naiLayout
+          naiLayout || customWorkspace
             ? "nai-toolbar flex shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2.5"
-            : "flex items-center justify-between border-b border-[var(--line)] px-4 py-3"
+            : "studio-controls-header flex items-center justify-between border-b border-[var(--line)] px-4 py-3"
         }
       >
-        {!naiLayout && (
+        {!naiLayout && !customWorkspace && (
           <b className="flex items-center gap-2 text-sm">
             <SlidersHorizontal size={16} /> 图像设置
           </b>
@@ -2748,7 +2828,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           aria-label="重置所有生成参数"
           disabled={generating}
           className={
-            naiLayout
+            naiLayout || customWorkspace
               ? "grid h-9 w-9 shrink-0 place-items-center rounded border border-[var(--line)] bg-white disabled:cursor-not-allowed disabled:opacity-50"
               : "disabled:cursor-not-allowed disabled:opacity-50"
           }
@@ -2793,7 +2873,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         >
           <RotateCcw size={16} />
         </button>
-        {naiLayout && (
+        {(naiLayout || customWorkspace) && (
           <>
             <div className="nai-wallet flex min-w-0 flex-1 items-center justify-center gap-1.5">
               <div
@@ -2837,8 +2917,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               {modelModeControls}
             </section>
           ) : customWorkspace ? (
-            <section className="nai-model-mode-persistent" aria-label="模型与模式">
-              <div className="nai-section-heading">模型与模式</div>
+            <section className="replica-model-controls" aria-label="模型与模式">
               {modelModeControls}
             </section>
           ) : (
@@ -2848,18 +2927,26 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           )}
         </div>
         {sidebarPromptLayout && (
-          <div data-layout-module="prompt" style={customModuleStyle("prompt")}>
+          <div data-layout-module="prompt" data-layout-collapsed={customWorkspace && customPromptCollapsed ? "true" : undefined} style={customModuleStyle("prompt", customPromptCollapsed)}>
             {layoutModuleTools("prompt")}
-            <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
+            {customWorkspace ? <>
+              <ReplicaPromptEditor variant="nai" prompt={prompt} negative={negative} model={model} assistantModel={assistantModel}
+                onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
+                collapsed={customPromptCollapsed} onCollapsedChange={setCustomPromptCollapsed}
+                onAssistant={(text) => { setAgentInput(text); if (window.innerWidth < 1024) setMobileToolsOpen(true); else enterDockPane("agent"); }} />
+              {["generate", "img2img", "inpainting"].includes(operation) && <ReplicaCharacters variant="nai" model={model}
+                characters={characters} setCharacters={setCharacters} charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
+                aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition} />}
+            </> : <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
               {promptFields}
               {characterControls}
-            </PanelSection>
+            </PanelSection>}
           </div>
         )}
 
         <div data-layout-module="image" style={customModuleStyle("image")}>
           {layoutModuleTools("image")}
-          {naiLayout ? (
+          {customWorkspace ? <ReplicaImageSize variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : naiLayout ? (
             <PanelSection title="图像设置" icon={<Images size={16} />}>
               <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
             </PanelSection>
@@ -2920,10 +3007,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         </div>
         {!sidebarPromptLayout && generationParameters}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
-        {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">{layoutModuleTools("sampling")}{generationParameters}</div>}
+        {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">
+          {layoutModuleTools("sampling")}
+          {customWorkspace ? <ReplicaGenerationSettings variant="nai" model={model} steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+            setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
+            count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : generationParameters}
+        </div>}
         <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
           {layoutModuleTools("operations")}
-          {generationModes.has(operation) && (
+          {!customWorkspace && generationModes.has(operation) && (
             <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
               {!naiLayout && <NumberField
@@ -3112,13 +3204,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         </div>
         <div
           data-layout-module="references"
-          style={customWorkspace ? {
-            ...customModuleStyle("references"),
-            display: customLayout.visibleModules.references || customLayout.visibleModules.director ? undefined : "none",
-          } : undefined}
+          data-layout-collapsed={customWorkspace && !customReferenceOpen ? "true" : undefined}
+          style={customModuleStyle("references", !customReferenceOpen)}
         >
           {layoutModuleTools("references")}
-          <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
+          {customWorkspace ? <PanelSection title="参考图片" icon={<ImagePlus size={16} />} open={customReferenceOpen} onOpenChange={setCustomReferenceOpen}>
+            <ReplicaNaiReference hideGroupLabel operation={operation} source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
+              onSelectOperation={(next) => selectOperation(next as Operation)} onUpload={(file) => { setOperation("img2img"); void importImageAndParameters(file); }}
+              onOpenEditor={() => void openImageEditor("canvas")} strength={strength} setStrength={setStrength} />
+            <div className="custom-reference-more"><button type="button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
+              {operation !== "generate" && <button type="button" onClick={() => selectOperation("generate")}><Sparkles size={15} /> 返回文生图</button>}</div>
+          </PanelSection> : <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
             <div className="nai-reference-grid">
               <button
                 type="button"
@@ -3164,25 +3260,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 />
               </Control>
             </div>
-            <div className="mt-3">
-              <div className="nai-section-heading">导演工具</div>
-              <div className="nai-director-grid">
-                {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={`nai-director-button${operation === item.id ? " is-active" : ""}`}
-                    aria-pressed={operation === item.id}
-                    onClick={() => selectOperation(item.id)}
-                  >
-                    <WandSparkles size={14} />
-                    <span>{item.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </PanelSection>
+            {!customWorkspace && <div className="mt-3"><div className="nai-section-heading">导演工具</div>{directorTools}</div>}
+          </PanelSection>}
         </div>
+        {customWorkspace && (
+          <div data-layout-module="director" data-layout-collapsed={!customDirectorOpen ? "true" : undefined} style={customModuleStyle("director", !customDirectorOpen)}>
+            {layoutModuleTools("director")}
+            <PanelSection title="图像工具" icon={<WandSparkles size={16} />} open={customDirectorOpen} onOpenChange={setCustomDirectorOpen}>
+              <div className="custom-image-tools">{[...referenceOperations, ...toolOperations.filter((item) => !item.value.startsWith("director-")).map((item) => ({ id: item.value, label: item.label }))].map((item) => <button type="button" key={item.id} onClick={() => selectOperation(item.id as Operation)}>{item.label}</button>)}</div>
+              {directorTools}
+            </PanelSection>
+          </div>
+        )}
       </div>
     </>
   );
@@ -3293,8 +3382,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       operation,
       providerId,
       model,
-      prompt,
-      negative_prompt: negative,
+      prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
+      negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
       width,
       height,
       steps,
@@ -3309,6 +3398,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     // 质量词 / UC 预设注入：NAI 默认档交给服务端（qualityToggle + ucPreset），
     // 其余档位按 Aaalice 语义本地注入（质量词→正向末尾，UC→负向前缀），
     // 并关闭服务端同名注入避免重复。
+    if (composedPromptLayout) {
+      // The editor has already composed the selected quality and UC presets.
+      base.qualityToggle = false;
+      base.ucPreset = 3;
+    } else {
     if (qualityTier === "nai-default") {
       base.qualityToggle = true;
     } else {
@@ -3331,6 +3425,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       );
       base.ucPreset = 3; // none：UC 已本地注入，关闭服务端追加
     }
+    }
     // 多角色：文生图与图生图/局部重绘（带参考图）都可与角色提示词同请求共存，
     // NAI 原生 API 的 v4_prompt.char_captions 与 image/reference 独立编码。
     if (
@@ -3342,7 +3437,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         .filter((character) => character.prompt.trim())
         .map((character) => ({
           prompt: character.prompt.trim(),
-          negative: character.negative.trim(),
+          negativePrompt: character.negative?.trim() || "",
           center: { x: character.centerX, y: character.centerY },
         }));
       base.use_coords = !aiAutoPosition;
@@ -4103,7 +4198,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   // 会话状态（钱包）：左侧导航栏展开态、NAI overlay 与移动抽屉共用。
   const walletBlock = (
-          <div className="p-4">
+          <div className="studio-session-state p-4" data-layout-module="session">
             <b className="text-sm">会话状态</b>
             <div className="mt-3 space-y-3 text-xs">
               <div className="flex justify-between">
@@ -4171,6 +4266,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     <div className="studio-dock-split-host flex min-h-0 flex-1 flex-col">
       {historyDockOpen ? (
         <div
+          data-layout-module="history"
           className="flex min-h-0 flex-col"
           style={{ flex: agentDockOpen ? `0 0 ${dockPct(1 - agentDockFraction)}` : "1 1 0%" }}
         >
@@ -4274,7 +4370,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     <>
       {sessionHistoryPanel}
       {!naiLayout && (
-        <div className="border-b border-[var(--line)] p-4">
+        <div className="studio-custom-nav border-b border-[var(--line)] p-4" data-layout-module="navigation">
           <b className="text-sm">创作中心</b>
           <div className="mt-3">{creativeCenterLinks}</div>
         </div>
@@ -4284,8 +4380,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </>
   );
 
-  const naiGenerationFooter = (
-    <div className="nai-generation-footer">
+  const legacyGenerationFooter = (
+    <div className="nai-generation-footer" data-layout-module="generate">
       {!sidebarPromptLayout && generationParameters}
       {operation !== "suggest-tags" && providerId === "newapi" && (
         <NaiBalanceMeter
@@ -4339,15 +4435,79 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>
   );
 
+  const assistantPanel = agentBlockInner(false);
+
+  const replicaVariant = naiLayout ? "nai" as const : "nlw" as const;
+  const replicaBalance = providerId === "newapi"
+    ? !signedIn ? "体验模式" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
+    : "个人 Key";
+  const controls = replicaLayout ? <ReplicaControls variant={replicaVariant}
+    prompt={prompt} negative={negative} model={model} operation={operation} assistantModel={assistantModel}
+    onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
+    onAssistant={(text) => { setAgentInput(text); if (window.innerWidth < 1024) setMobileToolsOpen(true); else if (naiLayout) setNaiToolsOpen(true); else setReplicaAssistantOpenRequest(value => value + 1); }}
+    width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount}
+    seed={seed} setSeed={setSeed} characters={characters} setCharacters={setCharacters}
+    charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
+    aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition}
+    source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
+    onUpload={(file, nextOperation) => {
+      const validation = validateUploadFile(file);
+      if (validation) { setNotice(validation); return; }
+      const reader = new FileReader();
+      reader.onerror = () => setNotice("读取图片失败，请重试。");
+      reader.onload = () => {
+        if (typeof reader.result !== "string") return;
+        setSource({ data: reader.result, name: file.name }); setMask(null);
+        setOperation(nextOperation as Operation);
+        if (nextOperation === "inpainting" || nextOperation === "edits") {
+          const inpaintModel = inpaintModelFor(model);
+          if (inpaintModel) setModel(inpaintModel);
+        }
+        if (nextOperation === "suggest-tags") setAgentImage(reader.result);
+        setNotice("已载入图片。");
+      };
+      reader.readAsDataURL(file);
+    }}
+    onSelectOperation={(value) => selectOperation(value as Operation)}
+    onOpenEditor={() => void openImageEditor("canvas")} onOpenMaskEditor={() => void openImageEditor("inpaint")} onGallery={(value) => { setReplicaGalleryOperation(value as Operation); setGalleryPickerOpen(true); }}
+    onReverse={() => { if (source) { setAgentImage(source.data); void askTagAssistant("请分析这张图片并给出可用于图像生成的英文标签。"); } }}
+    onMenu={() => setMenuOpen(true)} onCollapse={() => setNlwLeftCollapsed(true)}
+    modelControls={modelModeControls} balance={replicaBalance}
+    strength={strength} setStrength={setStrength} vibeStrength={vibeStrength} setVibeStrength={setVibeStrength}
+    vibeInformationExtracted={vibeInformationExtracted} setVibeInformationExtracted={setVibeInformationExtracted}
+    referenceType={referenceType} setReferenceType={setReferenceType}
+  /> : legacyControls;
+  const naiGenerationFooter = replicaLayout || customWorkspace ? <ReplicaGenerationFooter variant={customWorkspace ? "nai" : replicaVariant}
+    settings={customWorkspace ? <div className="custom-generation-meta"><span>{count} 张图像</span><button type="button" aria-label="切换提交方式" onClick={() => setBatchMode(batchMode === "once" ? "sequential" : "once")}>{batchMode === "once" ? "一次性" : "分批次"}</button></div> : <ReplicaGenerationSettings variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls}
+      steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+      setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
+      count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
+    generating={generating} disabled={layoutEditorOpen} progress={streamProgress || batchProgress}
+    operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
+    balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
+    count={count} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={() => void runOperation()}
+  /> : legacyGenerationFooter;
+  function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
+    if (nextOperation === "reuse-parameters") {
+      setPrompt(item.prompt); setNegative(item.negative); setWidth(item.width); setHeight(item.height);
+      setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null ? "" : String(item.seed)); setOperation("generate");
+    } else applyImageAsSource(item.image, nextOperation as Operation);
+  }
+  const replicaHistoryPanel = <ReplicaHistory items={sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
+    onUse={reuseHistory} onDelete={(index) => setSessionHistory(current => current.filter((_, itemIndex) => index !== itemIndex))} />;
+
   const displayedImages = images.length ? images : previewDrafts;
 
   return (
     <main
       data-studio-layout={naiLayout ? "nai" : "classic"}
       data-workspace-layout={!naiLayout ? (customWorkspace ? "custom" : preferences.workspaceLayout) : undefined}
+      data-replica-studio={replicaLayout ? replicaVariant : undefined}
+      data-has-images={displayedImages.length > 0 ? "true" : "false"}
+      data-left-collapsed={nlwLayout && nlwLeftCollapsed ? "true" : undefined}
       className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
     >
-      {!naiLayout && (
+      {!replicaLayout && (
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
           <div className="flex items-center gap-3">
             <Link href="/" aria-label="返回 Love for NAI 首页" className="flex items-center gap-3">
@@ -4455,21 +4615,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         style={
           {
             "--lfn-left": `${leftWidth}px`,
-            "--lfn-right": `${rightWidth}px`,
-            "--lfn-nav-rail": navRailExpanded ? "196px" : "56px",
+            "--lfn-right": `${nlwLayout && nlwDockCollapsed ? 40 : rightWidth}px`,
+            "--lfn-nav-rail": navRailExpanded ? "220px" : "56px",
           } as React.CSSProperties
         }
       >
-        {customWorkspace && !layoutEditorOpen && <Link className="layout-editor-entry" href="/image?layoutEditor=1"><Move size={14} />编辑布局</Link>}
-        {!naiLayout && !layoutEditorOpen && (
+        {nlwLayout && <ReplicaNavigation onMenu={() => setMenuOpen(true)} onAssistant={() => setReplicaAssistantOpenRequest(value => value + 1)} />}
+        {nlwLayout && nlwLeftCollapsed && <button type="button" className="replica-left-rail hidden" onClick={() => setNlwLeftCollapsed(false)} aria-label="展开参数栏"><ChevronRight size={18} />参数</button>}
+        {customWorkspace && !layoutEditorOpen && <Link className="layout-editor-entry" href="/image/setting/layout"><Move size={14} />编辑布局</Link>}
+        {!replicaLayout && !layoutEditorOpen && (
           // 最左侧功能导航栏（new-api/Aaalice 式）：折叠为纯图标，展开显示
           // 创作中心与会话状态；不随悬停自动收起。
           <aside
             className={`studio-nav-rail panel hidden min-h-0 flex-col border-y-0 border-l-0 lg:flex${navRailExpanded ? " is-expanded" : ""}`}
           >
+            <div className="studio-nav-header">
             <button
               type="button"
-              className="tools-panel-collapse"
+              className="studio-nav-toggle"
               aria-label={navRailExpanded ? "折叠导航栏" : "展开导航栏"}
               aria-expanded={navRailExpanded}
               onClick={() => {
@@ -4480,14 +4643,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             >
               {navRailExpanded ? <PanelLeftClose size={15} /> : <PanelLeft size={15} />}
             </button>
+            {navRailExpanded && <b className="text-sm">创作中心</b>}
+            </div>
             {navRailExpanded ? (
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                <div className="p-4">
-                  <b className="text-sm">创作中心</b>
-                  <div className="mt-3">{creativeCenterLinks}</div>
+              <>
+                <div className="studio-nav-links min-h-0 flex-1 overflow-y-auto">
+                  {creativeCenterLinks}
                 </div>
                 {walletBlock}
-              </div>
+              </>
             ) : (
               <nav className="tools-icon-rail" aria-label="功能入口">
                 {(isAdmin
@@ -4511,15 +4675,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           aria-orientation="vertical"
           aria-label="调整左侧面板宽度"
           aria-valuenow={leftWidth}
-          aria-valuemin={240}
-          aria-valuemax={520}
+          aria-valuemin={replicaLayout ? 320 : 240}
+          aria-valuemax={replicaLayout ? 560 : 520}
           tabIndex={0}
           className="panel-resizer hidden lg:block"
           onPointerDown={(event) => startResize("left", event)}
           onKeyDown={(event) => resizePanelWithKeyboard("left", event)}
-          onDoubleClick={() => { setLeftWidth(naiLayout ? 400 : 310); savePanelWidths(naiLayout ? 400 : 310, rightWidth); }}
+          onDoubleClick={() => { const value = naiLayout ? 447 : nlwLayout ? 400 : 310; setLeftWidth(value); savePanelWidths(value, rightWidth); }}
         />
-        <section className="studio-canvas flex min-h-0 flex-col">
+        <section className="studio-canvas flex min-h-0 flex-col" data-layout-module="canvas">
           {naiLayout && (
             <button
               type="button"
@@ -4624,7 +4788,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             )}
           <div
             ref={positionOverlayRef}
-            className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5"
+            className={`relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5${replicaLayout ? " replica-preview-host" : ""}`}
           >
             {charactersEnabled && !aiAutoPosition && ["generate", "img2img", "inpainting"].includes(operation) && (
               // 手动定位坐标系：X 轴=水平滑块，Y 轴=垂直滑块，多角色多色十字线，
@@ -4654,7 +4818,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ))}
               </div>
             )}
-            <div className="pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
+            <div className="studio-mode-badge pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
               {height} · {count} 张
             </div>
@@ -4674,6 +4838,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   </button>
                 ))}
               </div>
+            ) : replicaLayout ? (
+              <ReplicaMedia variant={replicaVariant} images={displayedImages} width={width} height={height} seed={seed}
+                progress={generating ? streamProgress || batchProgress || "正在生成…" : undefined}
+                onOpen={setLightboxIndex} onUse={(image, value) => applyImageAsSource(image, value as Operation)} />
             ) : displayedImages.length ? (
               <div className="workspace-results-scroll">
                 <div className="workspace-result-hero">
@@ -4818,29 +4986,40 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-label="调整右侧面板宽度"
             aria-valuenow={rightWidth}
             aria-valuemin={200}
-            aria-valuemax={460}
+            aria-valuemax={nlwLayout ? 520 : 460}
             tabIndex={0}
             className="panel-resizer hidden lg:block"
+            onMouseEnter={nlwLayout ? undefined : hoverRightPanel}
+            onMouseLeave={nlwLayout ? undefined : scheduleRightPanelClose}
+            onFocus={nlwLayout ? undefined : hoverRightPanel}
+            onBlur={nlwLayout ? undefined : scheduleRightPanelClose}
             onPointerDown={(event) => startResize("right", event)}
             onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
-            onDoubleClick={() => { setRightWidth(230); savePanelWidths(leftWidth, 230); }}
+            onDoubleClick={() => { const value = nlwLayout ? 280 : 230; setRightWidth(value); savePanelWidths(leftWidth, value); }}
           />
         )}
         <aside
           className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${
-            naiLayout
+            nlwLayout ? " is-replica-dock" : naiLayout
               ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
-              : rightPanelCollapsed && !layoutEditorOpen
+              : toolsPanelCollapsed
                 ? " is-collapsed"
                 : ""
           }`}
-          onMouseEnter={naiLayout ? undefined : hoverRightPanel}
-          onMouseLeave={naiLayout ? undefined : scheduleRightPanelClose}
-          onFocus={naiLayout ? undefined : hoverRightPanel}
-          onBlur={naiLayout ? undefined : scheduleRightPanelClose}
+          onMouseEnter={replicaLayout ? undefined : hoverRightPanel}
+          onMouseLeave={replicaLayout ? undefined : scheduleRightPanelClose}
+          onFocus={replicaLayout ? undefined : hoverRightPanel}
+          onBlur={replicaLayout ? undefined : scheduleRightPanelClose}
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
         >
+          {nlwLayout ? <ReplicaRightDock history={replicaHistoryPanel} assistant={assistantPanel} assistantOpenRequest={replicaAssistantOpenRequest} onCollapsedChange={setNlwDockCollapsed} /> : <>
+          {!naiLayout && !toolsPanelCollapsed && !layoutEditorOpen && (
+            <div className="studio-tools-topbar">
+              <b>功能区</b>
+              <button type="button" aria-label="折叠右侧面板" onClick={collapseRightDock}><PanelRightClose size={16} /></button>
+            </div>
+          )}
           {naiLayout && (
             <button
               type="button"
@@ -4853,7 +5032,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </button>
           )}
           {!naiLayout ? (
-            rightPanelCollapsed && !layoutEditorOpen ? (
+            toolsPanelCollapsed ? (
               <div className="right-dock-rail" role="toolbar" aria-label="停靠面板入口">
                 <button
                   type="button"
@@ -4880,9 +5059,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </button>
               </div>
             ) : (
-              desktopRightPanel
+              customWorkspace ? toolsPanel : desktopRightPanel
             )
           ) : toolsPanel}
+          </>}
         </aside>
       </div>
       {inlineChatMenu && (
@@ -4977,7 +5157,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </aside>
         </div>
       )}
-      {naiLayout && menuOpen && (
+      {(replicaLayout || customWorkspace) && menuOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/35"
           onClick={() => setMenuOpen(false)}
@@ -5103,6 +5283,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               className="nai-menu-item"
               onClick={() => {
                 setMenuOpen(false);
+                if (window.matchMedia("(max-width: 767px)").matches) {
+                  setMobileToolsOpen(true);
+                } else {
+                  enterDockPane("agent");
+                }
                 window.setTimeout(() => {
                   document
                     .querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
@@ -5194,7 +5379,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <GalleryPicker
               returnDataUrl
               onSelect={(dataUrl) => {
-                applyImageAsSource(dataUrl, "img2img");
+                applyImageAsSource(dataUrl, replicaLayout ? replicaGalleryOperation : "img2img");
                 setGalleryPickerOpen(false);
               }}
             />
@@ -5906,20 +6091,25 @@ function PanelSection({
   icon,
   children,
   defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   title: string;
   icon: React.ReactNode;
   children: React.ReactNode;
   defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [localOpen, setOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? localOpen;
   return (
     <section className={`panel-section${open ? " is-open" : ""}`}>
       <button
         type="button"
         className="panel-section-head"
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => { setOpen(!open); onOpenChange?.(!open); }}
       >
         <span className="panel-section-icon">{icon}</span>
         <b>{title}</b>

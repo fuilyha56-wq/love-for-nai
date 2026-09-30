@@ -1,0 +1,25 @@
+.replica-right-dock { box-sizing: border-box; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); font-family: var(--font-sans); }
+.replica-right-dock.is-collapsed { width: 40px; }
+.replica-dock-panels { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; }
+.replica-dock-panels[hidden], .replica-dock-content[hidden] { display: none; }
+.replica-dock-panels.is-split { display: grid; grid-template-rows: minmax(0, 4fr) 8px minmax(0, 7fr); }
+.replica-dock-pane { display: flex; min-width: 0; min-height: 0; flex: 0 0 44px; flex-direction: column; overflow: hidden; }
+.replica-dock-pane.is-open { flex: 1 1 0; }
+.replica-dock-heading { display: flex; width: 100%; min-height: 44px; flex: none; align-items: center; gap: 10px; padding: 0 14px; border: 0; background: var(--surface); color: inherit; font-family: var(--font-sans); font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
+.replica-dock-heading:hover { background: color-mix(in srgb, var(--surface) 90%, var(--ink) 10%); }
+.replica-dock-heading > svg { flex: none; }
+.replica-dock-heading:focus-visible, .replica-dock-rail > button:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+.replica-dock-content { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
+.replica-dock-content > * { max-width: 100%; }
+.replica-dock-splitter { position: relative; height: 8px; min-height: 8px; flex: 0 0 8px; background: var(--panel); cursor: row-resize; touch-action: none; user-select: none; }
+.replica-dock-splitter::after { position: absolute; top: 3px; right: calc(50% - 18px); left: calc(50% - 18px); height: 2px; border-radius: 1px; background: var(--muted); content: ""; }
+.replica-dock-splitter:is(:hover, :focus-visible) { outline: 0; background: var(--surface); }
+.replica-dock-splitter:is(:hover, :focus-visible)::after { background: var(--rose); }
+.replica-right-dock .replica-dock-rail { display: grid; width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden; }
+.replica-right-dock .replica-dock-rail > button { box-sizing: border-box; display: flex; width: 100%; min-width: 0; max-width: none; height: 100%; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 10px; overflow: hidden; padding: 8px 0; border: 0; border-radius: 0; background: var(--panel); color: var(--muted); font-family: var(--font-sans); line-height: 1; text-align: center; writing-mode: horizontal-tb; cursor: pointer; }
+.replica-right-dock .replica-dock-rail > button + button { border-top: 1px solid var(--line); background: var(--surface); }
+.replica-right-dock .replica-dock-rail > button:hover { background: color-mix(in srgb, var(--surface) 90%, var(--ink) 10%); color: var(--rose); }
+.replica-right-dock .replica-dock-rail > button > svg { display: block; width: 20px; height: 20px; flex: 0 0 20px; }
+/* Stack upright glyphs explicitly; inherited writing-mode cannot turn them sideways. */
+.replica-right-dock .replica-dock-rail .replica-dock-rail-label { display: flex; width: auto; min-width: 0; height: auto; flex: none; flex-direction: column; align-items: center; gap: 3px; margin: 0; padding: 0; font-family: var(--font-sans); font-size: 12px; line-height: 1; letter-spacing: 0; white-space: normal; writing-mode: horizontal-tb; text-orientation: upright; pointer-events: none; }
+.replica-right-dock .replica-dock-rail .replica-dock-rail-label > span { display: block; width: auto; min-width: 0; height: auto; flex: none; margin: 0; padding: 0; line-height: 1; letter-spacing: 0; writing-mode: horizontal-tb; text-orientation: upright; }
