@@ -947,6 +947,52 @@ html[data-theme="night"] .mask-editor-number {
   background: var(--rose);
 }
 /* 右侧停靠栏（Aaalice 式）：历史/助手独立折叠恢复条 + 上下可拖分割条 */
+.right-dock-rail {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 42px 4px 8px;
+}
+.right-dock-rail-item {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.right-dock-rail-item span {
+  writing-mode: vertical-rl;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 3px;
+  pointer-events: none;
+}
+.right-dock-rail-item:hover {
+  color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 6%, transparent);
+}
+.right-dock-rail-divider {
+  flex: 0 0 1px;
+  background: var(--line);
+  margin: 6px 0;
+}
+/* 右缘竖排入口的气泡向左弹，避免出屏 */
+.right-dock-rail .right-dock-rail-item:hover::after,
+.right-dock-rail .right-dock-rail-item:active::after {
+  left: auto;
+  right: calc(100% + 8px);
+  top: 50%;
+  bottom: auto;
+  translate: 0 -50%;
+}
 .right-dock-strip {
   display: flex;
   flex: 0 0 30px;
