@@ -1548,3 +1548,44 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
   outline: none;
 }
 .tag-chip.is-dragging { opacity: 0.4; }
+/* 多角色手动定位坐标系（画布叠加层）：X=水平滑块，Y=垂直滑块，多角色多色 */
+.character-position-overlay { position: absolute; inset: 0; z-index: 20; pointer-events: none; }
+.character-position-axis-x,
+.character-position-axis-y {
+  position: absolute;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  font-size: 10px;
+  color: var(--muted);
+}
+.character-position-axis-x { top: 4px; right: 8px; }
+.character-position-axis-y { top: 26px; right: 8px; }
+.char-pos-line { position: absolute; opacity: 0.55; pointer-events: none; }
+.char-pos-line-v { top: 0; bottom: 0; width: 1px; background: var(--char-color); }
+.char-pos-line-h { left: 0; right: 0; height: 1px; background: var(--char-color); }
+.char-pos-dot {
+  position: absolute;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  translate: -50% -50%;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: var(--char-color);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  font-size: 10px;
+  font-weight: 700;
+  color: #fff;
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+}
+.char-pos-dot:active { cursor: grabbing; }
+.char-color-0 { --char-color: #a83a4c; }
+.char-color-1 { --char-color: #2b6cb0; }
+.char-color-2 { --char-color: #2f855a; }
+.char-color-3 { --char-color: #b7791f; }
+.char-color-4 { --char-color: #6b46c1; }
+.char-color-5 { --char-color: #b83280; }
