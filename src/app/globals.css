@@ -952,7 +952,7 @@ html[data-theme="night"] .mask-editor-number {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  padding: 42px 4px 8px;
+  padding: 34px 0 0;
 }
 .right-dock-rail-item {
   display: flex;
@@ -964,25 +964,34 @@ html[data-theme="night"] .mask-editor-number {
   gap: 8px;
   border: 0;
   background: transparent;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--ink) 60%, transparent);
   cursor: pointer;
   transition: color var(--motion-fast) ease, background var(--motion-fast) ease;
 }
+.right-dock-rail-item svg {
+  width: 20px;
+  height: 20px;
+}
 .right-dock-rail-item span {
   writing-mode: vertical-rl;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 3px;
+  font-size: 12px;
+  letter-spacing: 2px;
   pointer-events: none;
 }
 .right-dock-rail-item:hover {
+  color: color-mix(in srgb, var(--ink) 95%, transparent);
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+}
+.right-dock-rail-item.is-active {
   color: var(--rose);
-  background: color-mix(in srgb, var(--rose) 6%, transparent);
+  background: color-mix(in srgb, var(--surface) 25%, transparent);
+}
+.right-dock-rail-item.is-active span {
+  font-weight: 600;
 }
 .right-dock-rail-divider {
   flex: 0 0 1px;
   background: var(--line);
-  margin: 6px 0;
 }
 /* 右缘竖排入口的气泡向左弹，避免出屏 */
 .right-dock-rail .right-dock-rail-item:hover::after,
