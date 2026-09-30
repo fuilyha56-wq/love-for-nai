@@ -952,7 +952,7 @@ html[data-theme="night"] .mask-editor-number {
   flex: 1;
   min-height: 0;
   flex-direction: column;
-  padding: 34px 0 0;
+  padding: 8px 0;
 }
 .right-dock-rail-item {
   display: flex;

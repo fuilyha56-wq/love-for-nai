@@ -1123,6 +1123,25 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
   }
 
+  // 面板折叠按钮（Aaalice collapsePane 语义）：仅剩的最后一块也折叠时，整个右栏收起成竖排入口。
+  function collapseDockPane(pane: "history" | "agent") {
+    if (pane === "history") {
+      setHistoryDockOpen(false);
+      if (!agentDockOpen) collapseRightDock();
+    } else {
+      setAgentDockOpen(false);
+      if (!historyDockOpen) collapseRightDock();
+    }
+  }
+
+  function collapseRightDock() {
+    setRightPanelCollapsed(true);
+    if (customWorkspace) {
+      const nextLayout = { ...customLayout, rightCollapsed: true };
+      setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
+    }
+  }
+
   // 内联聊天：文本域右键（有选中且已登录）弹出 AI 操作菜单；对话框锚定文本域下方。
   function openInlineChatMenu(
     event: React.MouseEvent<HTMLTextAreaElement>,
@@ -3719,7 +3738,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 <button
                   type="button"
                   data-label="折叠助手面板"
-                  onClick={() => setAgentDockOpen(false)}
+                  onClick={() => collapseDockPane("agent")}
                   className={`text-[var(--muted)] transition-colors hover:text-[var(--rose)]${signedIn ? "" : " ml-auto"}`}
                 >
                   <ChevronsDown size={14} />
@@ -4160,7 +4179,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <button
                 type="button"
                 data-label="折叠历史面板"
-                onClick={() => setHistoryDockOpen(false)}
+                onClick={() => collapseDockPane("history")}
                 className="text-[var(--muted)] transition-colors hover:text-[var(--rose)]"
               >
                 <ChevronsUp size={14} />
@@ -4819,26 +4838,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
         >
-          <button
-            type="button"
-            className="tools-panel-collapse"
-            aria-label={naiLayout ? "关闭历史与标签助手" : rightPanelCollapsed ? "展开功能栏" : "折叠功能栏"}
-            aria-expanded={naiLayout ? naiToolsOpen : !rightPanelCollapsed}
-            onClick={() => {
-              if (naiLayout) {
-                setNaiToolsOpen(false);
-                return;
-              }
-              const next = !rightPanelCollapsed;
-              setRightPanelCollapsed(next);
-              if (customWorkspace) {
-                const nextLayout = { ...customLayout, rightCollapsed: next };
-                setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
-              }
-            }}
-          >
-            {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
-          </button>
+          {naiLayout && (
+            <button
+              type="button"
+              className="tools-panel-collapse"
+              aria-label="关闭历史与标签助手"
+              aria-expanded={naiToolsOpen}
+              onClick={() => setNaiToolsOpen(false)}
+            >
+              <X size={15} />
+            </button>
+          )}
           {!naiLayout ? (
             rightPanelCollapsed && !layoutEditorOpen ? (
               <div className="right-dock-rail" role="toolbar" aria-label="停靠面板入口">
