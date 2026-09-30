@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { outboundFetch } from "@/lib/outbound";
 import { SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
+import { tagZh } from "@/lib/tag-translations";
 
 type DanbooruTag = {
   name: string;
@@ -60,15 +61,19 @@ type TagHit = {
   category: number;
   categoryName: string;
   postCount: number;
+  // 中文翻译（Aaalice 词库勘误表，无翻译时省略）。
+  zh?: string;
 };
 
 function toHit(name: string, category: number, postCount: number): TagHit {
+  const zh = tagZh(name);
   return {
     name,
     displayName: name.replaceAll("_", " "),
     category,
     categoryName: categoryNames[category] || "其他",
     postCount,
+    ...(zh ? { zh } : {}),
   };
 }
 

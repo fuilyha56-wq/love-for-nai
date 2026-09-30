@@ -12,6 +12,8 @@ export type ImageEditorPromptHandoff = {
 
 export type ImageStudioCharacterSnapshot = {
   prompt: string;
+  // 每角色负向提示词（NAI v4_negative_prompt 的 char_caption）。
+  negative?: string;
   centerX: number;
   centerY: number;
 };

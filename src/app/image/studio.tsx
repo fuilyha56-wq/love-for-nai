@@ -89,6 +89,7 @@ import {
 import {
   useCallback,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -261,10 +262,11 @@ async function consumeImageStream(
   const completed = finals.filter(Boolean);
   return doneImages?.length ? doneImages : completed;
 }
-// 多角色：每角色独立 prompt + 画面中心坐标（对齐 NAI Character Prompts）。
+// 多角色：每角色独立 prompt + 负向提示词 + 画面中心坐标（对齐 NAI Character Prompts）。
 type CharacterPromptUi = {
   id: string;
   prompt: string;
+  negative: string;
   centerX: number;
   centerY: number;
 };
@@ -644,7 +646,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [mask, setMask] = useState<Upload | null>(null);
   const [charactersEnabled, setCharactersEnabled] = useState(false);
   const [characters, setCharacters] = useState<CharacterPromptUi[]>([
-    { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
+    { id: "char-1", prompt: "", negative: "", centerX: 0.5, centerY: 0.5 },
   ]);
   const [maskEditorOpen, setMaskEditorOpen] = useState(false);
   // 提示词输入模式（借鉴 Aaalice）：tag 模式 = Danbooru 标签（逗号分隔），
@@ -1130,6 +1132,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setCharacters(saved.characters.map((character, index) => ({
         id: `char-${index}-${Date.now()}`,
         ...character,
+        negative: character.negative ?? "",
       })));
       setFormCacheReady(true);
     }, 0);
@@ -2019,6 +2022,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         suggestedCharacters.map((character, index) => ({
           id: `char-${index}-${Date.now()}`,
           prompt: character.prompt,
+          negative: "",
           centerX: character.centerX,
           centerY: character.centerY,
         })),
@@ -2230,6 +2234,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   )
                 }
               />
+              <input
+                className="field mt-2 h-9 w-full px-2 text-xs"
+                placeholder="该角色的负向提示词（可选），如 bad hands"
+                value={character.negative}
+                onChange={(event) =>
+                  setCharacters((current) =>
+                    current.map((item) =>
+                      item.id === character.id
+                        ? { ...item, negative: event.target.value }
+                        : item,
+                    ),
+                  )
+                }
+              />
               <div className="mt-2 space-y-1.5">
                 {(
                   [
@@ -2279,6 +2297,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   {
                     id: `char-${Date.now()}`,
                     prompt: "",
+                    negative: "",
                     centerX: 0.5,
                     centerY: 0.5,
                   },
@@ -2527,7 +2546,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             setMaskEditorOpen(false);
             setCharactersEnabled(false);
             setCharacters([
-              { id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 },
+              { id: "char-1", prompt: "", negative: "", centerX: 0.5, centerY: 0.5 },
             ]);
             setReferenceType("character&style");
             setControlModel("hed");
@@ -3091,6 +3110,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         .filter((character) => character.prompt.trim())
         .map((character) => ({
           prompt: character.prompt.trim(),
+          negative: character.negative.trim(),
           center: { x: character.centerX, y: character.centerY },
         }));
     }
@@ -5791,16 +5811,22 @@ function Prompt({
   tools?: React.ReactNode;
   autocomplete?: boolean;
 }) {
+  // 外层用 div：工具按钮放进 <label> 时，label 的隐式控件变成第一个
+  // button（骰子），点 Tag/清空会被 label 激活行为连带触发骰子。
+  const fieldId = useId();
   return (
-    <label
+    <div
       className={`rounded border bg-white p-3 ${accent ? "border-[#c99ba3]" : "border-[var(--line)]"}`}
     >
-      <span className="mb-2 flex items-center gap-2 text-xs font-semibold">
-        {accent && <Sparkles size={13} className="text-[var(--rose)]" />}
-        {label}
+      <div className="mb-2 flex items-center gap-2 text-xs font-semibold">
+        <label htmlFor={fieldId} className="flex items-center gap-2">
+          {accent && <Sparkles size={13} className="text-[var(--rose)]" />}
+          {label}
+        </label>
         {tools && <span className="ml-auto flex items-center gap-1.5 font-normal">{tools}</span>}
-      </span>
+      </div>
       <PromptAutocompleteTextarea
+        id={fieldId}
         value={value}
         onChange={onChange}
         placeholder={placeholder}
@@ -5808,6 +5834,6 @@ function Prompt({
         // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
         className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
       />
-    </label>
+    </div>
   );
 }
