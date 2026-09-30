@@ -1087,12 +1087,23 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setGenerating(false);
     }
   }
-  function openRightPanel() {
+  function hoverRightPanel() {
+    // 悬停只取消待执行的自动收起，不再强制展开——折叠态入口改为 Aaalice 式单击进入。
     if (rightPanelCloseTimer.current !== null) {
       window.clearTimeout(rightPanelCloseTimer.current);
       rightPanelCloseTimer.current = null;
     }
+  }
+
+  // 折叠态停靠入口（Aaalice 式）：点竖排入口展开并只进入对应面板，另一块折叠成恢复条。
+  function enterDockPane(pane: "history" | "agent") {
     setRightPanelCollapsed(false);
+    setHistoryDockOpen(pane === "history");
+    setAgentDockOpen(pane === "agent");
+    if (customWorkspace) {
+      const nextLayout = { ...customLayout, rightCollapsed: false };
+      setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
+    }
   }
 
   function scheduleRightPanelClose() {
@@ -4685,9 +4696,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ? " is-collapsed"
                 : ""
           }`}
-          onMouseEnter={naiLayout ? undefined : openRightPanel}
+          onMouseEnter={naiLayout ? undefined : hoverRightPanel}
           onMouseLeave={naiLayout ? undefined : scheduleRightPanelClose}
-          onFocus={naiLayout ? undefined : openRightPanel}
+          onFocus={naiLayout ? undefined : hoverRightPanel}
           onBlur={naiLayout ? undefined : scheduleRightPanelClose}
           aria-hidden={naiLayout ? !naiToolsOpen : undefined}
           inert={naiLayout && !naiToolsOpen ? true : undefined}
@@ -4712,7 +4723,35 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           >
             {naiLayout ? <X size={15} /> : rightPanelCollapsed ? <ChevronLeft size={15} /> : <ChevronRight size={15} />}
           </button>
-          {!naiLayout ? desktopRightPanel : toolsPanel}
+          {!naiLayout ? (
+            rightPanelCollapsed && !layoutEditorOpen ? (
+              <div className="right-dock-rail" role="toolbar" aria-label="停靠面板入口">
+                <button
+                  type="button"
+                  className="right-dock-rail-item"
+                  data-label="本次历史"
+                  aria-label="进入本次历史面板"
+                  onClick={() => enterDockPane("history")}
+                >
+                  <History size={15} />
+                  <span>本次历史</span>
+                </button>
+                <div className="right-dock-rail-divider" />
+                <button
+                  type="button"
+                  className="right-dock-rail-item"
+                  data-label="标签助手"
+                  aria-label="进入标签助手面板"
+                  onClick={() => enterDockPane("agent")}
+                >
+                  <WandSparkles size={15} />
+                  <span>标签助手</span>
+                </button>
+              </div>
+            ) : (
+              desktopRightPanel
+            )
+          ) : toolsPanel}
         </aside>
       </div>
       {lightboxIndex !== null && displayedImages[lightboxIndex] && (
