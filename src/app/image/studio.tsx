@@ -647,6 +647,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [source, setSource] = useState<Upload | null>(null);
   const [mask, setMask] = useState<Upload | null>(null);
   const [charactersEnabled, setCharactersEnabled] = useState(false);
+  // AI 自动定位（Aaalice aiChoice）：开启时不发坐标（use_coords=false），
+  // 角色位置由模型按提示词决定；关闭后用每角色滑块（use_coords=true）。
+  const [aiAutoPosition, setAiAutoPosition] = useState(true);
   const [characters, setCharacters] = useState<CharacterPromptUi[]>([
     { id: "char-1", prompt: "", negative: "", centerX: 0.5, centerY: 0.5 },
   ]);
@@ -2197,9 +2200,22 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       {charactersEnabled && (
         <div className="mt-3 space-y-3">
           <p className="text-[10px] leading-4 text-[var(--muted)]">
-            为画面中的每个角色编写独立提示词，并用滑块摆放角色位置（0–1
-            归一化坐标）。主提示词描述整体场景。
+            为画面中的每个角色编写独立提示词。主提示词描述整体场景。
           </p>
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] font-semibold">
+            <input
+              type="checkbox"
+              checked={aiAutoPosition}
+              onChange={(event) => setAiAutoPosition(event.target.checked)}
+              className="h-3.5 w-3.5 accent-[var(--rose)]"
+            />
+            AI 自动定位
+            <span className="font-normal text-[var(--muted)]">
+              {aiAutoPosition
+                ? "（角色位置由 AI 按提示词决定，关闭滑块）"
+                : "（用下方滑块手动摆放角色）"}
+            </span>
+          </label>
           {characters.map((character, index) => (
             <div
               key={character.id}
@@ -2252,6 +2268,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   )
                 }
               />
+              {!aiAutoPosition && (
               <div className="mt-2 space-y-1.5">
                 {(
                   [
@@ -2290,6 +2307,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   </label>
                 ))}
               </div>
+              )}
             </div>
           ))}
           {characters.length < 6 && (
@@ -3117,6 +3135,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           negative: character.negative.trim(),
           center: { x: character.centerX, y: character.centerY },
         }));
+      base.use_coords = !aiAutoPosition;
     }
     if (["img2img", "inpainting", "edits"].includes(operation)) {
       base.image = source?.data;
