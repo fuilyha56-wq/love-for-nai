@@ -1525,3 +1525,26 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
 .tag-chip-menu-item:hover:not(:disabled) { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); color: var(--rose); }
 .tag-chip-menu-item:disabled { opacity: 0.45; cursor: default; }
 .tag-chip-menu-item.is-danger { color: #b3261e; }
+.tag-chip-add { position: relative; display: inline-flex; }
+.tag-chip-add-input {
+  width: 130px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  outline: none;
+}
+.tag-chip-add-input:focus { border-color: var(--rose); border-style: solid; }
+.tag-chip-edit-input {
+  width: 130px;
+  border: 1px solid var(--rose);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  outline: none;
+}
+.tag-chip.is-dragging { opacity: 0.4; }
