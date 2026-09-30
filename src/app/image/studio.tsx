@@ -11,6 +11,8 @@ import {
   Brush,
   ChevronLeft,
   ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
   Code2,
   ExternalLink,
   Download,
@@ -24,6 +26,7 @@ import {
   ImageIcon,
   Images,
   KeyRound,
+  History,
   Megaphone,
   Menu,
   Maximize2,
@@ -695,6 +698,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
+  // 右侧停靠栏（Aaalice 式）：历史与助手是两块独立界面，各自可折叠成恢复条，上下分割比例记忆。
+  const [historyDockOpen, setHistoryDockOpen] = useState(true);
+  const [agentDockOpen, setAgentDockOpen] = useState(true);
+  const [agentDockFraction, setAgentDockFraction] = useState(0.5);
   const rightPanelCloseTimer = useRef<number | null>(null);
   // 多角色手动定位坐标系（画布叠加层）：拖动圆点更新 centerX/centerY。
   const positionOverlayRef = useRef<HTMLDivElement>(null);
@@ -1256,7 +1263,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (savedCustomQuality) void Promise.resolve().then(() => setCustomQuality(savedCustomQuality));
     const savedCustomUc = window.localStorage.getItem("lfn-uc-custom");
     if (savedCustomUc) void Promise.resolve().then(() => setCustomUc(savedCustomUc));
+    // 停靠栏折叠与分割比例记忆（Aaalice 式，比例 0.2–0.8）。
+    if (window.localStorage.getItem("lfn-right-dock-history") === "0")
+      void Promise.resolve().then(() => setHistoryDockOpen(false));
+    if (window.localStorage.getItem("lfn-right-dock-agent") === "0")
+      void Promise.resolve().then(() => setAgentDockOpen(false));
+    const savedDockFraction = Number(window.localStorage.getItem("lfn-right-dock-fraction"));
+    if (savedDockFraction >= 0.2 && savedDockFraction <= 0.8)
+      void Promise.resolve().then(() => setAgentDockFraction(savedDockFraction));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("lfn-right-dock-history", historyDockOpen ? "1" : "0");
+    window.localStorage.setItem("lfn-right-dock-agent", agentDockOpen ? "1" : "0");
+    window.localStorage.setItem("lfn-right-dock-fraction", String(agentDockFraction));
+  }, [historyDockOpen, agentDockOpen, agentDockFraction]);
 
   useEffect(() => {
     window.localStorage.setItem("lfn-prompt-tag-mode", promptTagMode ? "1" : "0");
@@ -1382,6 +1403,28 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       }
     }
     document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end);
+  }
+
+  // 停靠栏上下分割条：拖拽调整助手区占比（0.2–0.8），松手即持久化。
+  function startDockSplit(event: React.PointerEvent) {
+    event.preventDefault();
+    const panel = document.querySelector<HTMLElement>(".studio-dock-split-host");
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const move = (pointer: PointerEvent) => {
+      const fraction = (pointer.clientY - rect.top) / rect.height;
+      setAgentDockFraction(Math.min(0.8, Math.max(0.2, fraction)));
+    };
+    const end = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", end);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", end);
@@ -3515,8 +3558,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </nav>
   );
 
-  // 标签助手区块：桌面右侧栏、NAI overlay 与移动抽屉共用。
-  const agentBlockInner = (
+  // 标签助手区块：桌面右侧栏（可折叠）与 NAI overlay/移动抽屉（不可折叠）共用。
+  const agentBlockInner = (collapsible: boolean) => (
     <>
           <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             {layoutModuleTools("agent")}
@@ -3548,6 +3591,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     清空
                   </button>
                 </span>
+              )}
+              {collapsible && (
+                <button
+                  type="button"
+                  data-label="折叠助手面板"
+                  onClick={() => setAgentDockOpen(false)}
+                  className={`text-[var(--muted)] transition-colors hover:text-[var(--rose)]${signedIn ? "" : " ml-auto"}`}
+                >
+                  <ChevronsDown size={14} />
+                </button>
               )}
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
@@ -3967,11 +4020,31 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
   );
 
-  // 桌面右侧栏（非 NAI，Aaalice 式）：历史上半 + 标签助手下，上下分割。
+  // 桌面右侧栏（非 NAI，Aaalice 式停靠）：历史与助手是两块独立界面，各自可折叠成恢复条，
+  // 之间是可拖拽的上下分割条（占比 0.2–0.8 记忆，双击回到对半）。
+  const dockPct = (value: number) => `${(value * 100).toFixed(2)}%`;
   const desktopRightPanel = (
-    <>
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto border-b border-[var(--line)] p-4">
-            <b className="mb-2 text-xs">本次历史</b>
+    <div className="studio-dock-split-host flex min-h-0 flex-1 flex-col">
+      {historyDockOpen ? (
+        <div
+          className="flex min-h-0 flex-col"
+          style={{ flex: agentDockOpen ? `0 0 ${dockPct(1 - agentDockFraction)}` : "1 1 0%" }}
+        >
+          <div className="flex items-center justify-between gap-2 px-4 pt-4">
+            <b className="text-xs">本次历史</b>
+            <span className="flex items-center gap-1.5 text-[10px] text-[var(--muted)]">
+              {sessionHistory.length} 张
+              <button
+                type="button"
+                data-label="折叠历史面板"
+                onClick={() => setHistoryDockOpen(false)}
+                className="text-[var(--muted)] transition-colors hover:text-[var(--rose)]"
+              >
+                <ChevronsUp size={14} />
+              </button>
+            </span>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-2">
             {sessionHistory.length ? (
               <div className="grid grid-cols-2 gap-2">
                 {sessionHistory.map((item) => (
@@ -3998,8 +4071,57 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <span className="text-[10px] text-[var(--muted)]">生成后的图片会出现在这里</span>
             )}
           </div>
-          {agentBlockInner}
-    </>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="right-dock-strip"
+          data-label="展开历史面板"
+          onClick={() => setHistoryDockOpen(true)}
+        >
+          <History size={13} />
+          <span>本次历史</span>
+        </button>
+      )}
+      {historyDockOpen && agentDockOpen && (
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="调整助手面板高度"
+          aria-valuenow={Math.round(agentDockFraction * 100)}
+          aria-valuemin={20}
+          aria-valuemax={80}
+          tabIndex={0}
+          className="right-dock-split"
+          onPointerDown={startDockSplit}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+            event.preventDefault();
+            const delta = event.key === "ArrowUp" ? -0.04 : 0.04;
+            setAgentDockFraction(Math.min(0.8, Math.max(0.2, agentDockFraction + delta)));
+          }}
+          onDoubleClick={() => setAgentDockFraction(0.5)}
+        />
+      )}
+      {agentDockOpen ? (
+        <div
+          className="flex min-h-0 flex-col"
+          style={{ flex: historyDockOpen ? `0 0 ${dockPct(agentDockFraction)}` : "1 1 0%" }}
+        >
+          {agentBlockInner(true)}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="right-dock-strip"
+          data-label="展开助手面板"
+          onClick={() => setAgentDockOpen(true)}
+        >
+          <WandSparkles size={13} />
+          <span>标签助手</span>
+        </button>
+      )}
+    </div>
   );
 
   // NAI overlay 与移动抽屉：完整功能区。
@@ -4012,7 +4134,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <div className="mt-3">{creativeCenterLinks}</div>
         </div>
       )}
-      {agentBlockInner}
+      {agentBlockInner(false)}
       {walletBlock}
     </>
   );

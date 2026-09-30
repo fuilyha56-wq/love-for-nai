@@ -946,6 +946,61 @@ html[data-theme="night"] .mask-editor-number {
 .panel-resizer:active {
   background: var(--rose);
 }
+/* 右侧停靠栏（Aaalice 式）：历史/助手独立折叠恢复条 + 上下可拖分割条 */
+.right-dock-strip {
+  display: flex;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  border-block: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color var(--motion-fast) ease, background var(--motion-fast) ease;
+}
+.right-dock-strip:hover {
+  color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 6%, transparent);
+}
+.right-dock-strip span {
+  pointer-events: none;
+}
+.right-dock-split {
+  flex: 0 0 8px;
+  position: relative;
+  border: 0;
+  background: transparent;
+  cursor: row-resize;
+  touch-action: none;
+  transition: background var(--motion-fast) ease;
+}
+.right-dock-split::before {
+  content: "";
+  position: absolute;
+  left: 25%;
+  right: 25%;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-50%);
+  border-radius: 1px;
+  background: var(--line);
+  transition: background var(--motion-fast) ease;
+}
+.right-dock-split:hover,
+.right-dock-split:active,
+.right-dock-split:focus-visible {
+  background: color-mix(in srgb, var(--rose) 12%, transparent);
+  outline: none;
+}
+.right-dock-split:hover::before,
+.right-dock-split:active::before,
+.right-dock-split:focus-visible::before {
+  background: var(--rose);
+}
 
 .lightbox {
   width: 100vw;
