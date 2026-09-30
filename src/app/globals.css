@@ -1031,13 +1031,12 @@ html[data-theme="night"] .mask-editor-number {
   background: transparent;
   cursor: row-resize;
   touch-action: none;
-  transition: background var(--motion-fast) ease;
 }
 .right-dock-split::before {
   content: "";
   position: absolute;
-  left: 25%;
-  right: 25%;
+  left: 10px;
+  right: 10px;
   top: 50%;
   height: 2px;
   transform: translateY(-50%);
@@ -1045,16 +1044,13 @@ html[data-theme="night"] .mask-editor-number {
   background: var(--line);
   transition: background var(--motion-fast) ease;
 }
-.right-dock-split:hover,
-.right-dock-split:active,
-.right-dock-split:focus-visible {
-  background: color-mix(in srgb, var(--rose) 12%, transparent);
-  outline: none;
-}
 .right-dock-split:hover::before,
 .right-dock-split:active::before,
 .right-dock-split:focus-visible::before {
   background: var(--rose);
+}
+.right-dock-split:focus-visible {
+  outline: none;
 }
 /* VSCode 内联聊天（LFN 主题）：选中→右键菜单→锚定对话框 */
 .inline-chat-menu-backdrop {
