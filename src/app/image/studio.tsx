@@ -2282,8 +2282,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   )
                 }
               />
-              <input
-                className="field mt-2 h-9 w-full px-2 text-xs"
+              <textarea
+                className="field mt-2 min-h-12 w-full resize-y p-2 text-xs"
                 placeholder="该角色的负向提示词（可选），如 bad hands"
                 value={character.negative}
                 onChange={(event) =>
