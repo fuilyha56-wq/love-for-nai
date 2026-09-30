@@ -878,8 +878,9 @@ html[data-theme="night"] .mask-editor-number {
   .studio-nav-rail .tools-panel-collapse {
     position: absolute;
     top: 8px;
-    right: 10px;
-    left: auto;
+    right: auto;
+    left: 50%;
+    translate: -50% 0;
   }
   .studio-nav-rail.is-expanded .tools-panel-collapse { position: absolute; }
   /* 6 列 = 导航|图像设置|resizer|画布|resizer|右侧面板 */
@@ -887,6 +888,11 @@ html[data-theme="night"] .mask-editor-number {
     grid-template-columns:
       var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
       var(--lfn-right, 230px);
+  }
+  /* 右侧面板折叠：最后一列缩到 48px，否则 48px 面板塞在 230px 列里布局崩坏 */
+  .studio-layout:has(.studio-nav-rail):has(.studio-tools-panel.is-collapsed) {
+    grid-template-columns:
+      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
   }
   [data-studio-layout="nai"] .studio-layout {
     grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
@@ -1467,7 +1473,7 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
   white-space: nowrap;
   z-index: 70;
   pointer-events: none;
-  animation: lfn-tooltip-in 120ms ease;
+  animation: lfn-tooltip-in 120ms ease 350ms both;
 }
 @keyframes lfn-tooltip-in {
   from { opacity: 0; translate: -50% 4px; }

@@ -2066,7 +2066,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       </button>
       {target === "prompt" && (
         <span
-          className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white p-0.5 text-[10px] font-semibold"
+          className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white text-[10px] font-semibold"
           role="group"
           aria-label="输入模式"
         >
@@ -2075,7 +2075,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-pressed={!promptTagMode}
             data-label="文本模式"
             onClick={() => setPromptTagMode(false)}
-            className={`flex h-5 items-center gap-1 rounded-full px-2 ${
+            className={`flex h-full items-center gap-1 rounded-full px-2 ${
               !promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
             }`}
           >
@@ -2086,7 +2086,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-pressed={promptTagMode}
             data-label="Tag 模式"
             onClick={() => setPromptTagMode(true)}
-            className={`flex h-5 items-center gap-1 rounded-full px-2 ${
+            className={`flex h-full items-center gap-1 rounded-full px-2 ${
               promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
             }`}
           >
@@ -2131,7 +2131,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       )}
       {operation !== "suggest-tags" && (
         // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3">
           <div className="block text-xs font-semibold text-[#4c5052]">
             <span className="mb-2 block">质量词 <small className="font-normal text-[var(--muted)]">追加到提示词末尾</small></span>
             <PopupSelect
