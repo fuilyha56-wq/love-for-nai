@@ -708,7 +708,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 右侧停靠栏（Aaalice 式）：历史与助手是两块独立界面，各自可折叠成恢复条，上下分割比例记忆。
   const [historyDockOpen, setHistoryDockOpen] = useState(true);
   const [agentDockOpen, setAgentDockOpen] = useState(true);
-  const [agentDockFraction, setAgentDockFraction] = useState(0.5);
+  const [agentDockFraction, setAgentDockFraction] = useState(0.62);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
   const [inlineChatMenu, setInlineChatMenu] = useState<{
     position: { x: number; y: number };
@@ -1378,7 +1378,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (window.localStorage.getItem("lfn-right-dock-agent") === "0")
       void Promise.resolve().then(() => setAgentDockOpen(false));
     const savedDockFraction = Number(window.localStorage.getItem("lfn-right-dock-fraction"));
-    if (savedDockFraction >= 0.2 && savedDockFraction <= 0.8)
+    // 0.5 是旧默认值，视为没调过，升级到新默认（助手区更大）。
+    if (savedDockFraction >= 0.2 && savedDockFraction <= 0.8 && savedDockFraction !== 0.5)
       void Promise.resolve().then(() => setAgentDockFraction(savedDockFraction));
   }, []);
 
@@ -1518,13 +1519,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   // 停靠栏上下分割条：拖拽调整助手区占比（0.2–0.8），松手即持久化。
+  // 助手在分割条下方：指针往下 = 助手变矮，故占比 = (底边 - 指针) / 高度。
   function startDockSplit(event: React.PointerEvent) {
     event.preventDefault();
     const panel = document.querySelector<HTMLElement>(".studio-dock-split-host");
     if (!panel) return;
     const rect = panel.getBoundingClientRect();
     const move = (pointer: PointerEvent) => {
-      const fraction = (pointer.clientY - rect.top) / rect.height;
+      const fraction = (rect.bottom - pointer.clientY) / rect.height;
       setAgentDockFraction(Math.min(0.8, Math.max(0.2, fraction)));
     };
     const end = () => {
@@ -4239,10 +4241,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onKeyDown={(event) => {
             if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
             event.preventDefault();
-            const delta = event.key === "ArrowUp" ? -0.04 : 0.04;
+            // 方向键跟随分割条移动方向：↑ = 分割条上移 = 助手区变高。
+            const delta = event.key === "ArrowUp" ? 0.04 : -0.04;
             setAgentDockFraction(Math.min(0.8, Math.max(0.2, agentDockFraction + delta)));
           }}
-          onDoubleClick={() => setAgentDockFraction(0.5)}
+          onDoubleClick={() => setAgentDockFraction(0.62)}
         />
       )}
       {agentDockOpen ? (
