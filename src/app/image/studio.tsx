@@ -696,6 +696,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
   const rightPanelCloseTimer = useRef<number | null>(null);
+  // 多角色手动定位坐标系（画布叠加层）：拖动圆点更新 centerX/centerY。
+  const positionOverlayRef = useRef<HTMLDivElement>(null);
   const rightPanelResizing = useRef(false);
   const [streamProgress, setStreamProgress] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
@@ -1324,6 +1326,31 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   // side="right" 调右侧面板宽度。拖拽不再强制展开面板：折叠状态下也只调宽度。
+  // 画布坐标系拖拽：以叠加层为界，指针位置归一化为 0–1 坐标。
+  function startCharacterDrag(event: React.PointerEvent, characterId: string): void {
+    event.preventDefault();
+    const overlay = positionOverlayRef.current;
+    if (!overlay) return;
+    const rect = overlay.getBoundingClientRect();
+    const move = (pointer: PointerEvent) => {
+      const x = Math.min(1, Math.max(0, (pointer.clientX - rect.left) / rect.width));
+      const y = Math.min(1, Math.max(0, (pointer.clientY - rect.top) / rect.height));
+      setCharacters((current) =>
+        current.map((item) =>
+          item.id === characterId ? { ...item, centerX: x, centerY: y } : item,
+        ),
+      );
+    };
+    const end = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", end);
+      document.body.style.userSelect = "";
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end);
+    document.body.style.userSelect = "none";
+  }
+
   function startResize(side: "left" | "right", event: React.PointerEvent) {
     event.preventDefault();
     if (side === "right") rightPanelResizing.current = true;
@@ -2209,11 +2236,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               onChange={(event) => setAiAutoPosition(event.target.checked)}
               className="h-3.5 w-3.5 accent-[var(--rose)]"
             />
-            AI 自动定位
+            关闭滑块定位（AI 决定角色位置）
             <span className="font-normal text-[var(--muted)]">
               {aiAutoPosition
-                ? "（角色位置由 AI 按提示词决定，关闭滑块）"
-                : "（用下方滑块手动摆放角色）"}
+                ? "（当前：AI 按提示词自动摆放，无滑块）"
+                : "（当前：手动模式，在画布坐标系中拖动角色点，或用滑块微调）"}
             </span>
           </label>
           {characters.map((character, index) => (
@@ -2222,7 +2249,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
             >
               <div className="flex items-center justify-between">
-                <b className="text-[11px] text-[var(--rose)]">
+                <b className="flex items-center gap-1.5 text-[11px] text-[var(--rose)]">
+                  <i className={`char-color-${index % 6} inline-block h-2.5 w-2.5 rounded-full`} style={{ background: "var(--char-color)" }} />
                   角色 {index + 1}
                 </b>
                 {characters.length > 1 && (
@@ -4328,7 +4356,38 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 )}
               </div>
             )}
-          <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5">
+          <div
+            ref={positionOverlayRef}
+            className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5"
+          >
+            {charactersEnabled && !aiAutoPosition && ["generate", "img2img", "inpainting"].includes(operation) && (
+              // 手动定位坐标系：X 轴=水平滑块，Y 轴=垂直滑块，多角色多色十字线，
+              // 圆点可拖动（与滑块双向同步）。
+              <div className="character-position-overlay" aria-hidden={false}>
+                <span className="character-position-axis-x">X 轴 →</span>
+                <span className="character-position-axis-y">Y 轴 ↓</span>
+                {characters.map((character, index) => (
+                  <span key={character.id} className={`char-color-${index % 6}`}>
+                    <span
+                      className="char-pos-line char-pos-line-v"
+                      style={{ left: `${character.centerX * 100}%` }}
+                    />
+                    <span
+                      className="char-pos-line char-pos-line-h"
+                      style={{ top: `${character.centerY * 100}%` }}
+                    />
+                    <span
+                      className="char-pos-dot"
+                      style={{ left: `${character.centerX * 100}%`, top: `${character.centerY * 100}%` }}
+                      title={`角色 ${index + 1} · 拖动调整位置`}
+                      onPointerDown={(event) => startCharacterDrag(event, character.id)}
+                    >
+                      {index + 1}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
               {modes.find((item) => item.id === operation)?.label} · {width}×
               {height} · {count} 张
