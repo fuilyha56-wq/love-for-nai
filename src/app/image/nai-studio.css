@@ -1225,12 +1225,12 @@ html[data-theme="nai"] [data-studio-layout="nai"] .session-history-thumb { backg
   color: var(--rose);
   border-color: var(--rose);
 }
-/* 悬停显示功能名称：图标栏贴屏幕右缘，提示向左弹出 */
+/* 悬停显示功能名称：导航栏贴屏幕左缘，提示向右弹出 */
 .tools-icon-rail-item::after {
   content: attr(data-label);
   position: absolute;
   top: 50%;
-  right: calc(100% + 8px);
+  left: calc(100% + 8px);
   translate: 0 -50%;
   padding: 4px 9px;
   border-radius: 6px;

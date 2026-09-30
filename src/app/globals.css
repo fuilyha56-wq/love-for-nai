@@ -882,16 +882,11 @@ html[data-theme="night"] .mask-editor-number {
     left: auto;
   }
   .studio-nav-rail.is-expanded .tools-panel-collapse { position: absolute; }
-  /* 9 列 = 导航|图像设置|resizer|画布|resizer|历史栏|resizer|右侧面板 */
+  /* 6 列 = 导航|图像设置|resizer|画布|resizer|右侧面板 */
   .studio-layout:has(.studio-nav-rail) {
     grid-template-columns:
       var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
-      var(--lfn-dock, 72px) 5px var(--lfn-right, 230px);
-  }
-  .studio-layout:has(.studio-nav-rail):has(.studio-tools-panel.is-collapsed) {
-    grid-template-columns:
-      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
-      var(--lfn-right, 230px) 5px 48px;
+      var(--lfn-right, 230px);
   }
   [data-studio-layout="nai"] .studio-layout {
     grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
@@ -1456,3 +1451,25 @@ html[data-theme="nai"] .nai-menu-item:focus-visible { outline: 2px solid var(--n
 html[data-theme="nai"] .nai-menu-item[aria-expanded="true"] { background: var(--nai-raise); }
 html[data-theme="nai"] .nai-menu-sub { margin: 5px 18px 8px 27px; padding: 5px 0 5px 12px; border-left: 2px solid var(--line); }
 html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-size: 12px; color: var(--muted); }
+/* 新增按钮的 CSS tooltip（data-label）：替代浏览器原生 title，跟随主题 */
+[data-label] { position: relative; }
+[data-label]:not(.tools-icon-rail-item):hover::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  translate: -50% 0;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #292d2c;
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 70;
+  pointer-events: none;
+  animation: lfn-tooltip-in 120ms ease;
+}
+@keyframes lfn-tooltip-in {
+  from { opacity: 0; translate: -50% 4px; }
+  to { opacity: 1; translate: -50% 0; }
+}

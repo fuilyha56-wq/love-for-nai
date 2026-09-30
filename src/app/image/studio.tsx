@@ -2041,7 +2041,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onClick={() => void rollRandomPrompt()}
           disabled={randomPromptLoading}
           aria-label="随机提示词"
-          title="随机提示词：按 NovelAI 官方词库随机生成一组标签"
+          data-label="随机提示词"
           className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-50"
         >
           <Dices size={13} className={randomPromptLoading ? "animate-spin" : ""} />
@@ -2059,7 +2059,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         }}
         disabled={target === "prompt" ? !prompt.trim() : !negative.trim()}
         aria-label={target === "prompt" ? "清空提示词" : "清空排除内容"}
-        title={target === "prompt" ? "清空提示词（含角色提示词）" : "清空排除内容"}
+        data-label={target === "prompt" ? "清空提示词" : "清空排除内容"}
         className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-40"
       >
         <Eraser size={13} />
@@ -2073,7 +2073,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <button
             type="button"
             aria-pressed={!promptTagMode}
-            title="文本模式：自然语言描述"
+            data-label="文本模式"
             onClick={() => setPromptTagMode(false)}
             className={`flex h-5 items-center gap-1 rounded-full px-2 ${
               !promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
@@ -2084,7 +2084,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <button
             type="button"
             aria-pressed={promptTagMode}
-            title="Tag 模式：Danbooru 标签，逗号分隔"
+            data-label="Tag 模式"
             onClick={() => setPromptTagMode(true)}
             className={`flex h-5 items-center gap-1 rounded-full px-2 ${
               promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
