@@ -4690,7 +4690,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </div>
                 {displayedImages.length > 1 && <div className="workspace-result-list">
                   {displayedImages.slice(1).map((image, index) => (
-                    <div key={`${image.slice(-24)}-${index}`} className={`workspace-result-item${selectedImageIndex === index + 1 ? " is-selected" : ""}`}>
+                    <div key={`${image.slice(-24)}-${index}`} className={`workspace-result-item${selectedImageIndex === index + 1 ? " is-selected" : ""}`} style={{ aspectRatio: `${width} / ${height}` }}>
                       <button type="button" onClick={() => { setSelectedImageIndex(index + 1); setLightboxIndex(index + 1); }} title={`查看第 ${index + 2} 张`}>
                         <Image src={image} alt={`NAI 结果 ${index + 2}`} width={width} height={height} unoptimized />
                       </button>
