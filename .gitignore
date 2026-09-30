@@ -84,3 +84,4 @@ SERVER_CONNECTION_GUIDE.md
 *.key
 *.p12
 *.pfx
+data-b/

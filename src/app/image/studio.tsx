@@ -4,6 +4,13 @@ import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { readImageOperationResponse } from "@/lib/image-operation-response";
 import { inpaintModelFor } from "@/lib/inpaint-model";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
+import {
+  InlineChatMenu,
+  InlineChatZone,
+  type InlineChatMenuItem,
+  type InlineChatSession,
+  type InlineChatTarget,
+} from "@/app/image/inline-chat";
 
 import {
   Aperture,
@@ -702,6 +709,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [historyDockOpen, setHistoryDockOpen] = useState(true);
   const [agentDockOpen, setAgentDockOpen] = useState(true);
   const [agentDockFraction, setAgentDockFraction] = useState(0.5);
+  // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
+  const [inlineChatMenu, setInlineChatMenu] = useState<{
+    position: { x: number; y: number };
+    anchor: { top: number; left: number; width: number };
+    target: InlineChatTarget;
+    selection: { start: number; end: number; text: string };
+    contextBefore: string;
+    contextAfter: string;
+  } | null>(null);
+  const [inlineChat, setInlineChat] = useState<InlineChatSession | null>(null);
   const rightPanelCloseTimer = useRef<number | null>(null);
   // 多角色手动定位坐标系（画布叠加层）：拖动圆点更新 centerX/centerY。
   const positionOverlayRef = useRef<HTMLDivElement>(null);
@@ -1104,6 +1121,68 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       const nextLayout = { ...customLayout, rightCollapsed: false };
       setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
     }
+  }
+
+  // 内联聊天：文本域右键（有选中且已登录）弹出 AI 操作菜单；对话框锚定文本域下方。
+  function openInlineChatMenu(
+    event: React.MouseEvent<HTMLTextAreaElement>,
+    target: InlineChatTarget,
+  ) {
+    if (!signedIn) return;
+    const textarea = event.currentTarget;
+    const start = textarea.selectionStart ?? 0;
+    const end = textarea.selectionEnd ?? 0;
+    // 无选中时走浏览器默认菜单。
+    if (start >= end) return;
+    event.preventDefault();
+    const rect = textarea.getBoundingClientRect();
+    setInlineChatMenu({
+      position: { x: event.clientX, y: event.clientY },
+      anchor: {
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: Math.max(rect.width, 280),
+      },
+      target,
+      selection: { start, end, text: textarea.value.slice(start, end) },
+      contextBefore: textarea.value.slice(Math.max(0, start - 200), start),
+      contextAfter: textarea.value.slice(end, end + 200),
+    });
+  }
+
+  function pickInlineChatMenuItem(item: InlineChatMenuItem) {
+    if (!inlineChatMenu) return;
+    const menu = inlineChatMenu;
+    setInlineChatMenu(null);
+    setInlineChat({
+      target: menu.target,
+      anchor: menu.anchor,
+      selection: menu.selection,
+      contextBefore: menu.contextBefore,
+      contextAfter: menu.contextAfter,
+      mode: item.id,
+      autoSend: item.autoSend,
+    });
+  }
+
+  function keepInlineChatResult(text: string) {
+    const session = inlineChat;
+    if (!session) return;
+    const { start, end } = session.selection;
+    const apply = (value: string) => value.slice(0, start) + text + value.slice(end);
+    const target = session.target;
+    if (target.kind === "prompt") setPrompt(apply);
+    else if (target.kind === "negative") setNegative(apply);
+    else if (target.characterId)
+      setCharacters((current) =>
+        current.map((item) =>
+          item.id === target.characterId
+            ? target.kind === "character"
+              ? { ...item, prompt: apply(item.prompt) }
+              : { ...item, negative: apply(item.negative) }
+            : item,
+        ),
+      );
   }
 
   function scheduleRightPanelClose() {
@@ -2209,6 +2288,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         tools={promptToolbar("prompt")}
         autocomplete
         tagMode={promptTagMode}
+        inlineChatTarget={{ kind: "prompt", label: naiLayout ? "提示词" : "描述画面" }}
+        openInlineChatMenu={openInlineChatMenu}
       />
       {operation !== "suggest-tags" && (
         <Prompt
@@ -2219,6 +2300,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           tools={promptToolbar("negative")}
           autocomplete
           tagMode={promptTagMode}
+          inlineChatTarget={{ kind: "negative", label: naiLayout ? "负面内容" : "排除内容" }}
+          openInlineChatMenu={openInlineChatMenu}
         />
       )}
       {operation !== "suggest-tags" && (
@@ -2330,6 +2413,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     ),
                   )
                 }
+                onContextMenu={(event) =>
+                  openInlineChatMenu(
+                    event,
+                    { kind: "character", label: `角色 ${index + 1} 提示词`, characterId: character.id },
+                  )
+                }
+                onMouseDown={(event) => {
+                  // 右键保护选区：mousedown 移动光标会让选区先塌掉。
+                  if (
+                    event.button === 2 &&
+                    (event.currentTarget.selectionEnd ?? 0) >
+                      (event.currentTarget.selectionStart ?? 0)
+                  )
+                    event.preventDefault();
+                }}
               />
               <textarea
                 className="field mt-2 min-h-12 w-full resize-y p-2 text-xs"
@@ -2344,6 +2442,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     ),
                   )
                 }
+                onContextMenu={(event) =>
+                  openInlineChatMenu(
+                    event,
+                    { kind: "characterNegative", label: `角色 ${index + 1} 负向提示词`, characterId: character.id },
+                  )
+                }
+                onMouseDown={(event) => {
+                  if (
+                    event.button === 2 &&
+                    (event.currentTarget.selectionEnd ?? 0) >
+                      (event.currentTarget.selectionStart ?? 0)
+                  )
+                    event.preventDefault();
+                }}
               />
               {!aiAutoPosition && (
               <div className="mt-2 space-y-1.5">
@@ -4438,6 +4550,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   tools={promptToolbar("prompt")}
                   autocomplete
                   tagMode={promptTagMode}
+                  inlineChatTarget={{ kind: "prompt", label: "描述画面" }}
+                  openInlineChatMenu={openInlineChatMenu}
                 />
                 {operation !== "suggest-tags" && (
                   <Prompt
@@ -4448,6 +4562,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     tools={promptToolbar("negative")}
                     autocomplete
                     tagMode={promptTagMode}
+                    inlineChatTarget={{ kind: "negative", label: "排除内容" }}
+                    openInlineChatMenu={openInlineChatMenu}
                   />
                 )}
                 {operation !== "suggest-tags" && (
@@ -4756,6 +4872,22 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           ) : toolsPanel}
         </aside>
       </div>
+      {inlineChatMenu && (
+        <InlineChatMenu
+          position={inlineChatMenu.position}
+          targetLabel={inlineChatMenu.target.label}
+          onPick={pickInlineChatMenuItem}
+          onClose={() => setInlineChatMenu(null)}
+        />
+      )}
+      {inlineChat && (
+        <InlineChatZone
+          session={inlineChat}
+          model={assistantModel}
+          onKeep={keepInlineChatResult}
+          onClose={() => setInlineChat(null)}
+        />
+      )}
       {lightboxIndex !== null && displayedImages[lightboxIndex] && (
         <Lightbox
           images={displayedImages}
@@ -6045,6 +6177,8 @@ function Prompt({
   tools,
   autocomplete = false,
   tagMode = false,
+  inlineChatTarget,
+  openInlineChatMenu,
 }: {
   label: string;
   value: string;
@@ -6054,6 +6188,12 @@ function Prompt({
   tools?: React.ReactNode;
   autocomplete?: boolean;
   tagMode?: boolean;
+  // VSCode 内联聊天：文本域右键弹出 AI 操作菜单。
+  inlineChatTarget?: InlineChatTarget;
+  openInlineChatMenu?: (
+    event: React.MouseEvent<HTMLTextAreaElement>,
+    target: InlineChatTarget,
+  ) => void;
 }) {
   // 外层用 div：工具按钮放进 <label> 时，label 的隐式控件变成第一个
   // button（骰子），点 Tag/清空会被 label 激活行为连带触发骰子。
@@ -6080,6 +6220,11 @@ function Prompt({
           onChange={onChange}
           placeholder={placeholder}
           autocomplete={autocomplete}
+          onContextMenu={
+            inlineChatTarget && openInlineChatMenu
+              ? (event) => openInlineChatMenu(event, inlineChatTarget)
+              : undefined
+          }
           // 默认高度即最小高度，用户可拖右下角调整；不低于默认值。
           className="min-h-14 w-full resize-y text-sm leading-6 outline-none sm:min-h-16"
         />
