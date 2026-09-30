@@ -4262,6 +4262,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   }
                   tools={promptToolbar("prompt")}
                   autocomplete
+                  tagMode={promptTagMode}
                 />
                 {operation !== "suggest-tags" && (
                   <Prompt
@@ -4271,6 +4272,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     placeholder="低质量、错误肢体、水印等不希望出现的内容"
                     tools={promptToolbar("negative")}
                     autocomplete
+                    tagMode={promptTagMode}
                   />
                 )}
                 {operation !== "suggest-tags" && (

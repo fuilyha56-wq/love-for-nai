@@ -1479,3 +1479,49 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
   from { opacity: 0; translate: -50% 4px; }
   to { opacity: 1; translate: -50% 0; }
 }
+.tag-suggest-zh { margin-left: 6px; font-size: 10px; font-weight: 400; color: var(--muted); }
+/* Tag 模式胶囊编辑器 */
+.tag-chip-editor { display: flex; min-height: 3.5rem; flex-direction: column; }
+.tag-chip-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 240px; overflow-y: auto; }
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.tag-chip:hover { border-color: var(--rose); }
+.tag-chip.is-selected {
+  border-color: var(--rose);
+  background: color-mix(in srgb, var(--rose) 10%, var(--surface));
+}
+.tag-chip.is-disabled { opacity: 0.45; text-decoration: line-through; }
+.tag-chip-text { font-size: 12px; font-weight: 600; color: var(--ink); }
+.tag-chip.is-selected .tag-chip-text { color: var(--rose); }
+.tag-chip-zh { font-size: 10px; font-weight: 400; color: var(--muted); }
+.tag-chip-weight { font-size: 10px; font-weight: 700; color: var(--rose); font-variant-numeric: tabular-nums; }
+.tag-chip-disabled-mark { font-size: 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.tag-chip-menu {
+  z-index: 80;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 12px 35px rgba(54, 47, 39, 0.16);
+}
+.tag-chip-menu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--ink);
+}
+.tag-chip-menu-item:hover:not(:disabled) { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); color: var(--rose); }
+.tag-chip-menu-item:disabled { opacity: 0.45; cursor: default; }
+.tag-chip-menu-item.is-danger { color: #b3261e; }
