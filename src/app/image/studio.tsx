@@ -2236,12 +2236,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               onChange={(event) => setAiAutoPosition(event.target.checked)}
               className="h-3.5 w-3.5 accent-[var(--rose)]"
             />
-            关闭滑块定位（AI 决定角色位置）
-            <span className="font-normal text-[var(--muted)]">
-              {aiAutoPosition
-                ? "（当前：AI 按提示词自动摆放，无滑块）"
-                : "（当前：手动模式，在画布坐标系中拖动角色点，或用滑块微调）"}
-            </span>
+            关闭滑块定位
           </label>
           {characters.map((character, index) => (
             <div
