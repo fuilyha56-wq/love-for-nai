@@ -88,6 +88,8 @@ export function naiNativeGenerationBody(
         ? body.negativePrompt
         : "";
   const samples = options.samples ?? (typeof body.n === "number" ? body.n : 1);
+  // 角色定位模式：use_coords=false 时由 AI 根据提示词决定位置（Aaalice aiChoice）。
+  const useCoords = typeof body.use_coords === "boolean" ? body.use_coords : true;
   const action = actionFor(operation);
   const upstreamModel = modelForAction(String(body.model || ""), action);
   const parameters: Record<string, unknown> = {
@@ -159,7 +161,7 @@ export function naiNativeGenerationBody(
     const captions = characterCaptions(body.characterPrompts);
     parameters.v4_prompt = {
       caption: { base_caption: prompt, char_captions: captions },
-      use_coords: true,
+      use_coords: useCoords,
       use_order: true,
     };
     // 每角色负向：角色自带 negative 时进 v4_negative_prompt 对应 caption。

@@ -512,8 +512,8 @@ function UsersPanel({
                           setMessage("清理失败，请检查网络后重试");
                         }
                       }}
-                      className="text-xs font-semibold text-[var(--muted)] hover:underline"
-                      title="撤销该用户全部登录会话，用于「会话数已达上限，请联系管理员」的情况"
+                      className="relative text-xs font-semibold text-[var(--muted)] hover:underline"
+                      data-label="撤销该用户全部登录会话，用于「会话数已达上限，请联系管理员」的情况"
                     >
                       清会话
                     </button>
