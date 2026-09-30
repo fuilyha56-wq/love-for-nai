@@ -4728,23 +4728,25 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <div className="right-dock-rail" role="toolbar" aria-label="停靠面板入口">
                 <button
                   type="button"
-                  className="right-dock-rail-item"
+                  className={`right-dock-rail-item${historyDockOpen ? " is-active" : ""}`}
                   data-label="本次历史"
                   aria-label="进入本次历史面板"
+                  aria-pressed={historyDockOpen}
                   onClick={() => enterDockPane("history")}
                 >
-                  <History size={15} />
+                  <History size={20} />
                   <span>本次历史</span>
                 </button>
                 <div className="right-dock-rail-divider" />
                 <button
                   type="button"
-                  className="right-dock-rail-item"
+                  className={`right-dock-rail-item${agentDockOpen ? " is-active" : ""}`}
                   data-label="标签助手"
                   aria-label="进入标签助手面板"
+                  aria-pressed={agentDockOpen}
                   onClick={() => enterDockPane("agent")}
                 >
-                  <WandSparkles size={15} />
+                  <WandSparkles size={20} />
                   <span>标签助手</span>
                 </button>
               </div>
