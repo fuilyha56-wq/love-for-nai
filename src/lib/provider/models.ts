@@ -1,4 +1,4 @@
-import type { CustomProvider } from "./store";
+import { rememberDiscoveredModels, type CustomProvider } from "./store";
 import { safeProviderFetch } from "./http";
 import { validateModelId } from "./validation";
 
@@ -26,8 +26,12 @@ export async function discoverProviderModels(provider: CustomProvider): Promise<
   return [...new Set(models)].sort((a,b) => a.localeCompare(b));
 }
 
-export async function providerAllowsModel(provider: CustomProvider, model: string): Promise<boolean> {
-  if (provider.models.includes(model)) return true;
-  try { return (await discoverProviderModels(provider)).includes(model); }
-  catch { return false; }
+export async function providerAllowsModel(userId: number, provider: CustomProvider, model: string): Promise<boolean> {
+  if (provider.models.includes(model) || provider.discoveredModels?.includes(model)) return true;
+  try {
+    const discovered = await discoverProviderModels(provider);
+    if (!discovered.includes(model)) return false;
+    await rememberDiscoveredModels(userId, provider.id, discovered).catch(() => undefined);
+    return true;
+  } catch { return false; }
 }

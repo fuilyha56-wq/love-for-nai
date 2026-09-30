@@ -16,13 +16,13 @@ describe("merged studio request/pricing contract", () => {
     "Draw",
   );
   it.each([
-    ["sequential", 2, [1, 1], 13],
-    ["sequential", 3, [1, 1, 1], 19.5],
-    ["sequential", 4, [1, 1, 1, 1], 26],
-    ["sequential", 5, [1, 1, 1, 1, 1], 32.5],
+    ["sequential", 2, [1, 1], 4.16],
+    ["sequential", 3, [1, 1, 1], 6.24],
+    ["sequential", 4, [1, 1, 1, 1], 8.32],
+    ["sequential", 5, [1, 1, 1, 1, 1], 10.4],
     ["once", 4, [4], 2080],
     ["once", 5, [5], 2600],
-    ["sequential", 30, Array(30).fill(1), 195],
+    ["sequential", 30, Array(30).fill(1), 62.4],
   ] as const)("%s with %s images matches actual request chunks", (mode, samples, chunks, usd) => {
     const size = studioBatchSize(mode);
     expect(splitImageBatches(samples, size)).toEqual(chunks);

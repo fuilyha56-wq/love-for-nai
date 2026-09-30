@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { addProvider, setNovelaiKey } from "@/lib/provider/store";
+import { addProvider, getProvider, setNovelaiKey } from "@/lib/provider/store";
 import type { LfnSession } from "@/lib/session";
 
 const calls = vi.hoisted(() => ({ providerFetch: vi.fn(), novelaiGenerate: vi.fn(), saveHistory: vi.fn() }));
@@ -51,6 +51,25 @@ describe("个人密钥生成路由", () => {
     const foreign = await handlePersonalProviderGeneration(request, { ...session, userId: 72002 }, { model: "flux-dev", operation: "generate", width: 1024, height: 1024 }, provider.id);
     expect(foreign.status).toBe(404);
     expect(calls.providerFetch.mock.calls.filter(([, endpoint]) => endpoint === "/v1/images/generations")).toHaveLength(1);
+  });
+
+  it("自动发现的模型保存后，后续生成不再依赖模型列表接口", async () => {
+    const provider = await addProvider(session.userId, { name: "Discovered", baseUrl: "https://api.example.com", apiKey: "secret", models: [] });
+    calls.providerFetch.mockReset();
+    calls.providerFetch.mockImplementation(async (_baseUrl: string, endpoint: string) => {
+      if (endpoint === "/v1/models") return Response.json({ data: [{ id: "flux-discovered", type: "image" }] });
+      return Response.json({ data: [{ b64_json: "aGVsbG8=" }] });
+    });
+    const request = new Request("http://localhost/api/images/operate", { method: "POST" });
+    const body = { model: "flux-discovered", operation: "generate", prompt: "cat", width: 1024, height: 1024, n: 1 };
+    expect((await handlePersonalProviderGeneration(request, session, body, provider.id)).status).toBe(200);
+    expect((await getProvider(session.userId, provider.id))?.discoveredModels).toEqual(["flux-discovered"]);
+    calls.providerFetch.mockImplementation(async (_baseUrl: string, endpoint: string) => {
+      if (endpoint === "/v1/models") throw new Error("model list unavailable");
+      return Response.json({ data: [{ b64_json: "aGVsbG8=" }] });
+    });
+    expect((await handlePersonalProviderGeneration(request, session, body, provider.id)).status).toBe(200);
+    expect(calls.providerFetch.mock.calls.filter(([, endpoint]) => endpoint === "/v1/models")).toHaveLength(1);
   });
 
   it("NovelAI Key 走官方原生请求体", async () => {

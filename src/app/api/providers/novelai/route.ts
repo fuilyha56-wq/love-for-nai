@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getNovelaiKey, setNovelaiKey } from "@/lib/provider/store";
-import { readNovelaiAccount } from "@/lib/provider/novelai";
+import { NovelaiAuthError, readNovelaiAccount } from "@/lib/provider/novelai";
 import { ProviderInputError, validateApiKey } from "@/lib/provider/validation";
 
 export async function GET() {
@@ -11,7 +11,11 @@ export async function GET() {
     const key = await getNovelaiKey(session.userId);
     if (!key) return NextResponse.json({ account: null }, { headers: { "Cache-Control": "no-store" } });
     try { return NextResponse.json({ account: await readNovelaiAccount(key) }, { headers: { "Cache-Control": "no-store" } }); }
-    catch (error) { return NextResponse.json({ account: { connected: true, tier: null, active: null, anlas: null, usage: null, expiresAt: null }, error: error instanceof Error ? error.message : "无法读取 NovelAI 账号" }, { headers: { "Cache-Control": "no-store" } }); }
+    catch (error) {
+      if (error instanceof NovelaiAuthError)
+        return NextResponse.json({ account: null, keySaved: true, error: error.message }, { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json({ account: { connected: true, tier: null, active: null, anlas: null, usage: null, expiresAt: null }, error: error instanceof Error ? error.message : "无法读取 NovelAI 账号" }, { headers: { "Cache-Control": "no-store" } });
+    }
   } catch { return NextResponse.json({ message: "无法读取 NovelAI 账号配置" }, { status: 500 }); }
 }
 

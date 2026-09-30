@@ -4,7 +4,9 @@ import {
   IMAGE_STUDIO_FORM_STORAGE_KEY,
   clearEditorPromptHandoff,
   loadEditorPromptHandoff,
+  loadImageStudioForm,
   parseImageStudioForm,
+  saveImageStudioForm,
   syncEditorPromptToStudioForm,
 } from "@/lib/image-studio-form";
 
@@ -98,5 +100,30 @@ describe("ImageStudio 表单缓存", () => {
     expect(parsed.model).toBe("vendor/image model");
     expect(parseImageStudioForm({ providerId: "../../secret", model: "\ninvalid" }))
       .toMatchObject({ providerId: "newapi", model: DEFAULT_IMAGE_STUDIO_FORM.model });
+  });
+
+  it("角色负面提示词随缓存保存和重载，并保持各角色坐标", () => {
+    const localStorage = memoryStorage();
+    vi.stubGlobal("window", { localStorage });
+    const characters = [
+      { prompt: "white hair", negative: "red hair, hat", centerX: 0.2, centerY: 0.7 },
+      { prompt: "black hair", negative: "white hair, glasses", centerX: 0.8, centerY: 0.4 },
+    ];
+    const saved = saveImageStudioForm({ ...DEFAULT_IMAGE_STUDIO_FORM, charactersEnabled: true, characters });
+    expect(saved.characters).toEqual(characters);
+    expect(JSON.parse(localStorage.getItem(IMAGE_STUDIO_FORM_STORAGE_KEY) || "{}").characters).toEqual(characters);
+    expect(loadImageStudioForm().characters).toEqual(characters);
+  });
+
+  it("旧角色缓存不添加空负面字段，非法负面字段回退", () => {
+    const character = { prompt: "1girl", centerX: 0.3, centerY: 0.4 };
+    expect(parseImageStudioForm({ characters: [character] }).characters).toEqual([character]);
+    expect(parseImageStudioForm({ characters: [{ ...character, negative: "" }] }).characters).toEqual([character]);
+    expect(parseImageStudioForm({ characters: [{ ...character, negative: 123 }] }).characters).toEqual([character]);
+  });
+
+  it("角色负面提示词沿用角色文本长度边界", () => {
+    const parsed = parseImageStudioForm({ characters: [{ prompt: "1girl", negative: "x".repeat(5000) }] });
+    expect(parsed.characters[0].negative).toBe("x".repeat(4000));
   });
 });

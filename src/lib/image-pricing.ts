@@ -169,7 +169,8 @@ export function parseTieredExpr(expr: unknown): ParsedTieredExpr | null {
 }
 
 export function envelopeUsageTokens(model: string): number {
-  return modelPointVersion(model) === "V5" ? 25 : 0;
+  // Gateway _BILLING_LIMIT_UNITS_V5 is 8; NewAPI settles this usage marker.
+  return modelPointVersion(model) === "V5" ? 8 : 0;
 }
 
 export function snapshotFromRawPricing(
@@ -250,7 +251,6 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
     generation.width * generation.height <= 1024 * 1024 &&
     (referenceCount === 0 ||
       (generation.encodedVibeCount ?? 0) >= referenceCount) &&
-    !(generation.characterPromptCount ?? 0) &&
     generation.serviceTier !== "priority" &&
     !(operation === "generate" && generation.hasInputImage)
   );
