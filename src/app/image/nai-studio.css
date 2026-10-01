@@ -205,7 +205,7 @@ html[data-theme="nai"] .nai-wallet > div {
   border: 1px solid var(--line);
   border-radius: 8px 0 0 8px;
   background: var(--panel);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -252,7 +252,7 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-model-mode-row > div {
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-model-mode-row > div > span {
   margin: 0;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 400;
   line-height: 20px;
 }
@@ -265,7 +265,7 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-mode-button {
   height: 28px;
   border: 0;
   background: var(--nai-raise);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .popup-select-trigger {
@@ -273,53 +273,58 @@ html[data-theme="nai"] [data-studio-layout="nai"] .popup-select-trigger {
   border: 0;
   border-radius: 4px;
   box-shadow: none;
-  font-size: 13px;
+  font-size: 14px;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .popup-select-chevrons {
   background: transparent;
   color: currentColor;
 }
 html[data-theme="nai"] .nai-prompts {
+  display: flex;
+  flex-direction: column;
   gap: 0;
   overflow: hidden;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
   background: var(--nai-input);
 }
-html[data-theme="nai"] .nai-prompts > label {
+html[data-theme="nai"] .nai-prompts > .nai-prompt-field {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  padding: 0;
+  border: 0;
+  background: var(--nai-input);
+}
+html[data-theme="nai"] .nai-prompts > .nai-prompt-field + .nai-prompt-field {
+  border-top: 1px dashed var(--line);
+}
+html[data-theme="nai"] .nai-prompts .nai-prompt-field-head {
   display: flex;
   min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
-  padding: 12px 12px 2px;
-  border: 1px solid var(--line);
-  border-radius: 0;
-  background: var(--nai-input);
-}
-html[data-theme="nai"] .nai-prompts > label:first-child {
-  border-radius: 8px 8px 0 0;
-  border-bottom: 0;
-}
-html[data-theme="nai"] .nai-prompts > label + label {
-  border-top-style: dashed;
-  border-radius: 0 0 8px 8px;
-}
-html[data-theme="nai"] .nai-prompts > label > span {
-  margin-bottom: 5px;
+  padding: 12px 12px 8px;
   color: #fff;
+  background: transparent;
+}
+html[data-theme="nai"] .nai-prompts .nai-prompt-field-head > span {
+  margin: 0 0 6px;
   font-size: 13px;
   font-weight: 600;
 }
-html[data-theme="nai"] .nai-prompts > label > span svg {
-  display: none;
-}
-html[data-theme="nai"] .nai-prompts textarea {
-  min-height: 6rem;
-  flex: 1;
+html[data-theme="nai"] .nai-prompts .nai-prompt-textarea {
+  min-height: 112px;
+  flex: 1 1 auto;
+  padding: 0;
+  border: 0;
   color: #fff;
   background: transparent;
   font-size: 13px;
   line-height: 1.625rem;
 }
-html[data-theme="nai"] .nai-prompts label:focus-within {
+html[data-theme="nai"] .nai-prompts .nai-prompt-textarea:focus {
+  outline: none;
   box-shadow: none;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-characters {
@@ -332,19 +337,19 @@ html[data-theme="nai"] .nai-characters > div:first-child > div > svg {
   display: none;
 }
 html[data-theme="nai"] .nai-characters b {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 html[data-theme="nai"] .nai-character-hint {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   opacity: 0.7;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-section-heading {
   margin-bottom: 5px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   opacity: 0.5;
 }
@@ -357,11 +362,11 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-reference-card {
   background: var(--panel);
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-reference-card b {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-reference-card small {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   opacity: 0.7;
 }
@@ -378,12 +383,12 @@ html[data-theme="nai"] .nai-resolution {
 html[data-theme="nai"] .nai-image-settings h3 {
   margin: 0 0 5px;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   opacity: 0.5;
 }
 html[data-theme="nai"] .nai-image-settings b {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
 }
 html[data-theme="nai"] .nai-count-heading {
@@ -399,7 +404,7 @@ html[data-theme="nai"] .nai-count-input {
   border-radius: 4px;
   background: var(--nai-raise);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
   text-align: center;
   outline: none;
@@ -433,7 +438,7 @@ html[data-theme="nai"] .nai-dimbox input {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 400;
   line-height: 20px;
   text-align: center;
@@ -469,7 +474,7 @@ html[data-theme="nai"] .nai-resolution-options .popup-select-trigger {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--nai-raise);
-  font-size: 13px;
+  font-size: 16px;
 }
 html[data-theme="nai"] .nai-segmented {
   display: flex;
@@ -494,7 +499,7 @@ html[data-theme="nai"] .nai-segmented button {
   border-radius: 4px;
   background: transparent;
   color: #fff;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 20px;
   white-space: nowrap;
@@ -523,9 +528,6 @@ html[data-theme="nai"] .nai-generation-footer {
 html[data-theme="nai"] .nai-parameter-dock {
   gap: 0;
   overflow: hidden;
-  /* overflow:hidden 让 flex 的 min-height:auto 归零，栏会被滚动容器压扁到 2px；
-     禁止收缩保住自然高度。 */
-  flex-shrink: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background:
@@ -559,7 +561,7 @@ html[data-theme="nai"] .nai-parameter-summary small {
   width: fit-content;
   margin-bottom: 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 400;
 }
 html[data-theme="nai"] .nai-parameter-summary b,
@@ -571,7 +573,7 @@ html[data-theme="nai"] .nai-parameter-summary input {
   border: 0;
   background: transparent;
   color: inherit;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -603,16 +605,21 @@ html[data-theme="nai"] .nai-parameter-more svg.is-open {
   rotate: 90deg;
 }
 html[data-theme="nai"] .nai-parameter-details {
-  /* 在 dock 内原地向下展开（novelai.net 同款）：浮层写法会锚到面板顶部，
-     盖住提示词/图像设置面板，采样器栏也随之不可见。 */
+  position: absolute;
+  z-index: 30;
+  right: 12px;
+  bottom: calc(100% - 8px);
+  left: 12px;
   display: flex;
   max-height: min(480px, 60dvh);
   flex-direction: column;
   gap: 14px;
   overflow-y: auto;
-  padding: 14px 16px 16px;
-  border-top: 1px solid var(--line);
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
   background: var(--panel);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.6);
   animation: nai-settings-in 150ms ease-out both;
 }
 html[data-theme="nai"] .nai-parameter-details .nai-number-input {
@@ -633,7 +640,7 @@ html[data-theme="nai"] .nai-balance-meter {
   border-radius: 3px;
   background: var(--nai-input);
   color: var(--ink);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
 }
 html[data-theme="nai"] .nai-balance-meter > span {
@@ -679,7 +686,7 @@ html[data-theme="nai"] .nai-generate-button {
   border-radius: 4px;
   background: var(--nai-action);
   color: #13152c;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 24px;
   transition:
@@ -711,7 +718,7 @@ html[data-theme="nai"] .nai-cost-badge {
   border-radius: 4px;
   background: #13152c;
   color: var(--nai-action);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
 }
 html[data-theme="nai"] [data-studio-layout="nai"] button {
@@ -798,7 +805,7 @@ html[data-theme="nai"] [data-studio-layout="nai"] ::selection {
   border-radius: 6px;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   text-align: left;
   text-decoration: none;
@@ -1020,15 +1027,15 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-model-mode-persistent .na
 html[data-theme="nai"] [data-studio-layout="nai"] .session-history-panel { background: var(--panel); }
 html[data-theme="nai"] [data-studio-layout="nai"] .session-history-thumb { background: var(--surface-muted); }
 
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .studio-tools-panel {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .studio-tools-panel {
   box-shadow: -8px 0 22px rgba(30, 29, 27, 0.08);
 }
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .settings-scroll {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .settings-scroll {
   flex: 1 1 auto;
   min-height: 0;
   gap: 10px;
 }
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .settings-scroll > * {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .settings-scroll > * {
   min-width: 0;
 }
 [data-studio-layout="classic"][data-workspace-layout="custom"] .settings-scroll {
@@ -1105,17 +1112,17 @@ html[data-theme="nai"] [data-studio-layout="nai"] .session-history-thumb { backg
   color: color-mix(in srgb, #fff 78%, var(--rose));
   font-size: 10px;
 }
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .panel-section-head {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .panel-section-head {
   min-height: 38px;
   padding: 8px 10px;
 }
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .nlw-inline-generation-parameters {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .nlw-inline-generation-parameters {
   display: grid;
   min-width: 0;
   gap: 10px;
   padding: 2px 0;
 }
-[data-studio-layout="classic"]:is([data-workspace-layout="nlw"], [data-workspace-layout="custom"]) .nlw-inline-generation-parameters > * {
+[data-studio-layout="classic"][data-workspace-layout="nlw"] .nlw-inline-generation-parameters > * {
   min-width: 0;
 }
 .studio-tools-panel {
