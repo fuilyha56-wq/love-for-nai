@@ -10,6 +10,9 @@ const affMocks = vi.hoisted(() => ({
 const bindingMocks = vi.hoisted(() => ({
   resolveExternalApiUser: vi.fn(),
 }));
+const modelMocks = vi.hoisted(() => ({
+  userCanGenerateWithNewApiModel: vi.fn(),
+}));
 
 const session = {
   userId: 41,
@@ -33,6 +36,9 @@ vi.mock("@/lib/aff", async (importOriginal) => {
 });
 vi.mock("@/lib/newapi-db", () => ({
   resolveExternalApiUser: bindingMocks.resolveExternalApiUser,
+}));
+vi.mock("@/lib/provider/newapi-models", () => ({
+  userCanGenerateWithNewApiModel: modelMocks.userCanGenerateWithNewApiModel,
 }));
 vi.mock("@/lib/admin-auth", () => ({
   adminToken: vi.fn(() => "admin-token"),
@@ -58,6 +64,8 @@ let dataDir = "";
 beforeEach(async () => {
   dataDir = await mkdtemp(path.join(os.tmpdir(), "lfn-image-package-api-"));
   bindingMocks.resolveExternalApiUser.mockResolvedValue(null);
+  modelMocks.userCanGenerateWithNewApiModel.mockReset();
+  modelMocks.userCanGenerateWithNewApiModel.mockResolvedValue(false);
   affMocks.affStatus.mockResolvedValue({
     balance: 3,
     packageBalance: 400,
@@ -148,6 +156,48 @@ describe("图包购买请求", () => {
 });
 
 describe("内部生成 fallback", () => {
+  it("允许登录账号可用的 NewAPI 图片模型生成，且不扣 AFF 或发送到 Gateway", async () => {
+    modelMocks.userCanGenerateWithNewApiModel.mockResolvedValue(true);
+    affMocks.trySpendImageCredits.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    const response = await POST(
+      new Request("http://localhost/api/images/generate", {
+        method: "POST",
+        body: JSON.stringify({ model: "artist-model", prompt: "sky", width: 832, height: 1216 }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(modelMocks.userCanGenerateWithNewApiModel).toHaveBeenCalledWith(session, "artist-model");
+    expect(affMocks.trySpendImageCredits).not.toHaveBeenCalled();
+    const generation = currentFetch.mock.calls.find(([url]) => url === "http://newapi.test/v1/images/generations");
+    expect(generation?.[1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({ Authorization: "Bearer newapi-token" }),
+    }));
+    expect(JSON.parse(String(generation?.[1]?.body))).toEqual({
+      model: "artist-model",
+      prompt: "sky",
+      size: "832x1216",
+      n: 1,
+      response_format: "b64_json",
+    });
+    expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
+  });
+
+  it("拒绝账号未开放的 NewAPI 模型，不扣费也不请求生图上游", async () => {
+    affMocks.trySpendImageCredits.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    const response = await POST(
+      new Request("http://localhost/api/images/generate", {
+        method: "POST",
+        body: JSON.stringify({ model: "gpt-4o", prompt: "sky", width: 832, height: 1216 }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(modelMocks.userCanGenerateWithNewApiModel).toHaveBeenCalledWith(session, "gpt-4o");
+    expect(affMocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(currentFetch).not.toHaveBeenCalled();
+  });
+
   it("AFF 不足时使用 NewAPI 地址和 NewAPI token，不把 token 发给 Gateway", async () => {
     const { POST } = await import("@/app/api/images/generate/route");
     const response = await POST(

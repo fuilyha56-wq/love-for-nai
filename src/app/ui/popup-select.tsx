@@ -114,9 +114,11 @@ export function PopupSelect({
       }
     }
     function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (!event.defaultPrevented && event.key === "Escape") {
+        event.preventDefault();
         setOpen(false);
         setQuery("");
+        rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
       }
     }
     document.addEventListener("pointerdown", close);
@@ -149,7 +151,13 @@ export function PopupSelect({
   }
 
   function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.key === "ArrowDown") {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
+      setQuery("");
+      rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    } else if (event.key === "ArrowDown") {
       event.preventDefault();
       moveActive(1);
     } else if (event.key === "ArrowUp") {

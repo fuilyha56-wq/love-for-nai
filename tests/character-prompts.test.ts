@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe("多角色与档内判定", () => {
-  it("带 characterPrompts 的纯文生图掉出免费档", () => {
+  it("纯文字 characterPrompts 不会让文生图掉出免费档", () => {
     expect(
       isInFreeEnvelope({
         model: "nai-v5-full",
@@ -27,7 +27,7 @@ describe("多角色与档内判定", () => {
         samples: 1,
         characterPromptCount: 2,
       }),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isInFreeEnvelope({
         model: "nai-v5-full",
@@ -40,7 +40,7 @@ describe("多角色与档内判定", () => {
     ).toBe(true);
   });
 
-  it("带角色按 Anlas 动态计费，不带角色按档内 limit 价", () => {
+  it("纯文字角色和普通文生图都按档内价格计费", () => {
     const withCharacters = affCost({
       model: "nai-v5-full",
       width: 832,
@@ -58,7 +58,7 @@ describe("多角色与档内判定", () => {
     });
 
     expect(withoutCharacters).toBe(2);
-    expect(withCharacters).toBe(40);
+    expect(withCharacters).toBe(2);
   });
 
   it("-limit 模型带角色仍按张数计费（位置坐标不影响 limit 价格）", () => {
