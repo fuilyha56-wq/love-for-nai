@@ -1,8 +1,15 @@
 import { isIP } from "node:net";
+import { isImageProviderProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 export class ProviderInputError extends Error {}
 
 function invalid(message: string): never { throw new ProviderInputError(message); }
+
+export function validateImageProviderProtocol(value: unknown): ImageProviderProtocol {
+  if (value === undefined) return "auto";
+  if (!isImageProviderProtocol(value)) invalid("图像 API 协议无效");
+  return value;
+}
 
 export function validateApiKey(value: unknown): string {
   if (typeof value !== "string") invalid("请输入 API Key");
@@ -66,6 +73,6 @@ export function validateProviderBaseUrl(value: unknown): string {
   if (!hostname.includes(".") || hostname.endsWith(".local") || hostname.endsWith(".localhost") || hostname.endsWith(".internal") || isIP(hostname))
     invalid("第三方 API 地址不能使用本机、内网或 IP 地址");
   if (url.pathname.includes("%") || /[\u0000-\u001f]/.test(url.pathname)) invalid("第三方 API 地址路径无效");
-  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/v1$/i, "") || "/";
+  url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/v1(?:beta)?$/i, "") || "/";
   return url.toString().replace(/\/$/, "");
 }

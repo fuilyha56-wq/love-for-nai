@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AgentStep } from "@/lib/tag-agent";
+import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 // 助手任务存内存：单容器部署下进程常驻，重启丢失可接受（客户端提示重试）。
 // 用轮询代替一次长连接，避免移动端 WebView 在长等待中掐断请求。
 export type AssistantJobResult = {
   suggestion: {
+    imageModel?: string;
+    modelProtocol?: ImageProviderProtocol;
+    promptStyle?: "tags" | "natural";
     // 助手对用户说的自然语言（final.message），缺省表示本轮没有留言。
     message?: string;
     // 1–3 句英文自然语言描述，不含 artist 信息。

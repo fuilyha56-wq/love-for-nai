@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags } from "@/lib/prompt-completion";
 
 // Tag 模式胶囊编辑器（移植 Aaalice TagEditorView/tag_editor_commands，MIT）：
 // 提示词解析为 tag 胶囊（识别 {}/[] 权重层数、数字 ::权重::、/*disabled:*/
@@ -22,6 +23,7 @@ export function loadUserLibrary(): UserLibraryEntry[] {
 
 function saveUserLibrary(entries: UserLibraryEntry[]): void {
   window.localStorage.setItem("lfn-user-library", JSON.stringify(entries.slice(0, 500)));
+  window.dispatchEvent(new CustomEvent("replica-prompt-config-change", { detail: "lfn-user-library" }));
 }
 
 type Capsule = {
@@ -146,15 +148,20 @@ function weightLabel(capsule: Capsule): string {
 function AddTagInput({
   onAdd,
   zhOf,
+  autocomplete = true,
+  library = [],
 }: {
   onAdd: (tag: string) => void;
   zhOf?: (tag: string) => string | undefined;
+  autocomplete?: boolean;
+  library?: Array<{ name: string; content: string }>;
 }) {
   const [text, setText] = useState("");
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const debounceRef = useRef<number | null>(null);
+  const queryVersion = useRef(0);
 
   useEffect(
     () => () => {
@@ -165,8 +172,14 @@ function AddTagInput({
 
   function query(token: string) {
     if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    const key = token.trim().toLowerCase();
-    if (key.length < 2 || /\s/.test(key)) {
+    const version = ++queryVersion.current;
+    if (!autocomplete) { setOpen(false); return; }
+    const key = token.trim().toLowerCase().replaceAll(" ", "_");
+    if (token.startsWith("<")) {
+      const matches = library.filter((entry) => entry.name.toLowerCase().includes(token.slice(1).toLowerCase())).slice(0, 8).map((entry) => ({ name: "<" + entry.name + ">", displayName: entry.name, zh: entry.content }));
+      setSuggestions(matches); setActive(0); setOpen(matches.length > 0); return;
+    }
+    if (key.length < 2) {
       setOpen(false);
       setSuggestions([]);
       return;
@@ -178,13 +191,22 @@ function AddTagInput({
       setOpen(cached.length > 0);
       return;
     }
+    let local: Suggestion[] = [];
+    void loadPromptCompletionWordlist().then((names) => {
+      local = matchLocalPromptTags(key, [...names, ...library.flatMap((entry) => entry.content.split(/[,，\n]/))], 8);
+      if (version !== queryVersion.current) return;
+      setSuggestions(local); setActive(0); setOpen(local.length > 0);
+    });
     debounceRef.current = window.setTimeout(async () => {
       try {
         const response = await fetch(`/api/tags?q=${encodeURIComponent(key)}`, { cache: "no-store" });
+        if (!response.ok) return;
         const result = (await response.json()) as { tags?: Suggestion[] };
-        const hits = Array.isArray(result.tags) ? result.tags.slice(0, 8) : [];
+        const seen = new Set<string>();
+        const hits = [...(Array.isArray(result.tags) ? result.tags : []), ...local].filter((hit) => typeof hit.name === "string" && !seen.has(hit.name) && Boolean(seen.add(hit.name))).slice(0, 8);
         RESULT_CACHE.set(key, hits);
         if (RESULT_CACHE.size > 200) RESULT_CACHE.clear();
+        if (version !== queryVersion.current) return;
         setSuggestions(hits);
         setActive(0);
         setOpen(hits.length > 0);
@@ -195,6 +217,7 @@ function AddTagInput({
   }
 
   function add(name: string) {
+    queryVersion.current++;
     const clean = name.trim().replace(/,+$/, "");
     if (!clean) return;
     onAdd(clean);
@@ -230,7 +253,7 @@ function AddTagInput({
         aria-label="添加标签"
         className="tag-chip-add-input"
       />
-      {open && suggestions.length > 0 && (
+      {autocomplete && open && suggestions.length > 0 && (
         <div className="tag-suggest-panel" role="listbox" aria-label="标签联想">
           <p className="tag-suggest-head">猜你想用</p>
           <div className="tag-suggest-list">
@@ -267,10 +290,20 @@ export function TagChipEditor({
   value,
   onChange,
   zhOf,
+  autocomplete = true,
+  library = [],
+  cooccurrence = false,
+  relatedSamples = [],
+  resolveCopy,
 }: {
   value: string;
   onChange: (next: string) => void;
   zhOf?: (tag: string) => string | undefined;
+  autocomplete?: boolean;
+  library?: Array<{ name: string; content: string }>;
+  cooccurrence?: boolean;
+  relatedSamples?: string[];
+  resolveCopy?: (text: string) => string;
 }) {
   const capsules = useMemo(() => parsePromptCapsules(value), [value]);
   const [selected, setSelected] = useState<number[]>([]);
@@ -294,6 +327,7 @@ export function TagChipEditor({
     capsules.some((capsule) => capsule.start === start),
   );
   const selectedCapsules = capsules.filter((capsule) => validSelected.includes(capsule.start));
+  const relatedTags = cooccurrence && selectedCapsules.length === 1 ? localCooccurringTags(selectedCapsules[0].base, relatedSamples, value) : [];
 
   function applyToSelected(mutate: (capsule: Capsule) => string): void {
     if (!selectedCapsules.length) return;
@@ -347,7 +381,8 @@ export function TagChipEditor({
 
   function copySelected(): void {
     const text = selectedCapsules.map((capsule) => capsule.raw).join(", ");
-    void navigator.clipboard?.writeText(text).then(() => setNotice(`已复制 ${selectedCapsules.length} 个标签`));
+    if (!navigator.clipboard) { setNotice("剪贴板暂不可用，请选择文本复制。"); return; }
+    void navigator.clipboard.writeText(resolveCopy ? resolveCopy(text) : text).then(() => setNotice(`已复制 ${selectedCapsules.length} 个标签`)).catch(() => setNotice("复制失败，请选择文本复制。"));
   }
 
   function addToLibrary(): void {
@@ -421,7 +456,9 @@ export function TagChipEditor({
   ];
 
   return (
-    <div className="tag-chip-editor" onContextMenu={(event) => event.preventDefault()}>
+    <div className="tag-chip-editor" onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
+      if (cooccurrence && event.ctrlKey && event.shiftKey && event.code === "Space") { event.preventDefault(); if (!relatedTags.length) setNotice("本次历史和词库中没有当前选中标签的共现记录。"); }
+    }}>
       {capsules.length ? (
         <div className="tag-chip-list">
           {capsules.map((capsule, index) =>
@@ -469,13 +506,14 @@ export function TagChipEditor({
               </button>
             ),
           )}
-          <AddTagInput onAdd={addTag} zhOf={zhOf} />
+          <AddTagInput onAdd={addTag} zhOf={zhOf} autocomplete={autocomplete} library={library} />
         </div>
       ) : (
         <div className="tag-chip-list">
-          <AddTagInput onAdd={addTag} zhOf={zhOf} />
+          <AddTagInput onAdd={addTag} zhOf={zhOf} autocomplete={autocomplete} library={library} />
         </div>
       )}
+      {relatedTags.length > 0 && <div className="tag-chip-related" aria-label="本地共现标签"><b>本次历史 / 我的词库共现</b><div>{relatedTags.map((tag) => <button type="button" key={tag.name} onClick={() => addTag(tag.name)} title={tag.occurrences + " 条共同出现的记录"}>{tag.displayName || tag.name}<small>{tag.occurrences}</small></button>)}</div></div>}
       <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">
         单击选中，Ctrl 加减选，Shift 范围选，双击改词，拖拽排序，右键调权重/禁用/词库菜单。
       </p>
@@ -483,6 +521,7 @@ export function TagChipEditor({
       {menu && (
         <div
           ref={menuRef}
+          data-replica-menu
           className="tag-chip-menu"
           style={{ position: "fixed", left: menu.x, top: menu.y }}
           role="menu"

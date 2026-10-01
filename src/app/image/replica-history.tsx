@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { Copy, Ellipsis, History, Trash2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
+import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import "./replica-history.css";
 
 export type ReplicaHistoryItem = {
@@ -17,6 +18,12 @@ export type ReplicaHistoryItem = {
   steps: number;
   scale: number;
   sampler: string;
+  model?: string;
+  providerId?: string;
+  imageProtocol?: ImageProviderProtocol;
+  quality?: string;
+  imageSize?: string;
+  background?: string;
 };
 
 export type ReplicaHistoryProps = {
@@ -91,6 +98,10 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
           }}
         />
       </button>
+      {item.model && <details className="px-3 py-2 text-xs">
+        <summary className="cursor-pointer text-[var(--muted)]">参数详情</summary>
+        <dl className="mt-2"><div className="flex items-start gap-2"><dt className="shrink-0 text-[var(--muted)]">模型</dt><dd className="min-w-0 break-all">{item.model}</dd></div></dl>
+      </details>}
       <div className="replica-history-actions" role="group" aria-label={`第 ${index + 1} 张历史图像操作`}>
         <button type="button" aria-label={`复制第 ${index + 1} 张历史原图`} title={copying ? "正在复制…" : "复制原图"} disabled={copying} onClick={() => void onCopy(item)}><Copy size={16} /></button>
         <button type="button" aria-label={`删除第 ${index + 1} 张历史图像`} title="删除" onClick={() => { setMenuOpen(false); onDelete(index); }}><Trash2 size={16} /></button>
@@ -101,7 +112,9 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
           ["reuse-parameters", "复用参数"],
           ["img2img", "用于图生图"],
           ["inpainting", "用于局部重绘"],
+          ["director-lineart", "用于导演工具"],
           ["vibe-transfer", "用于风格迁移"],
+          ["upscale", "用于超分"],
         ].map(([operation, label]) => <button type="button" role="menuitem" key={operation} onClick={() => { setMenuOpen(false); onUse(item, operation); }}>{label}</button>)}
       </div>}
     </article>

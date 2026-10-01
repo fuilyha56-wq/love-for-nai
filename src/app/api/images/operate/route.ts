@@ -25,6 +25,9 @@ import { gatewayLogStart } from "@/lib/gateway-log";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import { sseEvent, sseResponse } from "@/lib/sse";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
+import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
+import { handleNaturalImagePromptSuggestion } from "@/lib/provider/prompt-suggestion";
+import { resolveImageModelCapabilities, isImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { validateModelId } from "@/lib/provider/validation";
 import {
@@ -275,8 +278,11 @@ export async function POST(request: Request) {
   const deferPatchHistory = body.editor_composite === true;
   delete body.editor_composite;
   const providerId = typeof body.providerId === "string" ? body.providerId : "";
+  if (operation === "suggest-tags" && resolveImageModelCapabilities(typeof body.model === "string" ? body.model : "", isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto").promptStyle === "natural") return handleNaturalImagePromptSuggestion(request, session, body);
   if (providerId && providerId !== "newapi")
     return handlePersonalProviderGeneration(request, session, { ...body, editor_composite: deferPatchHistory }, providerId);
+  try { assertImageModel(body.model); }
+  catch { return handleNewApiImageModelGeneration(request, session, { ...body, editor_composite: deferPatchHistory }); }
   let model: string;
   let nativeNaiModel = true;
   try {

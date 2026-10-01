@@ -17,7 +17,7 @@ export function ReplicaPromptModal({ variant, title, children, onClose, classNam
     return () => { if (node.open) node.close(); };
   }, []);
   if (typeof document === "undefined") return null;
-  return createPortal(<dialog ref={dialog} data-variant={variant} className={"replica-prompt-dialog " + className}
+  return createPortal(<dialog ref={dialog} data-variant={variant} data-replica-menu className={"replica-prompt-dialog " + className}
     aria-label={title} onCancel={(event) => { event.preventDefault(); onClose(); }}
     onClick={(event) => { if (event.target === event.currentTarget) {
       const bounds = event.currentTarget.getBoundingClientRect();

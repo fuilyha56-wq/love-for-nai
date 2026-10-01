@@ -4,6 +4,7 @@ import { assertBodySize } from "@/lib/image-request";
 import { pngDimensions } from "@/lib/png-dims";
 import { getSession } from "@/lib/session";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { parseImageHistoryMetadata } from "@/lib/editor-composite-history";
 
 const PNG_DATA_URL = /^data:image\/png;base64,[a-zA-Z0-9+/=\s]+$/;
 
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
     session.userId,
     {
       operation: "editor-composite",
+      ...parseImageHistoryMetadata(body),
       model: typeof body.model === "string" ? body.model : undefined,
       prompt: typeof body.prompt === "string" ? body.prompt.slice(0, 10_000) : undefined,
       negative_prompt:

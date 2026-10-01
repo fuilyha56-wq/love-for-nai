@@ -3,7 +3,8 @@
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { readImageOperationResponse } from "@/lib/image-operation-response";
 import { inpaintModelFor } from "@/lib/inpaint-model";
-import { saveEditorComposite } from "@/lib/editor-composite-history";
+import { parseImageHistoryMetadata, saveEditorComposite } from "@/lib/editor-composite-history";
+import type { GenerationParameters } from "@/lib/history";
 import {
   InlineChatMenu,
   InlineChatZone,
@@ -18,8 +19,6 @@ import {
   Brush,
   ChevronLeft,
   ChevronRight,
-  ChevronsDown,
-  ChevronsUp,
   Code2,
   ExternalLink,
   Download,
@@ -41,7 +40,6 @@ import {
   Paintbrush,
   PanelLeft,
   PanelLeftClose,
-  PanelRightClose,
   PawPrint,
   Plus,
   Redo2,
@@ -83,8 +81,10 @@ import {
 } from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { NaiBalanceMeter } from "./nai-balance-meter";
-import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference } from "./replica-controls";
+import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverseTagger } from "./replica-controls";
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
+import { NaturalImageSettings } from "./natural-image-settings";
+import { isKnownImageModel, nearestImageSize, normalizeImageModelSize, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { ReplicaPromptEditor } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
@@ -111,6 +111,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -134,10 +135,6 @@ import {
 
 type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
 
-export function shouldCollapseToolsPanel(_customWorkspace: boolean, layoutEditorOpen: boolean, rightPanelCollapsed: boolean) {
-  return rightPanelCollapsed && !layoutEditorOpen;
-}
-
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
 }
@@ -146,7 +143,6 @@ import {
   estimateNewApiCost,
   affCost as estimateAff,
   usesLimitPricing,
-  modelPointVersion,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
   type ModelPricingSnapshot,
@@ -177,6 +173,7 @@ type ProviderSummary = {
   name: string;
   baseUrl: string;
   models: string[];
+  protocol?: ImageProviderProtocol;
 };
 type AvailableModel = { id: string; kind?: string };
 type Operation =
@@ -197,7 +194,7 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string };
-type SessionResult = {
+type SessionResult = ReplicaHistoryItem & {
   id: string;
   image: string;
   prompt: string;
@@ -309,6 +306,9 @@ type DanbooruTag = {
   postCount: number;
 };
 type AssistantSuggestion = {
+  imageModel?: string;
+  modelProtocol?: ImageProviderProtocol;
+  promptStyle?: "tags" | "natural";
   message?: string;
   englishDescription?: string;
   prompt: string;
@@ -371,7 +371,7 @@ const CREATIVE_CENTER_LINKS: Array<{
   { href: "/gallery", label: "图片广场", icon: <Globe size={15} /> },
   { href: "/usage", label: "使用记录", icon: <BarChart3 size={15} /> },
   { href: "/account", label: "我的账号", icon: <UserRound size={15} /> },
-  { href: "/resources", label: "模型密钥", icon: <KeyRound size={15} /> },
+  { href: "/settings#models", label: "模型密钥", icon: <KeyRound size={15} /> },
   { href: "/announcements", label: "公告", icon: <Megaphone size={15} /> },
   { href: "/settings", label: "外观设置", icon: <Paintbrush size={15} /> },
 ];
@@ -500,6 +500,8 @@ const defaultPrompt =
 const defaultNegative = "lowres, bad anatomy, blurry, text, watermark";
 
 type GenerationValidationInput = {
+  imageModel?: string;
+  imageProtocol?: ImageProviderProtocol;
   operation: Operation;
   width: number;
   height: number;
@@ -514,6 +516,8 @@ type GenerationValidationInput = {
 };
 
 export function validateGenerationParameters({
+  imageModel,
+  imageProtocol,
   operation,
   width,
   height,
@@ -526,7 +530,9 @@ export function validateGenerationParameters({
   source,
   mask,
 }: GenerationValidationInput): string | null {
-  if (
+  const natural = imageModel && resolveImageModelCapabilities(imageModel, imageProtocol).promptStyle === "natural";
+  if (natural && (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 3840 || height > 3840)) return "输出宽高必须是 64–3840 之间的整数。";
+  if (!natural && (
     !Number.isInteger(width) ||
     !Number.isInteger(height) ||
     width < 64 ||
@@ -535,21 +541,21 @@ export function validateGenerationParameters({
     height > 1600 ||
     width % 64 !== 0 ||
     height % 64 !== 0
-  )
+  ))
     return "宽高必须是 64–1600 之间的整数，并且是 64 的倍数。";
-  if (!Number.isInteger(steps) || steps < 1 || steps > 50)
+  if (!natural && (!Number.isInteger(steps) || steps < 1 || steps > 50))
     return "采样步数必须是 1–50 之间的整数。";
-  if (!Number.isFinite(scale) || scale < 0 || scale > 10)
+  if (!natural && (!Number.isFinite(scale) || scale < 0 || scale > 10))
     return "提示词相关性必须是 0–10 之间的有效数字。";
   if (!Number.isInteger(count) || count < 1 || count > MAX_NAI_IMAGE_COUNT)
     return `生成张数必须是 1-${MAX_NAI_IMAGE_COUNT} 之间的整数。`;
-  if (!Number.isFinite(cfgRescale) || cfgRescale < 0 || cfgRescale > 1)
+  if (!natural && (!Number.isFinite(cfgRescale) || cfgRescale < 0 || cfgRescale > 1))
     return "CFG 重缩放必须是 0–1 之间的有效数字。";
-  if (!Number.isFinite(strength) || strength < 0 || strength > 1)
+  if (!natural && (!Number.isFinite(strength) || strength < 0 || strength > 1))
     return "变化强度必须是 0–1 之间的有效数字。";
   const seedValue = seed.trim();
   if (
-    seedValue &&
+    !natural && seedValue &&
     (!/^[+-]?\d+$/.test(seedValue) || !Number.isSafeInteger(Number(seedValue)))
   )
     return "种子必须为空或有效的整数。";
@@ -640,16 +646,19 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const naiLayout = preferences.theme === "nai" && preferences.workspaceLayout !== "custom" && !layoutEditorOpen;
   const customWorkspace = layoutEditorOpen || (!naiLayout && preferences.workspaceLayout === "custom");
   const nlwLayout = !naiLayout && preferences.workspaceLayout === "nlw";
-  // 外观设置「关闭右侧栏自动折叠」：功能栏保持展开（NAI 主题本就是
-  // overlay 滑出面板，无自动折叠，不受此开关影响）。
-  const keepRightPanelOpen = !naiLayout && preferences.rightPanelKeepOpen;
   const replicaLayout = naiLayout || nlwLayout;
+  // 所有运行布局共用停靠栏；布局编辑器保留独立模块预览。
+  const aaaliceDock = !layoutEditorOpen;
   const composedPromptLayout = replicaLayout || customWorkspace;
   const sidebarPromptLayout = replicaLayout || customWorkspace;
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
   const [providerId, setProviderId] = useState("newapi");
+  const [newApiImageProtocol, setNewApiImageProtocol] = useState<ImageProviderProtocol>("auto");
+  const [imageQuality, setImageQuality] = useState("auto");
+  const [imageResolution, setImageResolution] = useState("1K");
+  const [imageBackground, setImageBackground] = useState("auto");
   const [newApiModels, setNewApiModels] = useState<SelectOption[]>([]);
   const [newApiModelsLoaded, setNewApiModelsLoaded] = useState(false);
   const [customProviders, setCustomProviders] = useState<ProviderSummary[]>([]);
@@ -716,7 +725,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
   const [mobilePanel, setMobilePanel] = useState(false);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [naiToolsOpen, setNaiToolsOpen] = useState(false);
+  const [mobileToolsPane, setMobileToolsPane] = useState<"history" | "assistant">("history");
   const [me, setMe] = useState<Me | null>(null);
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
@@ -726,13 +735,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true);
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
-  // 右侧停靠栏（Aaalice 式）：历史与助手是两块独立界面，各自可折叠成恢复条，上下分割比例记忆。
-  const [historyDockOpen, setHistoryDockOpen] = useState(true);
-  const [agentDockOpen, setAgentDockOpen] = useState(true);
-  const [agentDockFraction, setAgentDockFraction] = useState(0.62);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
   const [inlineChatMenu, setInlineChatMenu] = useState<{
     position: { x: number; y: number };
@@ -743,14 +747,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     contextAfter: string;
   } | null>(null);
   const [inlineChat, setInlineChat] = useState<InlineChatSession | null>(null);
-  const [nlwDockCollapsed, setNlwDockCollapsed] = useState(true);
+  const [replicaDockCollapsed, setReplicaDockCollapsed] = useState(true);
+  const [customDockExpansionRequest, setCustomDockExpansionRequest] = useState({ revision: 0, expanded: false });
   const [replicaAssistantOpenRequest, setReplicaAssistantOpenRequest] = useState(0);
   const [nlwLeftCollapsed, setNlwLeftCollapsed] = useState(false);
-  const toolsPanelCollapsed = shouldCollapseToolsPanel(customWorkspace, layoutEditorOpen, rightPanelCollapsed);
-  const rightPanelCloseTimer = useRef<number | null>(null);
   // 多角色手动定位坐标系（画布叠加层）：拖动圆点更新 centerX/centerY。
   const positionOverlayRef = useRef<HTMLDivElement>(null);
-  const rightPanelResizing = useRef(false);
   const [streamProgress, setStreamProgress] = useState("");
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
 
@@ -786,13 +788,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [classicLeftWidth, setClassicLeftWidth] = useState(310);
   const [naiLeftWidth, setNaiLeftWidth] = useState(447);
   const [nlwLeftWidth, setNlwLeftWidth] = useState(400);
-  const [classicRightWidth, setClassicRightWidth] = useState(230);
+  const [classicRightWidth, setClassicRightWidth] = useState(280);
+  const [naiRightWidth, setNaiRightWidth] = useState(280);
   const [nlwRightWidth, setNlwRightWidth] = useState(280);
   const leftWidth = naiLayout ? naiLeftWidth : nlwLayout ? nlwLeftWidth : classicLeftWidth;
   const setLeftWidth = naiLayout ? setNaiLeftWidth : nlwLayout ? setNlwLeftWidth : setClassicLeftWidth;
-  const rightWidth = nlwLayout ? nlwRightWidth : classicRightWidth;
-  const setRightWidth = nlwLayout ? setNlwRightWidth : setClassicRightWidth;
+  const rightWidth = naiLayout ? naiRightWidth : nlwLayout ? nlwRightWidth : classicRightWidth;
+  const setRightWidth = naiLayout ? setNaiRightWidth : nlwLayout ? setNlwRightWidth : setClassicRightWidth;
   const [customLayout, setCustomLayout] = useState(() => structuredClone(DEFAULT_CUSTOM_LAYOUT));
+  const historyEnabled = !customWorkspace || customLayout.visibleModules.history;
+  const assistantEnabled = !customWorkspace || customLayout.visibleModules.agent;
   const [customPromptCollapsed, setCustomPromptCollapsed] = useState(false);
   const [customReferenceOpen, setCustomReferenceOpen] = useState(true);
   const [customDirectorOpen, setCustomDirectorOpen] = useState(false);
@@ -800,18 +805,30 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const previousCardPositions = useRef<Map<CustomLayoutModule, number> | null>(null);
   const [formCacheReady, setFormCacheReady] = useState(false);
   const selectedProvider = customProviders.find((item) => item.id === providerId);
+  const imageProtocol = providerId === "newapi" ? newApiImageProtocol : providerId === "novelai" ? "auto" : resolveProviderImageProtocol(selectedProvider?.protocol, selectedProvider?.baseUrl || "");
+  const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
+  const naturalImageModel = modelCapabilities.promptStyle === "natural";
+  const outputCount = generationModes.has(operation) ? count : 1;
+  const effectiveImageQuality = modelCapabilities.qualityOptions.includes(imageQuality) ? imageQuality : "auto";
+  const effectiveImageResolution = modelCapabilities.imageSizes.includes(imageResolution) ? imageResolution : "1K";
+  const naturalSettings = naturalImageModel ? <NaturalImageSettings model={model} imageProtocol={imageProtocol} width={width} height={height} setWidth={setWidth} setHeight={setHeight}
+    quality={effectiveImageQuality} setQuality={setImageQuality} imageSize={effectiveImageResolution} setImageSize={setImageResolution} background={imageBackground} setBackground={setImageBackground} /> : undefined;
+  useEffect(() => {
+    assistantAbortRef.current?.abort("cancel");
+    void Promise.resolve().then(() => { setAssistantSuggestion(null); setInlineChat(null); setInlineChatMenu(null); });
+  }, [model, imageProtocol]);
   const providerOptions: SelectOption[] = [
     { value: "newapi", label: "NewAPI 账号" },
     ...(novelAiConnected ? [{ value: "novelai", label: "NovelAI 官方 Key" }] : []),
     ...customProviders.map((item) => ({ value: item.id, label: item.name })),
   ];
-  const modelOptions = providerId === "newapi"
-    ? (newApiModelsLoaded ? newApiModels : models)
+  const modelOptions = useMemo(() => providerId === "newapi"
+    ? (newApiModelsLoaded ? newApiModels : authenticated ? models : [...models, ...["gpt-image-1.5", "gpt-image-2", "gpt-image-2.5-sunburst", "gemini-2.5-flash-image", "gemini-3-pro-image-preview"].map(value => ({ value, label: value }))])
     : providerId === "novelai"
       ? models.filter((item) => !item.value.endsWith("-limit"))
       : (customProviderModels.length
         ? customProviderModels
-        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })));
+        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id }))), [providerId, newApiModelsLoaded, newApiModels, authenticated, customProviderModels, selectedProvider]);
 
   useLayoutEffect(() => {
     const previous = previousCardPositions.current;
@@ -922,22 +939,55 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>;
   }
 
-  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation) {
+  function restoreGenerationParameters(parameters: GenerationParameters) {
+    const metadata = parseImageHistoryMetadata(parameters);
+    if (metadata.providerId) setProviderId(metadata.providerId);
+    if (metadata.imageProtocol) setNewApiImageProtocol(metadata.imageProtocol);
+    if (metadata.quality) setImageQuality(metadata.quality);
+    if (metadata.imageSize) setImageResolution(metadata.imageSize);
+    if (metadata.background) setImageBackground(metadata.background);
+    const targetModel = parameters.model || model;
+    const targetProtocol = metadata.imageProtocol || imageProtocol;
+    const caps = resolveImageModelCapabilities(targetModel, targetProtocol);
+    if (parameters.model) setModel(parameters.model);
+    if (typeof parameters.prompt === "string") setPrompt(parameters.prompt);
+    if (typeof parameters.negative_prompt === "string") setNegative(parameters.negative_prompt);
+    if (parameters.width && parameters.height) {
+      const size = normalizeImageModelSize(targetModel, parameters.width, parameters.height, targetProtocol);
+      setWidth(size.width); setHeight(size.height);
+    }
+    if (caps.sampling) {
+      if (typeof parameters.steps === "number") setSteps(parameters.steps);
+      if (typeof parameters.scale === "number") setScale(parameters.scale);
+      if (parameters.sampler) setSampler(parameters.sampler);
+      if (parameters.noise_schedule) setSchedule(parameters.noise_schedule);
+      if (typeof parameters.strength === "number") setStrength(parameters.strength);
+    }
+    if (caps.seed) setSeed(parameters.seed == null ? "" : String(parameters.seed));
+  }
+
+  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> = {}) {
     if (!nextImages.length || sourceOperation === "suggest-tags") return;
     const now = Date.now();
-    setSessionHistory((current) => [
-      ...nextImages.map((image, index) => ({
+    const results: SessionResult[] = nextImages.map((image, index) => ({
         id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         image,
         historyId: historyIds[index],
         prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
         negative: composedPromptLayout ? effectivePrompts.negative : negative,
         seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
+        model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
         operation: sourceOperation,
         createdAt: now + index,
-      })),
+        ...settings,
+      }));
+    setSessionHistory((current) => [
+      ...results,
       ...current,
     ]);
+    for (const item of results) void loadImageElement(item.image).then(decoded => {
+      setSessionHistory(current => current.map(saved => saved.id === item.id ? { ...saved, width: decoded.naturalWidth, height: decoded.naturalHeight } : saved));
+    }).catch(() => undefined);
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
@@ -967,7 +1017,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           negativePrompt: negative,
           seed: seed || null,
           source: { name: source?.name || "工作区图片.png", mimeType: "image/png" },
-          generation: { model, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
+          generation: { model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
         },
       );
       const random = new Uint32Array(2);
@@ -982,11 +1032,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function applyImageAsSource(image: string, nextOperation: Operation = "img2img") {
+    if (nextOperation !== "suggest-tags" && !modelCapabilities.operations.includes(nextOperation)) {
+      setNotice("当前模型不支持这个操作，请先选择支持图像编辑的模型。");
+      return;
+    }
     setSource({ data: image, name: "工作区图片.png" });
     setMask(null);
     setUpscaleSource(null);
     if (nextOperation === "inpainting" || nextOperation === "edits") {
-      const inpaintModel = inpaintModelFor(model);
+      const inpaintModel = inpaintModelFor(model, imageProtocol);
       if (inpaintModel) setModel(inpaintModel);
     }
     setOperation(nextOperation);
@@ -996,12 +1050,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function selectOperation(nextOperation: Operation) {
+    if (nextOperation !== "suggest-tags" && !modelCapabilities.operations.includes(nextOperation)) { setNotice("当前模型没有这个图像能力，请选择支持编辑的模型。"); return; }
     if (nextOperation !== "generate" && !source && images[0]) {
       applyImageAsSource(images[0], nextOperation);
       return;
     }
     if (nextOperation === "inpainting" || nextOperation === "edits") {
-      const inpaintModel = inpaintModelFor(model);
+      const inpaintModel = inpaintModelFor(model, imageProtocol);
       if (inpaintModel) setModel(inpaintModel);
     }
     setOperation(nextOperation);
@@ -1014,8 +1069,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice("请先登录后再进行精确重绘。");
       return;
     }
-    if (providerId !== "newapi" && providerId !== "novelai") {
-      setNotice("精确重绘暂不支持自定义 API，请切换到 NewAPI 或 NovelAI 官方 Key。");
+    if (!modelCapabilities.edit) {
+      setNotice("当前模型不支持重绘，请选择支持图像编辑的模型。");
       return;
     }
     setGenerating(true);
@@ -1054,7 +1109,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         patch.selectionInPatch.width,
         patch.selectionInPatch.height,
       );
-      const inpaintModel = inpaintModelFor(model);
+      const inpaintModel = inpaintModelFor(model, imageProtocol);
       if (!inpaintModel) throw new Error(`当前模型 ${model} 没有对应的重绘模型，请先选择支持重绘的模型。`);
       const response = await fetch("/api/images/operate", {
         method: "POST",
@@ -1063,6 +1118,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           operation: "inpainting",
           providerId,
           editor_composite: true,
+          imageProtocol,
+          quality: effectiveImageQuality,
+          imageSize: effectiveImageResolution,
+          background: imageBackground,
           model: inpaintModel,
           prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
           negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
@@ -1136,6 +1195,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       try {
         historyId = await saveEditorComposite({
           image: finalImage, model: inpaintModel, prompt, negative_prompt: negative,
+          providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
           width: imageSize.width, height: imageSize.height, steps, scale, sampler, strength,
         });
       } catch (error) {
@@ -1152,41 +1212,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setGenerating(false);
     }
   }
-  function hoverRightPanel() {
-    // 悬停只取消待执行的自动收起，不再强制展开——折叠态入口改为 Aaalice 式单击进入。
-    if (rightPanelCloseTimer.current !== null) {
-      window.clearTimeout(rightPanelCloseTimer.current);
-      rightPanelCloseTimer.current = null;
+  function openAssistantPanel() {
+    if (customWorkspace && !customLayout.visibleModules.agent) {
+      setNotice("标签助手模块已关闭，可在布局设置中启用。");
+      return;
     }
-  }
-
-  // 折叠态停靠入口（Aaalice 式）：点竖排入口展开并只进入对应面板，另一块折叠成恢复条。
-  function enterDockPane(pane: "history" | "agent") {
-    setRightPanelCollapsed(false);
-    setHistoryDockOpen(pane === "history");
-    setAgentDockOpen(pane === "agent");
-    if (customWorkspace) {
-      const nextLayout = { ...customLayout, rightCollapsed: false };
-      setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
-    }
-  }
-
-  // 面板折叠按钮（Aaalice collapsePane 语义）：仅剩的最后一块也折叠时，整个右栏收起成竖排入口。
-  function collapseDockPane(pane: "history" | "agent") {
-    if (pane === "history") {
-      setHistoryDockOpen(false);
-      if (!agentDockOpen) collapseRightDock();
+    if (window.innerWidth < 1024) {
+      setMobileToolsPane("assistant");
+      setMobileToolsOpen(true);
     } else {
-      setAgentDockOpen(false);
-      if (!historyDockOpen) collapseRightDock();
-    }
-  }
-
-  function collapseRightDock() {
-    setRightPanelCollapsed(true);
-    if (customWorkspace) {
-      const nextLayout = { ...customLayout, rightCollapsed: true };
-      setCustomLayout(layoutEditorOpen ? nextLayout : saveCustomLayout(nextLayout));
+      setReplicaAssistantOpenRequest(value => value + 1);
     }
   }
 
@@ -1252,16 +1287,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       );
   }
 
-  function scheduleRightPanelClose() {
-    // 外观设置开启「关闭右侧栏自动折叠」后，鼠标离开不再自动收起，
-    // 只保留折叠按钮的手动折叠。
-    if (rightPanelResizing.current || layoutEditorOpen || keepRightPanelOpen || customWorkspace || nlwLayout) return;
-    if (rightPanelCloseTimer.current !== null) window.clearTimeout(rightPanelCloseTimer.current);
-    rightPanelCloseTimer.current = window.setTimeout(() => {
-      setRightPanelCollapsed(true);
-    }, 220);
-  }
-
   useLayoutEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const handoff = loadEditorPromptHandoff(params.get("editorResult"));
@@ -1280,6 +1305,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setContentMode(saved.contentMode);
       setProviderId(saved.providerId);
       setModel(saved.model);
+      setNewApiImageProtocol(saved.imageProtocol || "auto");
+      setImageQuality(saved.imageQuality || "auto");
+      setImageResolution(saved.imageResolution || "1K");
+      setImageBackground(saved.imageBackground || "auto");
       setWidth(saved.width);
       setHeight(saved.height);
       setSteps(saved.steps);
@@ -1319,6 +1348,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         contentMode,
         providerId,
         model,
+        imageProtocol: newApiImageProtocol,
+        imageQuality,
+        imageResolution,
+        imageBackground,
         prompt,
         negative,
         width,
@@ -1350,6 +1383,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return () => window.clearTimeout(timer);
   }, [
     formCacheReady, operation, contentMode, providerId, model, prompt, negative, width, height,
+    newApiImageProtocol, imageQuality, imageResolution, imageBackground,
     steps, scale, count, batchMode, sampler, schedule, cfgRescale, seed, strength,
     vibeStrength, vibeInformationExtracted, referenceType, controlModel, upscaleModel, charactersEnabled, characters,
   ]);
@@ -1367,7 +1401,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   useEffect(() => {
     if (!mobilePanel && !mobileToolsOpen && !menuOpen) return;
     function onKey(event: KeyboardEvent) {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
       if ((event.target as Element).closest?.(".rgs-panel, [data-replica-menu]")) return;
       event.preventDefault();
       setMobilePanel(false);
@@ -1386,7 +1420,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   useEffect(() => {
     if (mobileToolsOpen) mobileToolsRef.current?.focus();
-    else if (previousMobileToolsRef.current) mobileToolsTriggerRef.current?.focus();
+    else if (previousMobileToolsRef.current) {
+      const trigger = mobileToolsTriggerRef.current;
+      if (trigger?.getClientRects().length) trigger.focus();
+      else Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="打开站内菜单"]'))
+        .find(button => button.getClientRects().length)?.focus();
+    }
     previousMobileToolsRef.current = mobileToolsOpen;
   }, [mobileToolsOpen]);
 
@@ -1422,22 +1461,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (savedCustomQuality) void Promise.resolve().then(() => setCustomQuality(savedCustomQuality));
     const savedCustomUc = window.localStorage.getItem("lfn-uc-custom");
     if (savedCustomUc) void Promise.resolve().then(() => setCustomUc(savedCustomUc));
-    // 停靠栏折叠与分割比例记忆（Aaalice 式，比例 0.2–0.8）。
-    if (window.localStorage.getItem("lfn-right-dock-history") === "0")
-      void Promise.resolve().then(() => setHistoryDockOpen(false));
-    if (window.localStorage.getItem("lfn-right-dock-agent") === "0")
-      void Promise.resolve().then(() => setAgentDockOpen(false));
-    const savedDockFraction = Number(window.localStorage.getItem("lfn-right-dock-fraction"));
-    // 0.5 是旧默认值，视为没调过，升级到新默认（助手区更大）。
-    if (savedDockFraction >= 0.2 && savedDockFraction <= 0.8 && savedDockFraction !== 0.5)
-      void Promise.resolve().then(() => setAgentDockFraction(savedDockFraction));
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("lfn-right-dock-history", historyDockOpen ? "1" : "0");
-    window.localStorage.setItem("lfn-right-dock-agent", agentDockOpen ? "1" : "0");
-    window.localStorage.setItem("lfn-right-dock-fraction", String(agentDockFraction));
-  }, [historyDockOpen, agentDockOpen, agentDockFraction]);
 
   useEffect(() => {
     window.localStorage.setItem("lfn-prompt-tag-mode", promptTagMode ? "1" : "0");
@@ -1465,14 +1489,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setCustomLayout(saved);
       setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
       setClassicRightWidth(clampPanel(saved.rightWidth, 200, 460));
-      setRightPanelCollapsed(saved.rightCollapsed);
+      if (!layoutEditorOpen) setCustomDockExpansionRequest(current => ({ revision: current.revision + 1, expanded: !saved.rightCollapsed }));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [layoutEditorOpen, naiLayout, preferences.workspaceLayout]);
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("lfn-nai-left-width"));
-    if (!saved) return;
-    const timer = window.setTimeout(() => setNaiLeftWidth(clampPanel(saved, 320, 560)), 0);
+    const savedRight = Number(window.localStorage.getItem("lfn-nai-right-width"));
+    if (!saved && !savedRight) return;
+    const timer = window.setTimeout(() => {
+      if (saved) setNaiLeftWidth(clampPanel(saved, 320, 560));
+      if (savedRight) setNaiRightWidth(clampPanel(savedRight, 200, 520));
+    }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
@@ -1510,7 +1538,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, [operation, source]);
 
   function savePanelWidths(left: number, right: number) {
-    if (naiLayout) window.localStorage.setItem("lfn-nai-left-width", String(left));
+    if (naiLayout) {
+      window.localStorage.setItem("lfn-nai-left-width", String(left));
+      window.localStorage.setItem("lfn-nai-right-width", String(right));
+    }
     else if (nlwLayout) window.localStorage.setItem("lfn-nlw-panel-widths", JSON.stringify({ left, right }));
     else window.localStorage.setItem("lfn-layout", JSON.stringify({ left, right }));
     if (customWorkspace) {
@@ -1545,9 +1576,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     document.body.style.userSelect = "none";
   }
 
+  function rightPanelMaxWidth() {
+    const navigationWidth = nlwLayout ? 60 : naiLayout || layoutEditorOpen ? 0 : navRailExpanded ? 220 : 56;
+    const controlsWidth = nlwLayout && nlwLeftCollapsed ? 40 : leftWidth;
+    return Math.max(200, Math.min(replicaLayout ? 520 : 460, window.innerWidth - controlsWidth - navigationWidth - 236));
+  }
+
   function startResize(side: "left" | "right", event: React.PointerEvent) {
     event.preventDefault();
-    if (side === "right") rightPanelResizing.current = true;
     const startX = event.clientX;
     const startLeft = leftWidth;
     const startRight = rightWidth;
@@ -1560,7 +1596,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         latestLeft = clampPanel(startLeft + delta, replicaLayout ? 320 : 240, replicaLayout ? 560 : 520);
         setLeftWidth(latestLeft);
       } else {
-        latestRight = clampPanel(startRight - delta, 200, nlwLayout ? Math.max(200, Math.min(520, window.innerWidth - leftWidth - 400)) : 460);
+        latestRight = clampPanel(startRight - delta, 200, rightPanelMaxWidth());
         setRightWidth(latestRight);
       }
     }
@@ -1570,10 +1606,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       savePanelWidths(latestLeft, latestRight);
-      if (side === "right") {
-        rightPanelResizing.current = false;
-        if (!document.querySelector(".studio-tools-panel:hover, .panel-resizer[aria-label='调整右侧面板宽度']:hover")) scheduleRightPanelClose();
-      }
     }
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
@@ -1581,36 +1613,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     document.addEventListener("pointerup", end);
   }
 
-  // 停靠栏上下分割条：拖拽调整助手区占比（0.2–0.8），松手即持久化。
-  // 助手在分割条下方：指针往下 = 助手变矮，故占比 = (底边 - 指针) / 高度。
-  function startDockSplit(event: React.PointerEvent) {
-    event.preventDefault();
-    const panel = document.querySelector<HTMLElement>(".studio-dock-split-host");
-    if (!panel) return;
-    const rect = panel.getBoundingClientRect();
-    const move = (pointer: PointerEvent) => {
-      const fraction = (rect.bottom - pointer.clientY) / rect.height;
-      setAgentDockFraction(Math.min(0.8, Math.max(0.2, fraction)));
-    };
-    const end = () => {
-      document.removeEventListener("pointermove", move);
-      document.removeEventListener("pointerup", end);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    };
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("pointermove", move);
-    document.addEventListener("pointerup", end);
-  }
-
   function resizePanelWithKeyboard(
-    side: "left" | "right" | "dock",
+    side: "left" | "right",
     event: React.KeyboardEvent<HTMLDivElement>,
   ) {
     const current = side === "left" ? leftWidth : rightWidth;
     const min = side === "left" ? replicaLayout ? 320 : 240 : 200;
-    const max = side === "left" ? replicaLayout ? 560 : 520 : nlwLayout ? 520 : 460;
+    const max = side === "left" ? replicaLayout ? 560 : 520 : rightPanelMaxWidth();
     const bounds = { min, max };
     let next = current;
     if (event.key === "ArrowLeft") next = current - 16;
@@ -1698,11 +1707,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (controller.signal.aborted) return;
       if (modelsResult.status === "fulfilled") {
         const available = (modelsResult.value.items || [])
-          .filter((item) => item.kind === "图像模型" && typeof item.id === "string")
-          // 工作台是 NAI 原生参数工作流：上游 NewAPI 上挂在 Draw 分组或
-          // 名字带 image/gpt-image 的非 NAI 模型（gpt-image-2.5、gemini-*-image
-          // 等）不该出现在模型下拉里。
-          .filter((item) => modelPointVersion(item.id) !== null)
+          .filter((item) => typeof item.id === "string" && (item.kind === "图像模型" || isKnownImageModel(item.id)))
           .map((item) => ({
             value: item.id,
             label: models.find((known) => known.value === item.id)?.label || item.id,
@@ -1790,9 +1795,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       const reusedModel = params.get("model");
       if (reusedModel && /^[\w][\w.\-/:+]{0,199}$/.test(reusedModel))
         setModel(reusedModel);
+      const reusedProvider = params.get("providerId");
+      if (reusedProvider && /^[A-Za-z0-9_-]{1,200}$/.test(reusedProvider)) setProviderId(reusedProvider);
+      const reusedProtocol = params.get("imageProtocol");
+      if (["auto", "openai-images", "gemini", "openai-chat-images"].includes(reusedProtocol || "")) setNewApiImageProtocol(reusedProtocol as ImageProviderProtocol);
+      if (["auto", "low", "medium", "high", "xhigh", "max"].includes(params.get("quality") || "")) setImageQuality(params.get("quality")!);
+      if (["512", "1K", "2K", "4K"].includes(params.get("imageSize") || "")) setImageResolution(params.get("imageSize")!);
+      if (["auto", "opaque", "transparent"].includes(params.get("background") || "")) setImageBackground(params.get("background")!);
+      const reusedNatural = reusedModel && resolveImageModelCapabilities(reusedModel, (reusedProtocol || "auto") as ImageProviderProtocol).promptStyle === "natural";
       const numericValues = [
-        ["width", setWidth, 64, 1600],
-        ["height", setHeight, 64, 1600],
+        ["width", setWidth, 64, reusedNatural ? 3840 : 1600],
+        ["height", setHeight, 64, reusedNatural ? 3840 : 1600],
         ["steps", setSteps, 1, 50],
         ["scale", setScale, 0, 10],
         ["n", setCount, 1, 6],
@@ -1836,9 +1849,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         const result = editorImageDataUrl(resultDraft.document.image);
         setPrompt(resultDraft.document.prompt || "");
         setNegative(resultDraft.document.negativePrompt || "");
+        restoreGenerationParameters({ operation: "inpainting", ...resultDraft.document.generation, prompt: resultDraft.document.prompt, negative_prompt: resultDraft.document.negativePrompt });
         applyImageAsSource(result, "inpainting");
         setImages([result]);
-        addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting");
+        addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting", {
+          ...resultDraft.document.generation, prompt: resultDraft.document.prompt || "", negative: resultDraft.document.negativePrompt || "", width: resultDraft.document.image.width, height: resultDraft.document.image.height,
+        });
         await deleteEditorDraft(resultId);
         window.history.replaceState(null, "", "/image");
       })
@@ -1867,6 +1883,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         if (!active) return;
         const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
         await importImageAndParameters(new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type }));
+        if (historyId) {
+          const metadataResponse = await fetch(`/api/history/${encodeURIComponent(historyId)}`, { cache: "no-store" });
+          const metadata = await metadataResponse.json().catch(() => null) as { parameters?: GenerationParameters } | null;
+          if (active && metadataResponse.ok && metadata?.parameters) {
+            restoreGenerationParameters(metadata.parameters);
+            const caps = resolveImageModelCapabilities(metadata.parameters.model || model, metadata.parameters.imageProtocol || imageProtocol);
+            setOperation(caps.edit ? "img2img" : "generate");
+            setNotice("已载入历史图片、提示词和模型参数。");
+          }
+        }
       })
       .catch((error) => {
         if (active) setNotice(error instanceof Error ? error.message : "导入图片失败");
@@ -2022,13 +2048,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const selected = sessionHistory.slice(0, agentImage ? 3 : 4).map((item) => item.image);
     return agentImage ? [...selected, agentImage] : selected;
   }
-  async function askTagAssistant(request: string) {
+  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string }) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
-      return;
+      return false;
     }
     assistantAbortRef.current?.abort("cancel");
     const controller = new AbortController();
+    const abortFromCaller = () => controller.abort("cancel");
+    options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    if (options?.signal?.aborted) controller.abort("cancel");
     assistantAbortRef.current = controller;
     const timeoutId = window.setTimeout(
       () => controller.abort("timeout"),
@@ -2045,10 +2074,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: assistantModel,
+          imageModel: model,
+          modelProtocol: imageProtocol,
+          operation,
+          localTags: options?.localTags,
           request,
           currentPrompt: prompt,
           currentNegativePrompt: negative,
-          images: inputImagesForAgent(),
+          images: options?.image ? [options.image] : inputImagesForAgent(),
           image: undefined,
         }),
         signal: controller.signal,
@@ -2064,6 +2097,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           { cache: "no-store", signal: controller.signal },
         );
         const progress = await poll.json();
+        if (controller.signal.aborted || assistantAbortRef.current !== controller) return false;
         if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
         if (Array.isArray(progress.steps) && progress.steps.length)
           setAgentSteps(progress.steps);
@@ -2071,14 +2105,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setAssistantSuggestion(progress.suggestion);
           // 本轮已落盘，刷新历史与标签池。
           void refreshConversation();
-          return;
+          return true;
         }
         if (progress.status === "error")
           throw new Error(progress.message || "智能助手调用失败");
       }
       throw new Error("助手任务轮询已达到 60 次上限，任务仍可能在后台运行，请重试。");
     } catch (error) {
-      if (assistantAbortRef.current !== controller) return;
+      if (assistantAbortRef.current !== controller) return false;
       if (controller.signal.aborted) {
         setNotice(
           controller.signal.reason === "timeout"
@@ -2088,7 +2122,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       } else {
         setNotice(error instanceof Error ? error.message : "智能助手调用失败");
       }
+      return false;
     } finally {
+      options?.signal?.removeEventListener("abort", abortFromCaller);
       if (assistantTimeoutRef.current === timeoutId) {
         window.clearTimeout(timeoutId);
         assistantTimeoutRef.current = null;
@@ -2210,32 +2246,35 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   function applySuggestedParameters(
     parameters: AssistantSuggestion["parameters"],
   ) {
-    if (parameters.width && parameters.width >= 64 && parameters.width <= 1600)
+    const suggestedSize = naturalImageModel && (parameters.width || parameters.height) ? normalizeImageModelSize(model, parameters.width || width, parameters.height || height, imageProtocol) : null;
+    const targetSize = suggestedSize ? [suggestedSize.width, suggestedSize.height] : modelCapabilities.sizes.length ? nearestImageSize(parameters.width || width, parameters.height || height, modelCapabilities.sizes).split("x").map(Number) : null;
+    if (targetSize) { setWidth(targetSize[0]); setHeight(targetSize[1]); }
+    if (!targetSize && parameters.width && parameters.width >= 64 && parameters.width <= 1600)
       setWidth(parameters.width);
     if (
-      parameters.height &&
+      !targetSize && parameters.height &&
       parameters.height >= 64 &&
       parameters.height <= 1600
     )
       setHeight(parameters.height);
-    if (parameters.steps && parameters.steps >= 1 && parameters.steps <= 50)
+    if (modelCapabilities.sampling && parameters.steps && parameters.steps >= 1 && parameters.steps <= 50)
       setSteps(parameters.steps);
     if (
-      parameters.scale != null &&
+      modelCapabilities.sampling && parameters.scale != null &&
       parameters.scale >= 0 &&
       parameters.scale <= 10
     )
       setScale(parameters.scale);
     // seed 0 = 随机，不填入种子框（保持为空即随机）。
-    if (parameters.seed != null && parameters.seed > 0)
+    if (modelCapabilities.seed && parameters.seed != null && parameters.seed > 0)
       setSeed(String(parameters.seed));
     if (
-      parameters.sampler &&
+      modelCapabilities.sampling && parameters.sampler &&
       samplers.some(({ value }) => value === parameters.sampler)
     )
       setSampler(parameters.sampler);
     if (
-      parameters.noiseSchedule &&
+      modelCapabilities.sampling && parameters.noiseSchedule &&
       schedules.some(({ value }) => value === parameters.noiseSchedule)
     )
       setSchedule(parameters.noiseSchedule);
@@ -2245,6 +2284,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 不用 window.confirm——部分内置浏览器会静默吞掉确认框导致无法应用。
   function applyAllSuggestions() {
     if (!assistantSuggestion) return;
+    if (assistantSuggestion.imageModel && (assistantSuggestion.imageModel !== model || assistantSuggestion.modelProtocol !== imageProtocol)) { setNotice("这份建议对应先前的图像模型，请使用当前模型重新生成建议。"); return; }
+    if (naturalImageModel) {
+      setPrompt(assistantSuggestion.prompt);
+      setNegative(assistantSuggestion.negativePrompt || "");
+      applySuggestedParameters(assistantSuggestion.parameters);
+      setAssistantSuggestion(null); setNotice("已应用当前图像模型的场景描述建议。"); return;
+    }
     const tagNames = assistantSuggestion.tags.map((tag) => tag.name);
     setPrompt((value) => {
       const base = (assistantSuggestion.prompt || value).trim();
@@ -2290,7 +2336,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 提示词工具条（借鉴 Aaalice）：随机、清空、文本/Tag 模式切换。
   const promptToolbar = (target: "prompt" | "negative") => (
     <>
-      {target === "prompt" && generationModes.has(operation) && (
+      {!naturalImageModel && target === "prompt" && generationModes.has(operation) && (
         <button
           type="button"
           onClick={() => void rollRandomPrompt()}
@@ -2319,7 +2365,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       >
         <Eraser size={13} />
       </button>
-      {target === "prompt" && (
+      {!naturalImageModel && target === "prompt" && (
         <span
           className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white text-[10px] font-semibold"
           role="group"
@@ -2372,8 +2418,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             : "自然语言描述画面，如 一个白发的女孩穿着和服站在窗边"
         }
         tools={promptToolbar("prompt")}
-        autocomplete
-        tagMode={promptTagMode}
+        autocomplete={!naturalImageModel}
+        tagMode={!naturalImageModel && promptTagMode}
         inlineChatTarget={{ kind: "prompt", label: naiLayout ? "提示词" : "描述画面" }}
         openInlineChatMenu={openInlineChatMenu}
       />
@@ -2384,13 +2430,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onChange={setNegative}
           placeholder="低质量、错误肢体、水印等不希望出现的内容"
           tools={promptToolbar("negative")}
-          autocomplete
-          tagMode={promptTagMode}
+          autocomplete={!naturalImageModel}
+          tagMode={!naturalImageModel && promptTagMode}
           inlineChatTarget={{ kind: "negative", label: naiLayout ? "负面内容" : "排除内容" }}
           openInlineChatMenu={openInlineChatMenu}
         />
       )}
-      {operation !== "suggest-tags" && (
+      {!naturalImageModel && operation !== "suggest-tags" && (
         // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
         <div className="grid gap-3">
           <div className="block text-xs font-semibold text-[#4c5052]">
@@ -2426,7 +2472,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   // 多角色：文生图与图生图/局部重绘（带参考图）都可与角色提示词一同使用。
-  const characterControls = ["generate", "img2img", "inpainting"].includes(operation) && (
+  const characterControls = modelCapabilities.characters && ["generate", "img2img", "inpainting"].includes(operation) && (
     <section className="nai-characters rounded-md border border-[var(--line)] bg-white p-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -2610,7 +2656,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </section>
   );
 
-  const generationParameters = generationModes.has(operation) && (
+  const generationParameters = naturalImageModel ? naturalSettings : generationModes.has(operation) && (
     <div
       className={
         naiLayout
@@ -2750,7 +2796,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             ariaLabel="模型来源"
           />
         </Control>
-        <Link href="/settings" className="studio-model-source-management flex h-10 items-center justify-center self-end text-xs font-semibold text-[var(--rose)] hover:underline">
+        <Link href="/settings#models" className="studio-model-source-management flex h-10 items-center justify-center self-end text-xs font-semibold text-[var(--rose)] hover:underline">
           管理来源
         </Link>
       </div>
@@ -2761,11 +2807,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             options={modelOptions}
             onChange={(next) => {
               setModel(next);
-              if (providerId === "newapi" && !/^nai-v(?:3|4(?:\.5)?|5)(?:-|$)/i.test(next))
-                setOperation("generate");
+              const caps = resolveImageModelCapabilities(next, imageProtocol);
+              if (!caps.operations.includes(operation)) setOperation("generate");
+              if (caps.sizes.length) { const [w, h] = nearestImageSize(width, height, caps.sizes).split("x").map(Number); setWidth(w); setHeight(h); }
             }}
             ariaLabel="模型"
             searchable
+            searchPlaceholder="搜索模型"
             emptyText="暂无可用图像模型，请在设置中导入"
           />
         </Control>
@@ -2788,12 +2836,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </Control>
         )}
       </div>
+      {providerId === "newapi" && <Control label="图像接口协议">
+        <PopupSelect value={newApiImageProtocol} onChange={(value) => setNewApiImageProtocol(value as ImageProviderProtocol)} ariaLabel="NewAPI 图像接口协议" options={[
+          { value: "auto", label: "自动（NAI / Images）" }, { value: "openai-images", label: "OpenAI Images" }, { value: "gemini", label: "Gemini 原生" }, { value: "openai-chat-images", label: "聊天生图兼容" },
+        ]} />
+      </Control>}
     </div>
   );
 
   const directorTools = (
     <div className="nai-director-grid">
-      {modes.filter((item) => item.id.startsWith("director-")).map((item) => (
+      {modes.filter((item) => item.id.startsWith("director-") && modelCapabilities.operations.includes(item.id)).map((item) => (
         <button
           type="button"
           key={item.id}
@@ -2930,11 +2983,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <div data-layout-module="prompt" data-layout-collapsed={customWorkspace && customPromptCollapsed ? "true" : undefined} style={customModuleStyle("prompt", customPromptCollapsed)}>
             {layoutModuleTools("prompt")}
             {customWorkspace ? <>
-              <ReplicaPromptEditor variant="nai" prompt={prompt} negative={negative} model={model} assistantModel={assistantModel}
+              <ReplicaPromptEditor variant="nai" prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} historyPrompts={sessionHistory.map((item) => item.prompt)}
                 onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
                 collapsed={customPromptCollapsed} onCollapsedChange={setCustomPromptCollapsed}
-                onAssistant={(text) => { setAgentInput(text); if (window.innerWidth < 1024) setMobileToolsOpen(true); else enterDockPane("agent"); }} />
-              {["generate", "img2img", "inpainting"].includes(operation) && <ReplicaCharacters variant="nai" model={model}
+                onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }} />
+              {modelCapabilities.characters && ["generate", "img2img", "inpainting"].includes(operation) && <ReplicaCharacters variant="nai" model={model}
                 characters={characters} setCharacters={setCharacters} charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
                 aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition} />}
             </> : <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
@@ -3009,12 +3062,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
         {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">
           {layoutModuleTools("sampling")}
-          {customWorkspace ? <ReplicaGenerationSettings variant="nai" model={model} steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+          {customWorkspace ? <ReplicaGenerationSettings variant="nai" model={model} naturalSettings={naturalSettings} steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
             setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
             count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : generationParameters}
         </div>}
         <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
           {layoutModuleTools("operations")}
+          <Control label="图片反推">
+            <UploadField label="导入反推图片" value={agentImage ? { data: agentImage, name: "反推图片" } : null} onChange={value => setAgentImage(value?.data || null)} />
+            {agentImage && <button type="button" className="text-xs text-[var(--muted)]" onClick={() => setAgentImage("")}>移除反推图片</button>}
+            <ReplicaReverseTagger source={agentImage ? { data: agentImage, name: "反推图片" } : source} prompt={prompt} model={model} imageProtocol={imageProtocol} onPromptChange={setPrompt} reverseBusy={assistantLoading}
+              onReverse={async (options) => { openAssistantPanel(); const ok = await askTagAssistant(naturalImageModel ? "请分析图片并给出适用于当前图像模型的完整场景描述。" : "请分析图片并给出英文生成标签。", { ...options, image: agentImage || source?.data }); if (!ok && !options?.signal?.aborted) throw new Error("视觉反推未完成，请查看助手提示。"); }} />
+          </Control>
           {!customWorkspace && generationModes.has(operation) && (
             <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
@@ -3061,7 +3120,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           )}
 
           {!sidebarPromptLayout && characterControls}
-          {["img2img", "inpainting", "edits"].includes(operation) && (
+          {!naturalImageModel && ["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
             <input
               className="range w-full"
@@ -3122,7 +3181,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             onError={setNotice}
           />
         )}
-        {operation === "vibe-transfer" && (
+        {!naturalImageModel && operation === "vibe-transfer" && (
           <div className="reference-parameter-card">
             <b>Vibe 参考强度</b>
             <NumericSlider label="参考强度" value={vibeStrength} setValue={setVibeStrength} min={0} max={1} step={0.05} />
@@ -3168,7 +3227,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             />
           </div>
         )}
-        {operation === "upscale" && (
+        {!naturalImageModel && operation === "upscale" && (
           <>
             <Control label="超分模型">
               <PopupSelect
@@ -3209,7 +3268,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         >
           {layoutModuleTools("references")}
           {customWorkspace ? <PanelSection title="参考图片" icon={<ImagePlus size={16} />} open={customReferenceOpen} onOpenChange={setCustomReferenceOpen}>
-            <ReplicaNaiReference hideGroupLabel operation={operation} source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
+            <ReplicaNaiReference hideGroupLabel model={model} imageProtocol={imageProtocol} operation={operation} source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
               onSelectOperation={(next) => selectOperation(next as Operation)} onUpload={(file) => { setOperation("img2img"); void importImageAndParameters(file); }}
               onOpenEditor={() => void openImageEditor("canvas")} strength={strength} setStrength={setStrength} />
             <div className="custom-reference-more"><button type="button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
@@ -3227,7 +3286,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 <ImagePlus size={18} />
                 <span><b>文生图</b><small>根据提示词生成图片。</small></span>
               </button>
-              {referenceOperations.map((item) => (
+              {referenceOperations.filter((item) => modelCapabilities.operations.includes(item.id)).map((item) => (
                 <button
                   type="button"
                   className={`nai-reference-card ${operation === item.id ? "is-active" : ""}`}
@@ -3251,7 +3310,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <Control label="图片工具">
                 <PopupSelect
                   value={toolOperations.some(({ value }) => value === operation) ? operation : "generate"}
-                  options={[{ value: "generate", label: "不使用工具" }, ...toolOperations]}
+                  options={[{ value: "generate", label: "不使用工具" }, ...toolOperations.filter((item) => item.value === "suggest-tags" || modelCapabilities.operations.includes(item.value))]}
                   onChange={(value) => {
                     selectOperation(value as Operation);
                     setNotice("");
@@ -3267,7 +3326,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <div data-layout-module="director" data-layout-collapsed={!customDirectorOpen ? "true" : undefined} style={customModuleStyle("director", !customDirectorOpen)}>
             {layoutModuleTools("director")}
             <PanelSection title="图像工具" icon={<WandSparkles size={16} />} open={customDirectorOpen} onOpenChange={setCustomDirectorOpen}>
-              <div className="custom-image-tools">{[...referenceOperations, ...toolOperations.filter((item) => !item.value.startsWith("director-")).map((item) => ({ id: item.value, label: item.label }))].map((item) => <button type="button" key={item.id} onClick={() => selectOperation(item.id as Operation)}>{item.label}</button>)}</div>
+              <div className="custom-image-tools">{[...referenceOperations, ...toolOperations.filter((item) => !item.value.startsWith("director-")).map((item) => ({ id: item.value, label: item.label }))].filter((item) => item.id === "suggest-tags" || modelCapabilities.operations.includes(item.id)).map((item) => <button type="button" key={item.id} onClick={() => selectOperation(item.id as Operation)}>{item.label}</button>)}</div>
               {directorTools}
             </PanelSection>
           </div>
@@ -3298,20 +3357,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice("请先选择当前来源可用的图像模型。");
       return;
     }
-    if (providerId === "newapi" && !/^nai-v(?:3|4(?:\.5)?|5)(?:-|$)/i.test(model) && operation !== "generate") {
-      setNotice("这个 NewAPI 模型目前只支持文生图，请切换到生成。");
+    if (operation !== "suggest-tags" && !modelCapabilities.operations.includes(operation)) {
+      setNotice("当前模型不支持这个操作，请选择支持编辑的图像模型。");
       return;
     }
-    if (providerId !== "newapi") {
-      const allowed = providerId === "novelai"
-        ? new Set<Operation>(["generate", "img2img", "inpainting", "edits", "vibe-transfer", "character-reference", "precise-reference"])
-        : new Set<Operation>(["generate"]);
+    if (providerId === "novelai") {
+      const allowed = new Set<Operation>(["generate", "img2img", "inpainting", "edits", "vibe-transfer", "character-reference", "precise-reference"]);
       if (!allowed.has(operation)) {
-        setNotice("这个操作暂不支持当前模型来源，请切换到 NewAPI 或选择生成。");
+        setNotice("这个操作暂不支持 NovelAI 官方来源，请切换模型来源。");
         return;
       }
     }
     const validationError = validateGenerationParameters({
+      imageModel: model,
+      imageProtocol,
       operation,
       width,
       height,
@@ -3329,13 +3388,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       return;
     }
     // 一次性提交走单请求，网关侧单请求上限 8 张；更多张数请逐张提交。
-    if (batchMode === "once" && count > 8) {
-      setNotice("一次性提交最多 8 张；更多张数请改用分批次并发。");
+    if (batchMode === "once" && outputCount > modelCapabilities.maxBatch) {
+      setNotice(`当前模型一次性提交最多 ${modelCapabilities.maxBatch} 张；更多张数请改用分批次。`);
       return;
     }
     const multiImage = generationModes.has(operation) && count > 1;
     const newApiPricedImage = providerId === "newapi" &&
-      !["annotate", "suggest-tags", "upscale"].includes(operation);
+      !["annotate", "suggest-tags"].includes(operation) && (operation !== "upscale" || naturalImageModel);
     const requestLeavesLimit =
       newApiPricedImage &&
       !usesLimitPricing({
@@ -3344,13 +3403,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         width,
         height,
         steps,
-        samples: batchMode === "sequential" ? 1 : count,
+        samples: batchMode === "sequential" ? 1 : outputCount,
         characterPromptCount: operation === "generate" && charactersEnabled
           ? characters.filter((character) => character.prompt.trim()).length
           : 0,
         referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
       });
-    if (newApiPricedImage && !canUseAffEstimate && (multiImage || requestLeavesLimit) && estimatedNewApiCost == null) {
+    if (!naturalImageModel && newApiPricedImage && !canUseAffEstimate && (multiImage || requestLeavesLimit) && estimatedNewApiCost == null) {
       setNotice("暂时无法读取 NewAPI 实际价格，请稍后再试，避免意外扣费。");
       return;
     }
@@ -3359,13 +3418,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         ? "费用以所选 API 的账单为准"
         : canUseAffEstimate
           ? `预计消耗 ${estimatedAffCost} AFF`
-          : `预计扣费 $${estimatedNewApiCost?.toFixed(2)}，实际以账单为准`;
+          : estimatedNewApiCost == null ? "当前模型按实际使用计费，费用以所选 API 的账单为准" : `预计扣费 $${estimatedNewApiCost.toFixed(2)}，实际以账单为准`;
       const requestMode = batchMode === "once" && multiImage
         ? `一次性请求 ${count} 张，可能进入高价档`
         : multiImage
           ? "每张独立请求"
           : "当前参数可能进入高价档";
-      const confirmation = `将生成 ${count} 张图像（${requestMode}）。\n${payment}`;
+      const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}`;
       if (approvedConfirmation !== confirmation) {
         setGenerationConfirmation(confirmation);
         return;
@@ -3381,6 +3440,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const base: Record<string, unknown> = {
       operation,
       providerId,
+      imageProtocol,
+      quality: effectiveImageQuality,
+      imageSize: effectiveImageResolution,
+      background: imageBackground,
+      assistantModel,
       model,
       prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
       negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
@@ -3388,17 +3452,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       height,
       steps,
       scale,
-      n: count,
+      n: outputCount,
       sampler,
       noise_schedule: schedule,
       response_format: "b64_json",
     };
-    if (cfgRescale > 0) base.cfg_rescale = cfgRescale;
-    if (seed) base.seed = Number(seed);
+    if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
+    if (modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
+    if (modelCapabilities.seed && seed) base.seed = Number(seed);
     // 质量词 / UC 预设注入：NAI 默认档交给服务端（qualityToggle + ucPreset），
     // 其余档位按 Aaalice 语义本地注入（质量词→正向末尾，UC→负向前缀），
     // 并关闭服务端同名注入避免重复。
-    if (composedPromptLayout) {
+    if (naturalImageModel) {
+      // Natural language models receive the composed description and explicit exclusions.
+    } else if (composedPromptLayout) {
       // The editor has already composed the selected quality and UC presets.
       base.qualityToggle = false;
       base.ucPreset = 3;
@@ -3430,7 +3497,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     // NAI 原生 API 的 v4_prompt.char_captions 与 image/reference 独立编码。
     if (
       ["generate", "img2img", "inpainting"].includes(operation) &&
-      charactersEnabled &&
+      modelCapabilities.characters && charactersEnabled &&
       characters.some((character) => character.prompt.trim())
     ) {
       base.characterPrompts = characters
@@ -3480,7 +3547,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       base.defry = 1;
     }
     try {
-      if (operation === "upscale") {
+      if (operation === "upscale" && !naturalImageModel) {
         if (!source) throw new Error("请先上传要超分的图片");
         if (!upscaleSource) throw new Error("无法读取源图尺寸，请重新上传");
         if (upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS)
@@ -3493,7 +3560,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       // 分批次：每片 1 张、最多 2 路在途、错峰 0.5s 启动，
       // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
-      const sequential = batchMode === "sequential" && count > 1 && operation !== "upscale";
+      const sequential = batchMode === "sequential" && outputCount > 1;
       const collected: string[] = [];
       const collectedHistoryIds: string[] = [];
       const chunkImagesByIndex: string[][] = [];
@@ -3529,7 +3596,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               ...base,
               n: size,
               n_samples: size,
-              seed: (baseSeed + chunkStarts[chunkIndex]) % 2 ** 32,
+              ...(modelCapabilities.seed ? { seed: (baseSeed + chunkStarts[chunkIndex]) % 2 ** 32 } : {}),
             }),
           });
           const contentType = response.headers.get("content-type") || "";
@@ -3619,7 +3686,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         if (contentType.includes("text/event-stream") && response.body) {
           let batchHistoryIds: string[] = [];
           const batchImages = await consumeImageStream(response, {
-            expected: count,
+            expected: outputCount,
             onPreview(next) {
               setPreviewDrafts(next);
             },
@@ -3643,6 +3710,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           if (!response.ok && !result.images)
             throw new Error(result.message || "操作失败");
           if (operation === "suggest-tags") {
+            if (typeof result.prompt === "string" && result.prompt.trim()) setPrompt(result.prompt);
             const tags = Array.isArray(result.tags) ? result.tags : [];
             setSuggestedTags(
               tags
@@ -3676,7 +3744,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         if (partialMessage) {
           setNotice(partialMessage);
         } else if (usedNewApi) {
-          setNotice("AFF 余额不足，本次已使用 NewAPI 余额支付。");
+          setNotice(naturalImageModel ? "图像已生成，本次使用 NewAPI 余额支付。" : "AFF 余额不足，本次已使用 NewAPI 余额支付。");
           // NewAPI 余额已变动，拉取最新数值让底部余额区立即更新。
           fetch("/api/me")
             .then((response) => response.json())
@@ -3711,26 +3779,26 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       : null;
   const estimatedAffCost =
     affFixedCost != null
-      ? Math.ceil(affFixedCost) * (operation === "upscale" ? 1 : count)
+      ? Math.ceil(affFixedCost) * outputCount
       : estimateAff({
           model,
           operation,
           width: upscaleDims ? upscaleDims.width : width,
           height: upscaleDims ? upscaleDims.height : height,
           steps,
-          samples: operation === "upscale" ? 1 : count,
+          samples: outputCount,
           characterPromptCount: activeCharacterCount,
         });
-  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags", "upscale"].includes(operation) ? null : estimateNewApiCost(modelPricing, {
+  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
     model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
-    samples: operation === "upscale" ? 1 : count,
+    samples: outputCount,
     characterPromptCount: activeCharacterCount,
     strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
     referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
   });
   const packageRateImages = Math.min(
-    operation === "upscale" ? 1 : count,
+    outputCount,
     wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
       ? wallet.aff.packageRateLimitRemaining
       : 0,
@@ -3740,13 +3808,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         wallet.aff.packageBalance,
         Math.ceil(
           (estimatedAffCost * packageRateImages) /
-            Math.max(1, operation === "upscale" ? 1 : count),
+            Math.max(1, outputCount),
         ),
       )
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
   const canUseAffEstimate = Boolean(
-    providerId === "newapi" &&
+    providerId === "newapi" && !naturalImageModel &&
     wallet?.aff?.enabled &&
       wallet.aff.balance >= estimatedPersonalCost &&
       wallet.aff.packageBalance >= estimatedPackageCost,
@@ -3797,10 +3865,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </nav>
   );
 
-  // 标签助手区块：桌面右侧栏（可折叠）与 NAI overlay/移动抽屉（不可折叠）共用。
-  const agentBlockInner = (collapsible: boolean) => (
+  // 标签助手内容保持挂载，切换标签、折叠和浮窗均保留输入与对话。
+  const agentBlockInner = (
     <>
-          <div data-layout-module="agent" style={customModuleStyle("agent")} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
+          <div data-layout-module="agent" style={layoutEditorOpen ? customModuleStyle("agent") : undefined} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
             {layoutModuleTools("agent")}
             <div className="flex items-center gap-2">
               <WandSparkles size={15} className="text-[var(--rose)]" />
@@ -3831,19 +3899,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   </button>
                 </span>
               )}
-              {collapsible && (
-                <button
-                  type="button"
-                  data-label="折叠助手面板"
-                  onClick={() => collapseDockPane("agent")}
-                  className={`text-[var(--muted)] transition-colors hover:text-[var(--rose)]${signedIn ? "" : " ml-auto"}`}
-                >
-                  <ChevronsDown size={14} />
-                </button>
-              )}
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              模型会检索 Danbooru 与相关概念，并整理、校验生成标签。
+              {naturalImageModel ? `助手按 ${model} 的能力整理场景描述、参考图修改和排除要求。` : "模型会检索 Danbooru 与相关概念，并整理、校验生成标签。"}
               {signedIn && " 多轮对话共享上下文，已校验标签会持续保留。"}
             </p>
             {signedIn && assistantModels.length > 0 && (
@@ -3972,7 +4030,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   />
                 </label>
                 <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--muted)]">
-                  可粘贴（Ctrl+V）或上传图片，助手按图检索 Danbooru 标签
+                  {naturalImageModel ? "可粘贴或上传图片，助手整理为当前图像模型适用的描述" : "可粘贴（Ctrl+V）或上传图片，助手按图检索 Danbooru 标签"}
                 </p>
               </div>
               {agentImage && (
@@ -4094,7 +4152,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   登录后助手可调用你的 NewAPI 文本模型整理提示词，按原规则计费。
                 </p>
               )}
-              {assistantSuggestion && (
+              {assistantSuggestion && (!assistantSuggestion.imageModel || (assistantSuggestion.imageModel === model && assistantSuggestion.modelProtocol === imageProtocol)) && (
                 <div className="assistant-preview">
                   <b>建议差异预览</b>
                   {assistantSuggestion.message && (
@@ -4147,7 +4205,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     />
                   )}
                   <div className="assistant-actions">
-                    <button
+                    {!naturalImageModel && <button
                       type="button"
                       onClick={() =>
                         assistantSuggestion.tags.forEach((tag) =>
@@ -4156,21 +4214,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                       }
                     >
                       追加标签
-                    </button>
+                    </button>}
                     <button
                       type="button"
-                      onClick={() => setPrompt(assistantSuggestion.prompt)}
+                      onClick={() => { setPrompt(assistantSuggestion.prompt); if (naturalImageModel) setNegative(assistantSuggestion.negativePrompt || ""); }}
                     >
                       替换提示词
                     </button>
-                    <button
+                    {!naturalImageModel && <button
                       type="button"
                       onClick={() =>
                         setNegative(assistantSuggestion.negativePrompt)
                       }
                     >
                       替换负向词
-                    </button>
+                    </button>}
                     <button
                       type="button"
                       onClick={() =>
@@ -4259,113 +4317,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </div>
   );
 
-  // 桌面右侧栏（非 NAI，Aaalice 式停靠）：历史与助手是两块独立界面，各自可折叠成恢复条，
-  // 之间是可拖拽的上下分割条（占比 0.2–0.8 记忆，双击回到对半）。
-  const dockPct = (value: number) => `${(value * 100).toFixed(2)}%`;
-  const desktopRightPanel = (
-    <div className="studio-dock-split-host flex min-h-0 flex-1 flex-col">
-      {historyDockOpen ? (
-        <div
-          data-layout-module="history"
-          className="flex min-h-0 flex-col"
-          style={{ flex: agentDockOpen ? `0 0 ${dockPct(1 - agentDockFraction)}` : "1 1 0%" }}
-        >
-          <div className="flex items-center justify-between gap-2 px-4 pt-4">
-            <b className="text-xs">本次历史</b>
-            <span className="flex items-center gap-1.5 text-[10px] text-[var(--muted)]">
-              {sessionHistory.length} 张
-              <button
-                type="button"
-                data-label="折叠历史面板"
-                onClick={() => collapseDockPane("history")}
-                className="text-[var(--muted)] transition-colors hover:text-[var(--rose)]"
-              >
-                <ChevronsUp size={14} />
-              </button>
-            </span>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 pt-2">
-            {sessionHistory.length ? (
-              <div className="grid grid-cols-2 gap-2">
-                {sessionHistory.map((item) => (
-                  <div key={item.id} className="session-history-entry relative overflow-hidden rounded border border-[var(--line)]">
-                    <button
-                      type="button"
-                      className="block w-full"
-                      aria-label="使用本次历史图片"
-                      onClick={() => applyImageAsSource(item.image, "img2img")}
-                    >
-                      <Image src={item.image} alt="本次生成图片" width={96} height={96} unoptimized className="w-full" />
-                    </button>
-                    <div className="session-history-actions">
-                      <button type="button" onClick={() => applyImageAsSource(item.image, "img2img")} aria-label="历史图片用于图生图" title="图生图"><ImagePlus size={13} /></button>
-                      <button type="button" onClick={() => applyImageAsSource(item.image, "inpainting")} aria-label="历史图片用于局部重绘" title="局部重绘"><Brush size={13} /></button>
-                      <button type="button" onClick={() => applyImageAsSource(item.image, "director-lineart")} aria-label="历史图片用于导演工具" title="导演工具"><WandSparkles size={13} /></button>
-                      <button type="button" onClick={() => applyImageAsSource(item.image, "vibe-transfer")} aria-label="历史图片用于氛围迁移" title="氛围迁移"><Eye size={13} /></button>
-                      <button type="button" onClick={() => applyImageAsSource(item.image, "upscale")} aria-label="历史图片用于超分" title="超分"><Aperture size={13} /></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <span className="text-[10px] text-[var(--muted)]">生成后的图片会出现在这里</span>
-            )}
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="right-dock-strip"
-          data-label="展开历史面板"
-          onClick={() => setHistoryDockOpen(true)}
-        >
-          <History size={13} />
-          <span>本次历史</span>
-        </button>
-      )}
-      {historyDockOpen && agentDockOpen && (
-        <div
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="调整助手面板高度"
-          aria-valuenow={Math.round(agentDockFraction * 100)}
-          aria-valuemin={20}
-          aria-valuemax={80}
-          tabIndex={0}
-          className="right-dock-split"
-          onPointerDown={startDockSplit}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-            event.preventDefault();
-            // 方向键跟随分割条移动方向：↑ = 分割条上移 = 助手区变高。
-            const delta = event.key === "ArrowUp" ? 0.04 : -0.04;
-            setAgentDockFraction(Math.min(0.8, Math.max(0.2, agentDockFraction + delta)));
-          }}
-          onDoubleClick={() => setAgentDockFraction(0.62)}
-        />
-      )}
-      {agentDockOpen ? (
-        <div
-          className="flex min-h-0 flex-col"
-          style={{ flex: historyDockOpen ? `0 0 ${dockPct(agentDockFraction)}` : "1 1 0%" }}
-        >
-          {agentBlockInner(true)}
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="right-dock-strip"
-          data-label="展开助手面板"
-          onClick={() => setAgentDockOpen(true)}
-        >
-          <WandSparkles size={13} />
-          <span>标签助手</span>
-        </button>
-      )}
-    </div>
-  );
-
-  // NAI overlay 与移动抽屉：完整功能区。
+  // 布局编辑器的独立模块预览。
   const toolsPanel = (
     <>
       {sessionHistoryPanel}
@@ -4375,7 +4327,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <div className="mt-3">{creativeCenterLinks}</div>
         </div>
       )}
-      {agentBlockInner(false)}
+      {agentBlockInner}
       {walletBlock}
     </>
   );
@@ -4435,21 +4387,22 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>
   );
 
-  const assistantPanel = agentBlockInner(false);
+  const assistantPanel = agentBlockInner;
 
   const replicaVariant = naiLayout ? "nai" as const : "nlw" as const;
   const replicaBalance = providerId === "newapi"
     ? !signedIn ? "体验模式" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
     : "个人 Key";
   const controls = replicaLayout ? <ReplicaControls variant={replicaVariant}
-    prompt={prompt} negative={negative} model={model} operation={operation} assistantModel={assistantModel}
+    prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} historyPrompts={sessionHistory.map((item) => item.prompt)}
     onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
-    onAssistant={(text) => { setAgentInput(text); if (window.innerWidth < 1024) setMobileToolsOpen(true); else if (naiLayout) setNaiToolsOpen(true); else setReplicaAssistantOpenRequest(value => value + 1); }}
+    onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }}
     width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount}
     seed={seed} setSeed={setSeed} characters={characters} setCharacters={setCharacters}
     charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
     aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition}
     source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
+    reverseSource={agentImage ? { data: agentImage, name: "反推图片" } : null} onRemoveReverseSource={() => setAgentImage("")}
     onUpload={(file, nextOperation) => {
       const validation = validateUploadFile(file);
       if (validation) { setNotice(validation); return; }
@@ -4457,10 +4410,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       reader.onerror = () => setNotice("读取图片失败，请重试。");
       reader.onload = () => {
         if (typeof reader.result !== "string") return;
+        if (nextOperation === "suggest-tags") { setAgentImage(reader.result); return; }
         setSource({ data: reader.result, name: file.name }); setMask(null);
         setOperation(nextOperation as Operation);
         if (nextOperation === "inpainting" || nextOperation === "edits") {
-          const inpaintModel = inpaintModelFor(model);
+          const inpaintModel = inpaintModelFor(model, imageProtocol);
           if (inpaintModel) setModel(inpaintModel);
         }
         if (nextOperation === "suggest-tags") setAgentImage(reader.result);
@@ -4470,7 +4424,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }}
     onSelectOperation={(value) => selectOperation(value as Operation)}
     onOpenEditor={() => void openImageEditor("canvas")} onOpenMaskEditor={() => void openImageEditor("inpaint")} onGallery={(value) => { setReplicaGalleryOperation(value as Operation); setGalleryPickerOpen(true); }}
-    onReverse={() => { if (source) { setAgentImage(source.data); void askTagAssistant("请分析这张图片并给出可用于图像生成的英文标签。"); } }}
+    reverseBusy={assistantLoading}
+    onReverse={async (options) => { openAssistantPanel(); const ok = await askTagAssistant(naturalImageModel ? "请分析这张图片并给出可用于当前图像模型生成或编辑的完整场景描述。" : "请分析这张图片并给出可用于图像生成的英文标签。", { ...options, image: agentImage || source?.data }); if (!ok && !options?.signal?.aborted) throw new Error("视觉反推未完成，请查看助手提示并确认已选择可用视觉模型。"); }}
     onMenu={() => setMenuOpen(true)} onCollapse={() => setNlwLeftCollapsed(true)}
     modelControls={modelModeControls} balance={replicaBalance}
     strength={strength} setStrength={setStrength} vibeStrength={vibeStrength} setVibeStrength={setVibeStrength}
@@ -4478,18 +4433,28 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     referenceType={referenceType} setReferenceType={setReferenceType}
   /> : legacyControls;
   const naiGenerationFooter = replicaLayout || customWorkspace ? <ReplicaGenerationFooter variant={customWorkspace ? "nai" : replicaVariant}
-    settings={customWorkspace ? <div className="custom-generation-meta"><span>{count} 张图像</span><button type="button" aria-label="切换提交方式" onClick={() => setBatchMode(batchMode === "once" ? "sequential" : "once")}>{batchMode === "once" ? "一次性" : "分批次"}</button></div> : <ReplicaGenerationSettings variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls}
+    settings={customWorkspace ? <div className="custom-generation-meta"><span>{count} 张图像</span><button type="button" aria-label="切换提交方式" onClick={() => setBatchMode(batchMode === "once" ? "sequential" : "once")}>{batchMode === "once" ? "一次性" : "分批次"}</button></div> : <ReplicaGenerationSettings variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
       setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
     generating={generating} disabled={layoutEditorOpen} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
-    count={count} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={() => void runOperation()}
+    count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={() => void runOperation()}
   /> : legacyGenerationFooter;
   function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
     if (nextOperation === "reuse-parameters") {
-      setPrompt(item.prompt); setNegative(item.negative); setWidth(item.width); setHeight(item.height);
+      if (item.providerId && item.providerId !== "newapi" && item.providerId !== "novelai" && !customProviders.some(provider => provider.id === item.providerId)) {
+        setNotice("这张历史图片的 API 来源已移除，请先重新配置来源。"); return;
+      }
+      if (item.providerId) setProviderId(item.providerId);
+      if (item.model) setModel(item.model);
+      if (item.providerId === "newapi" && item.imageProtocol) setNewApiImageProtocol(item.imageProtocol);
+      if (item.quality) setImageQuality(item.quality);
+      if (item.imageSize) setImageResolution(item.imageSize);
+      if (item.background) setImageBackground(item.background);
+      const size = item.model ? normalizeImageModelSize(item.model, item.width, item.height, item.imageProtocol) : item;
+      setPrompt(item.prompt); setNegative(item.negative); setWidth(size.width); setHeight(size.height);
       setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null ? "" : String(item.seed)); setOperation("generate");
     } else applyImageAsSource(item.image, nextOperation as Operation);
   }
@@ -4503,6 +4468,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       data-studio-layout={naiLayout ? "nai" : "classic"}
       data-workspace-layout={!naiLayout ? (customWorkspace ? "custom" : preferences.workspaceLayout) : undefined}
       data-replica-studio={replicaLayout ? replicaVariant : undefined}
+      data-aaalice-dock={aaaliceDock ? "true" : undefined}
       data-has-images={displayedImages.length > 0 ? "true" : "false"}
       data-left-collapsed={nlwLayout && nlwLeftCollapsed ? "true" : undefined}
       className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
@@ -4581,7 +4547,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <button
               type="button"
               onClick={() => {
-                saveCustomLayout({ ...customLayout, leftWidth, rightWidth, rightCollapsed: rightPanelCollapsed });
+                saveCustomLayout({ ...customLayout, leftWidth, rightWidth });
                 updatePreferences({ workspaceLayout: "custom", theme: preferences.theme === "nai" ? "paper" : preferences.theme });
                 setLayoutEditorOpen(false);
                 router.replace("/image");
@@ -4615,7 +4581,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         style={
           {
             "--lfn-left": `${leftWidth}px`,
-            "--lfn-right": `${nlwLayout && nlwDockCollapsed ? 40 : rightWidth}px`,
+            "--lfn-right": `${aaaliceDock && replicaDockCollapsed ? 40 : rightWidth}px`,
             "--lfn-nav-rail": navRailExpanded ? "220px" : "56px",
           } as React.CSSProperties
         }
@@ -4684,19 +4650,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onDoubleClick={() => { const value = naiLayout ? 447 : nlwLayout ? 400 : 310; setLeftWidth(value); savePanelWidths(value, rightWidth); }}
         />
         <section className="studio-canvas flex min-h-0 flex-col" data-layout-module="canvas">
-          {naiLayout && (
-            <button
-              type="button"
-              className="studio-tools-trigger hidden lg:flex"
-              aria-label="打开历史与标签助手"
-              aria-expanded={naiToolsOpen}
-              onClick={() => setNaiToolsOpen(true)}
-            >
-              <WandSparkles size={17} />
-              <span>工具</span>
-              {sessionHistory.length > 0 && <i>{sessionHistory.length}</i>}
-            </button>
-          )}
           <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
             <button
               ref={mobilePanelTriggerRef}
@@ -4711,7 +4664,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </span>
             <button
               ref={mobileToolsTriggerRef}
-              onClick={() => setMobileToolsOpen(true)}
+              onClick={() => { setMobileToolsPane("history"); setMobileToolsOpen(true); }}
               className="flex items-center gap-2 text-sm"
             >
               <Images size={18} />
@@ -4734,8 +4687,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                       : "自然语言描述画面，如 一个白发的女孩穿着和服站在窗边"
                   }
                   tools={promptToolbar("prompt")}
-                  autocomplete
-                  tagMode={promptTagMode}
+                  autocomplete={!naturalImageModel}
+                  tagMode={!naturalImageModel && promptTagMode}
                   inlineChatTarget={{ kind: "prompt", label: "描述画面" }}
                   openInlineChatMenu={openInlineChatMenu}
                 />
@@ -4746,13 +4699,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     onChange={setNegative}
                     placeholder="低质量、错误肢体、水印等不希望出现的内容"
                     tools={promptToolbar("negative")}
-                    autocomplete
-                    tagMode={promptTagMode}
+                    autocomplete={!naturalImageModel}
+                    tagMode={!naturalImageModel && promptTagMode}
                     inlineChatTarget={{ kind: "negative", label: "排除内容" }}
                     openInlineChatMenu={openInlineChatMenu}
                   />
                 )}
-                {operation !== "suggest-tags" && (
+                {!naturalImageModel && operation !== "suggest-tags" && (
                   // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
                   <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
                     <div className="block text-xs font-semibold text-[#4c5052]">
@@ -4790,7 +4743,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             ref={positionOverlayRef}
             className={`relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5${replicaLayout ? " replica-preview-host" : ""}`}
           >
-            {charactersEnabled && !aiAutoPosition && ["generate", "img2img", "inpainting"].includes(operation) && (
+            {modelCapabilities.characters && charactersEnabled && !aiAutoPosition && ["generate", "img2img", "inpainting"].includes(operation) && (
               // 手动定位坐标系：X 轴=水平滑块，Y 轴=垂直滑块，多角色多色十字线，
               // 圆点可拖动（与滑块双向同步）。
               <div className="character-position-overlay" aria-hidden={false}>
@@ -4979,90 +4932,31 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
           )}
         </section>
-        {!naiLayout && (
           <div
             role="separator"
             aria-orientation="vertical"
             aria-label="调整右侧面板宽度"
             aria-valuenow={rightWidth}
             aria-valuemin={200}
-            aria-valuemax={nlwLayout ? 520 : 460}
+            aria-valuemax={replicaLayout ? 520 : 460}
             tabIndex={0}
             className="panel-resizer hidden lg:block"
-            onMouseEnter={nlwLayout ? undefined : hoverRightPanel}
-            onMouseLeave={nlwLayout ? undefined : scheduleRightPanelClose}
-            onFocus={nlwLayout ? undefined : hoverRightPanel}
-            onBlur={nlwLayout ? undefined : scheduleRightPanelClose}
             onPointerDown={(event) => startResize("right", event)}
             onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
-            onDoubleClick={() => { const value = nlwLayout ? 280 : 230; setRightWidth(value); savePanelWidths(leftWidth, value); }}
+            onDoubleClick={() => { const value = 280; setRightWidth(value); savePanelWidths(leftWidth, value); }}
           />
-        )}
         <aside
-          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${
-            nlwLayout ? " is-replica-dock" : naiLayout
-              ? ` is-overlay${naiToolsOpen ? " is-open" : ""}`
-              : toolsPanelCollapsed
-                ? " is-collapsed"
-                : ""
-          }`}
-          onMouseEnter={replicaLayout ? undefined : hoverRightPanel}
-          onMouseLeave={replicaLayout ? undefined : scheduleRightPanelClose}
-          onFocus={replicaLayout ? undefined : hoverRightPanel}
-          onBlur={replicaLayout ? undefined : scheduleRightPanelClose}
-          aria-hidden={naiLayout ? !naiToolsOpen : undefined}
-          inert={naiLayout && !naiToolsOpen ? true : undefined}
+          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${aaaliceDock ? " is-replica-dock" : ""}`}
         >
-          {nlwLayout ? <ReplicaRightDock history={replicaHistoryPanel} assistant={assistantPanel} assistantOpenRequest={replicaAssistantOpenRequest} onCollapsedChange={setNlwDockCollapsed} /> : <>
-          {!naiLayout && !toolsPanelCollapsed && !layoutEditorOpen && (
-            <div className="studio-tools-topbar">
-              <b>功能区</b>
-              <button type="button" aria-label="折叠右侧面板" onClick={collapseRightDock}><PanelRightClose size={16} /></button>
-            </div>
-          )}
-          {naiLayout && (
-            <button
-              type="button"
-              className="tools-panel-collapse"
-              aria-label="关闭历史与标签助手"
-              aria-expanded={naiToolsOpen}
-              onClick={() => setNaiToolsOpen(false)}
-            >
-              <X size={15} />
-            </button>
-          )}
-          {!naiLayout ? (
-            toolsPanelCollapsed ? (
-              <div className="right-dock-rail" role="toolbar" aria-label="停靠面板入口">
-                <button
-                  type="button"
-                  className={`right-dock-rail-item${historyDockOpen ? " is-active" : ""}`}
-                  data-label="本次历史"
-                  aria-label="进入本次历史面板"
-                  aria-pressed={historyDockOpen}
-                  onClick={() => enterDockPane("history")}
-                >
-                  <History size={20} />
-                  <span>本次历史</span>
-                </button>
-                <div className="right-dock-rail-divider" />
-                <button
-                  type="button"
-                  className={`right-dock-rail-item${agentDockOpen ? " is-active" : ""}`}
-                  data-label="标签助手"
-                  aria-label="进入标签助手面板"
-                  aria-pressed={agentDockOpen}
-                  onClick={() => enterDockPane("agent")}
-                >
-                  <WandSparkles size={20} />
-                  <span>标签助手</span>
-                </button>
-              </div>
-            ) : (
-              customWorkspace ? toolsPanel : desktopRightPanel
-            )
-          ) : toolsPanel}
-          </>}
+          {aaaliceDock ? <ReplicaRightDock
+            history={replicaHistoryPanel}
+            assistant={assistantPanel}
+            historyEnabled={historyEnabled}
+            assistantEnabled={assistantEnabled}
+            assistantOpenRequest={replicaAssistantOpenRequest}
+            expansionRequest={customDockExpansionRequest}
+            onCollapsedChange={setReplicaDockCollapsed}
+          /> : toolsPanel}
         </aside>
       </div>
       {inlineChatMenu && (
@@ -5077,6 +4971,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         <InlineChatZone
           session={inlineChat}
           model={assistantModel}
+          imageModel={model}
+          modelProtocol={imageProtocol}
+          operation={operation}
           onKeep={keepInlineChatResult}
           onClose={() => setInlineChat(null)}
         />
@@ -5153,7 +5050,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 <X size={18} />
               </button>
             </div>
-            {toolsPanel}
+            {aaaliceDock ? <ReplicaRightDock
+              storageKey={null}
+              history={replicaHistoryPanel}
+              assistant={assistantPanel}
+              historyEnabled={historyEnabled}
+              assistantEnabled={assistantEnabled}
+              initialHistoryOpen={mobileToolsPane === "history"}
+              assistantOpenRequest={mobileToolsPane === "assistant" ? 1 : 0}
+              onCollapsedChange={(allCollapsed) => { if (allCollapsed && (historyEnabled || assistantEnabled)) setMobileToolsOpen(false); }}
+            /> : toolsPanel}
+            {aaaliceDock && <details className="studio-mobile-session">
+              <summary>会话与功能入口</summary>
+              <div className="p-4">{creativeCenterLinks}</div>
+              {walletBlock}
+            </details>}
           </aside>
         </div>
       )}
@@ -5280,17 +5191,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             )}
             <button
               type="button"
+              className="nai-menu-item lg:hidden"
+              onClick={() => {
+                setMenuOpen(false);
+                setMobileToolsPane("history");
+                setMobileToolsOpen(true);
+              }}
+            >
+              <History size={16} /> 本次历史
+            </button>
+            <button
+              type="button"
               className="nai-menu-item"
               onClick={() => {
                 setMenuOpen(false);
-                if (window.matchMedia("(max-width: 767px)").matches) {
-                  setMobileToolsOpen(true);
-                } else {
-                  enterDockPane("agent");
-                }
+                openAssistantPanel();
                 window.setTimeout(() => {
-                  document
-                    .querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
+                  const panel = window.innerWidth < 1024 ? mobileToolsRef.current : document.querySelector(".studio-tools-panel");
+                  panel?.querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
                     ?.focus();
                 }, 60);
               }}
@@ -5299,10 +5217,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </button>
 
             <p className="nai-menu-label">设置</p>
-            <Link href="/settings" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+            <Link href="/settings#appearance" onClick={() => setMenuOpen(false)} className="nai-menu-item">
               <Paintbrush size={16} /> 外观设置
             </Link>
-            <Link href="/resources" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+            <Link href="/settings#models" onClick={() => setMenuOpen(false)} className="nai-menu-item">
               <Code2 size={16} /> 模型密钥
             </Link>
             <Link href="/announcements" onClick={() => setMenuOpen(false)} className="nai-menu-item">

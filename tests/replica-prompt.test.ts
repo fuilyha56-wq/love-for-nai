@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   activePromptText, applyPromptWeight, composeReplicaPrompt, DEFAULT_REPLICA_PROMPT_CONFIG,
   parseReplicaPromptConfig, qualityPrompt, readTagWeight, resolvePromptAliases, splitPromptTags,
-  supportsLightQuality, transformPromptOnBlur, ucPrompt, withSharedReplicaPresets, type FixedPromptTag, type ReplicaPromptConfig,
+  supportsLightQuality, transformPromptOnBlur, ucPrompt, withSharedReplicaPresets, formatReplicaPrompt, applyPromptRegex, validatePromptRegex, type FixedPromptTag, type ReplicaPromptConfig,
 } from "@/lib/replica-prompt";
 import { qualityTagsForTier, ucForModel } from "@/lib/nai-quality";
 import { ReplicaPromptEditor } from "@/app/image/replica-prompt-editor";
@@ -113,8 +113,33 @@ describe("健壮存储与NAI文本结构", () => {
   });
   it("按开关真实转换SD权重、中文逗号与正则规则，错误规则报告失败", () => {
     const settings = config({ settings: { ...DEFAULT_REPLICA_PROMPT_CONFIG.settings, sdConvert: true }, regexRules: [{ id: "replace", pattern: "red", replacement: "blue", enabled: true }] });
-    expect(transformPromptOnBlur("(red eyes:1.2)，1girl", settings)).toEqual({ text: "1.20::blue eyes::, 1girl", error: null });
+    expect(transformPromptOnBlur("(red eyes:1.2)，1girl", settings)).toEqual({ text: "1.20::blue_eyes::, 1girl", error: null });
     expect(transformPromptOnBlur("1girl", config({ regexRules: [{ id: "bad", pattern: "[", replacement: "", enabled: true }] })).error).toContain("正则表达式无效");
+  });
+  it("格式化保留空行、缩进、别名空间和禁用片段，并且重复失焦不改变结果", () => {
+    const source = "  white hair，{ red eyes, blue eyes }\r\n\r\n  <my character>，/*disabled:red eyes, blue eyes*/，blue sky,  ";
+    const formatted = formatReplicaPrompt(source);
+    expect(formatted).toBe("  white_hair, { red_eyes, blue_eyes }\r\n\r\n  <my character>, /*disabled:red eyes, blue eyes*/, blue_sky,  ");
+    expect(formatReplicaPrompt(formatted)).toBe(formatted);
+  });
+  it("正则按顺序使用捕获组，支持忽略大小写；无效规则不会部分修改原文", () => {
+    const rules = [{ id: "color", pattern: "(blue)[ _](hair)", replacement: "$2 $1", enabled: true, flags: "gi" }, { id: "swap", pattern: "hair blue", replacement: "aqua hair", enabled: true, flags: "gi" }];
+    expect(applyPromptRegex("Blue hair, blue_hair", rules)).toEqual({ text: "aqua hair, aqua hair", error: null });
+    expect(validatePromptRegex({ id: "empty", pattern: "", replacement: "", enabled: true })).toBe("匹配内容不能为空");
+    expect(applyPromptRegex("Blue hair", [...rules, { id: "bad", pattern: "[", replacement: "", enabled: true }]).text).toBe("Blue hair");
+    expect(applyPromptRegex("Blue hair", [...rules, { id: "bad", pattern: "[", replacement: "", enabled: false }]).text).toBe("aqua hair");
+  });
+  it("正则先于SD转换和自动格式化，分别关闭开关后真实保留原文", () => {
+    const source = "(white hair:1.2)，blue eyes\nred hair";
+    const settings = config({ settings: { ...DEFAULT_REPLICA_PROMPT_CONFIG.settings, sdConvert: true }, regexRules: [{ id: "replace", pattern: "white hair", replacement: "silver hair", enabled: true }] });
+    expect(transformPromptOnBlur(source, settings).text).toBe("1.20::silver_hair::, blue_eyes\nred_hair");
+    expect(transformPromptOnBlur(source, config({ settings: { ...DEFAULT_REPLICA_PROMPT_CONFIG.settings, autoFormat: false, sdConvert: false } })).text).toBe(source);
+  });
+  it("存储实际恢复共现开关、替换flags和规则顺序", () => {
+    const original = config({ settings: { ...DEFAULT_REPLICA_PROMPT_CONFIG.settings, cooccurrence: false }, regexRules: [{ id: "first", pattern: "a", replacement: "b", enabled: true, flags: "gi" }, { id: "second", pattern: "b", replacement: "c", enabled: false }] });
+    const restored = parseReplicaPromptConfig(JSON.stringify(original));
+    expect(restored.settings.cooccurrence).toBe(false);
+    expect(restored.regexRules.map((rule) => [rule.id, rule.flags])).toEqual([["first", "gi"], ["second", "g"]]);
   });
 });
 
@@ -136,5 +161,7 @@ describe("两种独立Prompt视图", () => {
     expect(html).not.toContain("replica-nai-prompt-card negative");
     expect(html).toContain('role="tablist"');
     expect(html.match(/<textarea/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="调整提示词输入框高度"');
+    expect(html).toContain('aria-label="提示词设置"');
   });
 });

@@ -9,11 +9,11 @@ export function ReplicaNavigation({ onMenu, onAssistant }: { onMenu: () => void;
   return <nav className="replica-navigation" aria-label="工作台导航">
     <Link href="/" className="replica-brand" title="Love for NAI"><Aperture size={24} /></Link>
     <button type="button" className="is-active" aria-label="画布" title="画布" onClick={onMenu}><Brush size={23} /></button>
-    <Link href="/prompts" title="词库" aria-label="词库"><Folder size={23} /></Link>
+    <Link href="/settings#prompts" title="词库" aria-label="词库"><Folder size={23} /></Link>
     <Link href="/gallery" title="图片库" aria-label="图片库"><ImageIcon size={23} /></Link>
-    <Link href="/settings" title="外观设置" aria-label="外观设置"><Sparkles size={23} /></Link>
+    <Link href="/settings#appearance" title="外观设置" aria-label="外观设置"><Sparkles size={23} /></Link>
     <Link href="/image/editor" title="图像编辑器" aria-label="图像编辑器"><Scan size={23} /></Link>
-    <Link href="/prompts" title="提示词收藏" aria-label="提示词收藏"><BookOpen size={22} /></Link>
+    <Link href="/settings#prompts" title="提示词收藏" aria-label="提示词收藏"><BookOpen size={22} /></Link>
     <Link href="/history" title="历史记录" aria-label="历史记录"><Dice5 size={23} /></Link>
     <span className="replica-navigation-spacer" />
     <Link href="/account" title="账户" aria-label="账户"><Users size={22} /></Link>

@@ -14,7 +14,7 @@ export type FixedPromptTag = {
   enabled: boolean;
   category: string;
 };
-export type PromptRegexRule = { id: string; pattern: string; replacement: string; enabled: boolean };
+export type PromptRegexRule = { id: string; pattern: string; replacement: string; enabled: boolean; flags?: string };
 export type ReplicaPromptConfig = {
   version: 1;
   quality: QualityPreset;
@@ -26,7 +26,7 @@ export type ReplicaPromptConfig = {
   library: FixedPromptTag[];
   disabledPositive: string[];
   disabledNegative: string[];
-  settings: { autocomplete: boolean; autoFormat: boolean; highlight: boolean; sdConvert: boolean; resolveAliasesOnCopy: boolean };
+  settings: { autocomplete: boolean; autoFormat: boolean; highlight: boolean; sdConvert: boolean; resolveAliasesOnCopy: boolean; cooccurrence: boolean };
   regexRules: PromptRegexRule[];
 };
 export const DEFAULT_REPLICA_PROMPT_CONFIG: ReplicaPromptConfig = {
@@ -40,7 +40,7 @@ export const DEFAULT_REPLICA_PROMPT_CONFIG: ReplicaPromptConfig = {
   library: [],
   disabledPositive: [],
   disabledNegative: [],
-  settings: { autocomplete: true, autoFormat: true, highlight: true, sdConvert: false, resolveAliasesOnCopy: false },
+  settings: { autocomplete: true, autoFormat: true, highlight: true, sdConvert: false, resolveAliasesOnCopy: false, cooccurrence: true },
   regexRules: [],
 };
 export const REPLICA_SHARED_PRESET_KEYS = { quality: "lfn-quality-custom", uc: "lfn-uc-custom" } as const;
@@ -125,7 +125,7 @@ export function parseReplicaPromptConfig(serialized: string | null): ReplicaProm
   const rules = Array.isArray(source.regexRules) ? source.regexRules.slice(0, 40).flatMap((item, index) => {
     const rule = record(item);
     if (typeof rule.pattern !== "string") return [];
-    return [{ id: shortText(rule.id, 200) || "rule-" + index, pattern: shortText(rule.pattern, 500), replacement: shortText(rule.replacement, 2_000), enabled: rule.enabled !== false }];
+    return [{ id: shortText(rule.id, 200) || "rule-" + index, pattern: shortText(rule.pattern, 500), replacement: shortText(rule.replacement, 2_000), enabled: rule.enabled !== false, flags: rule.flags === "gi" ? "gi" : "g" }];
   }) : [];
   return {
     version: 1,
@@ -144,6 +144,7 @@ export function parseReplicaPromptConfig(serialized: string | null): ReplicaProm
       highlight: settings.highlight !== false,
       sdConvert: settings.sdConvert === true,
       resolveAliasesOnCopy: settings.resolveAliasesOnCopy === true,
+      cooccurrence: settings.cooccurrence !== false,
     },
     regexRules: rules,
   };
@@ -219,14 +220,53 @@ export function composeReplicaPrompt(prompt: string, negative: string, model: st
   const negativeParts = parts("negative");
   return { prompt: positiveParts.map((part) => part.content).join(", "), negative: negativeParts.map((part) => part.content).join(", "), positiveParts, negativeParts };
 }
+export function validatePromptRegex(rule: PromptRegexRule): string | null {
+  if (!rule.pattern.trim()) return "匹配内容不能为空";
+  try { new RegExp(rule.pattern, rule.flags === "gi" ? "gi" : "g"); return null; }
+  catch { return "正则表达式无效：" + rule.pattern; }
+}
+export function applyPromptRegex(text: string, rules: PromptRegexRule[]): { text: string; error: string | null } {
+  const active = rules.filter((rule) => rule.enabled);
+  const error = active.map(validatePromptRegex).find(Boolean);
+  // An invalid rule must never leave a partially transformed prompt behind.
+  if (error) return { text, error };
+  return { text: active.reduce((value, rule) => value.replace(new RegExp(rule.pattern, rule.flags === "gi" ? "gi" : "g"), rule.replacement), text), error: null };
+}
+
+/** Adapted from Aaalice's NaiPromptFormatter / TextSpaceConverter (MIT; public/nai/LICENSE-Aaalice.txt). */
+export function formatReplicaPrompt(text: string): string {
+  const protectedCharacters = new Set([",", "{", "}", "[", "]", "(", ")", "|", "<", ">"]);
+  return text.split(/(\/\*disabled:[\s\S]*?\*\/)/g).map((fragment, fragmentIndex, fragments) => {
+    if (fragment.startsWith("/*disabled:")) return fragment;
+    const formatted = fragment.split(/(\r\n|\r|\n)/g).map((line) => {
+      if (/^[\r\n]+$/.test(line) || !line.trim()) return line;
+      const leading = line.match(/^[ \t]*/)?.[0] || "";
+      const trailing = line.match(/[ \t]*$/)?.[0] || "";
+      const content = line.slice(leading.length, line.length - trailing.length).replace(/[，、]/g, ",").replace(/：/g, ":").replace(/[ \t\f\u00a0\u3000]+/g, " ").replace(/ *, */g, ", ").trimEnd();
+      let angleDepth = 0;
+      let quote = "";
+      let escaped = false;
+      const converted = content.split("").map((char, index) => {
+        if (escaped) { escaped = false; return char; }
+        if (char === "\\") { escaped = true; return char; }
+        if (quote) { if (char === quote) quote = ""; return char; }
+        if (char === '"') { quote = char; return char; }
+        if (char === "<") angleDepth++;
+        if (char === ">") angleDepth = Math.max(0, angleDepth - 1);
+        if (char !== " " || angleDepth || protectedCharacters.has(content[index - 1]) || protectedCharacters.has(content[index + 1])) return char;
+        return "_";
+      }).join("");
+      return leading + converted + trailing;
+    }).join("");
+    return formatted.endsWith(",") && fragments[fragmentIndex + 1]?.startsWith("/*disabled:") ? formatted + " " : formatted;
+  }).join("");
+}
 export function transformPromptOnBlur(text: string, config: ReplicaPromptConfig): { text: string; error: string | null } {
-  let value = text;
-  if (config.settings.sdConvert) value = value.replace(/\(([^()\n]+):(\d+(?:\.\d+)?)\)/g, (_, content: string, weight: string) => applyPromptWeight(content, Number(weight)));
-  if (config.settings.autoFormat) value = value.replace(/[，、]/g, ", ").replace(/[：]/g, ":");
-  for (const rule of config.regexRules.filter((rule) => rule.enabled && rule.pattern)) {
-    try { value = value.replace(new RegExp(rule.pattern, "g"), rule.replacement); }
-    catch { return { text: value, error: "正则表达式无效：" + rule.pattern }; }
-  }
+  const replaced = applyPromptRegex(text, config.regexRules);
+  if (replaced.error) return replaced;
+  let value = replaced.text;
+  if (config.settings.sdConvert) value = value.replace(/\(([^()\n]+):(-?(?:\d+(?:\.\d+)?|\.\d+))\)/g, (_, content: string, weight: string) => applyPromptWeight(content, Number(weight)));
+  if (config.settings.autoFormat) value = formatReplicaPrompt(value);
   return { text: value, error: null };
 }
 export { generateRandomPrompt as randomReplicaPrompt } from './random-prompt';

@@ -1,6 +1,8 @@
 "use client";
 
 import { inpaintModelFor } from "@/lib/inpaint-model";
+import { normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { NaturalImageSettings } from "../natural-image-settings";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
 
 import {
@@ -84,17 +86,17 @@ const SAMPLERS = [
   ["k_dpmpp_2m", "DPM++ 2M"],
 ] as const;
 
-async function dataUrlToRgba(dataUrl: string): Promise<RgbaImage> {
+async function dataUrlToRgba(dataUrl: string, output?: { width: number; height: number }): Promise<RgbaImage> {
   const image = new Image();
   image.decoding = "async";
   image.src = dataUrl;
   await image.decode();
   const canvas = document.createElement("canvas");
-  canvas.width = image.naturalWidth;
-  canvas.height = image.naturalHeight;
+  canvas.width = output?.width || image.naturalWidth;
+  canvas.height = output?.height || image.naturalHeight;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("当前浏览器不支持 Canvas");
-  context.drawImage(image, 0, 0);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
   return createRgbaImage(canvas.width, canvas.height, pixels.data);
 }
@@ -181,9 +183,24 @@ function imageFromDraft(draft: EditorDraft): EditorDocument {
   };
 }
 
-function viewportImage(document: EditorDocument, viewport: GenerationViewport, output: { width: number; height: number }): { image: RgbaImage; mask: Uint8ClampedArray } {
-  const width = Math.max(64, Math.min(1600, Math.round(output.width / 64) * 64));
-  const height = Math.max(64, Math.min(1600, Math.round(output.height / 64) * 64));
+export function normalizeEditorOutputSize(model: string, width: number, height: number, protocol?: ImageProviderProtocol): { width: number; height: number } {
+  const capabilities = resolveImageModelCapabilities(model, protocol);
+  const valid = (value: number, fallback: number) => Number.isFinite(value) && value > 0 ? value : fallback;
+  width = valid(width, DEFAULT_WIDTH); height = valid(height, DEFAULT_HEIGHT);
+  if (capabilities.promptStyle === "tags") return { width: Math.max(64, Math.min(1600, Math.round(width / 64) * 64)), height: Math.max(64, Math.min(1600, Math.round(height / 64) * 64)) };
+  const normalized = normalizeImageModelSize(model, width, height, protocol);
+  if (capabilities.sizes.length || capabilities.sizeConstraints) return normalized;
+  const maxEdge = 4096, maxPixels = 8_294_400, step = 16;
+  const scale = Math.min(1, maxEdge / Math.max(normalized.width, normalized.height), Math.sqrt(maxPixels / (normalized.width * normalized.height)));
+  let w = Math.max(step, Math.min(maxEdge, Math.round(normalized.width * scale / step) * step));
+  let h = Math.max(step, Math.min(maxEdge, Math.round(normalized.height * scale / step) * step));
+  while (w * h > maxPixels) { if (w >= h) w -= step; else h -= step; }
+  return { width: w, height: h };
+}
+
+export function viewportImage(document: EditorDocument, viewport: GenerationViewport, output: { width: number; height: number }): { image: RgbaImage; mask: Uint8ClampedArray } {
+  // Callers normalize once for the selected model; image, mask and request share these dimensions.
+  const { width, height } = output;
   const image = createRgbaImage(width, height);
   const mask = new Uint8ClampedArray(width * height);
   const sourceLeft = document.worldRect.x;
@@ -244,15 +261,16 @@ function applyStrokes(mask: Uint8ClampedArray, width: number, height: number, vi
   }
 }
 
-function fitViewport(document: EditorDocument, width: number, height: number): GenerationViewport {
-  const sourceWidth = Math.max(64, Math.min(1600, document.image.width));
-  const sourceHeight = Math.max(64, Math.min(1600, document.image.height));
+export function fitViewport(document: EditorDocument, width: number, height: number): GenerationViewport {
+  const natural = resolveImageModelCapabilities(document.generation?.model || "nai-v5-full", document.generation?.imageProtocol).promptStyle === "natural";
+  const sourceWidth = natural ? document.image.width : Math.max(64, Math.min(1600, document.image.width));
+  const sourceHeight = natural ? document.image.height : Math.max(64, Math.min(1600, document.image.height));
   const aspect = width / height;
   let viewportWidth = sourceWidth;
-  let viewportHeight = Math.round(viewportWidth / aspect);
+  let viewportHeight = Math.max(1, Math.round(viewportWidth / aspect));
   if (viewportHeight > sourceHeight) {
     viewportHeight = sourceHeight;
-    viewportWidth = Math.round(viewportHeight * aspect);
+    viewportWidth = Math.max(1, Math.round(viewportHeight * aspect));
   }
   return {
     x: document.worldRect.x + Math.round((sourceWidth - viewportWidth) / 2),
@@ -338,6 +356,17 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   const [ready, setReady] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [model, setModel] = useState("nai-v5-inpaint");
+  const [imageQuality, setImageQuality] = useState("auto");
+  const [imageResolution, setImageResolution] = useState("1K");
+  const [imageBackground, setImageBackground] = useState("auto");
+  const imageProtocol = document?.generation?.imageProtocol;
+  const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
+  const naturalImageModel = modelCapabilities.promptStyle === "natural";
+  const outputSize = normalizeEditorOutputSize(model, viewportSize.width, viewportSize.height, imageProtocol);
+  const outputStep = naturalImageModel ? modelCapabilities.sizeConstraints?.multipleOf || 16 : 64;
+  const outputMaxEdge = naturalImageModel ? modelCapabilities.sizeConstraints?.maxEdge || 4096 : 1600;
+  const effectiveImageQuality = modelCapabilities.qualityOptions.includes(imageQuality) ? imageQuality : "auto";
+  const effectiveImageResolution = modelCapabilities.imageSizes.includes(imageResolution) ? imageResolution : "1K";
   const [steps, setSteps] = useState(28);
   const [scale, setScale] = useState(5);
   const [strength, setStrength] = useState(0.7);
@@ -371,8 +400,9 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         if (!loaded) throw new Error("编辑草稿不存在或已过期");
         const nextDocument = imageFromDraft(loaded);
         const generation = nextDocument.generation;
-        const outputWidth = generation?.width || DEFAULT_WIDTH;
-        const outputHeight = generation?.height || DEFAULT_HEIGHT;
+        const output = normalizeEditorOutputSize(generation?.model || "nai-v5-full", generation?.width || DEFAULT_WIDTH, generation?.height || DEFAULT_HEIGHT, generation?.imageProtocol);
+        const outputWidth = output.width;
+        const outputHeight = output.height;
         const nextViewport = fitViewport(nextDocument, outputWidth, outputHeight);
         setDraft(loaded);
         setDocument(nextDocument);
@@ -381,16 +411,19 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         setPrompt(nextDocument.prompt || "");
         setNegative(nextDocument.negativePrompt || "");
         syncEditorPromptToStudioForm(loaded.id, nextDocument.prompt || "", nextDocument.negativePrompt || "");
-        const nextModel = inpaintModelFor(generation?.model || "nai-v5-full");
+        const nextModel = inpaintModelFor(generation?.model || "nai-v5-full", generation?.imageProtocol);
         if (!nextModel) throw new Error(`当前模型 ${generation?.model} 没有对应的重绘模型，请返回工作台选择支持重绘的模型。`);
         setModel(nextModel);
+        setImageQuality(generation?.quality || "auto");
+        setImageResolution(generation?.imageSize || "1K");
+        setImageBackground(generation?.background || "auto");
         setSteps(generation?.steps || 28);
         setScale(generation?.scale ?? 5);
         setStrength(generation?.strength ?? 0.7);
         setSampler(generation?.sampler || "k_euler_ancestral");
         setSeed(nextDocument.seed == null ? "" : String(nextDocument.seed));
         if (loaded.workspace) {
-          setViewport({ ...loaded.workspace.viewport });
+          setViewport({ ...loaded.workspace.viewport, height: loaded.workspace.viewport.width / (outputWidth / outputHeight) });
           setCamera({ ...loaded.workspace.camera });
           setStrokes(loaded.workspace.strokes.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
           setUndone(loaded.workspace.undone.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
@@ -567,7 +600,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       setViewport(moveViewport(drag.viewport, delta));
       dragRef.current = { ...drag, point, viewport: moveViewport(drag.viewport, delta) };
     } else if (drag.kind === "resize") {
-      const next = resizeViewport(drag.viewport, drag.corner, point, { aspect: viewportSize.width / viewportSize.height, minWidth: 128, minHeight: 128 });
+      const next = resizeViewport(drag.viewport, drag.corner, point, { aspect: outputSize.width / outputSize.height, minWidth: 128, minHeight: 128 });
       setViewport(next);
     } else if (drag.kind === "stroke") {
       const next = { ...drag.stroke, points: [...drag.stroke.points, point] };
@@ -596,8 +629,8 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       ...nextDocument,
       prompt,
       negativePrompt: negative,
-      seed: seed.trim() || null,
-      generation: { model, width: viewportSize.width, height: viewportSize.height, steps, scale, strength, sampler, noiseSchedule: nextDocument.generation?.noiseSchedule || "native" },
+      seed: modelCapabilities.seed ? seed.trim() || null : null,
+      generation: { ...nextDocument.generation, model, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width: outputSize.width, height: outputSize.height, steps, scale, strength, sampler, noiseSchedule: nextDocument.generation?.noiseSchedule || "native" },
     };
     return {
       ...createEditorDraft(draft?.id || createEditorId(), mode, synchronized, review),
@@ -627,7 +660,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
     return () => window.clearTimeout(timer);
   // createDraftPayload intentionally snapshots all listed editor state.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brushSize, camera, canvasBackground, document, draft?.id, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tool, undone, viewport, viewportSize.height, viewportSize.width]);
+  }, [brushSize, camera, canvasBackground, document, draft?.id, effectiveImageQuality, effectiveImageResolution, imageBackground, imageQuality, imageResolution, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tool, undone, viewport, outputSize.height, outputSize.width]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -674,16 +707,17 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   };
 
   const updateOutputSize = (next: { width?: number; height?: number }) => {
-    const width = next.width ?? viewportSize.width;
-    const height = next.height ?? viewportSize.height;
+    const width = next.width ?? outputSize.width;
+    const height = next.height ?? outputSize.height;
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-    setViewportSize({ width, height });
-    setViewport((current) => current ? { ...current, height: current.width / (width / height) } : current);
+    const normalized = normalizeEditorOutputSize(model, width, height, imageProtocol);
+    setViewportSize(normalized);
+    setViewport((current) => current ? { ...current, height: current.width / (normalized.width / normalized.height) } : current);
   };
 
   const refreshMaskPreview = () => {
     if (!document || !viewport) return;
-    const prepared = viewportImage(document, viewport, viewportSize);
+    const prepared = viewportImage(document, viewport, outputSize);
     applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
     setMaskPreviewUrl(maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height));
   };
@@ -691,23 +725,29 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   const generate = async () => {
     if (!document || !viewport) return;
     if (!authenticated) { setNotice("请先登录后使用编辑器。"); return; }
-    if (seed.trim() && (!/^[+-]?\d+$/.test(seed.trim()) || !Number.isSafeInteger(Number(seed)))) {
+    if (modelCapabilities.seed && seed.trim() && (!/^[+-]?\d+$/.test(seed.trim()) || !Number.isSafeInteger(Number(seed)))) {
       setNotice("种子必须为空或有效整数。");
       return;
     }
-    if (viewportSize.width * viewportSize.height > 2_560_000) {
-      setNotice("输出像素不能超过 2560000。");
+    const maxPixels = naturalImageModel ? modelCapabilities.sizeConstraints?.maxPixels || 8_294_400 : 2_560_000;
+    if (outputSize.width * outputSize.height > maxPixels) {
+      setNotice(`输出像素不能超过 ${maxPixels}。`);
       return;
     }
     setGenerating(true); setNotice("");
     try {
-      const prepared = viewportImage(document, viewport, viewportSize);
+      const prepared = viewportImage(document, viewport, outputSize);
       applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
       if (!prepared.mask.some((value) => value > 0))
         throw new Error("请先绘制重绘蒙版，或把生成框移动到原图外扩展画布。");
       const body = {
         operation: mode === "canvas" ? "outpainting" : "inpainting",
         editor_composite: true,
+        providerId: document.generation?.providerId || "newapi",
+        imageProtocol,
+        quality: effectiveImageQuality,
+        imageSize: effectiveImageResolution,
+        background: imageBackground,
         model,
         prompt: prompt.trim(),
         negative_prompt: negative.trim(),
@@ -719,14 +759,14 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         sampler,
         noise_schedule: document.generation?.noiseSchedule || "native",
         strength,
-        ...(seed.trim() ? { seed: Number(seed) } : {}),
+        ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
         image: rgbaToDataUrl(prepared.image),
         mask: maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height),
         response_format: "b64_json",
       };
       const response = await fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const resultUrl = await readGenerationResponse(response);
-      const patch = await dataUrlToRgba(resultUrl);
+      const patch = await dataUrlToRgba(resultUrl, { width: prepared.image.width, height: prepared.image.height });
       const candidate: PendingCandidate = { id: createEditorId(), patch, viewport: { ...viewport }, mask: prepared.mask, prompt, createdAt: Date.now() };
       setPending(candidate);
       setCompare(0.5);
@@ -752,9 +792,11 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       try {
         historyId = await saveEditorComposite({
           image: finalImage, model, prompt, negative_prompt: negative,
+          providerId: document.generation?.providerId || "newapi", imageProtocol,
+          quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
           width: applied.image.width, height: applied.image.height,
           steps, scale, sampler, strength,
-          ...(seed.trim() ? { seed: Number(seed) } : {}),
+          ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
         });
       } catch (error) {
         setNotice(`${error instanceof Error ? error.message : "完整合成图未写入历史"}，结果仍会返回工作台。`);
@@ -793,11 +835,11 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       const nextDocument = createEditorDocument(image, { x: 0, y: 0, width: image.width, height: image.height }, {
         prompt,
         negativePrompt: negative,
-        seed: seed || null,
+        seed: modelCapabilities.seed ? seed || null : null,
         source: { name: file.name, mimeType: file.type },
-        generation: { model, width: viewportSize.width, height: viewportSize.height, steps, scale, strength, sampler, noiseSchedule: document?.generation?.noiseSchedule },
+        generation: { ...document?.generation, model, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width: outputSize.width, height: outputSize.height, steps, scale, strength, sampler, noiseSchedule: document?.generation?.noiseSchedule },
       });
-      const nextViewport = fitViewport(nextDocument, viewportSize.width, viewportSize.height);
+      const nextViewport = fitViewport(nextDocument, outputSize.width, outputSize.height);
       setDocument(nextDocument);
       setViewport(nextViewport);
       setStrokes([]);
@@ -833,18 +875,22 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         <button type="button" aria-pressed={showMaskPreview} onClick={() => setShowMaskPreview((current) => !current)}>{showMaskPreview ? "隐藏蒙版" : "显示蒙版"}</button>
         <button type="button" onClick={refreshMaskPreview}>实际蒙版</button>
       </div>
-      {maskPreviewUrl && <div className="editor-mask-preview"><NextImage src={maskPreviewUrl} alt="实际黑白蒙版预览" width={viewportSize.width} height={viewportSize.height} unoptimized /><button type="button" onClick={() => setMaskPreviewUrl("")}>关闭预览</button></div>}
+      {maskPreviewUrl && <div className="editor-mask-preview"><NextImage src={maskPreviewUrl} alt="实际黑白蒙版预览" width={outputSize.width} height={outputSize.height} unoptimized /><button type="button" onClick={() => setMaskPreviewUrl("")}>关闭预览</button></div>}
       <div className="editor-history-actions"><button type="button" disabled={!strokes.length || Boolean(pending)} onClick={() => { const next = [...strokes]; const removed = next.pop(); if (removed) setUndone((current) => [removed, ...current]); setStrokes(next); }}><Undo2 size={15} />撤销</button><button type="button" disabled={!undone.length || Boolean(pending)} onClick={() => { const next = [...undone]; const restored = next.shift(); if (restored) setStrokes((current) => [...current, restored]); setUndone(next); }}><Redo2 size={15} />重做</button><button type="button" disabled={!strokes.length || Boolean(pending)} onClick={() => { setStrokes([]); setUndone([]); }}><Trash2 size={15} />清空</button></div>
     </>
   );
 
   const generationPanel = (
     <>
-      <div className="editor-panel-heading"><span><Settings2 size={15} />生成设置</span><small>{viewportSize.width} × {viewportSize.height}</small></div>
-      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={INPAINT_MODELS.map(([value, label]) => ({ value, label }))} ariaLabel="重绘模型" /></label>
-      <div className="editor-size-row"><label><span>宽度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出宽度" min={64} max={1600} step={64} value={viewportSize.width} setValue={(value) => updateOutputSize({ width: value })} /></label><button type="button" aria-label="交换宽高" onClick={() => updateOutputSize({ width: viewportSize.height, height: viewportSize.width })}>×</button><label><span>高度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出高度" min={64} max={1600} step={64} value={viewportSize.height} setValue={(value) => updateOutputSize({ height: value })} /></label></div>
-      <div className="editor-parameter-grid"><label><span>步数</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器采样步数" min={1} max={50} step={1} value={steps} setValue={setSteps} /></label><label><span>CFG</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器提示词相关性" min={0} max={10} step={0.1} value={scale} setValue={setScale} /></label><label><span>强度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器重绘强度" min={0} max={1} step={0.05} value={strength} setValue={setStrength} /></label><label><span>种子</span><input className="editor-text-input" inputMode="numeric" value={seed} onChange={(event) => setSeed(event.target.value)} placeholder="随机" /></label></div>
-      <label className="editor-field"><span>采样器</span><PopupSelect value={sampler} onChange={setSampler} options={SAMPLERS.map(([value, label]) => ({ value, label }))} ariaLabel="编辑器采样器" /></label>
+      <div className="editor-panel-heading"><span><Settings2 size={15} />生成设置</span><small>{outputSize.width} × {outputSize.height}</small></div>
+      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={naturalImageModel ? [{ value: model, label: model }] : INPAINT_MODELS.map(([value, label]) => ({ value, label }))} ariaLabel="重绘模型" /></label>
+      <div className="editor-size-row"><label><span>宽度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出宽度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.width} setValue={(value) => updateOutputSize({ width: value })} /></label><button type="button" aria-label="交换宽高" onClick={() => updateOutputSize({ width: outputSize.height, height: outputSize.width })}>×</button><label><span>高度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出高度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.height} setValue={(value) => updateOutputSize({ height: value })} /></label></div>
+      {naturalImageModel ? <NaturalImageSettings model={model} imageProtocol={imageProtocol} width={outputSize.width} height={outputSize.height} setWidth={(width) => updateOutputSize({ width })} setHeight={(height) => updateOutputSize({ height })}
+        setDimensions={updateOutputSize}
+        quality={effectiveImageQuality} setQuality={setImageQuality} imageSize={effectiveImageResolution} setImageSize={setImageResolution} background={imageBackground} setBackground={setImageBackground} /> : <>
+        <div className="editor-parameter-grid"><label><span>步数</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器采样步数" min={1} max={50} step={1} value={steps} setValue={setSteps} /></label><label><span>CFG</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器提示词相关性" min={0} max={10} step={0.1} value={scale} setValue={setScale} /></label><label><span>强度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器重绘强度" min={0} max={1} step={0.05} value={strength} setValue={setStrength} /></label><label><span>种子</span><input className="editor-text-input" inputMode="numeric" value={seed} onChange={(event) => setSeed(event.target.value)} placeholder="随机" /></label></div>
+        <label className="editor-field"><span>采样器</span><PopupSelect value={sampler} onChange={setSampler} options={SAMPLERS.map(([value, label]) => ({ value, label }))} ariaLabel="编辑器采样器" /></label>
+      </>}
       <label className="editor-field"><span>描述画面</span><textarea value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="描述要生成或补全的内容…" /></label>
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
       <p className="editor-tip">生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。</p>
@@ -877,7 +923,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
           <div className="editor-stage" ref={stageRef} onPointerMove={handlePointerMove} onPointerUp={finishPointer} onPointerCancel={finishPointer}>
             <canvas ref={canvasRef} onPointerDown={handlePointerDown} />
             {screenViewport && <div className="generation-viewport" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height }}>
-              <button type="button" className="viewport-badge" onPointerDown={(event) => beginViewportDrag(event, { kind: "viewport", point: worldPoint(event), viewport })}><span>{viewportSize.width} × {viewportSize.height}</span><small>拖动取景</small></button>
+              <button type="button" className="viewport-badge" onPointerDown={(event) => beginViewportDrag(event, { kind: "viewport", point: worldPoint(event), viewport })}><span>{outputSize.width} × {outputSize.height}</span><small>拖动取景</small></button>
               {(["nw", "ne", "sw", "se"] as const).map((corner) => <span key={corner} className={`viewport-corner ${corner}`} onPointerDown={(event) => beginViewportDrag(event, { kind: "resize", point: worldPoint(event), viewport, corner })} />)}
             </div>}
             {pending && screenViewport && <div className="review-overlay" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height, ["--compare" as string]: compare }}><div className="review-patch" style={{ backgroundImage: `url(${maskedPatchDataUrl(pending)})` }} /><div className="review-divider" /><div className="review-label merged">已合并</div><div className="review-label original">原图</div><input aria-label="原图与合成图比较位置" type="range" min="0" max="1" step="0.01" value={compare} onChange={(event) => setCompare(Number(event.target.value))} /></div>}
