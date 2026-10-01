@@ -4,6 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { createPortal } from "react-dom";
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp, RotateCcw, RectangleHorizontal, RectangleVertical, Square, Sprout } from "lucide-react";
 import { quantizeStepValue, useWheelStep } from "@/app/ui/wheel-number";
+import { useAnimatedDisclosure } from "@/app/ui/use-animated-disclosure";
 import "./replica-generation-settings.css";
 
 type Variant = "nai" | "nlw";
@@ -144,6 +145,7 @@ function SliderField({ label, value, onChange, min, max, step }: {
     <div className="rgs-slider-row">
       <NumberEntry label={label} value={value} onChange={onChange} min={min} max={max} step={step} />
       <input className="rgs-range" type="range" aria-label={`${label}滑条`} min={min} max={max} step={step}
+        style={{ "--rgs-progress": `${Math.max(0, Math.min(100, (value - min) / (max - min) * 100))}%` } as CSSProperties}
         value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </div>
   </div>;
@@ -151,6 +153,7 @@ function SliderField({ label, value, onChange, min, max, step }: {
 
 export type ReplicaGenerationSettingsProps = {
   variant: Variant; model: string; providerControls?: ReactNode; modelControls?: ReactNode;
+  naturalSettings?: ReactNode;
   steps: number; scale: number; seed: string; sampler: string; schedule: string; cfgRescale: number;
   setSteps: (value: number) => void; setScale: (value: number) => void; setSeed: (value: string) => void;
   setSampler: (value: string) => void; setSchedule: (value: string) => void; setCfgRescale: (value: number) => void;
@@ -161,7 +164,7 @@ export type ReplicaGenerationSettingsProps = {
 export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps) {
   const { variant, model, providerControls, modelControls, steps, scale, seed, sampler, schedule, cfgRescale,
     setSteps, setScale, setSeed, setSampler, setSchedule, setCfgRescale, count, setCount, batchMode, setBatchMode } = props;
-  const [open, setOpen] = useState(false);
+  const { open, present, setOpen } = useAnimatedDisclosure();
   const [advanced, setAdvanced] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const toggle = useRef<HTMLButtonElement>(null);
@@ -211,7 +214,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
       window.visualViewport?.removeEventListener("resize", locate);
       window.visualViewport?.removeEventListener("scroll", locate);
     };
-  }, [open, variant]);
+  }, [open, variant, setOpen]);
 
   useEffect(() => {
     if (open && variant === "nai" && position.visibility === "visible") {
@@ -224,29 +227,34 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
     function outside(event: PointerEvent) {
       const target = event.target as Element;
       if (target.closest?.(`[data-replica-menu][data-replica-variant="${variant}"]`)) return;
+      const selectMenu = target.closest?.(".popup-select-menu");
+      if (selectMenu?.id) {
+        const trigger = document.querySelector(`[aria-controls="${CSS.escape(selectMenu.id)}"]`);
+        if (trigger && (root.current?.contains(trigger) || panel.current?.contains(trigger))) return;
+      }
       if (!root.current?.contains(target) && !panel.current?.contains(target)) setOpen(false);
     }
     function escape(event: KeyboardEvent) {
-      if (event.key !== "Escape" || (event.target as Element).closest?.("[data-replica-menu]")) return;
+      if (event.defaultPrevented || event.key !== "Escape" || (event.target as Element).closest?.("[data-replica-menu],.popup-select-menu")) return;
       setOpen(false); requestAnimationFrame(() => toggle.current?.focus({ preventScroll: true }));
     }
     document.addEventListener("pointerdown", outside);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
-  }, [open, variant]);
+  }, [open, variant, setOpen]);
 
   function resetSampling() {
     setSteps(23); setScale(7); setSeed(""); setSampler("k_euler_ancestral"); setSchedule("native"); setCfgRescale(0);
   }
 
-  const settingsPanel = <section ref={panel} id={panelId} className="rgs-panel" role="dialog" aria-label="生成参数设置">
+  const settingsPanel = <section ref={panel} id={panelId} className={`rgs-panel${open ? "" : " is-closing"}`} role="dialog" aria-label="生成参数设置" aria-hidden={!open} inert={!open}>
       <div className="rgs-panel-header"><span>{variant === "nai" ? "AI设置" : "生成参数"}</span>
         <div><button type="button" aria-label="重置生成参数" title="重置生成参数" onClick={resetSampling}><RotateCcw size={15} /></button>
           <button type="button" aria-label="收起生成参数" onClick={closePanel}><ChevronDown size={20} /></button></div>
       </div>
       <div className="rgs-panel-content">
         {variant === "nlw" && <div className="rgs-model-controls">{providerControls}{modelControls}</div>}
-        {variant === "nlw" && <label className="rgs-field"><span className="rgs-label">采样器</span>
+        {props.naturalSettings || <>{variant === "nlw" && <label className="rgs-field"><span className="rgs-label">采样器</span>
           <ReplicaSelect variant={variant} label="采样器" value={sampler} choices={REPLICA_SAMPLERS} onChange={setSampler} /></label>}
         <SliderField label="步数" value={steps} onChange={setSteps} min={1} max={50} step={1} />
         <SliderField label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} />
@@ -260,11 +268,11 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
         </div>}
         <button type="button" className="rgs-advanced-toggle" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
           高级设置<ChevronDown size={14} className={advanced ? "is-open" : ""} /></button>
-        {advanced && <div className="rgs-advanced-content">
+        <div className={`rgs-advanced-motion${advanced ? " is-open" : ""}`} aria-hidden={!advanced} inert={!advanced}><div className="rgs-advanced-content">
           <SliderField label="提示引导重标" value={cfgRescale} onChange={setCfgRescale} min={0} max={1} step={0.02} />
           <label className="rgs-field"><span className="rgs-label">噪声调度</span>
             <ReplicaSelect variant={variant} label="噪声调度" value={schedule} choices={schedules} onChange={setSchedule} /></label>
-        </div>}
+        </div></div></>}
         {variant === "nlw" && <div className="rgs-output-settings">
           <label className="rgs-field"><span className="rgs-label">图像数量</span>
             <NumberEntry label="生成张数" value={count} onChange={setCount} min={1} max={30} step={1} /></label>
@@ -276,7 +284,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
     </section>;
 
   return <div ref={root} className={`rgs-shell${open ? " is-open" : ""}`} data-replica-variant={variant}>
-    {variant === "nai" ? <div className="rgs-summary">
+    {variant === "nai" && !props.naturalSettings ? <div className="rgs-summary">
       <label><small>步数</small><NumberEntry label="采样步数" value={steps} onChange={setSteps} min={1} max={50} step={1} /></label>
       <label><small>指导</small><NumberEntry label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} /></label>
       <span><small>种子</small><b title={seed || "随机种子"}>{seed || <Sprout size={16} aria-label="随机种子" />}</b></span>
@@ -289,7 +297,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
       {open ? <ChevronDown size={18} /> : <ChevronUp size={18} />}
     </button>}
 
-    {open && (variant === "nai"
+    {present && (variant === "nai"
       ? createPortal(<div className="rgs-shell rgs-popup" data-replica-variant={variant} style={position}>{settingsPanel}</div>, document.body)
       : settingsPanel)}
   </div>;

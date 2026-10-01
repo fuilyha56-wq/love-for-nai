@@ -1,208 +1,133 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
+import { tagZh } from "@/lib/tag-translations";
 
-// 提示词标签联想（借鉴 novelai_local_web / Aaalice 的补全交互）：
-// 输入时按光标所在 token 实时查询 /api/tags（Danbooru + 中文捷径），
-// 浮层按 LFN 主题渲染；Enter/Tab 接受、Esc 关闭、点击插入并补逗号。
-
-export type TagHit = {
-  name: string;
-  displayName?: string;
-  categoryName?: string;
-  postCount?: number;
-  zh?: string;
-};
-
+export type TagHit = PromptCompletion;
 const RESULT_CACHE = new Map<string, TagHit[]>();
-const CACHE_MAX_KEYS = 200;
-const MAX_SUGGESTIONS = 10;
-const DEBOUNCE_MS = 260;
 
-function tokenSpanBefore(text: string, cursor: number): { start: number; token: string } {
-  const slice = text.slice(0, cursor);
-  const start = Math.max(slice.lastIndexOf(","), slice.lastIndexOf("\n")) + 1;
-  return { start, token: slice.slice(start) };
-}
-
-export function PromptAutocompleteTextarea({
-  value,
-  onChange,
-  className,
-  placeholder,
-  autocomplete = false,
-  id,
-  onContextMenu,
+/** Shared editor: local fallback, tag search, library aliases and private local cooccurrences. */
+export function PromptAutocompleteTextarea({ value, onChange, className, placeholder, autocomplete = false, id, onContextMenu,
+  library = [], cooccurrence = false, relatedSamples = [], onCopy, onFeedback,
 }: {
-  value: string;
-  onChange: (value: string) => void;
-  className?: string;
-  placeholder?: string;
-  autocomplete?: boolean;
-  id?: string;
-  onContextMenu?: React.MouseEventHandler<HTMLTextAreaElement>;
+  value: string; onChange: (value: string) => void; className?: string; placeholder?: string; autocomplete?: boolean; id?: string;
+  onContextMenu?: React.MouseEventHandler<HTMLTextAreaElement>; onCopy?: React.ClipboardEventHandler<HTMLTextAreaElement>;
+  library?: Array<{ name: string; content: string }>; cooccurrence?: boolean; relatedSamples?: string[]; onFeedback?: (message: string) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const debounceRef = useRef<number | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestRef = useRef<AbortController | null>(null);
+  const requestNumber = useRef(0);
+  const listId = useId();
   const [suggestions, setSuggestions] = useState<TagHit[]>([]);
   const [open, setOpen] = useState(false);
+  const [related, setRelated] = useState(false);
   const [active, setActive] = useState(0);
-
-  useEffect(
-    () => () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    },
-    [],
-  );
-
-  function trackCursor(el: HTMLTextAreaElement, typing = false) {
-    if (!autocomplete) return;
-    const span = tokenSpanBefore(el.value, el.selectionStart ?? el.value.length);
-    const token = span.token.trim().toLowerCase();
-    if (debounceRef.current) {
-      window.clearTimeout(debounceRef.current);
-      debounceRef.current = null;
-    }
-    // 空格结尾或过短不联想（Danbooru tag 无空格，多词组合由用户手写）。
-    if (token.length < 2 || /\s$/.test(span.token) || /\s/.test(token)) {
-      setOpen(false);
-      setSuggestions([]);
-      return;
-    }
-    // 只在实际输入时弹出面板；点进框/移动光标不弹（避免误以为 tooltip）。
-    if (!typing) return;
-    const cached = RESULT_CACHE.get(token);
-    if (cached) {
-      setSuggestions(cached);
-      setActive(0);
-      setOpen(cached.length > 0);
-      return;
-    }
-    debounceRef.current = window.setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/tags?q=${encodeURIComponent(token)}`, {
-          cache: "no-store",
-        });
-        const result = (await response.json()) as { tags?: TagHit[] };
-        const hits = Array.isArray(result.tags) ? result.tags.slice(0, MAX_SUGGESTIONS) : [];
-        if (RESULT_CACHE.size >= CACHE_MAX_KEYS) RESULT_CACHE.clear();
-        RESULT_CACHE.set(token, hits);
-        // 响应回来时 token 可能已变，只在仍匹配时展示。
-        const now = tokenSpanBefore(
-          el.value,
-          el.selectionStart ?? el.value.length,
-        ).token
-          .trim()
-          .toLowerCase();
-        if (now !== token) return;
-        setSuggestions(hits);
-        setActive(0);
-        setOpen(hits.length > 0);
-      } catch {
-        // 网络失败静默，不打断输入。
-      }
-    }, DEBOUNCE_MS);
+  const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const showSuggestions = open && suggestions.length > 0 && (related ? cooccurrence : autocomplete);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); requestRef.current?.abort(); }, []);
+  useLayoutEffect(() => {
+    if (!showSuggestions) return;
+    const place = () => {
+      const bounds = textareaRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const below = window.innerHeight - bounds.bottom - 12;
+      const above = bounds.top - 12;
+      const upward = below < 180 && above > below;
+      const width = Math.min(Math.max(bounds.width, 260), window.innerWidth - 16);
+      setPosition({ position: "fixed", left: Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8)), width,
+        top: upward ? undefined : Math.max(8, bounds.bottom + 4), bottom: upward ? window.innerHeight - bounds.top + 4 : undefined,
+        maxHeight: Math.min(240, Math.max(80, upward ? above : below)), zIndex: 110, visibility: "visible" });
+    };
+    place();
+    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [showSuggestions]);
+  function cancelPending() {
+    requestNumber.current++;
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+    requestRef.current?.abort();
   }
-
-  function acceptTag(hit: TagHit) {
-    const el = textareaRef.current;
-    if (!el) return;
-    const span = tokenSpanBefore(el.value, el.selectionStart ?? el.value.length);
-    const after = el.value.slice(span.start + span.token.length);
-    // 替换当前 token；后文存在且不以逗号/换行开头时补 ", "。
-    const afterStart = after.trimStart();
-    const joiner = !afterStart
-      ? ""
-      : /^[,\n]/.test(afterStart)
-        ? ""
-        : ", ";
-    const next =
-      el.value.slice(0, span.start) + hit.name + (joiner ? joiner + afterStart : after);
-    onChange(next);
-    setOpen(false);
-    setSuggestions([]);
-    const caret = span.start + hit.name.length + (joiner ? joiner.length : 0);
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(caret, caret);
+  function display(hits: TagHit[], relatedMode = false) { setSuggestions(hits); setActive(0); setOpen(hits.length > 0); setRelated(relatedMode); }
+  function trackCursor(element: HTMLTextAreaElement) {
+    cancelPending();
+    if (!autocomplete) { setOpen(false); return; }
+    const token = promptTokenAt(element.value, element.selectionStart).token.toLowerCase();
+    if (token.startsWith("<")) {
+      const query = token.slice(1);
+      display(library.filter((entry) => entry.name.trim() && entry.name.toLowerCase().includes(query)).slice(0, 10)
+        .map((entry) => ({ name: "<" + entry.name + ">", displayName: entry.name, insertion: "<" + entry.name + ">", categoryName: "我的词库", zh: entry.content, local: true })));
+      return;
+    }
+    if (token.length < 2 || token.length > 80 || /[{}\[\]<>]|::/.test(token)) { setOpen(false); return; }
+    const cacheKey = token.replace(/[ \t]+/g, "_");
+    const cached = RESULT_CACHE.get(cacheKey);
+    if (cached) { display(cached); return; }
+    const sequence = requestNumber.current;
+    const isCurrent = () => sequence === requestNumber.current && document.activeElement === element && promptTokenAt(element.value, element.selectionStart).token.toLowerCase() === token;
+    let localHits: TagHit[] = [];
+    void loadPromptCompletionWordlist().then((names) => {
+      localHits = matchLocalPromptTags(token, [...names, ...library.flatMap((entry) => entry.content.split(/[,，\n]/))]);
+      if (isCurrent()) display(localHits.map((hit) => ({ ...hit, zh: tagZh(hit.name) })));
     });
+    debounceRef.current = setTimeout(async () => {
+      const controller = new AbortController(); requestRef.current = controller;
+      try {
+        const response = await fetch(`/api/tags?q=${encodeURIComponent(cacheKey)}`, { cache: "no-store", signal: controller.signal });
+        if (!response.ok) return;
+        const result = await response.json() as { tags?: TagHit[] };
+        const seen = new Set<string>();
+        const hits = [...(Array.isArray(result.tags) ? result.tags : []), ...localHits].filter((hit) => typeof hit.name === "string" && !seen.has(hit.name) && Boolean(seen.add(hit.name))).slice(0, 10);
+        if (RESULT_CACHE.size >= 200) RESULT_CACHE.clear();
+        RESULT_CACHE.set(cacheKey, hits);
+        if (isCurrent()) display(hits);
+      } catch { /* The local wordlist remains usable offline. */ }
+    }, 260);
   }
-
+  function showRelated(element: HTMLTextAreaElement, quiet = false) {
+    cancelPending();
+    if (!cooccurrence) return;
+    const selected = element.value.slice(element.selectionStart, element.selectionEnd).trim() || promptTokenAt(element.value, element.selectionStart).token;
+    const hits = localCooccurringTags(selected, relatedSamples, element.value);
+    display(hits.map((hit) => ({ ...hit, zh: tagZh(hit.name) })), true);
+    if (!hits.length && !quiet) onFeedback?.("本次历史和词库中没有这个标签的共现记录。保存含该标签的词库条目或生成图片后再试。");
+  }
+  function acceptTag(hit: TagHit) {
+    const element = textareaRef.current;
+    if (!element) return;
+    cancelPending();
+    const next = related ? { text: element.value.trimEnd() + (/[,，\n]\s*$/.test(element.value) ? " " : element.value.trim() ? ", " : "") + hit.name, cursor: 0 }
+      : insertPromptCompletion(element.value, element.selectionStart, hit.insertion || hit.name);
+    onChange(next.text); setOpen(false);
+    const caret = related ? next.text.length : next.cursor;
+    requestAnimationFrame(() => { element.focus(); element.setSelectionRange(caret, caret); });
+  }
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (!open || !suggestions.length) return;
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActive((index) => (index + 1) % suggestions.length);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActive((index) => (index - 1 + suggestions.length) % suggestions.length);
-    } else if (event.key === "Enter" || event.key === "Tab") {
-      event.preventDefault();
-      acceptTag(suggestions[active]);
-    } else if (event.key === "Escape") {
-      setOpen(false);
-    }
+    if (event.ctrlKey && event.shiftKey && event.code === "Space") { event.preventDefault(); showRelated(event.currentTarget); return; }
+    if (!showSuggestions || event.nativeEvent.isComposing) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); setActive((index) => (index + (event.key === "ArrowDown" ? 1 : suggestions.length - 1)) % suggestions.length);
+    } else if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); acceptTag(suggestions[active]); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelPending(); setOpen(false); }
   }
-
-  return (
-    <div className="prompt-autocomplete-wrap">
-      <textarea
-        ref={textareaRef}
-        id={id}
-        value={value}
-        onChange={(event) => {
-          onChange(event.target.value);
-          trackCursor(event.target, true);
-        }}
-        onKeyDown={onKeyDown}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
-        onMouseDown={(event) => {
-          // 右键保护选区（VSCode 同款）：否则 mousedown 先移动光标，选区塌掉，内联菜单没有可操作对象。
-          if (
-            event.button === 2 &&
-            (event.currentTarget.selectionEnd ?? 0) >
-              (event.currentTarget.selectionStart ?? 0)
-          )
-            event.preventDefault();
-        }}
-        onContextMenu={onContextMenu}
-        placeholder={placeholder}
-        className={className}
-      />
-      {open && suggestions.length > 0 && (
-        <div className="tag-suggest-panel" role="listbox" aria-label="标签联想">
-          <p className="tag-suggest-head">猜你想用</p>
-          <div className="tag-suggest-list">
-            {suggestions.map((hit, index) => (
-              <button
-                type="button"
-                key={hit.name}
-                role="option"
-                aria-selected={index === active}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  acceptTag(hit);
-                }}
-                onMouseEnter={() => setActive(index)}
-                className={`tag-suggest-item${index === active ? " is-active" : ""}`}
-              >
-                <span className="tag-suggest-name">
-                  {hit.displayName || hit.name}
-                  {hit.zh && hit.zh !== (hit.displayName || hit.name) && (
-                    <span className="tag-suggest-zh">{hit.zh}</span>
-                  )}
-                </span>
-                <span className="tag-suggest-meta">
-                  {hit.categoryName || ""}
-                  {hit.postCount != null
-                    ? ` · ${hit.postCount.toLocaleString("zh-CN")}`
-                    : ""}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return <div className="prompt-autocomplete-wrap">
+    <textarea ref={textareaRef} id={id} value={value} onChange={(event) => { onChange(event.target.value); if (!(event.nativeEvent as InputEvent).isComposing) trackCursor(event.target); }}
+      onCompositionEnd={(event) => trackCursor(event.currentTarget)} onKeyDown={onKeyDown} onCopy={onCopy}
+      aria-autocomplete={autocomplete ? "list" : "none"} aria-controls={showSuggestions ? listId : undefined}
+      aria-activedescendant={showSuggestions ? listId + "-" + active : undefined}
+      onBlur={() => { cancelPending(); setOpen(false); }} onSelect={(event) => { if (event.currentTarget.selectionEnd > event.currentTarget.selectionStart) showRelated(event.currentTarget, true); }}
+      onClick={(event) => { if (event.ctrlKey) showRelated(event.currentTarget); }}
+      onMouseDown={(event) => { if (event.button === 2 && event.currentTarget.selectionEnd > event.currentTarget.selectionStart) event.preventDefault(); }}
+      onContextMenu={onContextMenu} placeholder={placeholder} className={className} />
+    {showSuggestions && createPortal(<div data-replica-menu id={listId} style={position} className="tag-suggest-panel replica-completion-panel" role="listbox" aria-label={related ? "本地共现标签" : "标签联想"}>
+      <p className="tag-suggest-head">{related ? "本次历史 / 我的词库共现" : "标签建议 · ↑↓ 选择 · Enter / Tab 插入"}</p>
+      <div className="tag-suggest-list">{suggestions.map((hit, index) => <button type="button" id={listId + "-" + index} key={hit.name} role="option" aria-selected={index === active}
+        onPointerDown={(event) => { event.preventDefault(); acceptTag(hit); }} onMouseEnter={() => setActive(index)} className={"tag-suggest-item" + (index === active ? " is-active" : "")}>
+        <span className="tag-suggest-name">{hit.displayName || hit.name}{hit.zh && <span className="tag-suggest-zh">{hit.zh}</span>}</span>
+        <span className="tag-suggest-meta">{hit.categoryName || "标签"}{hit.occurrences != null ? ` · ${hit.occurrences} 条记录` : hit.postCount != null ? ` · ${hit.postCount.toLocaleString("zh-CN")}` : ""}</span>
+      </button>)}</div>
+    </div>, document.body)}
+  </div>;
 }

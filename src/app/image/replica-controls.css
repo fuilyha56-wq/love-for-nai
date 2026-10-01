@@ -19,6 +19,16 @@ html[data-theme="nai"] .replica-nai-mark { filter:invert(1); }
 .replica-controls-scroll { min-height:0; flex:1; overflow-y:auto; overscroll-behavior:contain; display:flex; flex-direction:column; gap:16px; padding:12px; scrollbar-width:thin; scrollbar-color:var(--muted) transparent; }
 .replica-controls-scroll::-webkit-scrollbar { display:block; width:6px; }.replica-controls-scroll::-webkit-scrollbar-thumb { background:var(--muted); border-radius:4px; }
 .replica-controls-scroll > * { flex-shrink:0; min-width:0; }
+.replica-controls-scroll { animation:replica-controls-enter 180ms ease-out both; }
+.replica-controls :is(button,a) { transition:background-color 140ms ease,color 140ms ease,opacity 140ms ease; }
+.replica-controls :is(.replica-section-heading,.replica-character-chevron) svg { transition:transform 180ms ease; }
+.replica-controls :is(.replica-section-motion,.replica-character-motion) { display:grid; grid-template-rows:0fr; opacity:0; transition:grid-template-rows 180ms ease,opacity 180ms ease; }
+.replica-controls :is(.replica-section.is-open>.replica-section-motion,.replica-character-section.is-open>.replica-character-motion) { grid-template-rows:1fr; opacity:1; }
+.replica-controls :is(.replica-section-motion>.replica-section-content,.replica-character-motion>.replica-character-body) { min-height:0; overflow:hidden; margin-top:0; margin-bottom:0; padding-top:0; padding-bottom:0; }
+.replica-section.is-open>.replica-section-motion>.replica-section-content { padding-bottom:14px; }
+.replica-character-section.is-open>.replica-character-motion>.replica-character-body { padding-top:8px; padding-bottom:12px; }
+@keyframes replica-controls-enter { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:none; } }
+@media(prefers-reduced-motion:reduce) { .replica-controls-scroll { animation:none; }.replica-controls :is(.replica-section-motion,.replica-character-motion,.replica-section-heading svg,.replica-character-chevron svg) { transition:none; } }
 .replica-controls[data-variant="nlw"] .replica-controls-scroll { padding:12px; gap:16px; }
 .replica-model-controls .nai-model-mode-row { grid-template-columns:minmax(0,1fr) 90px; }
 .replica-model-controls .popup-select-trigger,.replica-model-controls .nai-mode-button { background:var(--replica-control); border-color:var(--replica-line); color:var(--replica-ink); min-height:40px; }
@@ -44,6 +54,14 @@ html[data-theme="nai"] .replica-nai-mark { filter:invert(1); }
 .replica-reference-type { display:flex; flex-direction:column; gap:7px; }.replica-reference-type select,.replica-tagger-model select { width:100%; padding:10px; background:transparent; border:1px solid var(--line); border-radius:8px; }
 .replica-reverse-methods { display:flex; flex-wrap:wrap; gap:10px; }.replica-reverse-methods label { display:flex; align-items:center; gap:7px; background:color-mix(in srgb, var(--rose) 10%, var(--surface)); border-radius:6px; padding:7px 9px; }.replica-reverse-methods input { accent-color:var(--rose); }
 .replica-tagger-model { display:flex; flex-direction:column; gap:5px; }
+.replica-local-tagger { display:grid; gap:12px; }
+.replica-tagger-settings-link { color:var(--rose); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
+.replica-tagger-status,.replica-tagger-error { font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
+.replica-tagger-error { color:var(--danger, #b42318); }
+.replica-tagger-actions { display:flex; gap:8px; }.replica-tagger-actions>button:first-child { flex:1; }
+.replica-tagger-result { display:grid; gap:8px; font-size:12px; }.replica-tagger-result>div { display:flex; flex-wrap:wrap; gap:5px; max-height:160px; overflow:auto; }
+.replica-tagger-result span { padding:3px 6px; background:color-mix(in srgb,var(--rose) 10%,var(--surface)); border-radius:5px; }
+.replica-tagger-result button { width:fit-content; color:var(--rose); text-decoration:underline; text-underline-offset:3px; }
 .replica-slider-label { display:grid; grid-template-columns:1fr auto; align-items:center; gap:6px; }.replica-slider-label input { grid-column:1 / -1; width:100%; accent-color:var(--rose); height:22px; }
 .replica-group-label { display:block; color:var(--replica-muted); font-size:14px; margin-bottom:-6px; }
 .replica-nai-reference { display:flex; gap:6px; align-items:center; min-height:70px; padding:10px 12px; border:0; border-radius:9px; }

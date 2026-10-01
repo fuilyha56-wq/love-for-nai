@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 export type CustomProvider = {
   id: string;
@@ -8,6 +9,7 @@ export type CustomProvider = {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  protocol?: ImageProviderProtocol;
   discoveredModels?: string[];
   createdAt: string;
 };
@@ -76,7 +78,7 @@ function withLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
 
 export const publicProvider = (item: CustomProvider): PublicProvider => ({
   id: item.id, name: item.name, baseUrl: item.baseUrl, models: item.models,
-  createdAt: item.createdAt, hasKey: true,
+  createdAt: item.createdAt, hasKey: true, protocol: item.protocol ?? "auto",
 });
 
 export async function listProviders(userId: number): Promise<PublicProvider[]> {

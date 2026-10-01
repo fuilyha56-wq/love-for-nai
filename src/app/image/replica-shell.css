@@ -3,7 +3,7 @@
 [data-replica-studio] .studio-canvas { min-width:0; overflow:hidden; background:var(--paper); }
 [data-replica-studio] .replica-preview-host { padding:0; overflow:hidden; }
 [data-replica-studio] .replica-preview-host>.studio-mode-badge { display:none; }
-[data-replica-studio] .studio-tools-panel { min-width:0; background:var(--panel); padding:0; border-radius:0; border:0; box-shadow:none; }
+[data-aaalice-dock] .studio-layout>.studio-tools-panel.is-replica-dock { min-width:0; background:var(--panel); padding:0; border-radius:0; border:0; box-shadow:none; }
 [data-replica-studio] .panel-resizer { width:8px; background:var(--panel); border-left:1px solid var(--line); cursor:col-resize; }
 [data-replica-studio] .panel-resizer:hover { background:var(--surface-muted); }
 [data-replica-studio] .replica-controls .popup-select-trigger { color:var(--ink); background:var(--input-bg); border-color:var(--line); min-height:40px; }
@@ -28,19 +28,24 @@
 .replica-run-button:disabled { opacity:.5; cursor:wait; }
 .replica-run-button>small { background:color-mix(in srgb, var(--paper) 20%, transparent); border-radius:7px; padding:3px 7px; color:var(--paper); font-size:13px; }
 [data-replica-footer="nai"]>.replica-run-button { background:var(--rose); font-size:17px; }
-[data-replica-studio="nlw"] .replica-dock-content [data-layout-module="agent"] { border:0; padding:16px; font-family:var(--font-sans); }
-[data-replica-studio="nlw"] .replica-dock-content :is(textarea,input) { background:var(--surface); color:var(--ink); border-color:var(--line); }
-[data-replica-studio="nlw"] .replica-dock-content .popup-select-trigger { background:var(--surface); color:var(--ink); border-color:var(--line); }
-[data-replica-studio="nlw"] .replica-dock-content .bg-white { background:var(--surface); }
+[data-aaalice-dock] .replica-dock-content [data-layout-module="agent"] { border:0; padding:16px; font-family:var(--font-sans); }
+[data-aaalice-dock] .replica-dock-content :is(textarea,input) { background:var(--surface); color:var(--ink); border-color:var(--line); }
+[data-aaalice-dock] .replica-dock-content .popup-select-trigger { background:var(--surface); color:var(--ink); border-color:var(--line); }
+[data-aaalice-dock] .replica-dock-content .bg-white { background:var(--surface); }
+.studio-mobile-session { flex:none; max-height:40%; overflow:auto; border-top:1px solid var(--line); background:var(--panel); }
+.studio-mobile-session>summary { min-height:40px; padding:10px 16px; color:var(--muted); font-size:13px; cursor:pointer; }
 @media (min-width:1024px) {
-  [data-replica-studio="nai"] .studio-layout { grid-template-columns:var(--lfn-left) 8px minmax(0,1fr); }
+  [data-aaalice-dock] .studio-layout { transition: grid-template-columns 220ms cubic-bezier(.2,.7,.2,1); }
+  [data-aaalice-dock]:not([data-replica-studio]) .studio-layout:has(.studio-nav-rail) { grid-template-columns:var(--lfn-nav-rail,56px) var(--lfn-left) 5px minmax(0,1fr) 5px min(var(--lfn-right),max(200px,calc(100vw - var(--lfn-nav-rail,56px) - var(--lfn-left) - 236px))); }
+  [data-replica-studio="nai"] .studio-layout { grid-template-columns:var(--lfn-left) 8px minmax(0,1fr) 8px min(var(--lfn-right),max(200px,calc(100vw - var(--lfn-left) - 236px))); }
   [data-replica-studio="nlw"] .studio-layout { grid-template-columns:60px var(--lfn-left) 8px minmax(0,1fr) 8px var(--lfn-right); }
   [data-replica-studio="nlw"] .replica-navigation { display:flex; }
-  [data-replica-studio="nlw"] .studio-tools-panel { overflow:hidden; }
+  [data-aaalice-dock] .studio-tools-panel { overflow:hidden; }
   [data-replica-studio="nlw"][data-left-collapsed="true"] .studio-controls-panel { display:none; }
   [data-replica-studio="nlw"][data-left-collapsed="true"] .replica-left-rail { display:flex; }
   [data-replica-studio="nlw"][data-left-collapsed="true"] .studio-layout { grid-template-columns:60px 40px 8px minmax(0,1fr) 8px var(--lfn-right); }
 }
+@media (prefers-reduced-motion:reduce) { [data-aaalice-dock] .studio-layout { transition:none; } }
 @media (max-width:1023px) {
   body:has([data-replica-studio="nai"][data-has-images="false"]) .guide-launcher { top:14px; right:56px; bottom:auto; padding:8px; border:0; background:transparent; box-shadow:none; }
   body:has([data-replica-studio="nai"][data-has-images="false"]) .guide-launcher>span { display:none; }

@@ -11,6 +11,8 @@ import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { validateModelId } from "@/lib/provider/validation";
+import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
+import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
 import {
   assertBodySize,
   assertImageModel,
@@ -42,6 +44,11 @@ export async function POST(request: Request) {
   }
   if (!body.model || !body.prompt || body.width == null || body.height == null)
     return NextResponse.json({ message: "生成参数不完整" }, { status: 400 });
+
+  const providerId = typeof body.providerId === "string" ? body.providerId : "";
+  if (providerId && providerId !== "newapi") return handlePersonalProviderGeneration(request, session, { ...body, operation: "generate" }, providerId);
+  try { assertImageModel(body.model); }
+  catch { return handleNewApiImageModelGeneration(request, session, { ...body, operation: "generate" }, false); }
 
   let model: string;
   let width: number;

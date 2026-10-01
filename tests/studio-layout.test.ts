@@ -10,7 +10,7 @@ vi.mock("@/app/appearance", () => ({
   useAppearance: () => ({ preferences: { ...DEFAULT_APPEARANCE_PREFERENCES, theme: appearance.theme, workspaceLayout: appearance.workspaceLayout } }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }));
-import ImageStudio, { shouldCollapseToolsPanel } from "@/app/image/studio";
+import ImageStudio from "@/app/image/studio";
 
 function renderStudio(theme: string, workspaceLayout = "lfn", layoutEditor = false) {
   appearance.theme = theme;
@@ -52,7 +52,7 @@ function expectOriginalFeatureLinks(html: string) {
   for (const [href, label] of [
     ["/stories", "故事工作台"], ["/history", "图片历史"],
     ["/gallery", "图片广场"], ["/usage", "使用记录"],
-    ["/account", "我的账号"], ["/resources", "模型密钥"],
+    ["/account", "我的账号"], ["/settings#models", "模型密钥"],
     ["/announcements", "公告"], ["/settings", "外观设置"],
   ]) {
     const link = navigation.match(new RegExp(`<a\\b[^>]*href="${href}"[^>]*>[\\s\\S]*?</a>`))?.[0];
@@ -74,11 +74,13 @@ function expectReplicaCanvas(canvas: string, variant: "nai" | "nlw") {
 }
 
 function expectCollapsedTools(tools: string) {
-  expect(tools).toMatch(/^<aside class="studio-tools-panel[^\"]* is-collapsed"/);
-  expect(tools).toContain('aria-label="停靠面板入口"');
-  expect(tools).toContain('aria-label="进入本次历史面板"');
-  expect(tools).toContain('aria-label="进入标签助手面板"');
-  expect(tools).not.toContain('aria-label="标签助手输入"');
+  expect(tools).toMatch(/^<aside class="studio-tools-panel[^\"]* is-replica-dock"/);
+  expect(tools).toContain('class="replica-right-dock is-collapsed"');
+  expect(tools).toContain('aria-label="展开历史记录"');
+  expect(tools).toContain('aria-label="展开聊天"');
+  expect(tools).toContain('class="replica-dock-workspace" hidden=""');
+  expect(tools).toContain('aria-label="标签助手输入"');
+  expect(tools).not.toContain('class="right-dock-rail"');
   expect(tools).not.toContain('aria-label="调整助手面板高度"');
 }
 
@@ -90,6 +92,8 @@ describe("工作台布局按主题隔离", () => {
     const tools = studioTools(html);
     expect(html).toContain('data-studio-layout="classic"');
     expect(html).toContain('data-workspace-layout="lfn"');
+    expect(html).toContain('data-aaalice-dock="true"');
+    expect(html).toContain('--lfn-right:40px');
     expect(html).toContain('class="studio-layout grid min-h-0 flex-1"');
     expect(html).toContain("--lfn-left:310px");
     expect(html).toContain('aria-label="返回 Love for NAI 首页"');
@@ -139,7 +143,7 @@ describe("工作台布局按主题隔离", () => {
     expect(navigation).toContain('aria-label="图片库"');
     expect(navigation).toContain('href="/gallery"');
     const appearanceLink = navigation.match(/<a\b[^>]*aria-label="外观设置"[^>]*>[\s\S]*?<\/a>/)?.[0];
-    expect(appearanceLink).toContain('href="/settings"');
+    expect(appearanceLink).toContain('href="/settings#appearance"');
     expect(navigation).not.toContain('href="/image/setting/layout"');
     expect(left).toContain('aria-label="收起参数栏"');
     expect(html).not.toContain('data-left-collapsed="true"');
@@ -157,8 +161,8 @@ describe("工作台布局按主题隔离", () => {
     expect(scroll.match(/class="replica-section"/g)).toHaveLength(4);
     expect(scroll.match(/class="replica-section-heading"[\s\S]*?<button[^>]*aria-expanded="false"/g)).toHaveLength(4);
     for (const title of ["反推", "图生图", "风格迁移", "精准参考"]) expect(scroll).toContain(title);
-    expect(scroll).not.toContain('class="replica-section-content"');
-    expect(scroll).not.toContain('class="replica-character-body"');
+    expect(scroll.match(/class="replica-section-motion" aria-hidden="true" inert=""/g)).toHaveLength(4);
+    expect(scroll).toContain('class="replica-character-motion" aria-hidden="true" inert=""');
     expect(scroll).not.toContain("多角色");
     expect(scroll).not.toContain('class="replica-generation-footer"');
     expect(left.indexOf(footer)).toBeGreaterThan(left.indexOf(scroll) + scroll.length);
@@ -239,9 +243,17 @@ describe("工作台布局按主题隔离", () => {
     expect(footer).not.toContain('class="rgs-panel"');
     expect(footer).not.toContain('class="rgs-nlw-summary"');
     expect(html).not.toContain('class="replica-navigation"');
-    expect(html).not.toContain('class="replica-right-dock');
-    expect(tools).toMatch(/class="studio-tools-panel[^\"]* is-overlay"[^>]*aria-hidden="true"[^>]*inert=""/);
-    expect(canvas).toContain('aria-label="打开历史与标签助手" aria-expanded="false"');
+    expect(tools).toContain("is-replica-dock");
+    expect(tools).toContain('class="replica-right-dock is-collapsed"');
+    expect(tools).toContain('aria-label="展开历史记录"');
+    expect(tools).toContain('aria-label="展开聊天"');
+    expect(tools).toContain('data-replica-history');
+    expect(tools).not.toContain("session-history-panel");
+    expect(tools).not.toContain("is-overlay");
+    expect(tools.slice(0, tools.indexOf(">") + 1)).not.toContain('aria-hidden="true"');
+    expect(canvas).not.toContain('aria-label="打开历史与标签助手"');
+    expect(html).toContain("--lfn-right:40px");
+    expect(html).toContain('aria-label="调整右侧面板宽度" aria-valuenow="280"');
     expect(html).not.toContain("创作中心");
     expect(html).toContain("--lfn-left:447px");
     expect(html).toContain('aria-label="调整左侧面板宽度" aria-valuenow="447"');
@@ -254,6 +266,8 @@ describe("工作台布局按主题隔离", () => {
     const canvas = studioCanvas(html);
     const tools = studioTools(html);
     expect(html).toContain('data-workspace-layout="custom"');
+    expect(html).toContain('data-aaalice-dock="true"');
+    expect(html).toContain('--lfn-right:40px');
     expect(html).toContain('class="studio-layout grid min-h-0 flex-1 is-custom-layout"');
     expect(html).toContain('class="layout-editor-entry" href="/image/setting/layout"');
     expectOriginalFeatureLinks(html);
@@ -285,6 +299,8 @@ describe("工作台布局按主题隔离", () => {
     expect(html).not.toContain("grid-row:");
     expect(html).not.toContain('data-layout-drag=');
     expectCollapsedTools(tools);
+    const assistant = elementMarkup(tools, "div", '<div data-layout-module="agent"');
+    expect(assistant.match(/^<div\b[^>]*>/)?.[0]).not.toContain("min-height:");
     expect(html).not.toContain('data-replica-studio=');
     expect(html).not.toContain('class="replica-controls"');
     expect(canvas).not.toContain("<textarea");
@@ -297,6 +313,8 @@ describe("工作台布局按主题隔离", () => {
     const movable = [...html.matchAll(/data-layout-drag="([^\"]+)"/g)].map(match => match[1]);
     expect(movable.sort()).toEqual(["prompt", "model", "image", "sampling", "references", "operations", "history", "agent", "director"].sort());
     expect(html).toContain('data-layout-editor-board="true"');
+    expect(html).not.toContain('data-aaalice-dock=');
+    expect(tools).not.toContain('class="replica-right-dock');
     expect(html).not.toContain("grid-column:");
     expect(html).not.toContain("grid-row:");
     expect(tools).not.toContain('aria-label="停靠面板入口"');
@@ -304,14 +322,6 @@ describe("工作台布局按主题隔离", () => {
     expect(tools).toContain('aria-label="标签助手输入"');
   });
 
-  it("所有布局允许右栏收起，编辑模式始终展开", () => {
-    expect(shouldCollapseToolsPanel(true, false, true)).toBe(true);
-    expect(shouldCollapseToolsPanel(true, true, true)).toBe(false);
-    expect(shouldCollapseToolsPanel(false, false, true)).toBe(true);
-    expect(shouldCollapseToolsPanel(false, true, true)).toBe(false);
-    expect(shouldCollapseToolsPanel(true, true, false)).toBe(false);
-    expect(shouldCollapseToolsPanel(false, true, false)).toBe(false);
-  });
 });
 
 describe("真实余额进度条", () => {

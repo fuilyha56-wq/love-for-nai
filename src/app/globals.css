@@ -942,7 +942,7 @@ html[data-theme="night"] .mask-editor-number {
       var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(260px, 1fr) 5px 48px;
   }
   [data-studio-layout="nai"] .studio-layout {
-    grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
+    grid-template-columns: var(--lfn-left, 447px) 8px minmax(0, 1fr) 8px min(var(--lfn-right, 280px), max(200px, calc(100vw - var(--lfn-left, 447px) - 236px)));
   }
 }
 .studio-nav-header {

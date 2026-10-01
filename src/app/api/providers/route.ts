@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { addProvider, deleteProvider, listProviders } from "@/lib/provider/store";
-import { ProviderInputError, validateApiKey, validateModels, validateProviderBaseUrl, validateProviderName } from "@/lib/provider/validation";
+import { ProviderInputError, validateApiKey, validateModels, validateProviderBaseUrl, validateProviderName, validateImageProviderProtocol } from "@/lib/provider/validation";
 
 const unauthorized = () => NextResponse.json({ message: "请先登录" }, { status: 401 });
 
@@ -24,6 +24,7 @@ export async function POST(request: Request) {
       baseUrl: validateProviderBaseUrl(body.baseUrl),
       apiKey: validateApiKey(body.apiKey),
       models: validateModels(body.models),
+      protocol: validateImageProviderProtocol(body.protocol),
     });
     return NextResponse.json({ item }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {

@@ -2,7 +2,8 @@
 
 import { ArrowLeft, ArrowRight, Compass, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { GUIDE_OPEN_EVENT, guideLauncherVisible, setGuideLauncherVisible, subscribeGuideVisibility } from "@/lib/guide-preferences";
 import "./onboarding-guide.css";
 
 const GUIDE_KEY = "lfn-onboarding-v1";
@@ -22,18 +23,25 @@ const steps: Step[] = [
   { title: "历史与广场", body: "图片历史保存个人生成记录，广场浏览和分享作品；需要投稿时先检查图片内容与公开范围。", path: "/history", target: ".workspace-page > section", action: "查看图片历史" },
   { title: "发现作品", body: "在图片广场发现、查看作品；点击作品进入详情页。部分作品可能被默认遮罩，按页面提示查看。", path: "/gallery", target: ".workspace-page > section", action: "打开图片广场" },
   { title: "用量、账单与额度", body: "在使用记录核对每次调用及扣费；账号页查看 AFF、图包与 NewAPI 余额。自带第三方 API 的上游账单应在该服务商处核对。", path: "/usage", target: ".workspace-page > section", action: "查看使用记录" },
-  { title: "对外 API 密钥", body: "模型与密钥页面还可创建 LFN 对外 API 密钥，供外部客户端调用 /ai 和 /v1；它不同于导入故事模型用的上游 Key，请妥善保管。", path: "/resources#api-tokens", target: "#api-tokens", action: "查看密钥" },
-  { title: "外观、公告与帮助", body: "外观设置可调主题、背景和布局；公告查看站点变化；开发者文档记录接口鉴权与请求格式。管理功能仅向管理员显示。教程以后可通过右下角指南按钮重新打开。", path: "/settings", target: ".workspace-page > section > article", action: "查看外观设置" },
+  { title: "对外 API 密钥", body: "设置中的模型与密钥可创建 LFN 对外 API 密钥，供外部客户端调用 /ai 和 /v1；它不同于导入故事模型用的上游 Key，请妥善保管。", path: "/settings#api-tokens", target: "#api-tokens", action: "查看密钥" },
+  { title: "外观、公告与帮助", body: "设置分为外观与界面、个人资料、模型与密钥、提示词库。教程可通过右下角指南重新打开；隐藏后可以在外观与界面中恢复。公告查看站点变化，开发者文档记录接口格式。", path: "/settings#appearance", target: ".settings-content article", action: "查看外观设置" },
 ];
 
 export function OnboardingGuide() {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const launcherVisible = useSyncExternalStore(subscribeGuideVisibility, guideLauncherVisible, () => true);
   const [stepIndex, setStepIndex] = useState(0);
   const [source, setSource] = useState<"newapi" | "custom" | null>(null);
   const [resuming, setResuming] = useState(false);
   const [spotlight, setSpotlight] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+
+  useEffect(() => {
+    const openGuide = () => { setStepIndex(0); setOpen(true); setResuming(false); };
+    window.addEventListener(GUIDE_OPEN_EVENT, openGuide);
+    return () => window.removeEventListener(GUIDE_OPEN_EVENT, openGuide);
+  }, []);
 
   useEffect(() => {
     if (pathname === "/sign-in") return;
@@ -102,7 +110,10 @@ export function OnboardingGuide() {
 
   if (pathname === "/sign-in") return null;
   return <>
-    <button type="button" className="guide-launcher" onClick={() => { if (!resuming) setStepIndex(0); setOpen(true); }} aria-label={resuming ? "继续新手教程" : "打开新手教程"} title="新手教程"><Compass size={18} /><span>{resuming ? "继续指南" : "指南"}</span></button>
+    {launcherVisible && <div className="guide-launcher-group">
+      <button type="button" className="guide-launcher" onClick={() => { if (!resuming) setStepIndex(0); setOpen(true); }} aria-label={resuming ? "继续新手教程" : "打开新手教程"} title="新手教程"><Compass size={18} /><span>{resuming ? "继续指南" : "指南"}</span></button>
+      <button type="button" className="guide-hide-launcher" onClick={() => setGuideLauncherVisible(false)} aria-label="隐藏指南按钮" title="隐藏指南，可在设置的外观与界面中恢复"><X size={13} /></button>
+    </div>}
     {open && <div className={`guide-backdrop${spotlight ? " has-spotlight" : ""}`} role="presentation">
       {spotlight && <>
         <div className="guide-shade" aria-hidden="true" style={{ top: 0, left: 0, right: 0, height: spotlight.top }} />

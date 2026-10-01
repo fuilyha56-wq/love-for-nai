@@ -706,7 +706,7 @@ export default function StoriesWorkspace({
                   />
                   <p>{modelLabel}。模型列表实时读取上游 NewAPI；自定义模型使用你在模型与密钥中导入的凭据。</p>
                   {modelWarning && <p role="status">{modelWarning}</p>}
-                  <Link href="/resources#story-providers">管理模型源</Link>
+                  <Link href="/settings#story-providers">管理模型源</Link>
                 </div>
                 <div className="story-setting-section">
                   <Toggle checked={activeStory.specializedPrompt} onChange={(specializedPrompt) => void savePatch({ specializedPrompt })} label="小说特化提示词" />
