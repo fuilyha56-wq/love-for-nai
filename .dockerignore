@@ -10,3 +10,15 @@ src/lib/compat-api.ts.backup.rsh*.py
 *.tar
 *.tar.gz
 .zcode
+data
+data-b
+*.tsbuildinfo
+.env*
+!.env.example
+.rsh*.py
+.upload*.py
+_*.py
+SERVER_CONNECTION_GUIDE.md
+.vscode
+.idea
+.mimosa

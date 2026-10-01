@@ -1,7 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, isNaiImageModel } from "@/lib/newapi";
+import { getChatToken } from "@/lib/newapi";
+import { isKnownImageModel } from "@/lib/image-model-capabilities";
+import {
+  adaptAssistantSuggestion,
+  assistantHistoryMatchesTarget,
+  resolveAssistantImageTarget,
+  type AssistantImageContext,
+  type AssistantImageTarget,
+} from "@/lib/assistant-model-prompts";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { outboundFetch } from "@/lib/outbound";
 import { findHistory, historyImagePath } from "@/lib/history";
@@ -27,6 +35,11 @@ type AssistantPayload = {
   request?: string;
   currentPrompt?: string;
   currentNegativePrompt?: string;
+  imageModel?: unknown;
+  targetImageModel?: unknown;
+  modelProtocol?: unknown;
+  operation?: unknown;
+  localTags?: unknown;
   // 兼容旧客户端的单图 data URL。
   image?: string;
   // 当前用户可访问的历史 ID；服务端读取图片，不信任客户端 URL。
@@ -192,13 +205,15 @@ async function runJob(
   key: string,
   model: string,
   request: string,
-  context: { currentPrompt?: string; currentNegativePrompt?: string },
+  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[] } & AssistantImageContext,
   images: string[],
+  target: AssistantImageTarget,
 ) {
   try {
     // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
     const conversation = await readConversation(userId);
     const history = conversation.turns
+      .filter((turn) => assistantHistoryMatchesTarget(turn, target))
       .slice(-MODEL_HISTORY_TURNS)
       .map((turn) => ({ request: turn.request, answer: turn.answer }));
     const { content } = await runTagAgent(key, model, request, context, 8, {
@@ -209,8 +224,8 @@ async function runJob(
       images,
       history,
     });
-    const suggestion = parseTagSuggestion(content);
-    const candidates = [...new Set(suggestion.tags)];
+    const suggestion = adaptAssistantSuggestion(parseTagSuggestion(content), target);
+    const candidates = target.capabilities.promptStyle === "tags" ? [...new Set(suggestion.tags)] : [];
     const results = await Promise.all(
       candidates.map(async (candidate) => ({
         candidate,
@@ -222,6 +237,9 @@ async function runJob(
     );
     job.result = {
       suggestion: {
+        imageModel: target.imageModel,
+        modelProtocol: target.modelProtocol,
+        promptStyle: target.capabilities.promptStyle,
         ...(suggestion.message ? { message: suggestion.message } : {}),
         ...(suggestion.englishDescription
           ? { englishDescription: suggestion.englishDescription }
@@ -246,7 +264,17 @@ async function runJob(
       const turn: ConversationTurn = {
         id: job.id,
         request,
-        answer: content,
+        answer: JSON.stringify({
+          ...suggestion,
+          characters: suggestion.characters?.map((character) => ({
+            prompt: character.prompt,
+            center: { x: character.centerX, y: character.centerY },
+          })),
+          prompt: job.result.suggestion.prompt,
+          tags: job.result.suggestion.tags.map((tag) => tag.name),
+        }),
+        imageModel: target.imageModel,
+        modelProtocol: target.modelProtocol,
         createdAt: new Date().toISOString(),
         ...(suggestion.message ? { message: suggestion.message } : {}),
         ...(suggestion.englishDescription
@@ -284,11 +312,20 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  if (typeof body.model !== "string" || isNaiImageModel(body.model))
+  if (typeof body.model !== "string" || isKnownImageModel(body.model))
     return NextResponse.json(
       { message: "请选择一个文本对话模型" },
       { status: 400 },
     );
+  let target: AssistantImageTarget;
+  try {
+    target = resolveAssistantImageTarget(body);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "图像目标无效" },
+      { status: 400 },
+    );
+  }
   if (
     typeof body.request !== "string" ||
     !body.request.trim() ||
@@ -298,6 +335,10 @@ export async function POST(request: Request) {
       { message: "请输入不超过 1000 字的创作需求" },
       { status: 400 },
     );
+  if (body.localTags !== undefined && (
+    !Array.isArray(body.localTags) || body.localTags.length > 256 ||
+    body.localTags.some((tag) => typeof tag !== "string" || tag.length > 120)
+  )) return NextResponse.json({ message: "localTags 必须为最多 256 个候选标签的数组" }, { status: 400 });
 
   if (body.historyIds !== undefined && !Array.isArray(body.historyIds))
     return NextResponse.json(
@@ -381,8 +422,13 @@ export async function POST(request: Request) {
       {
         currentPrompt: body.currentPrompt,
         currentNegativePrompt: body.currentNegativePrompt,
+        imageModel: target.imageModel,
+        modelProtocol: target.modelProtocol,
+        operation: target.operation,
+        ...(Array.isArray(body.localTags) ? { localTags: body.localTags as string[] } : {}),
       },
       images,
+      target,
     );
     return NextResponse.json({ jobId: job.id });
   } catch (error) {

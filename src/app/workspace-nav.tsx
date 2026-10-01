@@ -10,7 +10,6 @@ import {
   History,
   House,
   Images,
-  KeyRound,
   Megaphone,
   Palette,
   UserRound,
@@ -60,16 +59,9 @@ const destinations = [
     group: "账号",
   },
   {
-    href: "/resources",
-    label: "模型与密钥",
-    detail: "选择适合的模型，管理 API 访问。",
-    icon: KeyRound,
-    group: "账号",
-  },
-  {
     href: "/settings",
-    label: "外观偏好",
-    detail: "让工作台更符合你的习惯。",
+    label: "设置",
+    detail: "管理外观、个人资料、模型密钥和提示词库。",
     icon: Palette,
     group: "设置",
   },
@@ -86,8 +78,8 @@ export function WorkspaceNav() {
   const pathname = usePathname();
   const current =
     destinations.find((item) => item.href === pathname) ??
-    (pathname === "/keys"
-      ? { ...destinations[6], label: "API 密钥" }
+    (pathname === "/keys" || pathname === "/resources"
+      ? destinations[6]
       : destinations[1]);
   return (
     <div className="workspace-heading">
@@ -98,7 +90,7 @@ export function WorkspaceNav() {
             href={href}
             aria-current={
               pathname === href ||
-              (href === "/resources" && pathname === "/keys")
+              (href === "/settings" && (pathname === "/keys" || pathname === "/resources"))
                 ? "page"
                 : undefined
             }

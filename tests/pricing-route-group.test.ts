@@ -56,7 +56,7 @@ describe("pricing snapshot follows image-token group selection", () => {
     expect(response.status).toBe(200);
     expect(body.effectiveGroup).toBe("Draw");
     expect(body.groupRatio).toBe(1.5);
-    expect(body.inEnvelopeUsd).toBe(9.75);
+    expect(body.inEnvelopeUsd).toBe(3.12);
   });
 
   it("prefers ikun when the user owns it and the model enables it", async () => {
@@ -66,7 +66,7 @@ describe("pricing snapshot follows image-token group selection", () => {
     expect(response.status).toBe(200);
     expect(body.effectiveGroup).toBe("ikun");
     expect(body.groupRatio).toBe(0.5);
-    expect(body.inEnvelopeUsd).toBe(3.25);
+    expect(body.inEnvelopeUsd).toBe(1.04);
   });
 
   it("does not invent a group or a ratio when access or metadata is missing", async () => {

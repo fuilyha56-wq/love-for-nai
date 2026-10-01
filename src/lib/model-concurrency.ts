@@ -58,8 +58,8 @@ async function acquireModelConcurrencySlot(signal?: AbortSignal | null): Promise
   };
 }
 
-export async function withModelConcurrencySlot<T>(task: () => Promise<T>): Promise<T> {
-  const release = await acquireModelConcurrencySlot();
+export async function withModelConcurrencySlot<T>(task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const release = await acquireModelConcurrencySlot(signal);
   try {
     return await task();
   } finally {

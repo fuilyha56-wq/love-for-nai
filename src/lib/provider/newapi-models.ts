@@ -1,14 +1,14 @@
 import { resolvedNewApiBaseUrl, userHeaders, type Session } from "@/lib/newapi";
+import { isKnownImageModel } from "@/lib/image-model-capabilities";
 
 export type AvailableModel = { id: string; kind: "图像模型" | "助手模型" };
 
-const IMAGE_NAME = /^(?:nai-(?!chat$)|gpt-image|dall-e|flux(?:\.|-|$)|stable-diffusion|sdxl|imagen|ideogram|recraft|midjourney|seedream|sd3(?:\.|-|$))/i;
 const MODEL_ID = /^[^\u0000-\u001f\u007f]{1,160}$/;
 
 function inspect(value: unknown, into: Map<string, boolean>): void {
   if (typeof value === "string") {
     const id = value.trim();
-    if (MODEL_ID.test(id)) into.set(id, into.get(id) || IMAGE_NAME.test(id));
+    if (MODEL_ID.test(id)) into.set(id, into.get(id) || isKnownImageModel(id));
     return;
   }
   if (Array.isArray(value)) { value.forEach((item) => inspect(item, into)); return; }
@@ -21,7 +21,7 @@ function inspect(value: unknown, into: Map<string, boolean>): void {
     .flatMap((item) => Array.isArray(item) ? item : [item])
     .filter((item): item is string => typeof item === "string")
     .join(" ").toLowerCase();
-  const image = /(?:image|图像|绘图|图片|\/v1\/images|draw)/.test(metadata) || IMAGE_NAME.test(id);
+  const image = /(?:image|图像|绘图|图片|\/v1\/images|draw)/.test(metadata) || isKnownImageModel(id);
   into.set(id.trim(), Boolean(into.get(id.trim()) || image));
 }
 
