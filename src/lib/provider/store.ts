@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 export type CustomProvider = {
   id: string;
@@ -8,11 +9,13 @@ export type CustomProvider = {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  protocol?: ImageProviderProtocol;
+  discoveredModels?: string[];
   createdAt: string;
 };
 
 type UserProviders = { version: 1; items: CustomProvider[]; novelaiKey: string | null };
-export type PublicProvider = Omit<CustomProvider, "apiKey"> & { hasKey: true };
+export type PublicProvider = Omit<CustomProvider, "apiKey" | "discoveredModels"> & { hasKey: true };
 
 const emptyStore = (): UserProviders => ({ version: 1, items: [], novelaiKey: null });
 const root = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "providers");
@@ -75,7 +78,7 @@ function withLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
 
 export const publicProvider = (item: CustomProvider): PublicProvider => ({
   id: item.id, name: item.name, baseUrl: item.baseUrl, models: item.models,
-  createdAt: item.createdAt, hasKey: true,
+  createdAt: item.createdAt, hasKey: true, protocol: item.protocol ?? "auto",
 });
 
 export async function listProviders(userId: number): Promise<PublicProvider[]> {
@@ -84,6 +87,19 @@ export async function listProviders(userId: number): Promise<PublicProvider[]> {
 
 export async function getProvider(userId: number, id: string): Promise<CustomProvider | null> {
   return (await read(userId)).items.find((item) => item.id === id) ?? null;
+}
+
+export async function rememberDiscoveredModels(userId: number, id: string, models: string[]): Promise<boolean> {
+  return withLock(userId, async () => {
+    const store = await read(userId);
+    const provider = store.items.find((item) => item.id === id);
+    if (!provider) return false;
+    const next = [...new Set(models)];
+    if (JSON.stringify(provider.discoveredModels ?? []) === JSON.stringify(next)) return true;
+    provider.discoveredModels = next;
+    await write(userId, store);
+    return true;
+  });
 }
 
 export async function addProvider(userId: number, input: Omit<CustomProvider, "id" | "createdAt">): Promise<PublicProvider> {

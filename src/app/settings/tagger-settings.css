@@ -1,0 +1,15 @@
+.tagger-settings { display:flex; flex-direction:column; gap:16px; }
+.tagger-settings h2 { font-size:18px; font-weight:700; margin-bottom:8px; }
+.tagger-settings p { line-height:1.6; font-size:14px; }
+.tagger-settings-hint,.tagger-model-item small { color:var(--muted); }
+.tagger-settings-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.tagger-settings-actions button { display:inline-flex; align-items:center; gap:7px; }
+.tagger-model-list { display:grid; gap:8px; }
+.tagger-model-item { display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-radius:10px; }
+.tagger-model-item label { display:flex; align-items:center; gap:10px; min-width:0; flex:1; cursor:pointer; }
+.tagger-model-item label span { display:grid; gap:4px; min-width:0; overflow-wrap:anywhere; }
+.tagger-model-item input { accent-color:var(--rose); }
+.tagger-model-item button { display:grid; place-items:center; padding:8px; border-radius:6px; }
+.tagger-model-item button:hover { background:var(--surface); }
+.tagger-settings-error { color:var(--danger, #b42318); }
+.tagger-settings a { width:fit-content; color:var(--rose); font-size:14px; text-decoration:underline; text-underline-offset:3px; }

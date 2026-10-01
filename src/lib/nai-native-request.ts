@@ -51,12 +51,18 @@ function modelForAction(model: string, action: string): string {
   return upstream;
 }
 
-function characterCaptions(characters: unknown): Array<Record<string, unknown>> {
+function characterCaptions(characters: unknown, negative = false): Array<Record<string, unknown>> {
   if (!Array.isArray(characters)) return [];
   return characters.flatMap((item) => {
     if (!item || typeof item !== "object") return [];
     const record = item as Record<string, unknown>;
-    const prompt = typeof record.prompt === "string" ? record.prompt : "";
+    const prompt = negative
+      ? typeof record.negativePrompt === "string"
+        ? record.negativePrompt
+        : typeof record.negative === "string"
+          ? record.negative
+          : ""
+      : typeof record.prompt === "string" ? record.prompt : "";
     const center =
       record.center && typeof record.center === "object"
         ? (record.center as Record<string, unknown>)
@@ -100,8 +106,8 @@ export function naiNativeGenerationBody(
     sampler: body.sampler ?? "k_euler_ancestral",
     steps: body.steps ?? 28,
     n_samples: samples,
-    ucPreset: 0,
-    qualityToggle: true,
+    ucPreset: typeof body.ucPreset === "number" && Number.isInteger(body.ucPreset) && body.ucPreset >= 0 && body.ucPreset <= 3 ? body.ucPreset : 0,
+    qualityToggle: typeof body.qualityToggle === "boolean" ? body.qualityToggle : true,
     cfg_rescale: body.cfg_rescale ?? 0,
     noise_schedule: body.noise_schedule ?? "karras",
     noise: body.noise ?? 0,
@@ -164,19 +170,11 @@ export function naiNativeGenerationBody(
       use_coords: useCoords,
       use_order: true,
     };
-    // 每角色负向：角色自带 negative 时进 v4_negative_prompt 对应 caption。
+    // 每角色负向：优先 negativePrompt，并兼容旧 negative 字段。
     parameters.v4_negative_prompt = {
       caption: {
         base_caption: negative,
-        char_captions: captions.map((item, index) => {
-          const record = (body.characterPrompts as Array<Record<string, unknown>>)[index] || {};
-          const charNegative =
-            typeof record.negative === "string" ? record.negative.trim() : "";
-          return {
-            ...item,
-            char_caption: charNegative,
-          };
-        }),
+        char_captions: characterCaptions(body.characterPrompts, true),
       },
       legacy_uc: false,
     };

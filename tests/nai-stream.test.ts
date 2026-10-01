@@ -15,6 +15,34 @@ function framed(message: Record<string, unknown>): Uint8Array {
 }
 
 describe("NAI native stream protocol", () => {
+  it.each([0, 1, 2, 3])("preserves explicit quality disabling and valid UC preset %i", (ucPreset) => {
+    const body = naiNativeGenerationBody({
+      model: "nai-v5-full", prompt: "1girl, custom quality", negative_prompt: "custom uc",
+      qualityToggle: false, ucPreset,
+    });
+    expect(body.input).toBe("1girl, custom quality");
+    expect(body.parameters).toMatchObject({ qualityToggle: false, ucPreset, negative_prompt: "custom uc" });
+  });
+
+  it("keeps legacy quality and UC defaults when flags are omitted", () => {
+    const body = naiNativeGenerationBody({ model: "nai-v4.5-full", prompt: "1girl" });
+    expect(body.parameters).toMatchObject({ qualityToggle: true, ucPreset: 0 });
+  });
+
+  it.each([
+    { qualityToggle: "false", ucPreset: "3" },
+    { qualityToggle: 0, ucPreset: -1 },
+    { qualityToggle: null, ucPreset: 4 },
+    { qualityToggle: {}, ucPreset: 1.5 },
+    { qualityToggle: [], ucPreset: Number.NaN },
+    { qualityToggle: undefined, ucPreset: Number.POSITIVE_INFINITY },
+    { qualityToggle: "true", ucPreset: null },
+    { qualityToggle: 1, ucPreset: false },
+  ])("rejects invalid preset flags without coercing them (%j)", (flags) => {
+    const body = naiNativeGenerationBody({ model: "nai-v5-full", prompt: "1girl", ...flags });
+    expect(body.parameters).toMatchObject({ qualityToggle: true, ucPreset: 0 });
+  });
+
   it("builds a msgpack stream payload with official fields", () => {
     const body = naiNativeGenerationBody(
       {
@@ -57,6 +85,53 @@ describe("NAI native stream protocol", () => {
       image: "aW1hZ2U=",
       mask: "bWFzaw==",
       params_version: 4,
+    });
+  });
+
+  it("maps each character's positive and negative prompts independently with identical coordinates", () => {
+    const characters = [
+      { prompt: "cat ears", negativePrompt: "dog ears", negative: "ignored fallback", center: { x: 0.3, y: 0.4 } },
+      { prompt: "blue eyes", negative: "red eyes", center: { x: 0.7, y: 0.6 } },
+      { prompt: "red hair", center: { x: 0.5, y: 0.2 } },
+    ];
+    const body = naiNativeGenerationBody({
+      model: "nai-v5-full", prompt: "two characters", negative_prompt: "lowres", characterPrompts: characters,
+    });
+    const parameters = body.parameters as Record<string, unknown>;
+    expect(parameters.characterPrompts).toEqual(characters);
+    expect(parameters.v4_prompt).toEqual({
+      caption: {
+        base_caption: "two characters",
+        char_captions: [
+          { char_caption: "cat ears", centers: [{ x: 0.3, y: 0.4 }] },
+          { char_caption: "blue eyes", centers: [{ x: 0.7, y: 0.6 }] },
+          { char_caption: "red hair", centers: [{ x: 0.5, y: 0.2 }] },
+        ],
+      }, use_coords: true, use_order: true,
+    });
+    expect(parameters.v4_negative_prompt).toEqual({
+      caption: {
+        base_caption: "lowres",
+        char_captions: [
+          { char_caption: "dog ears", centers: [{ x: 0.3, y: 0.4 }] },
+          { char_caption: "red eyes", centers: [{ x: 0.7, y: 0.6 }] },
+          { char_caption: "", centers: [{ x: 0.5, y: 0.2 }] },
+        ],
+      }, legacy_uc: false,
+    });
+  });
+
+  it("keeps empty native character negatives explicit and defaults missing coordinates", () => {
+    const body = naiNativeGenerationBody({
+      model: "nai-v4.5-full", prompt: "scene",
+      characterPrompts: [null, { prompt: "1girl", negativePrompt: "", negative: "ignored" }, { prompt: "1boy", negativePrompt: 123, negative: "hat" }],
+    });
+    const parameters = body.parameters as Record<string, unknown>;
+    expect(parameters.v4_negative_prompt).toMatchObject({
+      caption: { char_captions: [
+        { char_caption: "", centers: [{ x: 0.5, y: 0.5 }] },
+        { char_caption: "hat", centers: [{ x: 0.5, y: 0.5 }] },
+      ] },
     });
   });
 

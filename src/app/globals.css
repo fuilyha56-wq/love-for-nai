@@ -1,10 +1,14 @@
 @import "tailwindcss";
 @import "./image/nai-studio.css";
 
+@theme static {
+  --font-sans: "Noto Sans SC", sans-serif;
+  --font-serif: var(--font-sans);
+  --font-mono: var(--font-sans);
+}
+
 :root {
-  --font-sans: "Noto Sans SC", "Microsoft YaHei", "PingFang SC", system-ui,
-    sans-serif;
-  --font-display: Georgia, "Times New Roman", serif;
+  --font-display: var(--font-sans);
   --ink: #202328;
   --muted: #71767c;
   --paper: #f7f6f2;
@@ -32,6 +36,7 @@
 html,
 body {
   min-height: 100%;
+  font-family: var(--font-sans);
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -54,8 +59,24 @@ body {
     linear-gradient(90deg, rgba(56, 52, 45, 0.035) 1px, transparent 1px),
     var(--paper);
   background-size: 24px 24px;
-  font-family: var(--font-sans), sans-serif;
   letter-spacing: 0;
+}
+button,
+input,
+select,
+optgroup,
+option,
+textarea,
+code,
+kbd,
+samp,
+pre,
+.font-mono,
+.font-serif {
+  font-family: var(--font-sans);
+}
+::file-selector-button {
+  font-family: inherit;
 }
 html[data-grid="off"] body {
   background: var(--paper);
@@ -145,9 +166,6 @@ html[data-theme="nai"] {
   --canvas: #0e0f21;
   --surface: #191b31;
   --surface-muted: #0e0f21;
-  --font-sans: "Source Sans 3", "Source Sans Pro", "Noto Sans SC",
-    "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-  --font-display: Eczar, "Noto Serif SC", Georgia, "Times New Roman", serif;
   --motion-fast: 120ms;
   --motion-base: 160ms;
   --motion-ease: cubic-bezier(0.3, 0.6, 0.25, 1);
@@ -434,9 +452,44 @@ html[data-theme="night"] .field::placeholder {
 .nai-model-mode-row {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 68px;
+  grid-template-columns: minmax(0, 1fr) 100px;
   align-items: end;
   gap: 10px;
+}
+.studio-model-controls .nai-model-mode-row > div {
+  min-width: 0;
+  width: 100%;
+}
+.studio-model-controls .popup-select,
+.studio-model-controls .popup-select-trigger {
+  min-width: 0;
+  width: 100%;
+}
+.studio-model-controls .nai-mode-button {
+  white-space: nowrap;
+}
+.studio-model-controls .nai-mode-button svg {
+  flex-shrink: 0;
+}
+html[data-theme="nai"] [data-studio-layout="nai"] .studio-model-controls .nai-model-mode-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  gap: 10px;
+}
+html[data-theme="nai"] [data-studio-layout="nai"] .studio-model-controls .nai-model-mode-row > div {
+  display: block;
+  height: auto;
+  padding: 0;
+  border: 0;
+}
+html[data-theme="nai"] [data-studio-layout="nai"] .studio-model-controls .nai-model-mode-row > div > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+html[data-theme="nai"] [data-studio-layout="nai"] .studio-model-controls :is(.popup-select-trigger, .nai-mode-button) {
+  height: 40px;
+  min-height: 40px;
 }
 .nai-mode-button {
   display: flex;
@@ -865,40 +918,115 @@ html[data-theme="night"] .mask-editor-number {
 @media (min-width: 1024px) {
   .studio-layout {
     grid-template-columns:
-      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
+      var(--lfn-left, 310px) 5px minmax(260px, 1fr) 5px
       var(--lfn-right, 230px);
   }
   .studio-layout:has(.studio-tools-panel.is-collapsed) {
     grid-template-columns:
-      var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
+      var(--lfn-left, 310px) 5px minmax(260px, 1fr) 5px 48px;
   }
-  /* 最左功能导航栏（new-api/Aaalice 式）：折叠 56px / 展开 196px，可开合 */
+  /* 最左功能导航栏：折叠 56px，展开 220px。 */
   .studio-nav-rail {
     width: var(--lfn-nav-rail, 56px);
     transition: width 180ms var(--motion-ease, ease);
   }
-  .studio-nav-rail .tools-panel-collapse {
-    position: absolute;
-    top: 8px;
-    right: auto;
-    left: 50%;
-    translate: -50% 0;
-  }
-  .studio-nav-rail.is-expanded .tools-panel-collapse { position: absolute; }
   /* 6 列 = 导航|图像设置|resizer|画布|resizer|右侧面板 */
   .studio-layout:has(.studio-nav-rail) {
     grid-template-columns:
-      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px
+      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(260px, 1fr) 5px
       var(--lfn-right, 230px);
   }
   /* 右侧面板折叠：最后一列缩到 48px，否则 48px 面板塞在 230px 列里布局崩坏 */
   .studio-layout:has(.studio-nav-rail):has(.studio-tools-panel.is-collapsed) {
     grid-template-columns:
-      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(360px, 1fr) 5px 48px;
+      var(--lfn-nav-rail, 56px) var(--lfn-left, 310px) 5px minmax(260px, 1fr) 5px 48px;
   }
   [data-studio-layout="nai"] .studio-layout {
-    grid-template-columns: var(--lfn-left, 400px) 5px minmax(360px, 1fr);
+    grid-template-columns: var(--lfn-left, 447px) 8px minmax(0, 1fr) 8px min(var(--lfn-right, 280px), max(200px, calc(100vw - var(--lfn-left, 447px) - 236px)));
   }
+}
+.studio-nav-header {
+  display: flex;
+  flex: 0 0 48px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+.studio-nav-toggle {
+  display: grid;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.studio-nav-toggle:hover,
+.studio-nav-toggle:focus-visible {
+  background: color-mix(in srgb, var(--rose) 10%, var(--surface));
+  color: var(--rose);
+}
+.studio-nav-links {
+  padding: 4px 12px 12px;
+}
+.studio-nav-links > nav {
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+.studio-nav-links .feature-link {
+  height: 40px;
+  padding: 0 12px;
+  gap: 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.studio-nav-links .feature-link svg {
+  flex-shrink: 0;
+}
+.studio-nav-links .feature-link:hover {
+  background: color-mix(in srgb, var(--rose) 10%, var(--surface));
+}
+.studio-nav-rail .tools-icon-rail {
+  padding: 4px 8px 12px;
+  gap: 6px;
+}
+.studio-nav-rail .tools-icon-rail-item {
+  border: 0;
+  background: transparent;
+}
+.studio-nav-rail .tools-icon-rail-item:hover {
+  background: color-mix(in srgb, var(--rose) 10%, var(--surface));
+}
+.studio-nav-rail > .studio-session-state {
+  flex-shrink: 0;
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+}
+.studio-tools-topbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.studio-tools-topbar button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.studio-tools-topbar button:hover {
+  background: var(--surface-muted);
+  color: var(--rose);
 }
 .panel-resizer {
   cursor: col-resize;

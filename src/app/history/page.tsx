@@ -23,6 +23,7 @@ import {
   SessionExpiredNotice,
 } from "@/app/session-notice";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
+import { imageHistoryReuseHref } from "@/lib/editor-composite-history";
 
 type HistoryItem = {
   id: string;
@@ -32,7 +33,7 @@ type HistoryItem = {
 };
 
 function reuseHref(item: HistoryItem) {
-  return `/image?historyId=${encodeURIComponent(item.id)}`;
+  return imageHistoryReuseHref(item.id, item.parameters);
 }
 
 export default function HistoryPage() {

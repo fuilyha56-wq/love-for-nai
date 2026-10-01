@@ -145,11 +145,17 @@ export function InlineChatMenu({
 export function InlineChatZone({
   session,
   model,
+  imageModel,
+  modelProtocol,
+  operation,
   onKeep,
   onClose,
 }: {
   session: InlineChatSession;
   model: string;
+  imageModel?: string;
+  modelProtocol?: string;
+  operation?: string;
   onKeep: (text: string) => void;
   onClose: () => void;
 }) {
@@ -189,6 +195,9 @@ export function InlineChatZone({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
+            imageModel,
+            modelProtocol,
+            operation,
             mode,
             instruction,
             selection: session.selection.text,

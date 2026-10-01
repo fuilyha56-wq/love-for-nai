@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { addProvider, deleteProvider, getNovelaiKey, getProvider, listProviders, setNovelaiKey } from "@/lib/provider/store";
-import { isPublicIp, validateApiKey, validateProviderBaseUrl } from "@/lib/provider/validation";
+import { isPublicIp, validateApiKey, validateImageProviderProtocol, validateProviderBaseUrl } from "@/lib/provider/validation";
 import { parseNovelaiSubscription } from "@/lib/provider/novelai";
 
 let directory: string;
@@ -28,7 +28,7 @@ describe("个人提供商密钥", () => {
   it("按用户隔离并加密保存，不在列表中返回 Key", async () => {
     const item = await addProvider(71001, {
       name: "Image API", baseUrl: "https://example.com", apiKey: "secret-provider-key",
-      models: ["flux-dev"],
+      models: ["flux-dev"], protocol: "openai-images",
     });
     await setNovelaiKey(71001, "pst-secret-novelai-key");
     const disk = await readFile(path.join(directory, "providers", "71001.enc"), "utf8");
@@ -36,6 +36,7 @@ describe("个人提供商密钥", () => {
     expect(disk).not.toContain("pst-secret-novelai-key");
     expect(JSON.stringify(await listProviders(71001))).not.toContain("secret-provider-key");
     expect((await getProvider(71001, item.id))?.apiKey).toBe("secret-provider-key");
+    expect((await listProviders(71001))[0].protocol).toBe("openai-images");
     expect(await getProvider(71002, item.id)).toBeNull();
     expect(await getNovelaiKey(71002)).toBeNull();
     expect(await deleteProvider(71001, item.id)).toBe(true);
@@ -48,6 +49,10 @@ describe("个人提供商密钥", () => {
     expect(() => validateProviderBaseUrl("https://user:pass@example.com")).toThrow();
     expect(() => validateProviderBaseUrl("https://service.internal")).toThrow();
     expect(validateProviderBaseUrl("https://api.example.com/v1/")).toBe("https://api.example.com");
+    expect(validateProviderBaseUrl("https://generativelanguage.googleapis.com/v1beta/")).toBe("https://generativelanguage.googleapis.com");
+    expect(validateImageProviderProtocol(undefined)).toBe("auto");
+    expect(validateImageProviderProtocol("gemini")).toBe("gemini");
+    expect(() => validateImageProviderProtocol("custom-http")).toThrow("协议无效");
     expect(() => validateApiKey("good\r\nX-Evil: yes")).toThrow();
     for (const ip of ["127.0.0.1", "10.4.5.6", "172.16.2.1", "192.168.0.1", "169.254.169.254", "::1", "fc00::1", "fe80::1"])
       expect(isPublicIp(ip)).toBe(false);

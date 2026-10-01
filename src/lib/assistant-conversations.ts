@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentStep } from "@/lib/tag-agent";
+import { isImageProviderProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 // 助手对话标签的展示信息（与 Danbooru 校验结果一致）。
 export type ConversationTag = {
@@ -17,6 +18,8 @@ export type ConversationTurn = {
   // agent 最终输出的 JSON 字符串，下次对话原样回填给模型延续上下文。
   answer: string;
   createdAt: string;
+  imageModel?: string;
+  modelProtocol?: ImageProviderProtocol;
   // 助手本轮对用户说的话（final.message），可选。
   message?: string;
   // 兼容旧记录：旧会话可能没有该字段。
@@ -84,6 +87,8 @@ function normalize(value: unknown): AssistantConversation {
         ...turn,
         id: typeof turn.id === "string" ? turn.id : randomUUID(),
         createdAt: typeof turn.createdAt === "string" ? turn.createdAt : new Date(0).toISOString(),
+        imageModel: typeof turn.imageModel === "string" ? turn.imageModel : undefined,
+        modelProtocol: isImageProviderProtocol(turn.modelProtocol) ? turn.modelProtocol : undefined,
         message: typeof turn.message === "string" ? turn.message : undefined,
         englishDescription: typeof turn.englishDescription === "string" ? turn.englishDescription : undefined,
         prompt: typeof turn.prompt === "string" ? turn.prompt : "",

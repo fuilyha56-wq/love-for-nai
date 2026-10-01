@@ -1,6 +1,11 @@
 import { runTool, summarizeToolResult, toolCatalog } from "@/lib/agent-tools";
 import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
+import {
+  buildAssistantModelPrompt,
+  resolveAssistantImageTarget,
+  type AssistantImageContext,
+} from "@/lib/assistant-model-prompts";
 
 type MessageContent =
   | string
@@ -59,6 +64,7 @@ async function callModel(
   key: string,
   model: string,
   messages: Message[],
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetchWithModelConcurrency(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
@@ -73,7 +79,7 @@ async function callModel(
       messages,
     }),
     cache: "no-store",
-    signal: AbortSignal.timeout(90_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(90_000)]) : AbortSignal.timeout(90_000),
   });
   const result = (await response.json()) as ChatResponse;
   if (!response.ok || result.error)
@@ -118,7 +124,7 @@ export async function runTagAgent(
   key: string,
   model: string,
   userRequest: string,
-  context: { currentPrompt?: string; currentNegativePrompt?: string },
+  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[] } & AssistantImageContext,
   maxRounds = 8,
   options?: {
     onStep?: (step: AgentStep) => void;
@@ -128,9 +134,15 @@ export async function runTagAgent(
     // 之前轮次的 {需求, 最终 JSON}，注入为 user/assistant 消息对，
     // 让模型带着历史上下文延续对话。
     history?: Array<{ request: string; answer: string }>;
+    /** Server-owned configuration only; never copy a browser-provided URL here. */
+    baseUrl?: string;
+    signal?: AbortSignal;
   },
 ): Promise<{ content: string; steps: AgentStep[] }> {
-  const baseUrl = await resolvedNewApiBaseUrl();
+  options?.signal?.throwIfAborted();
+  const baseUrl = options?.baseUrl ?? await resolvedNewApiBaseUrl();
+  const target = resolveAssistantImageTarget(context);
+  const naturalPrompt = target.capabilities.promptStyle === "natural";
   const images = [
     ...(options?.images ?? []),
     ...(options?.image ? [options.image] : []),
@@ -141,8 +153,11 @@ export async function runTagAgent(
     currentNegativePrompt: context.currentNegativePrompt || "",
     hasImage: images.length > 0,
     imageCount: images.length,
+    imageModel: target.imageModel,
+    operation: target.operation,
+    ...(context.localTags?.length ? { localTaggerCandidates: context.localTags.slice(0, 256) } : {}),
   });
-  const messages: Message[] = [{ role: "system", content: SYSTEM_PROMPT }];
+  const messages: Message[] = [{ role: "system", content: buildAssistantModelPrompt(target, SYSTEM_PROMPT) }];
   // 历史必须按时间顺序追加；逐条 splice(1, ...) 会把多轮历史倒序。
   for (const turn of options?.history ?? []) {
     if (!turn.request || !turn.answer) continue;
@@ -170,7 +185,7 @@ export async function runTagAgent(
   const steps: AgentStep[] = [];
 
   for (let round = 0; round < maxRounds; round += 1) {
-    const content = await callModel(baseUrl, key, model, messages);
+    const content = await callModel(baseUrl, key, model, messages, options?.signal);
     const decision = parseDecision(content);
     if (decision.kind === "final") return { content: decision.content, steps };
 
@@ -183,7 +198,9 @@ export async function runTagAgent(
       continue;
     }
 
-    const result = await runTool(decision.name, decision.args);
+    const result = naturalPrompt && decision.name !== "web_search"
+      ? { ok: false, data: "当前图像模型使用自然语言提示词，不使用 Danbooru 标签工具。请直接给最终提示词，或使用 web_search 查询概念。" }
+      : await runTool(decision.name, decision.args);
     const step: AgentStep = {
       tool: decision.name,
       query: String(
@@ -208,9 +225,11 @@ export async function runTagAgent(
   // 轮次用尽时收口，要求模型基于已有工具结果直接给出 JSON。
   messages.push({
     role: "user",
-    content: "工具调用已达上限，请基于已确认的标签立即输出最终 JSON。",
+    content: naturalPrompt
+      ? "工具调用已达上限，请基于当前需求、图片和已有结果立即输出自然语言提示词的最终 JSON；只使用当前图像模型支持的参数。"
+      : "工具调用已达上限，请基于已确认的标签立即输出最终 JSON。",
   });
-  const final = await callModel(baseUrl, key, model, messages);
+  const final = await callModel(baseUrl, key, model, messages, options?.signal);
   const decision = parseDecision(final);
   return {
     content: decision.kind === "final" ? decision.content : final,

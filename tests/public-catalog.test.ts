@@ -68,7 +68,7 @@ describe("公开模型与价格目录", () => {
       pricing: {
         billingMode: "live",
         liveType: "tiered",
-        liveUsdPerRequest: 6,
+        liveUsdPerRequest: 1.92,
         liveUsdPerUsageToken: 0.24,
         privatePointReference: null,
       },
