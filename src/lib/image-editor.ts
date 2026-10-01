@@ -25,6 +25,11 @@ export type ImageSourceMetadata = {
 };
 
 export type EditorGenerationSettings = {
+  providerId?: string;
+  imageProtocol?: import("./image-model-capabilities").ImageProviderProtocol;
+  quality?: string;
+  imageSize?: string;
+  background?: string;
   model?: string;
   width?: number;
   height?: number;

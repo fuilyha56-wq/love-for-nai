@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import {
   CircleCheck,
   CircleHelp,
@@ -16,6 +17,7 @@ type Provider = {
   name: string;
   baseUrl: string;
   models: string[];
+  protocol?: ImageProviderProtocol;
   hasKey: boolean;
   createdAt: string;
 };
@@ -116,9 +118,11 @@ export default function ProviderSettings() {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [manualModels, setManualModels] = useState("");
+  const [protocol, setProtocol] = useState<ImageProviderProtocol>("auto");
   const [discoveredModels, setDiscoveredModels] = useState<Record<string, DiscoveredModel[]>>({});
   const [discoveryWarning, setDiscoveryWarning] = useState<Record<string, string>>({});
   const [account, setAccount] = useState<NovelAiAccount | null>(null);
+  const [novelAiKeySaved, setNovelAiKeySaved] = useState(false);
   const [accountLoading, setAccountLoading] = useState(true);
   const [accountError, setAccountError] = useState("");
   const [accountMessage, setAccountMessage] = useState("");
@@ -143,10 +147,11 @@ export default function ProviderSettings() {
     setAccountLoading(true);
     setAccountError("");
     try {
-      const result = await readJson<{ account: NovelAiAccount | null; error?: string }>(
+      const result = await readJson<{ account: NovelAiAccount | null; keySaved?: boolean; error?: string }>(
         await fetch("/api/providers/novelai", { cache: "no-store" }),
       );
       setAccount(result.account || null);
+      setNovelAiKeySaved(Boolean(result.keySaved || result.account));
       if (result.error) setAccountError(result.error);
     } catch (cause) {
       setAccountError(cause instanceof Error ? cause.message : "读取 NovelAI 账号失败。");
@@ -169,10 +174,11 @@ export default function ProviderSettings() {
         if (!controller.signal.aborted) setProvidersLoading(false);
       });
     fetch("/api/providers/novelai", { cache: "no-store", signal: controller.signal })
-      .then((response) => readJson<{ account: NovelAiAccount | null; error?: string }>(response))
+      .then((response) => readJson<{ account: NovelAiAccount | null; keySaved?: boolean; error?: string }>(response))
       .then((result) => {
         if (controller.signal.aborted) return;
         setAccount(result.account || null);
+        setNovelAiKeySaved(Boolean(result.keySaved || result.account));
         if (result.error) setAccountError(result.error);
       })
       .catch((cause) => {
@@ -198,6 +204,7 @@ export default function ProviderSettings() {
           baseUrl: baseUrl.trim(),
           apiKey: apiKey.trim(),
           models: modelIds(manualModels),
+          protocol,
         }),
       }));
       setProviders((current) => [...current, result.item]);
@@ -205,6 +212,7 @@ export default function ProviderSettings() {
       setBaseUrl("");
       setApiKey("");
       setManualModels("");
+      setProtocol("auto");
       setProvidersMessage(`已保存「${result.item.name}」。可在生图工作台的模型菜单中选择。`);
     } catch (cause) {
       setProvidersError(cause instanceof Error ? cause.message : "保存接口失败。");
@@ -257,6 +265,7 @@ export default function ProviderSettings() {
         body: JSON.stringify({ key: novelAiKey.trim() }),
       }));
       setAccount(result.account);
+      setNovelAiKeySaved(true);
       setNovelAiKey("");
       setEditingNovelAi(false);
       setAccountMessage("NovelAI key 已验证并保存；现在可以在生图工作台选择 NovelAI 官方模型。");
@@ -275,6 +284,7 @@ export default function ProviderSettings() {
     try {
       await readJson<{ ok: true }>(await fetch("/api/providers/novelai", { method: "DELETE" }));
       setAccount(null);
+      setNovelAiKeySaved(false);
       setNovelAiKey("");
       setEditingNovelAi(false);
       setAccountMessage("NovelAI key 已移除。");
@@ -293,7 +303,7 @@ export default function ProviderSettings() {
             icon={<Layers3 size={18} />}
             eyebrow="MODEL SOURCES · 模型来源"
             title="接入自己的图像 API"
-            detail="填写 OpenAI 兼容接口的地址和 key；模型 ID 可手动指定，也可保存后读取接口公布的模型。"
+            detail="支持 OpenAI Images、Gemini／Nano Banana 原生接口，以及兼容聊天生图的网关；模型 ID 可手动填写或从接口读取。"
           />
           <button
             type="button"
@@ -392,8 +402,18 @@ export default function ProviderSettings() {
               <input required type="password" className="field mt-1.5 h-10 w-full px-3 text-sm" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="粘贴此接口的 key" autoComplete="new-password" spellCheck={false} />
             </label>
             <label className="text-xs font-semibold sm:col-span-2">
+              图像接口协议
+              <select aria-label="图像接口协议" className="field mt-1.5 h-10 w-full px-3 text-sm" value={protocol} onChange={(event) => setProtocol(event.target.value as ImageProviderProtocol)}>
+                <option value="auto">自动（Google 原生地址使用 Gemini，其它使用 OpenAI Images）</option>
+                <option value="openai-images">OpenAI Images · generations / edits</option>
+                <option value="gemini">Gemini 原生 · generateContent</option>
+                <option value="openai-chat-images">兼容聊天生图 · chat/completions</option>
+              </select>
+              <span className="mt-1 block text-[11px] font-normal leading-5 text-[var(--muted)]">Google 地址可填写 https://generativelanguage.googleapis.com；Nano Banana 的官方模型 ID 以 Gemini 图像模型为准。</span>
+            </label>
+            <label className="text-xs font-semibold sm:col-span-2">
               自定义模型 ID（可选）
-              <textarea className="field mt-1.5 min-h-20 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\nmy-image-model"} spellCheck={false} />
+              <textarea className="field mt-1.5 min-h-20 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\ngpt-image-1.5\ngemini-2.5-flash-image"} spellCheck={false} />
               <span className="mt-1 block text-[11px] font-normal leading-5 text-[var(--muted)]">也可用逗号分隔。保存后会尝试从接口读取模型；手动填写的 ID 始终可选。</span>
             </label>
           </div>
@@ -428,7 +448,8 @@ export default function ProviderSettings() {
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="flex items-center gap-2 text-sm font-semibold">
-                  <CircleCheck size={16} className="text-[var(--mint)]" /> 已连接 NovelAI 官方账号
+                  {accountError ? <CircleHelp size={16} className="text-[var(--rose)]" /> : <CircleCheck size={16} className="text-[var(--mint)]" />}
+                  {accountError ? "Key 已保存，账号信息暂不可读取" : "已连接 NovelAI 官方账号"}
                 </p>
                 <p className="mt-1 text-xs text-[var(--muted)]">{account.tier === null ? "套餐未知" : tierNames[account.tier] || `Tier ${account.tier}`} · {account.active === null ? "订阅状态未知" : account.active ? "订阅有效" : "订阅未激活"}</p>
               </div>
@@ -466,6 +487,11 @@ export default function ProviderSettings() {
               {editingNovelAi ? "收起更换 key" : "更换 key"}
             </button>
           </div>
+        ) : novelAiKeySaved ? (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+            <div><p className="text-sm font-semibold">NovelAI key 已保存，但目前无法验证</p><p className="mt-1 text-xs text-[var(--muted)]">请更换 key，或稍后刷新账号信息。</p></div>
+            <button type="button" disabled={accountBusy} onClick={() => void removeNovelAi()} className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-semibold text-[var(--rose)] hover:border-[var(--rose)] disabled:opacity-50"><Trash2 size={13} /> 移除 key</button>
+          </div>
         ) : (
           <p className="mt-5 rounded-md border border-dashed border-[var(--line)] px-4 py-5 text-center text-xs text-[var(--muted)]">
             尚未导入 NovelAI key。导入后可在这里查看账号与订阅信息。
@@ -485,7 +511,7 @@ export default function ProviderSettings() {
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <p className="text-[11px] leading-5 text-[var(--muted)]">保存前会读取官方订阅信息验证 key；已有 key 无法在页面中查看。</p>
               <button type="submit" disabled={accountBusy} className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-xs font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-50">
-                <KeyRound size={14} /> {accountBusy ? "验证中…" : account ? "更换 key" : "验证并导入"}
+                <KeyRound size={14} /> {accountBusy ? "验证中…" : novelAiKeySaved ? "更换 key" : "验证并导入"}
               </button>
             </div>
           </form>

@@ -1,4 +1,5 @@
 export type ImageOperationResult = {
+  prompt?: string;
   message?: string;
   images?: string[];
   image?: string;

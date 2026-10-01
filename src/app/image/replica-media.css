@@ -1,0 +1,30 @@
+.replica-media { display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; font-family: var(--font-sans); }
+.replica-media-nlw { background: var(--paper); color: var(--ink); }
+.replica-media-nai { background: var(--paper); color: var(--ink); }
+.replica-media-stage { display: flex; min-width: 0; min-height: 0; flex: 1; align-items: center; justify-content: center; overflow: hidden; padding: 16px; }
+.replica-media-stage.is-batch { display: block; overflow-y: auto; padding: 0; }
+.replica-media-card { position: relative; min-width: 0; flex: none; overflow: hidden; border-radius: 12px; background: var(--surface); box-shadow: 0 2px 6px color-mix(in srgb, var(--ink) 8%, transparent); }
+.replica-media-nai .replica-media-card { border-radius: 4px; }
+.replica-media-open { display: flex; width: 100%; height: 100%; min-width: 0; align-items: center; justify-content: center; overflow: hidden; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+.replica-media-open img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.replica-media-grid { display: grid; box-sizing: border-box; width: 100%; align-items: start; gap: 12px; padding: 8px; }
+.replica-media-grid .replica-media-card { width: 100%; }
+.replica-media-actions { position: absolute; z-index: 1; bottom: 12px; left: 50%; display: flex; max-width: calc(100% - 12px); gap: 4px; overflow-x: auto; padding: 4px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 94%, transparent); color: var(--ink); opacity: 0; transform: translateX(-50%); transition: opacity 150ms ease; }
+.replica-media-actions > :is(button, a) { display: grid; width: 40px; height: 40px; flex: 0 0 40px; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.replica-media-actions > :is(button, a):hover { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); }
+.replica-media-actions svg { width: 16px; height: 16px; }
+.replica-media-card:is(:hover, :focus-within) .replica-media-actions { opacity: 1; }
+.replica-media-card:focus-within { outline: 2px solid currentColor; outline-offset: -2px; }
+.replica-media-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; text-align: center; }
+.replica-media-empty > svg { margin-bottom: 12px; color: var(--muted); }
+.replica-media-empty p { margin: 0; font-size: 16px; font-weight: 600; }
+.replica-media-empty small { color: var(--muted); font-size: 12px; }
+.replica-media-nai .replica-media-empty > svg, .replica-media-nai .replica-media-empty small { color: var(--muted); }
+.replica-media-info { display: flex; min-height: 28px; flex: none; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 16px; padding: 4px 12px 8px; color: inherit; font-size: 11px; opacity: .72; }
+.replica-media-info > span { display: inline-flex; min-width: 0; align-items: center; gap: 5px; overflow-wrap: anywhere; }
+.replica-media-progress { flex: none; padding: 8px 16px; font-size: 12px; text-align: center; }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .replica-media-grid .replica-media-card { transition: transform 150ms ease, box-shadow 150ms ease; }
+  .replica-media-grid .replica-media-card:hover { z-index: 1; transform: scale(1.01); box-shadow: 0 6px 14px color-mix(in srgb, var(--ink) 16%, transparent); }
+}
+@media (hover: none) { .replica-media-actions { opacity: 1; } }

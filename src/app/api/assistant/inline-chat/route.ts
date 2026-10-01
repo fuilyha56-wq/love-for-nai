@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, isNaiImageModel, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { getChatToken, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { isKnownImageModel } from "@/lib/image-model-capabilities";
+import { buildInlineAssistantPrompt, resolveAssistantImageTarget, type AssistantImageTarget } from "@/lib/assistant-model-prompts";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
 import {
@@ -19,6 +21,10 @@ type InlinePayload = {
   selection?: string;
   contextBefore?: string;
   contextAfter?: string;
+  imageModel?: unknown;
+  targetImageModel?: unknown;
+  modelProtocol?: unknown;
+  operation?: unknown;
 };
 
 type ChatResponse = {
@@ -96,11 +102,20 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  if (typeof body.model !== "string" || isNaiImageModel(body.model))
+  if (typeof body.model !== "string" || isKnownImageModel(body.model))
     return NextResponse.json(
       { message: "请选择一个文本对话模型" },
       { status: 400 },
     );
+  let target: AssistantImageTarget;
+  try {
+    target = resolveAssistantImageTarget(body);
+  } catch (error) {
+    return NextResponse.json(
+      { message: error instanceof Error ? error.message : "图像目标无效" },
+      { status: 400 },
+    );
+  }
   if (typeof body.selection !== "string" || !body.selection.trim())
     return NextResponse.json(
       { message: "请先选中要处理的内容" },
@@ -150,7 +165,7 @@ export async function POST(request: Request) {
   try {
     const key = await getChatToken(session, body.model);
     const job = createInlineChatJob(session.userId);
-    void runJob(job, key, body.model, MODE_PROMPTS[mode], userContent);
+    void runJob(job, key, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(

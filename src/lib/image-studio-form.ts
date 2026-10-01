@@ -1,3 +1,5 @@
+import { resolveImageModelCapabilities } from "./image-model-capabilities";
+
 export const IMAGE_STUDIO_FORM_STORAGE_KEY = "lfn-image-studio-form-v1";
 export const IMAGE_EDITOR_PROMPT_HANDOFF_KEY = "lfn-image-editor-prompt-handoff-v1";
 export const IMAGE_STUDIO_FORM_VERSION = 1 as const;
@@ -24,6 +26,10 @@ export type ImageStudioFormSnapshot = {
   contentMode: "anime" | "furry";
   providerId: string;
   model: string;
+  imageProtocol?: import("./image-model-capabilities").ImageProviderProtocol;
+  imageQuality?: string;
+  imageResolution?: string;
+  imageBackground?: string;
   prompt: string;
   negative: string;
   width: number;
@@ -52,6 +58,10 @@ export const DEFAULT_IMAGE_STUDIO_FORM: ImageStudioFormSnapshot = {
   contentMode: "anime",
   providerId: "newapi",
   model: "nai-v5-full",
+  imageProtocol: "auto",
+  imageQuality: "auto",
+  imageResolution: "1K",
+  imageBackground: "auto",
   prompt: "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light",
   negative: "lowres, bad anatomy, blurry, text, watermark",
   width: 832,
@@ -108,9 +118,9 @@ function numberValue(value: unknown, fallback: number, min: number, max: number,
   const normalized = integer ? Math.round(value) : value;
   return Math.min(max, Math.max(min, normalized));
 }
-function alignedDimension(value: unknown, fallback: number): number {
-  const normalized = numberValue(value, fallback, 64, 1600, true);
-  return Math.max(64, Math.min(1600, Math.round(normalized / 64) * 64));
+function alignedDimension(value: unknown, fallback: number, max = 1600, multiple = 64): number {
+  const normalized = numberValue(value, fallback, 64, max, true);
+  return Math.max(64, Math.min(max, Math.round(normalized / multiple) * multiple));
 }
 
 export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
@@ -118,10 +128,15 @@ export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
   const record = input as Record<string, unknown>;
   if (record.version !== undefined && record.version !== IMAGE_STUDIO_FORM_VERSION) return { ...DEFAULT_IMAGE_STUDIO_FORM, characters: DEFAULT_IMAGE_STUDIO_FORM.characters.map((item) => ({ ...item })) };
   const rawCharacters = Array.isArray(record.characters) ? record.characters : [];
+  const selectedModel = modelIdentifier(record.model, DEFAULT_IMAGE_STUDIO_FORM.model);
+  const selectedProtocol = record.imageProtocol === "openai-images" || record.imageProtocol === "gemini" || record.imageProtocol === "openai-chat-images" ? record.imageProtocol : "auto";
+  const caps = resolveImageModelCapabilities(selectedModel, selectedProtocol);
   const characters = rawCharacters.slice(0, 6).map((item) => {
     const character = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    const negative = stringValue(character.negative, "", 4_000);
     return {
       prompt: stringValue(character.prompt, "", 4_000),
+      ...(negative ? { negative } : {}),
       centerX: numberValue(character.centerX, 0.5, 0, 1),
       centerY: numberValue(character.centerY, 0.5, 0, 1),
     };
@@ -131,11 +146,15 @@ export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
     operation: enumValue(record.operation, OPERATIONS, DEFAULT_IMAGE_STUDIO_FORM.operation),
     contentMode: record.contentMode === "furry" ? "furry" : "anime",
     providerId: providerIdentifier(record.providerId),
-    model: modelIdentifier(record.model, DEFAULT_IMAGE_STUDIO_FORM.model),
+    model: selectedModel,
+    imageProtocol: selectedProtocol,
+    imageQuality: ["auto", "low", "medium", "high", "xhigh", "max"].includes(String(record.imageQuality)) ? String(record.imageQuality) : "auto",
+    imageResolution: ["512", "1K", "2K", "4K"].includes(String(record.imageResolution)) ? String(record.imageResolution) : "1K",
+    imageBackground: ["auto", "opaque", "transparent"].includes(String(record.imageBackground)) ? String(record.imageBackground) : "auto",
     prompt: stringValue(record.prompt, DEFAULT_IMAGE_STUDIO_FORM.prompt),
     negative: stringValue(record.negative, DEFAULT_IMAGE_STUDIO_FORM.negative),
-    width: alignedDimension(record.width, DEFAULT_IMAGE_STUDIO_FORM.width),
-    height: alignedDimension(record.height, DEFAULT_IMAGE_STUDIO_FORM.height),
+    width: alignedDimension(record.width, DEFAULT_IMAGE_STUDIO_FORM.width, caps.promptStyle === "natural" ? 3840 : 1600, caps.sizeConstraints?.multipleOf || 64),
+    height: alignedDimension(record.height, DEFAULT_IMAGE_STUDIO_FORM.height, caps.promptStyle === "natural" ? 3840 : 1600, caps.sizeConstraints?.multipleOf || 64),
     steps: numberValue(record.steps, 28, 1, 50, true),
     scale: numberValue(record.scale, 5, 0, 10),
     count: numberValue(record.count, 1, 1, 30, true),

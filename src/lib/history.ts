@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { ImageProviderProtocol } from "./image-model-capabilities";
 import {
   deleteRemoteHistoryImage,
   putRemoteHistoryImage,
@@ -9,6 +10,11 @@ import {
 export type GenerationParameters = {
   operation: string;
   model?: string;
+  providerId?: string;
+  imageProtocol?: ImageProviderProtocol;
+  quality?: string;
+  imageSize?: string;
+  background?: string;
   prompt?: string;
   negative_prompt?: string;
   width?: number;

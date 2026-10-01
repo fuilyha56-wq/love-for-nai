@@ -173,4 +173,41 @@ describe("runTagAgent budgets", () => {
     ) as { messages: Array<{ content: string | Array<unknown> }> };
     expect(body.messages.at(-1)?.content).toHaveLength(5);
   });
+
+  it("injects the selected image model while retaining the separate upstream chat model", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({ choices: [{ message: { content: '{"final":{"prompt":"A blue cup on a wooden table.","tags":[]}}' } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+    await runTagAgent("key", "gpt-text-model", "make a product shot", { imageModel: "gpt-image-1.5", operation: "img2img" }, 1);
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string) as { model: string; messages: Array<{ content: string }> };
+    expect(body.model).toBe("gpt-text-model");
+    expect(body.messages[0].content).toContain('"imageModel":"gpt-image-1.5"');
+    expect(body.messages[0].content).toContain("连贯、清楚的自然语言");
+    expect(body.messages.at(-1)?.content).toContain('"operation":"img2img"');
+  });
+
+  it("does not execute Danbooru tool actions for a natural-language image target", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '{"action":"verify_danbooru_tag","args":{"name":"not_a_tag"}}' } }] }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: '{"final":{"prompt":"A cup.","tags":[]}}' } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+    const result = await runTagAgent("key", "vision-model", "request", { imageModel: "gemini-2.5-flash-image" }, 1);
+    expect(runTool).not.toHaveBeenCalled();
+    expect(result.steps[0].ok).toBe(false);
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string) as { messages: Array<{ content: string }> };
+    expect(body.messages.at(-1)?.content).toContain("自然语言提示词");
+  });
+
+  it("does not start upstream work after the caller cancels", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    const { runTagAgent } = await import("@/lib/tag-agent");
+    await expect(runTagAgent("key", "vision-chat", "request", { imageModel: "gpt-image-1" }, 1, { signal: controller.signal })).rejects.toThrow("cancelled");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

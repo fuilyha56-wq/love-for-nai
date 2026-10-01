@@ -85,3 +85,7 @@ SERVER_CONNECTION_GUIDE.md
 *.p12
 *.pfx
 data-b/
+
+# Generated from the pinned onnxruntime-web package before dev/build.
+/public/onnx/ort*.mjs
+/public/onnx/ort*.wasm
