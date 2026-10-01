@@ -690,14 +690,16 @@ export default function StoriesWorkspace({
                   <span className="story-setting-label">AI 模型 <small>选择已配置的文本模型</small></span>
                   <PopupSelect
                     value={activeStory.model}
-                    options={(models.length
-                      ? models
-                      : [{ id: activeStory.model, label: activeStory.model, source: "当前" }]
-                    ).map((item) => ({
-                      value: item.id,
-                      label: item.label,
-                      description: item.source,
-                    }))}
+                    options={[
+                      ...(!models.some((item) => item.id === activeStory.model)
+                        ? [{ value: activeStory.model, label: activeStory.model, description: "当前不可用" }]
+                        : []),
+                      ...models.map((item) => ({
+                        value: item.id,
+                        label: item.label,
+                        description: item.source,
+                      })),
+                    ]}
                     onChange={(next) => void savePatch({ model: next as StoryModel })}
                     ariaLabel="故事 AI 模型"
                     searchable
