@@ -19,6 +19,11 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
   const quotaPerUnit = optionalNumber(raw.quotaPerUnit);
   if (quotaPerUnit !== undefined && (!Number.isInteger(quotaPerUnit) || quotaPerUnit <= 0))
     throw new Error("余额单位必须是正整数");
+  const dailyCheckInReward = optionalNumber(raw.dailyCheckInReward);
+  const referralReward = optionalNumber(raw.referralReward);
+  for (const [label, value] of [["签到奖励", dailyCheckInReward], ["邀请奖励", referralReward]] as const)
+    if (value !== undefined && (!Number.isFinite(value) || value < 0 || value > 100_000))
+      throw new Error(`${label}需为 0–100000 之间的数字`);
   return {
     authProvider: authProvider as RuntimeSettings["authProvider"] | undefined,
     newApiBaseUrl: optionalString(raw.newApiBaseUrl),
@@ -41,6 +46,16 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
     cookieSecure: optionalBoolean(raw.cookieSecure),
     remoteHistoryUrl: optionalString(raw.remoteHistoryUrl),
     remoteHistoryToken: optionalString(raw.remoteHistoryToken),
+    enableV5Models: optionalBoolean(raw.enableV5Models),
+    enableV45Models: optionalBoolean(raw.enableV45Models),
+    enableDailyCheckIn: optionalBoolean(raw.enableDailyCheckIn),
+    enableReferral: optionalBoolean(raw.enableReferral),
+    dailyCheckInReward,
+    referralReward,
+    watermarkEnabled: optionalBoolean(raw.watermarkEnabled),
+    watermarkIssuer: optionalString(raw.watermarkIssuer),
+    watermarkLabel: optionalString(raw.watermarkLabel),
+    watermarkNote: optionalString(raw.watermarkNote),
   };
 }
 

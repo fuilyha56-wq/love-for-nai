@@ -150,7 +150,9 @@ export function buildInlineAssistantPrompt(basePrompt: string, target: Assistant
 
 export function assistantHistoryMatchesTarget(turn: { imageModel?: string; modelProtocol?: ImageProviderProtocol }, target: AssistantImageTarget): boolean {
   try {
-    return resolveAssistantImageTarget(turn).capabilities.promptStyle === target.capabilities.promptStyle;
+    // Prompt style is not enough: NAI/GPT/Gemini/Nano Banana are separate
+    // products even when two of them happen to use natural language.
+    return resolveAssistantImageTarget(turn).capabilities.family === target.capabilities.family;
   } catch {
     return false;
   }

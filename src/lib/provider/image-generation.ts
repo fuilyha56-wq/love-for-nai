@@ -6,6 +6,8 @@ import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib
 import { buildImageTransportRequest, finishImageTransportImages, imageTransportOutputDimensions, parseImageTransportResult, type ImageTransportRequest } from "@/lib/image-transport";
 import { ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import type { LfnSession } from "@/lib/session";
+import { startRequestAudit } from "@/lib/request-audit";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { ProviderInputError, validateModelId } from "./validation";
 import { downloadProviderImage } from "./http";
 
@@ -29,6 +31,7 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
   let firstRequest: ImageTransportRequest;
   try {
     model = validateModelId(body.model);
+    if (!(await isNaiModelEnabled(model))) return NextResponse.json({ message: "该 NAI 模型已被管理员停用" }, { status: 403 });
     samples = normalizeSamples(body);
     const capabilities = resolveImageModelCapabilities(model, options.protocol);
     firstRequest = await buildImageTransportRequest({ ...body, model }, options.apiKey, options.protocol, Math.min(samples, capabilities.maxBatch));
@@ -37,18 +40,35 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
   }
   const requestBody = { ...body, model, width: firstRequest.width, height: firstRequest.height };
   const normalized = { ...requestBody };
+  const audit = await startRequestAudit({
+    request,
+    source: "lfn",
+    endpoint: request.url,
+    userId: session.userId,
+    username: session.username,
+    operation: typeof body.operation === "string" ? body.operation : "generate",
+    model,
+    parameters: requestBody,
+  });
   const images: string[] = [];
   let usage: unknown = null;
+  let watermarkStatus: "embedded" | "disabled" | "skipped" | "failed" = "skipped";
   let upstreamText = "";
   let warning = "";
   const save = options.saveToHistory !== false && body.editor_composite !== true;
   const partial = async (message: string, status: number): Promise<NextResponse> => {
     let historyIds: string[] = [];
     if (images.length && save) {
-      try { historyIds = (await saveHistory(session.userId, normalized, images, usage)).map((item) => item.id); }
-      catch { /* generated output remains available if history storage fails */ }
+      try {
+        const saved = await saveHistory(session.userId, { ...normalized, _lfnRequestId: audit.requestId, _lfnRequestFingerprint: audit.requestFingerprint }, images, usage);
+        historyIds = saved.map((item) => item.id);
+        watermarkStatus = saved.some((item) => item.watermarkStatus === "embedded") ? "embedded" : saved[0]?.watermarkStatus || watermarkStatus;
+        await audit.finish({ historyIds, status: images.length ? 207 : status, paymentSource: options.paymentSource, watermarkStatus });
+      } catch { /* generated output remains available if history storage fails */ }
+    } else {
+      await audit.finish({ status: images.length ? 207 : status, paymentSource: options.paymentSource });
     }
-    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: { "X-LFN-Payment-Source": options.paymentSource } });
+    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   };
   try {
     const batches = splitImageBatches(samples, resolveImageModelCapabilities(model, options.protocol).maxBatch);
@@ -91,13 +111,19 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
     }
     let historyIds: string[] = [];
     if (save) {
-      try { historyIds = (await saveHistory(session.userId, normalized, images, usage)).map((item) => item.id); }
+      try {
+        const saved = await saveHistory(session.userId, { ...normalized, _lfnRequestId: audit.requestId, _lfnRequestFingerprint: audit.requestFingerprint }, images, usage);
+        historyIds = saved.map((item) => item.id);
+        watermarkStatus = saved.some((item) => item.watermarkStatus === "embedded") ? "embedded" : saved[0]?.watermarkStatus || watermarkStatus;
+      }
       catch { warning = "图片已生成，但暂时无法保存历史记录"; }
     }
-    return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: { "X-LFN-Payment-Source": options.paymentSource } });
+    await audit.finish({ historyIds, status: 200, paymentSource: options.paymentSource, watermarkStatus });
+    return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, requestId: audit.requestId, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   } catch (error) {
     const invalid = error instanceof ImageRequestValidationError || error instanceof ProviderInputError;
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
+    await audit.finish({ status: invalid ? 400 : queueAborted ? 503 : 502, error: error instanceof Error ? error.message : "图像请求失败" });
     return partial(error instanceof Error ? error.message : "图像请求失败", invalid ? 400 : queueAborted ? 503 : 502);
   }
 }

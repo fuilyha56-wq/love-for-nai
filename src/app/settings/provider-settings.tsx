@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { PopupSelect } from "@/app/ui/popup-select";
 import {
   CircleCheck,
   CircleHelp,
@@ -46,6 +47,14 @@ const tierNames: Record<number, string> = {
 
 function modelIds(value: string): string[] {
   return [...new Set(value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+/** 手动模型 ID 的产品分类标签（仅用于展示，不做能力判断）。 */
+function manualTag(id: string): string {
+  if (/^nai-/i.test(id)) return "NAI";
+  if (/^(?:gemini-|nano[-_ ]?banana)/i.test(id)) return "Nano Banana";
+  if (/^(?:gpt-image|chatgpt-image)/i.test(id)) return "GPT";
+  return "自定义";
 }
 
 function formatExpiry(value: number | null): string {
@@ -129,6 +138,12 @@ export default function ProviderSettings() {
   const [accountBusy, setAccountBusy] = useState(false);
   const [novelAiKey, setNovelAiKey] = useState("");
   const [editingNovelAi, setEditingNovelAi] = useState(false);
+
+  // 手动模型 ID 的实时预览：逗号/换行分隔，逐条显示所属产品分类。
+  const manualList = useMemo(
+    () => manualModels.split(/[\n,]/).map((id) => id.trim()).filter(Boolean),
+    [manualModels],
+  );
 
   const loadProviders = useCallback(async () => {
     setProvidersLoading(true);
@@ -395,7 +410,7 @@ export default function ProviderSettings() {
             </label>
             <label className="text-xs font-semibold">
               API 地址
-              <input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false} />
+              <input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（GPT/NAI）或 https://generativelanguage.googleapis.com（Nano Banana）" autoComplete="url" spellCheck={false} />
             </label>
             <label className="text-xs font-semibold sm:col-span-2">
               API key
@@ -403,19 +418,37 @@ export default function ProviderSettings() {
             </label>
             <label className="text-xs font-semibold sm:col-span-2">
               图像接口协议
-              <select aria-label="图像接口协议" className="field mt-1.5 h-10 w-full px-3 text-sm" value={protocol} onChange={(event) => setProtocol(event.target.value as ImageProviderProtocol)}>
-                <option value="auto">自动（Google 原生地址使用 Gemini，其它使用 OpenAI Images）</option>
-                <option value="openai-images">OpenAI Images · generations / edits</option>
-                <option value="gemini">Gemini 原生 · generateContent</option>
-                <option value="openai-chat-images">兼容聊天生图 · chat/completions</option>
-              </select>
+              <div className="mt-1.5">
+                <PopupSelect
+                  value={protocol}
+                  onChange={(value) => setProtocol(value as ImageProviderProtocol)}
+                  ariaLabel="图像接口协议"
+                  options={[
+                    { value: "auto", label: "NAI 原生", description: "按模型自动适配" },
+                    { value: "openai-images", label: "GPT Images", description: "OpenAI Images 接口" },
+                    { value: "gemini", label: "Nano Banana", description: "Gemini 原生接口" },
+                  ]}
+                />
+              </div>
               <span className="mt-1 block text-[11px] font-normal leading-5 text-[var(--muted)]">Google 地址可填写 https://generativelanguage.googleapis.com；Nano Banana 的官方模型 ID 以 Gemini 图像模型为准。</span>
             </label>
-            <label className="text-xs font-semibold sm:col-span-2">
-              自定义模型 ID（可选）
-              <textarea className="field mt-1.5 min-h-20 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\ngpt-image-1.5\ngemini-2.5-flash-image"} spellCheck={false} />
-              <span className="mt-1 block text-[11px] font-normal leading-5 text-[var(--muted)]">也可用逗号分隔。保存后会尝试从接口读取模型；手动填写的 ID 始终可选。</span>
-            </label>
+            <div className="rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-4 sm:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-semibold">自定义模型 ID（可选）</p>
+                {manualList.length > 0 && <span className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold">{manualList.length} 个模型</span>}
+              </div>
+              <textarea className="field mt-2 min-h-20 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\ngpt-image-1.5（GPT）\nnai-v5-full（NAI）\nnano-banana-pro（Nano Banana）"} spellCheck={false} />
+              {manualList.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {manualList.map((id) => (
+                    <span key={id} className="rounded bg-[var(--panel)] px-2 py-0.5 font-mono text-[10px]">
+                      {id} · {manualTag(id)}
+                    </span>
+                  ))}
+                </div>
+              )}
+              <span className="mt-2 block text-[11px] font-normal leading-5 text-[var(--muted)]">也可用逗号分隔。保存后会尝试从接口读取模型；手动填写的 ID 始终可选。</span>
+            </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <p className="flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">

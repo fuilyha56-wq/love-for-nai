@@ -1,6 +1,8 @@
 /** Shared by the studio, assistant and server adapters. Endpoint selection is explicit for gateways. */
 export type ImageProviderProtocol = "auto" | "openai-images" | "gemini" | "openai-chat-images";
-export type ImageModelFamily = "nai" | "gpt-image" | "gemini" | "openai-image";
+/** Canonical product families used by prompts/history; transport protocol stays independent. */
+export type ImageModelFamily = "nai" | "gpt-image" | "nano-banana" | "gemini" | "openai-image";
+export type ImageProductMode = "nai" | "gpt" | "nano-banana";
 export type ImageModelCapabilities = {
   family: ImageModelFamily;
   promptStyle: "tags" | "natural";
@@ -33,13 +35,39 @@ export function isKnownImageModel(model: string): boolean {
   return /^(?:nai-(?!chat$)|gpt-image|chatgpt-image|dall-e|flux(?:\.|-|$)|stable-diffusion|sdxl|imagen|ideogram|recraft|midjourney|seedream|sd3(?:\.|-|$)|nano[-_ ]?banana)/i.test(model) || /^gemini-.*(?:image|imagen)/i.test(model);
 }
 
+function isNanoBananaModel(model: string): boolean {
+  return /^nano[-_ ]?banana(?:$|[-_.])/i.test(model);
+}
+
+function isGeminiImageModel(model: string): boolean {
+  return /^gemini-.*image/i.test(model);
+}
+
+export function imageProductMode(model: string): ImageProductMode {
+  const caps = resolveImageModelCapabilities(model, "auto");
+  if (caps.family === "nai") return "nai";
+  if (caps.family === "nano-banana" || caps.family === "gemini") return "nano-banana";
+  return "gpt";
+}
+
+export function productModeProtocol(mode: ImageProductMode): ImageProviderProtocol {
+  return mode === "nai" ? "auto" : mode === "nano-banana" ? "gemini" : "openai-images";
+}
+
+export function modelMatchesProductMode(model: string, mode: ImageProductMode): boolean {
+  return imageProductMode(model) === mode;
+}
+
 export function resolveImageModelCapabilities(model: string, protocol: ImageProviderProtocol = "auto"): ImageModelCapabilities {
   const nai = /^nai-(?!chat$)/i.test(model);
   const gpt = /^(?:gpt-image|chatgpt-image)/i.test(model);
-  const gemini = /^gemini-.*(?:image|imagen)/i.test(model) || /^nano[-_ ]?banana/i.test(model) || protocol === "gemini";
-  const transport = protocol === "auto" ? "openai-images" : protocol;
+  const nanoBanana = isNanoBananaModel(model);
+  const gemini = isGeminiImageModel(model) || /^gemini-.*imagen/i.test(model) || nanoBanana || protocol === "gemini";
+  // Nano Banana is a Google-native product alias. Auto selects Gemini for it,
+  // while an explicit gateway protocol remains an intentional transport override.
+  const transport = protocol === "auto" ? (nanoBanana ? "gemini" : "openai-images") : protocol;
   const edit = nai || gpt || gemini || protocol === "openai-chat-images" || /^dall-e-2$/i.test(model);
-  const family = nai ? "nai" : gpt ? "gpt-image" : gemini ? "gemini" : "openai-image";
+  const family = nai ? "nai" : gpt ? "gpt-image" : nanoBanana ? "nano-banana" : gemini ? "gemini" : "openai-image";
   const flexibleGpt = /^gpt-image-2(?:\.5)?(?:-|$)/i.test(model);
   const geminiHighResolution = /(?:gemini-3|nano[-_ ]?banana-(?:pro|2))/i.test(model) && !/lite/i.test(model);
   return {

@@ -6,7 +6,7 @@ import {
   isInFreeEnvelope as calculateIsInFreeEnvelope,
 } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
-import { runtimeModelFixedCost } from "@/lib/runtime-config";
+import { runtimeModelFixedCost, runtimeRewards } from "@/lib/runtime-config";
 
 export type AffTransaction = {
   id: string;
@@ -68,6 +68,8 @@ export type ImageCreditCharge = {
 };
 
 export const CHECK_IN_REWARD = 20;
+export const REFERRAL_REWARD = 100;
+
 export const IMAGE_PACKAGE_PRICE_USD = 200;
 export const IMAGE_PACKAGE_AFF = 400;
 export const IMAGE_PACKAGE_RATE_LIMIT = 10;
@@ -228,16 +230,19 @@ export async function affStatus(userId: number): Promise<{
   packageRateLimitRemaining: number;
   checkedInToday: boolean;
   checkInReward: number;
+  checkInEnabled: boolean;
 }> {
   const account = await readAccount(userId);
   const remaining = packageRateLimitRemaining(account);
+  const rewards = await runtimeRewards();
   return {
     balance: account.balance,
     packageBalance: account.packageBalance,
     totalBalance: account.balance + account.packageBalance,
     packageRateLimitRemaining: remaining,
     checkedInToday: account.lastCheckInDay === chinaDay(),
-    checkInReward: CHECK_IN_REWARD,
+    checkInReward: rewards.checkInReward,
+    checkInEnabled: rewards.checkInEnabled,
   };
 }
 
@@ -247,7 +252,20 @@ export async function checkInAff(userId: number): Promise<{
   totalBalance: number;
   reward: number;
   checkedInToday: boolean;
+  checkInEnabled: boolean;
 }> {
+  const rewards = await runtimeRewards();
+  if (!rewards.checkInEnabled) {
+    const account = await readAccount(userId);
+    return {
+      balance: account.balance,
+      packageBalance: account.packageBalance,
+      totalBalance: account.balance + account.packageBalance,
+      reward: 0,
+      checkedInToday: account.lastCheckInDay === chinaDay(),
+      checkInEnabled: false,
+    };
+  }
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
     const today = chinaDay();
@@ -258,17 +276,20 @@ export async function checkInAff(userId: number): Promise<{
         totalBalance: account.balance + account.packageBalance,
         reward: 0,
         checkedInToday: true,
+        checkInEnabled: true,
       };
-    account.balance += CHECK_IN_REWARD;
+    const reward = rewards.checkInReward;
+    account.balance += reward;
     account.lastCheckInDay = today;
-    addTransaction(account, CHECK_IN_REWARD, "check-in", "每日签到奖励", undefined, "personal");
+    addTransaction(account, reward, "check-in", "每日签到奖励", undefined, "personal");
     await writeAccount(userId, account);
     return {
       balance: account.balance,
       packageBalance: account.packageBalance,
       totalBalance: account.balance + account.packageBalance,
-      reward: CHECK_IN_REWARD,
+      reward,
       checkedInToday: true,
+      checkInEnabled: true,
     };
   });
 }
@@ -511,8 +532,8 @@ export async function grantAffOnce(
   description: string,
   referenceId: string,
 ): Promise<{ balance: number; granted: boolean }> {
-  if (!Number.isInteger(amount) || amount <= 0)
-    throw new Error("AFF 奖励金额必须为正整数");
+  if (!Number.isInteger(amount) || amount < 0)
+    throw new Error("AFF 奖励金额必须为非负整数");
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
     if (account.transactions.some((item) => item.referenceId === referenceId))
@@ -557,6 +578,7 @@ export type AffLedgerSummary = {
 export type AffLedgerDetail = AffLedgerSummary & {
   checkedInToday: boolean;
   checkInReward: number;
+  checkInEnabled: boolean;
   transactions: AffTransaction[];
   packageOrders: ImagePackageOrder[];
 };
@@ -593,10 +615,12 @@ export async function listAffLedgers(): Promise<AffLedgerSummary[]> {
 
 export async function affLedger(userId: number): Promise<AffLedgerDetail> {
   const account = await readAccount(userId);
+  const rewards = await runtimeRewards();
   return {
     ...ledgerSummary(userId, account),
     checkedInToday: account.lastCheckInDay === chinaDay(),
-    checkInReward: CHECK_IN_REWARD,
+    checkInReward: rewards.checkInReward,
+    checkInEnabled: rewards.checkInEnabled,
     transactions: account.transactions,
     packageOrders: account.packageOrders,
   };

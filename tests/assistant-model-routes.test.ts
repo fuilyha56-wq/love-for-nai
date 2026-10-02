@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -11,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/session", () => ({ getSession: mocks.getSession }));
-vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test" }));
+vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
 vi.mock("@/lib/tag-agent", () => ({ runTagAgent: mocks.runTagAgent }));
 vi.mock("@/lib/outbound", () => ({ outboundFetch: mocks.outboundFetch }));
 vi.mock("@/lib/model-concurrency", () => ({ fetchWithModelConcurrency: mocks.chatFetch }));
@@ -43,7 +43,20 @@ beforeEach(() => {
   mocks.chatFetch.mockResolvedValue(Response.json({ choices: [{ message: { content: "A cat by a window." } }] }));
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("image model context in assistant routes", () => {
+  it("filters every known image family from assistant text models", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [
+      { id: "gpt-image-1" }, { id: "nano-banana-pro" }, { id: "gemini-3-pro-image-preview" },
+      { id: "nai-v5-full" }, { id: "text-chat" }, { id: "gpt-4o" },
+    ] })));
+    const route = await import("@/app/api/assistant/models/route");
+    const response = await route.GET();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ models: ["gpt-4o", "text-chat"] });
+  });
+
   it("does not validate or reject natural-language text as Danbooru tags", async () => {
     const route = await import("@/app/api/assistant/tags/route");
     mocks.runTagAgent.mockResolvedValue({ content: JSON.stringify({ prompt: "A red cup on the table.", negativePrompt: "watermark", tags: ["never_a_danbooru_tag"], parameters: { steps: 50, scale: 9, seed: 1234, width: 832, height: 1216 } }), steps: [] });
@@ -83,12 +96,13 @@ describe("image model context in assistant routes", () => {
     mocks.readConversation.mockResolvedValue({ turns: [
       { request: "old NAI", answer: "old tags" },
       { request: "GPT scene", answer: "natural description", imageModel: "gpt-image-1" },
+      { request: "old Gemini", answer: "natural description", imageModel: "gemini-2.5-flash-image" },
     ], tagPool: [] });
     const response = await route.POST(postRequest("tags", { model: "vision-chat", imageModel: "gemini-2.5-flash-image", operation: "inpainting", request: "make it blue" }));
     expect(response.status).toBe(200);
     await vi.waitFor(() => expect(mocks.appendConversationTurn).toHaveBeenCalled());
     expect(mocks.runTagAgent.mock.calls[0][3]).toMatchObject({ imageModel: "gemini-2.5-flash-image", operation: "inpainting" });
-    expect(mocks.runTagAgent.mock.calls[0][5].history).toEqual([{ request: "GPT scene", answer: "natural description" }]);
+    expect(mocks.runTagAgent.mock.calls[0][5].history).toEqual([{ request: "old Gemini", answer: "natural description" }]);
     expect(mocks.appendConversationTurn.mock.calls[0][1]).toMatchObject({ imageModel: "gemini-2.5-flash-image", tags: [], parameters: {} });
   });
 

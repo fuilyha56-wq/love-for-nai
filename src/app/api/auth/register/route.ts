@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { callNewApi } from "@/lib/login";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
-import { redeemReferral } from "@/lib/referral";
+import {
+  canonicalReferralLink,
+  redeemReferral,
+} from "@/lib/referral";
 import { createLocalUser } from "@/lib/local-users";
 import { resolvedAuthProviderId } from "@/lib/platform";
+import { getRuntimeSettings } from "@/lib/runtime-config";
 import {
   invalidJsonResponse,
   optionalString,
@@ -14,8 +18,36 @@ import {
   SlidingWindowRateLimiter,
   trustedClientKey,
 } from "@/lib/rate-limit";
+import { createHash, randomUUID } from "node:crypto";
 
 type UpstreamResult = { success?: boolean; message?: string };
+
+const LANDING_QUERY_KEYS = new Set([
+  "invite",
+  "source",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+]);
+
+function safeInviteLandingPath(value: string | undefined, inviteCode: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value, "http://lfn.invalid");
+    if (url.origin !== "http://lfn.invalid" || url.pathname !== "/sign-in") return undefined;
+    const invite = url.searchParams.get("invite");
+    if (!invite || invite !== inviteCode) return undefined;
+    const safe = new URLSearchParams({ invite });
+    for (const key of LANDING_QUERY_KEYS) {
+      if (key === "invite") continue;
+      const source = url.searchParams.get(key)?.trim() || "";
+      if (/^[a-zA-Z0-9._~-]{1,64}$/.test(source)) safe.set(key, source);
+    }
+    return `/sign-in?${safe.toString()}`.slice(0, 512);
+  } catch {
+    return undefined;
+  }
+}
 
 const TEN_MINUTES = 10 * 60_000;
 const verificationEmailLimiter = new SlidingWindowRateLimiter({
@@ -152,6 +184,19 @@ export async function POST(request: Request) {
   const code = optionalString(raw.verificationCode)?.trim() || "";
   const affCode = optionalString(raw.affCode)?.trim() || "";
   const inviteCode = optionalString(raw.inviteCode)?.trim() || "";
+  const inviteLandingPath = optionalString(raw.inviteLandingPath)?.trim().slice(0, 512) || undefined;
+  const registrationRequestId = randomUUID();
+  const trustedIp = trustedClientKey(request);
+  const landingPath = safeInviteLandingPath(inviteLandingPath, inviteCode);
+  const provenance = {
+    landingPath,
+    referer: request.headers.get("referer")?.slice(0, 512) || undefined,
+    clientIpHash: trustedIp
+      ? createHash("sha256").update(trustedIp).digest("hex")
+      : undefined,
+    userAgent: request.headers.get("user-agent")?.slice(0, 512) || undefined,
+    requestId: registrationRequestId,
+  };
 
   if (!/^[a-zA-Z0-9_\-.]{3,32}$/.test(username))
     return NextResponse.json(
@@ -190,7 +235,12 @@ export async function POST(request: Request) {
       });
       if (inviteCode) {
         try {
-          await redeemReferral(inviteCode, user.id);
+          const settings = await getRuntimeSettings();
+          const origin = settings.publicUrl || new URL(request.url).origin;
+          await redeemReferral(inviteCode, user.id, {
+            ...provenance,
+            invitationLink: canonicalReferralLink(origin, inviteCode),
+          });
         } catch {
           // 邀请失败不影响注册本身。
         }
@@ -227,16 +277,18 @@ export async function POST(request: Request) {
   // default 分组。这里保持 default（用户面板体验正常），模型渠道权限由
   // LFN 托管密钥解决：注册后异步为用户预创建一把可用分组（如 Draw）的
   // 密钥，与生图时的托管回退共用同一把，NewAPI 余额照常计入本人。
+  let loggedInUserId: number | null = null;
   try {
-    const { resolvedAdminTokenValue } = await import("@/lib/admin-auth");
-    const token = await resolvedAdminTokenValue();
-    if (token) {
-      const loginResult = await callNewApi("/api/user/login", {
-        username,
-        password,
-      });
-      const user = loginResult.result.data?.user ?? loginResult.result.data;
-      if (loginResult.result.success && typeof user?.id === "number") {
+    const loginResult = await callNewApi("/api/user/login", {
+      username,
+      password,
+    });
+    const user = loginResult.result.data?.user ?? loginResult.result.data;
+    if (loginResult.result.success && typeof user?.id === "number") {
+      loggedInUserId = user.id;
+      const { resolvedAdminTokenValue } = await import("@/lib/admin-auth");
+      const token = await resolvedAdminTokenValue();
+      if (token) {
         const { ensureManagedFallbackToken } = await import("@/lib/newapi-db");
         await ensureManagedFallbackToken(user.id, "nai-v4.5-full").catch(
           () => null,
@@ -244,26 +296,25 @@ export async function POST(request: Request) {
       }
     }
   } catch {
-    // 托管密钥预创建失败不影响注册本身；首次生图时会再次尝试。
+    // 注册已成功，但自动登录失败时不影响上游账号创建。
   }
 
-  if (!inviteCode) return registered;
+  if (!inviteCode || loggedInUserId == null) return registered;
 
   try {
-    const { result } = await callNewApi("/api/user/login", {
-      username,
-      password,
+    const settings = await getRuntimeSettings();
+    const origin = settings.publicUrl || new URL(request.url).origin;
+    const reward = await redeemReferral(inviteCode, loggedInUserId, {
+      ...provenance,
+      invitationLink: canonicalReferralLink(origin, inviteCode),
     });
-    const user = result.data?.user ?? result.data;
-    if (result.success && typeof user?.id === "number") {
-      const reward = await redeemReferral(inviteCode, user.id);
-      return NextResponse.json({
-        success: true,
-        referralReward: reward.reward,
-      });
-    }
+    return NextResponse.json({
+      success: true,
+      referralReward: reward.reward,
+      referralApplied: reward.applied,
+    });
   } catch {
-    // 注册已成功，但自动登录失败时不影响上游账号创建。
+    // 注册已成功，但邀请写入失败时不影响上游账号创建。
   }
   return registered;
 }

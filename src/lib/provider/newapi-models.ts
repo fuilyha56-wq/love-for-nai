@@ -1,5 +1,6 @@
 import { resolvedNewApiBaseUrl, userHeaders, type Session } from "@/lib/newapi";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 
 export type AvailableModel = { id: string; kind: "图像模型" | "助手模型" };
 
@@ -44,7 +45,11 @@ export async function loadNewApiModels(session: Session): Promise<AvailableModel
       }
     }
   } catch { /* model names remain available without optional pricing metadata */ }
-  return [...models].map(([id, image]) => ({ id, kind: image ? "图像模型" as const : "助手模型" as const }))
+  const filtered: Array<[string, boolean]> = [];
+  for (const [id, image] of models) {
+    if (await isNaiModelEnabled(id)) filtered.push([id, image]);
+  }
+  return filtered.map(([id, image]) => ({ id, kind: image ? "图像模型" as const : "助手模型" as const }))
     .sort((a,b) => a.id.localeCompare(b.id));
 }
 

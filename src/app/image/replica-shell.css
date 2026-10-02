@@ -1,5 +1,6 @@
 [data-replica-studio] { --input-bg:var(--surface); min-height:0; color:var(--ink); background:var(--paper); font-family:var(--font-sans); }
 [data-replica-studio] .studio-controls-panel { position:relative; min-width:0; overflow:visible; border-radius:0; background:var(--panel); padding:0; border:0; box-shadow:none; }
+[data-replica-studio] .studio-tools-panel { overflow:visible; }
 [data-replica-studio] .studio-canvas { min-width:0; overflow:hidden; background:var(--paper); }
 [data-replica-studio] .replica-preview-host { padding:0; overflow:hidden; }
 [data-replica-studio] .replica-preview-host>.studio-mode-badge { display:none; }

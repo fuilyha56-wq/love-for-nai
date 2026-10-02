@@ -46,6 +46,15 @@ describe("图像模型路由和计费适配", () => {
     expect(mocks.history).toHaveBeenCalled();
     expect(mocks.history).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ width: 1024, height: 1536 }), expect.anything(), null);
   });
+  it("Nano Banana auto协议默认使用Gemini原生端点", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aGVsbG8=" } }] } }] })));
+    const response = await operate(request({ ...base, model: "nano-banana-pro", n: 1 }));
+    expect(response.status).toBe(200);
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(url).toBe("https://newapi.example.com/v1beta/models/nano-banana-pro:generateContent");
+    expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("image-key");
+    expect(new Headers(init?.headers).has("Authorization")).toBe(false);
+  });
   it("Gemini 多张请求逐张使用原生端点，保留已生成图片和历史", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "aGVsbG8=" } }] } }] })).mockResolvedValueOnce(Response.json({ error: { message: "quota exceeded" } }, { status: 429 })));
     const response = await operate(request({ ...base, model: "gemini-2.5-flash-image", imageProtocol: "gemini", n: 2 }));

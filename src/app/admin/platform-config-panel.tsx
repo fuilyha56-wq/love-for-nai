@@ -38,6 +38,16 @@ type RuntimeSettings = {
   cookieSecure: boolean;
   remoteHistoryUrl: string;
   remoteHistoryToken: string;
+  enableV5Models: boolean;
+  enableV45Models: boolean;
+  enableDailyCheckIn: boolean;
+  enableReferral: boolean;
+  dailyCheckInReward: number;
+  referralReward: number;
+  watermarkEnabled: boolean;
+  watermarkIssuer: string;
+  watermarkLabel: string;
+  watermarkNote: string;
 };
 
 type EndpointForm = {
@@ -91,6 +101,16 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   cookieSecure: false,
   remoteHistoryUrl: "",
   remoteHistoryToken: "",
+  enableV5Models: true,
+  enableV45Models: true,
+  enableDailyCheckIn: true,
+  enableReferral: true,
+  dailyCheckInReward: 20,
+  referralReward: 100,
+  watermarkEnabled: true,
+  watermarkIssuer: "love-for-nai",
+  watermarkLabel: "Love-for-NAI image provenance",
+  watermarkNote: "Generated through Love-for-NAI",
 };
 
 function emptyForm(type: EndpointForm["type"] = "image"): EndpointForm {
@@ -327,6 +347,48 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="flex h-10 items-center gap-2 text-sm font-semibold">
             <input type="checkbox" checked={settings.cookieSecure} onChange={(event) => setSettings({ ...settings, cookieSecure: event.target.checked })} />
             Cookie 仅 HTTPS
+          </label>
+        </div>
+      </article>
+
+      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+        <h3 className="text-sm font-semibold text-[var(--rose)]">模型与福利</h3>
+        <p className="mt-1 text-xs text-[var(--muted)]">关闭模型后会从模型列表下架并拒绝对应请求；签到/邀请奖励单位为 AFF。修改后点击上方「保存站点设置」生效。</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={settings.enableV5Models} onChange={(event) => setSettings({ ...settings, enableV5Models: event.target.checked })} />
+            启用 V5 模型（nai-v5-*）
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={settings.enableV45Models} onChange={(event) => setSettings({ ...settings, enableV45Models: event.target.checked })} />
+            启用 V4.5 模型（nai-v4.5-*）
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={settings.enableDailyCheckIn} onChange={(event) => setSettings({ ...settings, enableDailyCheckIn: event.target.checked })} />
+            开启每日签到
+          </label>
+          <label className="block text-sm font-semibold">每日签到奖励（AFF）
+            <input type="number" min={0} step="any" value={settings.dailyCheckInReward} onChange={(event) => setSettings({ ...settings, dailyCheckInReward: Number(event.target.value) })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={settings.enableReferral} onChange={(event) => setSettings({ ...settings, enableReferral: event.target.checked })} />
+            开启邀请奖励
+          </label>
+          <label className="block text-sm font-semibold">邀请奖励（AFF，邀请人与新用户各得）
+            <input type="number" min={0} step="any" value={settings.referralReward} onChange={(event) => setSettings({ ...settings, referralReward: Number(event.target.value) })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+          </label>
+          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={settings.watermarkEnabled} onChange={(event) => setSettings({ ...settings, watermarkEnabled: event.target.checked })} />
+            启用 Love-for-NAI 图片签名
+          </label>
+          <label className="block text-sm font-semibold">签名发行方
+            <input value={settings.watermarkIssuer} onChange={(event) => setSettings({ ...settings, watermarkIssuer: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+          </label>
+          <label className="block text-sm font-semibold">签名标签
+            <input value={settings.watermarkLabel} onChange={(event) => setSettings({ ...settings, watermarkLabel: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+          </label>
+          <label className="block text-sm font-semibold sm:col-span-2">签名附加说明
+            <input value={settings.watermarkNote} onChange={(event) => setSettings({ ...settings, watermarkNote: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
         </div>
       </article>

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
+import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import {
-  isNaiImageModel,
   isUpstreamAuthError,
   resolvedNewApiBaseUrl,
   userHeaders,
@@ -46,7 +46,7 @@ export async function GET() {
     if (result.success === false)
       throw new Error(result.message || "无法读取可用模型");
     const models = [...new Set(collectModels(result.data || result))]
-      .filter((model) => model && !isNaiImageModel(model))
+      .filter((model) => model && !isKnownImageModel(model))
       .sort((left, right) => left.localeCompare(right));
     return NextResponse.json({ models });
   } catch (error) {

@@ -3,6 +3,7 @@
 // VSCode 内联聊天的 LFN 版：选中文本→右键菜单（1_chat 组语义）→
 // 锚定在文本域下方的对话框，Keep 用结果替换所选内容。
 import { useEffect, useRef, useState } from "react";
+import { Tooltip } from "@/app/ui/tooltip";
 import {
   Check,
   Languages,
@@ -118,8 +119,8 @@ export function InlineChatMenu({
         role="menu"
         aria-label={`AI 操作 · ${targetLabel}`}
         style={{
-          left: Math.min(position.x, window.innerWidth - 250),
-          top: Math.min(position.y, window.innerHeight - 230),
+          left: Math.max(8, Math.min(position.x, window.innerWidth - 258)),
+          top: Math.max(8, Math.min(position.y, window.innerHeight - 238)),
         }}
       >
         {INLINE_CHAT_MENU_ITEMS.map((item) => (
@@ -281,10 +282,9 @@ export function InlineChatZone({
             }
           }}
         />
-        <button
+        <Tooltip label={running ? "停止" : "发送"}><button
           type="button"
           className="inline-chat-send"
-          data-label={running ? "停止" : "发送"}
           aria-label={running ? "停止处理" : "发送指令"}
           onClick={() => {
             if (running) {
@@ -297,7 +297,7 @@ export function InlineChatZone({
           }}
         >
           {running ? <Square size={12} /> : <SendHorizontal size={13} />}
-        </button>
+        </button></Tooltip>
       </div>
       {(result !== null || error) && (
         <div
@@ -313,11 +313,10 @@ export function InlineChatZone({
           {session.target.label} · 所选 {session.selection.text.length} 字
         </span>
         <span className="inline-chat-status-actions">
-          <button
+          <Tooltip label="用结果替换所选内容"><button
             type="button"
             className="is-primary"
             disabled={!result || running}
-            data-label="用结果替换所选内容"
             onClick={() => {
               if (result !== null && !running) {
                 onKeep(result);
@@ -327,19 +326,17 @@ export function InlineChatZone({
           >
             <Check size={13} />
             保留
-          </button>
-          <button
+          </button></Tooltip>
+          <Tooltip label="重新生成"><button
             type="button"
             disabled={running}
-            data-label="重新生成"
             onClick={() => run(session.mode, input)}
           >
             <RotateCcw size={13} />
             重试
-          </button>
-          <button
+          </button></Tooltip>
+          <Tooltip label="关闭（Esc）"><button
             type="button"
-            data-label="关闭（Esc）"
             onClick={() => {
               stopPolling();
               onClose();
@@ -347,7 +344,7 @@ export function InlineChatZone({
           >
             <X size={13} />
             关闭
-          </button>
+          </button></Tooltip>
         </span>
       </div>
     </div>

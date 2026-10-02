@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getProvider, rememberDiscoveredModels } from "@/lib/provider/store";
 import { discoverProviderModels } from "@/lib/provider/models";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 
 export async function GET(request: Request) {
   const session = await getSession();
@@ -18,6 +19,9 @@ export async function GET(request: Request) {
     try { await rememberDiscoveredModels(session.userId, provider.id, discovered); }
     catch { warning = "已读取远端模型，但无法保存模型列表；生成时可能需要重新读取"; }
   }
-  const items = [...new Set([...provider.models, ...discovered])].sort((a,b) => a.localeCompare(b)).map((id) => ({ id, kind: "图像模型" }));
+  const items: Array<{ id: string; kind: "图像模型" }> = [];
+  for (const id of [...new Set([...provider.models, ...discovered])].sort((a,b) => a.localeCompare(b))) {
+    if (await isNaiModelEnabled(id)) items.push({ id, kind: "图像模型" });
+  }
   return NextResponse.json({ items, ...(warning ? { warning } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }

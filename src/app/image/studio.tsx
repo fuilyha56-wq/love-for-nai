@@ -62,6 +62,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
+import { Tooltip } from "@/app/ui/tooltip";
 import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { useAppearance } from "@/app/appearance";
 import { generateRandomPrompt } from "@/lib/random-prompt";
@@ -84,7 +85,7 @@ import { NaiBalanceMeter } from "./nai-balance-meter";
 import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverseTagger } from "./replica-controls";
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
 import { NaturalImageSettings } from "./natural-image-settings";
-import { isKnownImageModel, nearestImageSize, normalizeImageModelSize, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageSize, normalizeImageModelSize, productModeProtocol, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProductMode, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { ReplicaPromptEditor } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
@@ -656,6 +657,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [model, setModel] = useState(models[0].value);
   const [providerId, setProviderId] = useState("newapi");
   const [newApiImageProtocol, setNewApiImageProtocol] = useState<ImageProviderProtocol>("auto");
+  const [productMode, setProductMode] = useState<ImageProductMode>("nai");
   const [imageQuality, setImageQuality] = useState("auto");
   const [imageResolution, setImageResolution] = useState("1K");
   const [imageBackground, setImageBackground] = useState("auto");
@@ -807,10 +809,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const selectedProvider = customProviders.find((item) => item.id === providerId);
   const imageProtocol = providerId === "newapi" ? newApiImageProtocol : providerId === "novelai" ? "auto" : resolveProviderImageProtocol(selectedProvider?.protocol, selectedProvider?.baseUrl || "");
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
+  // 输出设置的门控能力：未选具体模型时（如刚切换接口）按接口的代表性模型
+  // 展示与校验，否则用户的选择会因空模型能力列表被立即重置回默认值。
+  const displayModel = model
+    || (imageProtocol === "gemini" ? "nano-banana" : imageProtocol === "openai-images" ? "gpt-image-1.5" : "");
+  const displayCaps = resolveImageModelCapabilities(displayModel, imageProtocol);
   const naturalImageModel = modelCapabilities.promptStyle === "natural";
   const outputCount = generationModes.has(operation) ? count : 1;
-  const effectiveImageQuality = modelCapabilities.qualityOptions.includes(imageQuality) ? imageQuality : "auto";
-  const effectiveImageResolution = modelCapabilities.imageSizes.includes(imageResolution) ? imageResolution : "1K";
+  const effectiveImageQuality = displayCaps.qualityOptions.includes(imageQuality) ? imageQuality : "auto";
+  const effectiveImageResolution = displayCaps.imageSizes.includes(imageResolution) ? imageResolution : "1K";
   const naturalSettings = naturalImageModel ? <NaturalImageSettings model={model} imageProtocol={imageProtocol} width={width} height={height} setWidth={setWidth} setHeight={setHeight}
     quality={effectiveImageQuality} setQuality={setImageQuality} imageSize={effectiveImageResolution} setImageSize={setImageResolution} background={imageBackground} setBackground={setImageBackground} /> : undefined;
   useEffect(() => {
@@ -822,13 +829,34 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     ...(novelAiConnected ? [{ value: "novelai", label: "NovelAI 官方 Key" }] : []),
     ...customProviders.map((item) => ({ value: item.id, label: item.name })),
   ];
-  const modelOptions = useMemo(() => providerId === "newapi"
-    ? (newApiModelsLoaded ? newApiModels : authenticated ? models : [...models, ...["gpt-image-1.5", "gpt-image-2", "gpt-image-2.5-sunburst", "gemini-2.5-flash-image", "gemini-3-pro-image-preview"].map(value => ({ value, label: value }))])
+  // 模型只来自上游：NewAPI 列表按图像接口过滤；上游不可用时只保留 NAI 内置列表，
+  // 不伪造 GPT/Gemini 模型 ID。
+  const allModelOptions = useMemo(() => providerId === "newapi"
+    ? (newApiModelsLoaded ? newApiModels : models)
     : providerId === "novelai"
       ? models.filter((item) => !item.value.endsWith("-limit"))
-      : (customProviderModels.length
+      : customProviderModels.length
         ? customProviderModels
-        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id }))), [providerId, newApiModelsLoaded, newApiModels, authenticated, customProviderModels, selectedProvider]);
+        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })), [providerId, newApiModelsLoaded, newApiModels, customProviderModels, selectedProvider]);
+  const modelOptions = useMemo(() => allModelOptions.filter((item) => modelMatchesProductMode(item.value, productMode)), [allModelOptions, productMode]);
+  // 模型被外部来源（历史复用、URL 参数、缓存）改变时，接口模式跟随模型。
+  useEffect(() => {
+    if (!model) return;
+    const mode = imageProductMode(model);
+    if (mode === productMode) return;
+    void Promise.resolve().then(() => {
+      setProductMode(mode);
+      if (providerId === "newapi") setNewApiImageProtocol(productModeProtocol(mode));
+    });
+  }, [model, productMode, providerId]);
+  useEffect(() => {
+    const next = modelOptions[0]?.value;
+    if (!next || modelOptions.some((item) => item.value === model)) return;
+    void Promise.resolve().then(() => {
+      setModel(next);
+      if (providerId === "newapi") setNewApiImageProtocol(productModeProtocol(productMode));
+    });
+  }, [modelOptions, model, providerId, productMode]);
 
   useLayoutEffect(() => {
     const previous = previousCardPositions.current;
@@ -1683,46 +1711,56 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     void Promise.resolve().then(() => refreshWallet());
   }, [refreshWallet, signedIn]);
 
+  // 模型来源实时读取：每次都直接请求上游（no-store），并在窗口聚焦和每 60 秒刷新，
+  // 不依赖本地存档；上游新增/下架模型后无需手动刷新页面。
+  const refreshSources = useCallback(async (signal: AbortSignal) => {
+    const [modelsResult, providersResult, novelAiResult] = await Promise.allSettled([
+      fetch("/api/models", { cache: "no-store", signal }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "无法读取 NewAPI 模型");
+        return data as { items?: AvailableModel[] };
+      }),
+      fetch("/api/providers", { cache: "no-store", signal }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "无法读取自定义 API");
+        return data as { items?: ProviderSummary[] };
+      }),
+      fetch("/api/providers/novelai", { cache: "no-store", signal }).then(async (response) => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.message || "无法读取 NovelAI 账号");
+        return data as { account?: { connected?: boolean } | null };
+      }),
+    ]);
+    if (signal.aborted) return;
+    if (modelsResult.status === "fulfilled") {
+      const available = (modelsResult.value.items || [])
+        .filter((item) => typeof item.id === "string" && (item.kind === "图像模型" || isKnownImageModel(item.id)))
+        .map((item) => ({
+          value: item.id,
+          label: models.find((known) => known.value === item.id)?.label || item.id,
+        }));
+      setNewApiModels(available);
+      setNewApiModelsLoaded(true);
+    }
+    if (providersResult.status === "fulfilled")
+      setCustomProviders(Array.isArray(providersResult.value.items) ? providersResult.value.items : []);
+    if (novelAiResult.status === "fulfilled")
+      setNovelAiConnected(Boolean(novelAiResult.value.account?.connected));
+  }, []);
+
   useEffect(() => {
     if (!signedIn) return;
     const controller = new AbortController();
-    async function loadSources() {
-      const [modelsResult, providersResult, novelAiResult] = await Promise.allSettled([
-        fetch("/api/models", { cache: "no-store", signal: controller.signal }).then(async (response) => {
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.message || "无法读取 NewAPI 模型");
-          return data as { items?: AvailableModel[] };
-        }),
-        fetch("/api/providers", { cache: "no-store", signal: controller.signal }).then(async (response) => {
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.message || "无法读取自定义 API");
-          return data as { items?: ProviderSummary[] };
-        }),
-        fetch("/api/providers/novelai", { cache: "no-store", signal: controller.signal }).then(async (response) => {
-          const data = await response.json();
-          if (!response.ok) throw new Error(data.message || "无法读取 NovelAI 账号");
-          return data as { account?: { connected?: boolean } | null };
-        }),
-      ]);
-      if (controller.signal.aborted) return;
-      if (modelsResult.status === "fulfilled") {
-        const available = (modelsResult.value.items || [])
-          .filter((item) => typeof item.id === "string" && (item.kind === "图像模型" || isKnownImageModel(item.id)))
-          .map((item) => ({
-            value: item.id,
-            label: models.find((known) => known.value === item.id)?.label || item.id,
-          }));
-        setNewApiModels(available);
-        setNewApiModelsLoaded(true);
-      }
-      if (providersResult.status === "fulfilled")
-        setCustomProviders(Array.isArray(providersResult.value.items) ? providersResult.value.items : []);
-      if (novelAiResult.status === "fulfilled")
-        setNovelAiConnected(Boolean(novelAiResult.value.account?.connected));
-    }
-    void loadSources();
-    return () => controller.abort();
-  }, [signedIn]);
+    void Promise.resolve().then(() => refreshSources(controller.signal));
+    const onFocus = () => { if (!controller.signal.aborted) void refreshSources(controller.signal); };
+    window.addEventListener("focus", onFocus);
+    const timer = window.setInterval(onFocus, 60_000);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(timer);
+    };
+  }, [refreshSources, signedIn]);
 
   useEffect(() => {
     if (!signedIn || !selectedProvider) return;
@@ -2337,18 +2375,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const promptToolbar = (target: "prompt" | "negative") => (
     <>
       {!naturalImageModel && target === "prompt" && generationModes.has(operation) && (
-        <button
+        <Tooltip label="随机提示词"><button
           type="button"
           onClick={() => void rollRandomPrompt()}
           disabled={randomPromptLoading}
           aria-label="随机提示词"
-          data-label="随机提示词"
           className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-50"
         >
           <Dices size={13} className={randomPromptLoading ? "animate-spin" : ""} />
-        </button>
+        </button></Tooltip>
       )}
-      <button
+      <Tooltip label={target === "prompt" ? "清空提示词" : "清空排除内容"}><button
         type="button"
         onClick={() => {
           if (target === "prompt") {
@@ -2360,39 +2397,36 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         }}
         disabled={target === "prompt" ? !prompt.trim() : !negative.trim()}
         aria-label={target === "prompt" ? "清空提示词" : "清空排除内容"}
-        data-label={target === "prompt" ? "清空提示词" : "清空排除内容"}
         className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)] disabled:opacity-40"
       >
         <Eraser size={13} />
-      </button>
+      </button></Tooltip>
       {!naturalImageModel && target === "prompt" && (
         <span
           className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white text-[10px] font-semibold"
           role="group"
           aria-label="输入模式"
         >
-          <button
+          <Tooltip label="文本模式"><button
             type="button"
             aria-pressed={!promptTagMode}
-            data-label="文本模式"
             onClick={() => setPromptTagMode(false)}
             className={`flex h-full items-center gap-1 rounded-full px-2 ${
               !promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
             }`}
           >
             <Type size={10} />文本
-          </button>
-          <button
+          </button></Tooltip>
+          <Tooltip label="Tag 模式"><button
             type="button"
             aria-pressed={promptTagMode}
-            data-label="Tag 模式"
             onClick={() => setPromptTagMode(true)}
             className={`flex h-full items-center gap-1 rounded-full px-2 ${
               promptTagMode ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"
             }`}
           >
             <Tags size={10} />Tag
-          </button>
+          </button></Tooltip>
         </span>
       )}
     </>
@@ -2814,7 +2848,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             ariaLabel="模型"
             searchable
             searchPlaceholder="搜索模型"
-            emptyText="暂无可用图像模型，请在设置中导入"
+            emptyText={authenticated ? "该接口暂无可用模型" : "暂无可用模型，登录后从上游读取"}
           />
         </Control>
         {(providerId === "novelai" || model.startsWith("nai-")) && (
@@ -2836,10 +2870,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </Control>
         )}
       </div>
-      {providerId === "newapi" && <Control label="图像接口协议">
-        <PopupSelect value={newApiImageProtocol} onChange={(value) => setNewApiImageProtocol(value as ImageProviderProtocol)} ariaLabel="NewAPI 图像接口协议" options={[
-          { value: "auto", label: "自动（NAI / Images）" }, { value: "openai-images", label: "OpenAI Images" }, { value: "gemini", label: "Gemini 原生" }, { value: "openai-chat-images", label: "聊天生图兼容" },
-        ]} />
+      {providerId === "newapi" && <Control label="图像接口">
+        <PopupSelect
+          value={productMode}
+          onChange={(value) => {
+            const nextMode = value as ImageProductMode;
+            setProductMode(nextMode);
+            if (providerId === "newapi") setNewApiImageProtocol(productModeProtocol(nextMode));
+            // 切换接口时只允许选择该接口在上游可用的模型；没有可用模型时置空等待用户选择。
+            const nextModel = allModelOptions.find((item) => modelMatchesProductMode(item.value, nextMode))?.value;
+            setModel(nextModel ?? "");
+          }}
+          ariaLabel="图像接口"
+          options={[
+            { value: "nai", label: "NAI 原生", description: "标签、采样参数与 NAI 原生接口" },
+            { value: "gpt", label: "GPT Images", description: "自然语言与 OpenAI Images" },
+            { value: "nano-banana", label: "Nano Banana", description: "自然语言与 Gemini 原生接口" },
+          ]}
+        />
       </Control>}
     </div>
   );
@@ -3058,7 +3106,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </Control>
           )}
         </div>
-        {!sidebarPromptLayout && generationParameters}
+        {!sidebarPromptLayout && (naturalImageModel
+          ? <Control label={model ? "输出设置" : `${productMode === "nano-banana" ? "Nano Banana" : "GPT Images"} 输出设置`}>{naturalSettings}</Control>
+          : generationParameters)}
         {naiLayout && <div className="nai-inline-generation-parameters">{generationParameters}</div>}
         {(nlwLayout || customWorkspace) && <div data-layout-module="sampling" style={customModuleStyle("sampling")} className="nlw-inline-generation-parameters">
           {layoutModuleTools("sampling")}
@@ -3068,12 +3118,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         </div>}
         <div data-layout-module="operations" style={customModuleStyle("operations")} className="space-y-5">
           {layoutModuleTools("operations")}
-          <Control label="图片反推">
+          {nlwLayout && <Control label="图片反推">
             <UploadField label="导入反推图片" value={agentImage ? { data: agentImage, name: "反推图片" } : null} onChange={value => setAgentImage(value?.data || null)} />
             {agentImage && <button type="button" className="text-xs text-[var(--muted)]" onClick={() => setAgentImage("")}>移除反推图片</button>}
             <ReplicaReverseTagger source={agentImage ? { data: agentImage, name: "反推图片" } : source} prompt={prompt} model={model} imageProtocol={imageProtocol} onPromptChange={setPrompt} reverseBusy={assistantLoading}
               onReverse={async (options) => { openAssistantPanel(); const ok = await askTagAssistant(naturalImageModel ? "请分析图片并给出适用于当前图像模型的完整场景描述。" : "请分析图片并给出英文生成标签。", { ...options, image: agentImage || source?.data }); if (!ok && !options?.signal?.aborted) throw new Error("视觉反推未完成，请查看助手提示。"); }} />
-          </Control>
+          </Control>}
           {!customWorkspace && generationModes.has(operation) && (
             <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
@@ -3337,6 +3387,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   async function runOperation(approvedConfirmation?: string) {
     if (generationInFlight.current) return;
+    if (!model) {
+      setNotice("请先选择当前接口可用的图像模型。");
+      return;
+    }
     if (!signedIn) {
       setNotice(
         authenticated
@@ -3901,7 +3955,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               )}
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              {naturalImageModel ? `助手按 ${model} 的能力整理场景描述、参考图修改和排除要求。` : "模型会检索 Danbooru 与相关概念，并整理、校验生成标签。"}
+              {naturalImageModel ? `助手按 ${model || "当前图像模型"} 的能力整理场景描述、参考图修改和排除要求。` : "模型会检索 Danbooru 与相关概念，并整理、校验生成标签。"}
               {signedIn && " 多轮对话共享上下文，已校验标签会持续保留。"}
             </p>
             {signedIn && assistantModels.length > 0 && (
@@ -4349,7 +4403,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       <div className="nai-generation-action">
         <button
           onClick={() => void runOperation()}
-          disabled={generating || layoutEditorOpen}
+          disabled={generating || layoutEditorOpen || !model}
           title={
             providerId !== "newapi"
               ? "使用个人 API Key；费用以提供方账单为准"
@@ -4437,7 +4491,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
       setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
-    generating={generating} disabled={layoutEditorOpen} progress={streamProgress || batchProgress}
+    generating={generating} disabled={layoutEditorOpen || !model} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
     count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={() => void runOperation()}
@@ -4624,9 +4678,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   ? [...CREATIVE_CENTER_LINKS, { href: "/admin", label: "管理", icon: <ShieldCheck size={16} /> }]
                   : CREATIVE_CENTER_LINKS
                 ).map((link) => (
-                  <Link key={link.href} href={link.href} className="tools-icon-rail-item" aria-label={link.label} data-label={link.label}>
-                    {link.icon}
-                  </Link>
+                  <Tooltip key={link.href} label={link.label}>
+                    <Link href={link.href} className="tools-icon-rail-item" aria-label={link.label} data-label={link.label}>
+                      {link.icon}
+                    </Link>
+                  </Tooltip>
                 ))}
               </nav>
             )}
@@ -4917,7 +4973,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               )}
               <button
                 onClick={() => void runOperation()}
-                disabled={generating}
+                disabled={generating || !model}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
               >
                 <Sparkles size={18} />
@@ -4959,15 +5015,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           /> : toolsPanel}
         </aside>
       </div>
-      {inlineChatMenu && (
+      {typeof document !== "undefined" && inlineChatMenu && createPortal(
         <InlineChatMenu
           position={inlineChatMenu.position}
           targetLabel={inlineChatMenu.target.label}
           onPick={pickInlineChatMenuItem}
           onClose={() => setInlineChatMenu(null)}
-        />
+        />,
+        document.body,
       )}
-      {inlineChat && (
+      {typeof document !== "undefined" && inlineChat && createPortal(
         <InlineChatZone
           session={inlineChat}
           model={assistantModel}
@@ -4976,7 +5033,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           operation={operation}
           onKeep={keepInlineChatResult}
           onClose={() => setInlineChat(null)}
-        />
+        />,
+        document.body,
       )}
       {lightboxIndex !== null && displayedImages[lightboxIndex] && (
         <Lightbox

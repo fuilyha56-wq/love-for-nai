@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { listAdminModules } from "@/lib/admin-modules";
-import { affTotals, CHECK_IN_REWARD } from "@/lib/aff";
+import { affTotals } from "@/lib/aff";
+import { runtimeRewards } from "@/lib/runtime-config";
 import { countAnnouncementComments } from "@/lib/announcement-comments";
 import { countAnnouncements } from "@/lib/announcements";
 import { countGallery } from "@/lib/gallery";
 import { countLocalUsers } from "@/lib/local-users";
 import { getResolvedPlatformCapabilities, resolvedAuthProviderId } from "@/lib/platform";
-import { countReferrals, referralReward } from "@/lib/referral";
+import { countReferrals } from "@/lib/referral";
 
 export async function GET() {
   const gate = await requireAdmin();
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
   const capabilities = await getResolvedPlatformCapabilities();
-  const [announcements, comments, gallery, referrals, credits, localUsers] =
+  const [announcements, comments, gallery, referrals, credits, localUsers, rewards] =
     await Promise.all([
       countAnnouncements(),
       countAnnouncementComments(),
@@ -21,6 +22,7 @@ export async function GET() {
       countReferrals(),
       affTotals(),
       (await resolvedAuthProviderId()) === "local" ? countLocalUsers() : Promise.resolve(null),
+      runtimeRewards(),
     ]);
   return NextResponse.json({
     capabilities,
@@ -42,8 +44,10 @@ export async function GET() {
     credits: {
       personal: credits.personalCredits,
       packages: credits.packageCredits,
-      checkInReward: CHECK_IN_REWARD,
-      referralReward: referralReward(),
+      checkInReward: rewards.checkInReward,
+      referralReward: rewards.referralReward,
+      referralEnabled: rewards.referralEnabled,
+      checkInEnabled: rewards.checkInEnabled,
     },
   });
 }

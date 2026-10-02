@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowLeftToLine, BookOpen, Bot, Brush, ChevronDown, Copy, FileUp, Folder, ImagePlus, LockKeyhole, Menu, Pencil, Plus, ScanSearch, Sparkles, UnlockKeyhole, UserRound, Users, WandSparkles, X } from "lucide-react";
+import { PopupSelect } from "@/app/ui/popup-select";
 import { ReplicaImageSize } from "./replica-generation-settings";
 import { ReplicaPromptEditor } from "./replica-prompt-editor";
 import { listTaggerModels, readTaggerPreferences, runBrowserTagger, subscribeTaggerChanges, writeTaggerPreferences, type TaggerModelInfo, type TaggerPreferences } from "@/lib/browser-tagger";
@@ -134,7 +135,9 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
   const working = busy || p.reverseBusy;
   const visiblePredictions = predictionSource === p.source?.data ? predictions : [];
   const chosenModel = models.find(model => model.id === preferences.modelId);
+  const modelOptions = models.map(model => ({ value: model.id, label: model.name, description: `${model.modelName} · ${model.tagCount.toLocaleString()} 标签` }));
   function update(value: Partial<TaggerPreferences>) { try { setPreferences(writeTaggerPreferences(value)); setError(""); } catch { setError("无法保存反推设置，请检查浏览器的存储权限。"); } }
+  function selectModel(modelId: string) { update({ modelId }); }
   function applyTags(tags: readonly string[]) {
     if (!tags.length) return;
     const style = resolveImageModelCapabilities(p.model, p.imageProtocol).promptStyle;
@@ -158,12 +161,26 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
     } catch (reason) { if (reason instanceof Error && reason.name === "AbortError") setStatus("反推已取消。"); else { setStatus(""); setError(reason instanceof Error ? reason.message : "图片反推失败。"); } }
     finally { if (controller.current === abort) controller.current = null; setBusy(false); }
   }
+  useEffect(() => {
+    if (!models.length || models.some(model => model.id === preferences.modelId)) return;
+    void Promise.resolve().then(() => {
+      try {
+        setPreferences(writeTaggerPreferences({ modelId: models[0].id }));
+        setError("");
+      } catch {
+        setError("无法保存默认模型，请检查浏览器存储权限。");
+      }
+    });
+  }, [models, preferences.modelId]);
+  const onnxUnavailable = preferences.onnx && !models.length;
+  const onnxNeedsModel = preferences.onnx && !!models.length && !chosenModel;
   return <div className="replica-local-tagger">
     <div className="replica-reverse-methods"><label><input type="checkbox" checked={preferences.onnx} disabled={working} onChange={event => update({ onnx: event.target.checked })} />ONNX tagger</label><label><input type="checkbox" checked={preferences.llm} disabled={working} onChange={event => update({ llm: event.target.checked })} />LLM 反推</label></div>
-    <label className="replica-tagger-model">本地 tagger 模型<select value={preferences.modelId} disabled={working || !models.length} aria-label="本地 tagger 模型" onChange={event => update({ modelId: event.target.value })}><option value="">选择本地标签模型</option>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</select></label>
-    {!models.length && <Link className="replica-tagger-settings-link" href="/settings#local-tagger">在设置中导入 ONNX 模型和标签 CSV</Link>}
-    <label className="replica-slider-label">通用标签阈值 <output>{preferences.generalThreshold.toFixed(2)}</output><input type="range" disabled={working || !preferences.onnx} aria-label="通用标签阈值" min={0} max={1} step={0.01} value={preferences.generalThreshold} onChange={event => update({ generalThreshold: Number(event.target.value) })} /></label>
-    <label className="replica-slider-label">角色标签阈值 <output>{preferences.characterThreshold.toFixed(2)}</output><input type="range" disabled={working || !preferences.onnx} aria-label="角色标签阈值" min={0} max={1} step={0.01} value={preferences.characterThreshold} onChange={event => update({ characterThreshold: Number(event.target.value) })} /></label>
+    {models.length ? <label className="replica-tagger-model">本地 tagger 模型<PopupSelect value={preferences.modelId} disabled={working} ariaLabel="本地 tagger 模型" options={modelOptions} onChange={selectModel} searchable searchPlaceholder="搜索本地模型" /></label> : <div className="replica-tagger-empty" role="status"><p>尚未导入本地 ONNX 标签模型。</p><Link className="replica-primary-upload" href="/settings#local-tagger">去设置导入模型</Link></div>}
+    {onnxUnavailable && <p className="replica-tagger-warning" role="alert">已开启 ONNX，但尚未导入模型。请先点击“去设置导入模型”。</p>}
+    {onnxNeedsModel && <p className="replica-tagger-warning" role="alert">当前本地模型已失效，请重新选择可用模型。</p>}
+    <label className="replica-slider-label">通用标签阈值 <output>{preferences.generalThreshold.toFixed(2)}</output><input type="range" disabled={working || !preferences.onnx || onnxUnavailable} aria-label="通用标签阈值" min={0} max={1} step={0.01} value={preferences.generalThreshold} onChange={event => update({ generalThreshold: Number(event.target.value) })} /></label>
+    <label className="replica-slider-label">角色标签阈值 <output>{preferences.characterThreshold.toFixed(2)}</output><input type="range" disabled={working || !preferences.onnx || onnxUnavailable} aria-label="角色标签阈值" min={0} max={1} step={0.01} value={preferences.characterThreshold} onChange={event => update({ characterThreshold: Number(event.target.value) })} /></label>
     <p className="replica-hint">ONNX 在本机识别标签；LLM 根据当前图像模型生成适用的提示词。两项同时启用时，标签作为视觉反推的补充。</p>
     {status && <p className="replica-tagger-status" role="status" aria-live="polite">{status}</p>}{error && <p className="replica-tagger-error" role="alert">{error}</p>}
     {!!visiblePredictions.length && <div className="replica-tagger-result"><div>{visiblePredictions.slice(0, 50).map(item => <span key={`${item.category}-${item.name}`} title={`${(item.score * 100).toFixed(1)}%`}>{item.name}</span>)}</div>{preferences.llm && <button type="button" disabled={working} onClick={() => applyTags(visiblePredictions.map(item => item.name))}>将本地标签加入提示词</button>}</div>}
@@ -199,7 +216,6 @@ export function ReplicaControls(p: Props) {
       {p.variant === "nai" ? <>
         <ReplicaNaiReference model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} source={p.source} onRemoveSource={p.onRemoveSource} onSelectOperation={p.onSelectOperation} onUpload={p.onUpload} onOpenEditor={p.onOpenEditor} strength={p.strength} setStrength={p.setStrength} />
         <ReplicaImageSize variant="nai" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />
-        {reverseSection}
       </> : <>
         {reverseSection}
         {capabilities.edit && <Section title="图生图" icon={<ImagePlus size={20} />}>
