@@ -160,7 +160,9 @@ describe("工作台布局按主题隔离", () => {
     expect(scroll).toContain('aria-label="展开角色" aria-expanded="false"');
     expect(scroll.match(/class="replica-section"/g)).toHaveLength(4);
     expect(scroll.match(/class="replica-section-heading"[\s\S]*?<button[^>]*aria-expanded="false"/g)).toHaveLength(4);
-    for (const title of ["反推", "图生图", "风格迁移", "精准参考"]) expect(scroll).toContain(title);
+    expect(scroll).toContain("反推");
+    expect(scroll).toContain('class="replica-local-tagger"');
+    for (const title of ["图生图", "风格迁移", "精准参考"]) expect(scroll).toContain(title);
     expect(scroll.match(/class="replica-section-motion" aria-hidden="true" inert=""/g)).toHaveLength(4);
     expect(scroll).toContain('class="replica-character-motion" aria-hidden="true" inert=""');
     expect(scroll).not.toContain("多角色");
@@ -215,6 +217,8 @@ describe("工作台布局按主题隔离", () => {
     expect(scroll).toContain('class="replica-model-controls"');
     expect(scroll).toContain('aria-label="模型"');
     expect(scroll).toContain('aria-label="提示词编辑器"');
+    expect(scroll).not.toContain("反推");
+    expect(scroll).not.toContain('class="replica-local-tagger"');
     expect(scroll).toContain('class="replica-nai-prompt-card positive"');
     expect(scroll.match(/class="replica-nai-prompt-card /g)).toHaveLength(1);
     expect(scroll.match(/<textarea\b/g)).toHaveLength(1);

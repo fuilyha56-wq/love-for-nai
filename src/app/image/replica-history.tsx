@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { Copy, Ellipsis, History, Trash2, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import "./replica-history.css";
@@ -50,18 +51,47 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
   const width = natural?.image === item.image ? natural.width : (Number.isFinite(item.width) && item.width > 0 ? item.width : 1);
   const height = natural?.image === item.image ? natural.height : (Number.isFinite(item.height) && item.height > 0 ? item.height : 1);
 
   useEffect(() => {
     if (!menuOpen) return;
+    const place = () => {
+      const button = menuButtonRef.current;
+      const menu = menuRef.current;
+      if (!button || !menu) return;
+      const buttonBounds = button.getBoundingClientRect();
+      const menuBounds = menu.getBoundingClientRect();
+      const gap = 6;
+      const left = Math.max(8, Math.min(buttonBounds.right - menuBounds.width, window.innerWidth - menuBounds.width - 8));
+      const below = buttonBounds.bottom + gap;
+      const above = buttonBounds.top - menuBounds.height - gap;
+      setMenuPosition({ top: above >= 8 ? above : Math.min(below, window.innerHeight - menuBounds.height - 8), left });
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
     menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
     const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && !cardRef.current?.contains(event.target)) setMenuOpen(false);
+      if (!(event.target instanceof Node)) return;
+      if (!cardRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setMenuOpen(false);
     };
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [menuOpen]);
+
+  function focusMenuButton(): void {
+    menuButtonRef.current?.focus({ preventScroll: true });
+  }
 
   function menuKeyboard(event: KeyboardEvent<HTMLDivElement>): void {
     const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button"));
@@ -107,16 +137,37 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
         <button type="button" aria-label={`删除第 ${index + 1} 张历史图像`} title="删除" onClick={() => { setMenuOpen(false); onDelete(index); }}><Trash2 size={16} /></button>
         <button ref={menuButtonRef} type="button" aria-label={`第 ${index + 1} 张历史图像更多操作`} title="更多操作" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen((open) => !open)}><Ellipsis size={16} /></button>
       </div>
-      {menuOpen && <div className="replica-history-menu" ref={menuRef} id={menuId} role="menu" aria-label="历史图像更多操作" onKeyDown={menuKeyboard}>
-        {[
-          ["reuse-parameters", "复用参数"],
-          ["img2img", "用于图生图"],
-          ["inpainting", "用于局部重绘"],
-          ["director-lineart", "用于导演工具"],
-          ["vibe-transfer", "用于风格迁移"],
-          ["upscale", "用于超分"],
-        ].map(([operation, label]) => <button type="button" role="menuitem" key={operation} onClick={() => { setMenuOpen(false); onUse(item, operation); }}>{label}</button>)}
-      </div>}
+      {menuOpen && (() => {
+        const menu = (
+          <div
+            className="replica-history-menu"
+            ref={menuRef}
+            id={menuId}
+            role="menu"
+            aria-label="历史图像更多操作"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setMenuOpen(false);
+                focusMenuButton();
+                return;
+              }
+              menuKeyboard(event);
+            }}
+            style={menuPosition ? { top: menuPosition.top, left: menuPosition.left } : { visibility: "hidden" }}
+          >
+            {[
+              ["reuse-parameters", "复用参数"],
+              ["img2img", "用于图生图"],
+              ["inpainting", "用于局部重绘"],
+              ["director-lineart", "用于导演工具"],
+              ["vibe-transfer", "用于风格迁移"],
+              ["upscale", "用于超分"],
+            ].map(([operation, label]) => <button type="button" role="menuitem" key={operation} onClick={() => { setMenuOpen(false); onUse(item, operation); }}>{label}</button>)}
+          </div>
+        );
+        return typeof document === "undefined" ? menu : createPortal(menu, document.body);
+      })()}
     </article>
   );
 }

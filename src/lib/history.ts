@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ImageProviderProtocol } from "./image-model-capabilities";
@@ -6,6 +6,7 @@ import {
   deleteRemoteHistoryImage,
   putRemoteHistoryImage,
 } from "@/lib/remote-history";
+import { embedWatermark } from "@/lib/image-watermark";
 
 export type GenerationParameters = {
   operation: string;
@@ -35,8 +36,12 @@ export type HistoryItem = {
   saved: boolean;
   parameters: GenerationParameters;
   usage: unknown;
-  // 图片实体存放在远程二级存储（本地已无文件），读取时走远程接口。
   remote?: boolean;
+  fingerprint?: string;
+  requestId?: string;
+  requestFingerprint?: string;
+  imageSha256?: string;
+  watermarkStatus?: "embedded" | "disabled" | "skipped" | "failed";
 };
 
 const historyRoot = () =>
@@ -92,6 +97,10 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
     "characters",
     "characterPrompts",
     "source",
+    "_lfnRequestId",
+    "_lfnRequestFingerprint",
+    "_lfnSkipWatermark",
+    "_lfnWatermarkStatus",
   ]);
   return Object.fromEntries(
     Object.keys(body)
@@ -100,18 +109,35 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
   ) as GenerationParameters;
 }
 
-// 历史分层保留：最新 LOCAL_HISTORY_LIMIT 张留在主服务器磁盘；
-// 更旧的最多 REMOTE_HISTORY_LIMIT 张转存远程二级存储；超过两层总量
-// 的最旧条目连同远程文件一起删除。
+function generateFingerprint(userId: number, timestamp: string, parameters: GenerationParameters): string {
+  const payload = JSON.stringify({ userId, timestamp, parameters });
+  return createHash("sha256").update(payload).digest("hex").slice(0, 16);
+}
+
 const LOCAL_HISTORY_LIMIT = 40;
 const REMOTE_HISTORY_LIMIT = 60;
+
+export type SaveHistoryOptions = {
+  requestId?: string;
+  requestFingerprint?: string;
+  skipWatermark?: boolean;
+  watermarkStatus?: HistoryItem["watermarkStatus"];
+};
 
 export async function saveHistory(
   userId: number,
   body: Record<string, unknown>,
   images: string[],
   usage: unknown,
+  options: SaveHistoryOptions = {},
 ) {
+  const effectiveOptions: SaveHistoryOptions = {
+    ...options,
+    requestId: options.requestId || (typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined),
+    requestFingerprint: options.requestFingerprint || (typeof body._lfnRequestFingerprint === "string" ? body._lfnRequestFingerprint : undefined),
+    skipWatermark: options.skipWatermark ?? body._lfnSkipWatermark === true,
+    watermarkStatus: options.watermarkStatus || (typeof body._lfnWatermarkStatus === "string" ? body._lfnWatermarkStatus as HistoryItem["watermarkStatus"] : undefined),
+  };
   return withUserLock(userId, async () => {
     await mkdir(userDirectory(userId), { recursive: true });
     const created: HistoryItem[] = [];
@@ -123,15 +149,42 @@ export async function saveHistory(
       const extension = match[1] === "jpeg" ? "jpg" : match[1];
       const id = randomUUID();
       const fileName = `${id}.${extension}`;
-      const buffer = Buffer.from(match[2], "base64");
-      await writeFile(path.join(userDirectory(userId), fileName), buffer);
+      const timestamp = new Date().toISOString();
+      const parameters = safeParameters(body);
+      const fingerprint = effectiveOptions.requestFingerprint || generateFingerprint(userId, timestamp, parameters);
+      let watermarkStatus: HistoryItem["watermarkStatus"] = effectiveOptions.watermarkStatus || "skipped";
+      let processedImage = image;
+      if (match[1] === "png" && !effectiveOptions.skipWatermark) {
+        try {
+          processedImage = await embedWatermark(image, id, userId, parameters.model || "unknown", {
+            imageId: id,
+            requestId: effectiveOptions.requestId || id,
+            requestFingerprint: effectiveOptions.requestFingerprint || fingerprint,
+            parameters,
+          });
+          watermarkStatus = processedImage === image ? "disabled" : "embedded";
+        } catch {
+          watermarkStatus = "failed";
+        }
+      }
+
+      const imageMatch = processedImage.match(/^data:image\/[^;]+;base64,([\s\S]+)$/);
+      if (imageMatch) {
+        const buffer = Buffer.from(imageMatch[1], "base64");
+        await writeFile(path.join(userDirectory(userId), fileName), buffer);
+      }
+
       created.push({
         id,
-        createdAt: new Date().toISOString(),
+        createdAt: timestamp,
         imagePath: fileName,
         saved: false,
-        parameters: safeParameters(body),
+        parameters,
         usage,
+        fingerprint,
+        requestId: effectiveOptions.requestId,
+        requestFingerprint: effectiveOptions.requestFingerprint || fingerprint,
+        watermarkStatus,
       });
     }
     const merged = [...created, ...(await readIndex(userId))];
@@ -195,6 +248,10 @@ export async function listHistory(userId: number) {
 
 export async function findHistory(userId: number, id: string) {
   return (await readIndex(userId)).find((item) => item.id === id) || null;
+}
+
+export async function findHistoryByRequestId(userId: number, requestId: string) {
+  return (await readIndex(userId)).find((item) => item.requestId === requestId) || null;
 }
 
 export async function deleteHistory(userId: number, id: string) {

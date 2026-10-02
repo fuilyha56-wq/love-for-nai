@@ -79,6 +79,7 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  const [inviteLandingPath, setInviteLandingPath] = useState("");
   const [galleryBackground, setGalleryBackground] =
     useState<GalleryBackground | null>(null);
   const [backgroundVisible, setBackgroundVisible] = useState(true);
@@ -120,11 +121,20 @@ export default function SignInPage() {
   }, [localBackgroundActive]);
 
   useEffect(() => {
-    const code =
-      new URLSearchParams(window.location.search).get("invite") || "";
+    const params = new URLSearchParams(window.location.search);
+    const code = (params.get("invite") || "").slice(0, 32);
     if (!code) return;
+    // Keep only the invite and small, non-sensitive attribution values. Never
+    // send arbitrary query strings (which may contain tokens) to the server.
+    const safe = new URLSearchParams({ invite: code });
+    for (const key of ["source", "utm_source", "utm_medium", "utm_campaign"]) {
+      const value = params.get(key)?.trim() || "";
+      if (/^[a-zA-Z0-9._~-]{1,64}$/.test(value)) safe.set(key, value);
+    }
+    const landingPath = `/sign-in?${safe.toString()}`.slice(0, 512);
     const timer = window.setTimeout(() => {
-      setInviteCode(code.slice(0, 32));
+      setInviteLandingPath(landingPath);
+      setInviteCode(code);
       setMode("register");
     }, 0);
     return () => window.clearTimeout(timer);
@@ -225,6 +235,7 @@ export default function SignInPage() {
           email,
           verificationCode: emailCode,
           inviteCode,
+          inviteLandingPath,
         }),
       });
       const result = await readAuthResult(response);

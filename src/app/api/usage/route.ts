@@ -9,11 +9,33 @@ type UpstreamPage = { items: LogEntry[]; total: number };
 const PAGE_SIZE = 20;
 // 每个模型预取的条数：归并排序后可保证前 10 页精确。
 const PER_MODEL_LIMIT = 200;
+// 日期范围限制：默认最近 7 天，最多可查 90 天，避免全表扫描拖垮 NewAPI。
+const DEFAULT_RANGE_SECONDS = 7 * 24 * 3600;
+const MAX_RANGE_SECONDS = 90 * 24 * 3600;
+
+/** 解析并钳位 start/end（unix 秒）：end 默认现在，start 默认 end-7 天，跨度最多 90 天。 */
+function resolveRange(request: NextRequest): { start: number; end: number } {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const requestedEnd = Number(request.nextUrl.searchParams.get("end"));
+  const requestedStart = Number(request.nextUrl.searchParams.get("start"));
+  const end =
+    Number.isFinite(requestedEnd) && requestedEnd > 0
+      ? Math.min(requestedEnd, nowSeconds + 60)
+      : nowSeconds;
+  let start =
+    Number.isFinite(requestedStart) && requestedStart > 0
+      ? requestedStart
+      : end - DEFAULT_RANGE_SECONDS;
+  if (end - start > MAX_RANGE_SECONDS) start = end - MAX_RANGE_SECONDS;
+  if (start > end) start = end;
+  return { start, end };
+}
 
 async function fetchModelPage(
   model: string,
   page: number,
   headers: Record<string, string>,
+  range: { start: number; end: number },
 ): Promise<UpstreamPage> {
   const params = new URLSearchParams({
     p: String(page),
@@ -22,6 +44,8 @@ async function fetchModelPage(
     page_size: String(PER_MODEL_LIMIT),
     type: "2",
     model_name: model,
+    start_timestamp: String(range.start),
+    end_timestamp: String(range.end),
   });
   const response = await fetch(
     `${newApiBaseUrl()}/api/log/self?${params}`,
@@ -70,13 +94,14 @@ export async function GET(request: NextRequest) {
     ? Math.min(Math.max(requested, 1), 1000)
     : 1;
   const headers = userHeaders(session);
+  const range = resolveRange(request);
   try {
     let pages: UpstreamPage[];
     let total: number;
     const models = await fetchNaiModelNames(headers);
     if (models?.length) {
       const settled = await Promise.allSettled(
-        models.map((model) => fetchModelPage(model, 1, headers)),
+        models.map((model) => fetchModelPage(model, 1, headers, range)),
       );
       const fulfilled = settled.flatMap((item) =>
         item.status === "fulfilled" ? [item.value] : [],
@@ -101,6 +126,8 @@ export async function GET(request: NextRequest) {
         page_size: String(PAGE_SIZE),
         type: "2",
         model_name: "nai-%",
+        start_timestamp: String(range.start),
+        end_timestamp: String(range.end),
       });
       const response = await fetch(
         `${newApiBaseUrl()}/api/log/self?${params}`,
@@ -133,6 +160,7 @@ export async function GET(request: NextRequest) {
       items: await attachGenerationParams(session.userId, visible),
       total,
       page,
+      range,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "无法读取使用记录";

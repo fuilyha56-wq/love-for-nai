@@ -53,8 +53,10 @@ html[data-theme="nai"] .replica-nai-mark { filter:invert(1); }
 .replica-hint { color:var(--replica-muted); line-height:1.55; font-size:14px; }
 .replica-reference-type { display:flex; flex-direction:column; gap:7px; }.replica-reference-type select,.replica-tagger-model select { width:100%; padding:10px; background:transparent; border:1px solid var(--line); border-radius:8px; }
 .replica-reverse-methods { display:flex; flex-wrap:wrap; gap:10px; }.replica-reverse-methods label { display:flex; align-items:center; gap:7px; background:color-mix(in srgb, var(--rose) 10%, var(--surface)); border-radius:6px; padding:7px 9px; }.replica-reverse-methods input { accent-color:var(--rose); }
-.replica-tagger-model { display:flex; flex-direction:column; gap:5px; }
+.replica-tagger-model { display:flex; flex-direction:column; gap:5px; }.replica-tagger-model .popup-select { width:100%; }.replica-tagger-model .popup-select-trigger { width:100%; min-height:40px; border-color:var(--line); background:var(--replica-input); color:var(--replica-ink); text-align:left; }
 .replica-local-tagger { display:grid; gap:12px; }
+.replica-tagger-empty { display:grid; gap:8px; padding:10px; border:1px dashed var(--replica-line); border-radius:8px; background:color-mix(in srgb,var(--rose) 5%,var(--surface)); }.replica-tagger-empty p { font-size:13px; line-height:1.5; }.replica-tagger-empty .replica-primary-upload { width:fit-content; min-height:36px; font-size:13px; }
+.replica-tagger-warning { padding:9px 10px; border-left:3px solid var(--rose); background:color-mix(in srgb,var(--rose) 8%,var(--surface)); color:var(--replica-ink); font-size:12px; line-height:1.55; }
 .replica-tagger-settings-link { color:var(--rose); font-size:12px; text-decoration:underline; text-underline-offset:3px; }
 .replica-tagger-status,.replica-tagger-error { font-size:12px; line-height:1.6; overflow-wrap:anywhere; }
 .replica-tagger-error { color:var(--danger, #b42318); }

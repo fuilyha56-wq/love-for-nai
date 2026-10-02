@@ -1,3 +1,6 @@
+import { mkdtemp } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sessionMocks = vi.hoisted(() => ({
@@ -8,6 +11,7 @@ const sessionMocks = vi.hoisted(() => ({
 vi.mock("@/lib/newapi", () => ({ newApiBaseUrl: sessionMocks.newApiBaseUrl }));
 
 let currentFetch: ReturnType<typeof vi.fn>;
+const originalDataDir = process.env.LFN_DATA_DIR;
 
 beforeEach(() => {
   vi.resetModules();
@@ -44,7 +48,11 @@ beforeEach(() => {
   sessionMocks.adminToken.mockReturnValue("server-admin-token");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const { resetRuntimeConfigCache } = await import("@/lib/runtime-config");
+  resetRuntimeConfigCache();
+  if (originalDataDir == null) delete process.env.LFN_DATA_DIR;
+  else process.env.LFN_DATA_DIR = originalDataDir;
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -134,4 +142,24 @@ describe("公开模型与价格目录", () => {
     expect(result.models[0].pricing).toMatchObject({ billingMode: "unknown", liveType: "unknown" });
     expect(result.models[0].pricing.liveUsdPerRequest).toBeUndefined();
   });
+
+  it("每次输出都按当前策略过滤缓存、snapshot和fallback目录", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-catalog-policy-"));
+    const { resetRuntimeConfigCache, updateRuntimeSettings } = await import("@/lib/runtime-config");
+    resetRuntimeConfigCache();
+    const { GET } = await import("@/app/api/public/catalog/route");
+
+    const enabled = await (await GET()).json();
+    expect(enabled.models.map((item: { id: string }) => item.id)).toContain("nai-v5-full");
+
+    await updateRuntimeSettings({ enableV5Models: false });
+    const filteredCached = await (await GET()).json();
+    expect(filteredCached.models.map((item: { id: string }) => item.id)).not.toContain("nai-v5-full");
+
+    currentFetch.mockRejectedValue(new Error("network down"));
+    const { resetPublicCatalogCache } = await import("@/lib/public-catalog");
+    resetPublicCatalogCache({ keepSnapshot: true });
+    const filteredSnapshot = await (await GET()).json();
+    expect(filteredSnapshot.models.map((item: { id: string }) => item.id)).not.toContain("nai-v5-full");
+  }, 65_000);
 });

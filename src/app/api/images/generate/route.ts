@@ -10,6 +10,7 @@ import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { validateModelId } from "@/lib/provider/validation";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
@@ -70,6 +71,7 @@ export async function POST(request: Request) {
   }
   try {
     model = assertImageModel(body.model);
+    if (!(await isNaiModelEnabled(model))) return NextResponse.json({ message: "该 NAI 模型已被管理员停用" }, { status: 403 });
   } catch {
     nativeNaiModel = false;
     try {

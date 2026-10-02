@@ -7,6 +7,7 @@ export type AdminModuleId =
   | "announcements"
   | "gallery"
   | "referrals"
+  | "audits"
   | "platform";
 
 export type AdminModule = {

@@ -1,6 +1,7 @@
 "use client";
 
 import { inpaintModelFor } from "@/lib/inpaint-model";
+import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, isNaiModelEnabledForPolicy, type ModelPolicy } from "@/lib/model-policy";
 import { normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { NaturalImageSettings } from "../natural-image-settings";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
@@ -71,14 +72,15 @@ type DragState =
 const DEFAULT_WIDTH = 832;
 const DEFAULT_HEIGHT = 1216;
 const MASK_COLORS = ["#a83a4c", "#2d7567", "#6c7fff", "#b47c2a", "#f783ac"];
-const INPAINT_MODELS = [
+type InpaintModelOption = readonly [string, string];
+const INPAINT_MODELS: readonly InpaintModelOption[] = [
   ["nai-v5-inpaint", "V5 局部重绘"],
   ["nai-v4.5-inpaint", "V4.5 局部重绘"],
   ["nai-v5-inpaint-limit", "V5 局部重绘 · 受限"],
   ["nai-v4.5-inpaint-limit", "V4.5 局部重绘 · 受限"],
   ["nai-v3-inpaint", "V3 动漫局部重绘"],
   ["nai-v3-furry-inpaint", "V3 兽人局部重绘"],
-] as const;
+];
 const SAMPLERS = [
   ["k_euler_ancestral", "欧拉祖先"],
   ["k_euler", "欧拉"],
@@ -356,12 +358,68 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   const [ready, setReady] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [model, setModel] = useState("nai-v5-inpaint");
+  const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
+  const [availableInpaintModels, setAvailableInpaintModels] = useState<readonly InpaintModelOption[]>(INPAINT_MODELS);
   const [imageQuality, setImageQuality] = useState("auto");
   const [imageResolution, setImageResolution] = useState("1K");
   const [imageBackground, setImageBackground] = useState("auto");
   const imageProtocol = document?.generation?.imageProtocol;
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
   const naturalImageModel = modelCapabilities.promptStyle === "natural";
+  const refreshModelPolicy = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch("/api/public/image-policy", { cache: "no-store", signal });
+      if (!response.ok) return;
+      const result = await response.json() as Partial<ModelPolicy>;
+      if (typeof result.enableV5Models !== "boolean" || typeof result.enableV45Models !== "boolean") return;
+      setModelPolicy({ enableV5Models: result.enableV5Models, enableV45Models: result.enableV45Models });
+    } catch {
+      // Keep the conservative client policy until the next refresh.
+    }
+  }, []);
+
+  const refreshInpaintModels = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch("/api/public/catalog", { cache: "no-store", signal });
+      const result = await response.json() as { models?: Array<{ id?: string; kind?: string }> };
+      if (signal?.aborted) return;
+      const ids = new Set((result.models || [])
+        .filter((item) => item.kind === "image" && typeof item.id === "string")
+        .map((item) => item.id as string));
+      const catalogOptions = INPAINT_MODELS.filter(([id]) => ids.has(id));
+      // A catalog outage must not erase the usable legacy list.
+      if (catalogOptions.length) setAvailableInpaintModels(catalogOptions);
+    } catch {
+      // Keep the static list when the public catalog is unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void Promise.resolve().then(() => refreshModelPolicy(controller.signal));
+    void Promise.resolve().then(() => refreshInpaintModels(controller.signal));
+    const refresh = () => {
+      void refreshModelPolicy();
+      void refreshInpaintModels();
+    };
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+  }, [refreshInpaintModels, refreshModelPolicy]);
+
+  useEffect(() => {
+    const filtered = filterNaiModelOptions(
+      availableInpaintModels.map(([value, label]) => ({ value, label })),
+      modelPolicy,
+    );
+    if (filtered.length) {
+      void Promise.resolve().then(() => setModel((current) => current.startsWith("nai-") && !filtered.some(({ value }) => value === current) ? filtered[0].value : current));
+    }
+  }, [availableInpaintModels, modelPolicy]);
   const outputSize = normalizeEditorOutputSize(model, viewportSize.width, viewportSize.height, imageProtocol);
   const outputStep = naturalImageModel ? modelCapabilities.sizeConstraints?.multipleOf || 16 : 64;
   const outputMaxEdge = naturalImageModel ? modelCapabilities.sizeConstraints?.maxEdge || 4096 : 1600;
@@ -724,6 +782,10 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
 
   const generate = async () => {
     if (!document || !viewport) return;
+    if (!isNaiModelEnabledForPolicy(model, modelPolicy)) {
+      setNotice("当前 NAI 模型已被管理员停用，请刷新后重新选择。");
+      return;
+    }
     if (!authenticated) { setNotice("请先登录后使用编辑器。"); return; }
     if (modelCapabilities.seed && seed.trim() && (!/^[+-]?\d+$/.test(seed.trim()) || !Number.isSafeInteger(Number(seed)))) {
       setNotice("种子必须为空或有效整数。");
@@ -883,7 +945,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   const generationPanel = (
     <>
       <div className="editor-panel-heading"><span><Settings2 size={15} />生成设置</span><small>{outputSize.width} × {outputSize.height}</small></div>
-      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={naturalImageModel ? [{ value: model, label: model }] : INPAINT_MODELS.map(([value, label]) => ({ value, label }))} ariaLabel="重绘模型" /></label>
+      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={naturalImageModel ? [{ value: model, label: model }] : filterNaiModelOptions(availableInpaintModels.map(([value, label]) => ({ value, label })), modelPolicy)} ariaLabel="重绘模型" /></label>
       <div className="editor-size-row"><label><span>宽度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出宽度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.width} setValue={(value) => updateOutputSize({ width: value })} /></label><button type="button" aria-label="交换宽高" onClick={() => updateOutputSize({ width: outputSize.height, height: outputSize.width })}>×</button><label><span>高度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出高度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.height} setValue={(value) => updateOutputSize({ height: value })} /></label></div>
       {naturalImageModel ? <NaturalImageSettings model={model} imageProtocol={imageProtocol} width={outputSize.width} height={outputSize.height} setWidth={(width) => updateOutputSize({ width })} setHeight={(height) => updateOutputSize({ height })}
         setDimensions={updateOutputSize}

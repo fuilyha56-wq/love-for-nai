@@ -2,6 +2,7 @@ import { rememberDiscoveredModels, type CustomProvider } from "./store";
 import { safeProviderFetch } from "./http";
 import { validateModelId } from "./validation";
 import { isKnownImageModel, resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 
 export async function discoverProviderModels(provider: CustomProvider): Promise<string[]> {
   const gemini = resolveProviderImageProtocol(provider.protocol, provider.baseUrl) === "gemini";
@@ -22,15 +23,21 @@ export async function discoverProviderModels(provider: CustomProvider): Promise<
     try {
       const model = validateModelId(typeof id === "string" ? id.replace(/^models\//, "") : id);
       // Imagen uses a different predict API; don't advertise it as a Gemini generateContent model.
-      if (gemini && !/^gemini-.*image/i.test(model)) continue;
+      // Keep the nano-banana alias when a gateway exposes it alongside Gemini IDs.
+      if (gemini && !(/^(?:gemini-.*image|nano[-_ ]?banana)/i.test(model))) continue;
       if (/(?:image|图像|图片|绘图|draw|\/v1\/images)/.test(indicators) || isKnownImageModel(model))
         models.push(model);
     } catch { /* ignore malformed upstream records */ }
   }
-  return [...new Set(models)].sort((a,b) => a.localeCompare(b));
+  const filtered: string[] = [];
+  for (const model of [...new Set(models)]) {
+    if (await isNaiModelEnabled(model)) filtered.push(model);
+  }
+  return filtered.sort((a,b) => a.localeCompare(b));
 }
 
 export async function providerAllowsModel(userId: number, provider: CustomProvider, model: string): Promise<boolean> {
+  if (!(await isNaiModelEnabled(model))) return false;
   if (provider.models.includes(model) || provider.discoveredModels?.includes(model)) return true;
   try {
     const discovered = await discoverProviderModels(provider);

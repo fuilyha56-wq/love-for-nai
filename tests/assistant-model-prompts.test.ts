@@ -75,12 +75,16 @@ describe("model-specific image assistant", () => {
     expect(adaptAssistantSuggestion(input, resolveAssistantImageTarget({})).parameters).toEqual({});
   });
 
-  it("does not inject legacy Danbooru conclusions into natural-language assistant history", () => {
-    const target = resolveAssistantImageTarget({ imageModel: "gemini-2.5-flash-image" });
-    expect(assistantHistoryMatchesTarget({}, target)).toBe(false);
-    expect(assistantHistoryMatchesTarget({ imageModel: "nai-v5-full" }, target)).toBe(false);
-    expect(assistantHistoryMatchesTarget({ imageModel: "gpt-image-1" }, target)).toBe(true);
-    expect(assistantHistoryMatchesTarget({ imageModel: "bad\nmodel" }, target)).toBe(false);
+  it("only injects history from the same canonical image family", () => {
+    const gemini = resolveAssistantImageTarget({ imageModel: "gemini-2.5-flash-image" });
+    expect(assistantHistoryMatchesTarget({}, gemini)).toBe(false);
+    expect(assistantHistoryMatchesTarget({ imageModel: "nai-v5-full" }, gemini)).toBe(false);
+    expect(assistantHistoryMatchesTarget({ imageModel: "gpt-image-1" }, gemini)).toBe(false);
+    expect(assistantHistoryMatchesTarget({ imageModel: "gemini-3-pro-image-preview" }, gemini)).toBe(true);
+    const nano = resolveAssistantImageTarget({ imageModel: "nano-banana-pro" });
+    expect(assistantHistoryMatchesTarget({ imageModel: "gemini-2.5-flash-image" }, nano)).toBe(false);
+    expect(assistantHistoryMatchesTarget({ imageModel: "nano-banana-pro" }, nano)).toBe(true);
+    expect(assistantHistoryMatchesTarget({ imageModel: "bad\nmodel" }, gemini)).toBe(false);
   });
 
   it("adapts inline editing without replacing the requested action", () => {

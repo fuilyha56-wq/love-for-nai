@@ -29,6 +29,7 @@ import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate
 import { handleNaturalImagePromptSuggestion } from "@/lib/provider/prompt-suggestion";
 import { resolveImageModelCapabilities, isImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
@@ -287,6 +288,7 @@ export async function POST(request: Request) {
   let nativeNaiModel = true;
   try {
     model = assertImageModel(body.model);
+    if (!(await isNaiModelEnabled(model))) return NextResponse.json({ message: "该 NAI 模型已被管理员停用" }, { status: 403 });
   } catch {
     nativeNaiModel = false;
     try {

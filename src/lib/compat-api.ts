@@ -21,6 +21,8 @@ import {
   maskKeyForLog,
   type GatewayLogMeta,
 } from "@/lib/gateway-log";
+import { startRequestAudit } from "@/lib/request-audit";
+import { watermarkImages } from "@/lib/image-watermark";
 import {
   resolvedImageUpstream,
   resolvedNaiAccountUpstream,
@@ -38,6 +40,7 @@ import {
   validateImageShape,
   validateReferenceCount,
 } from "@/lib/image-request";
+import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { registry } from "@/lib/adapters/registry";
 import type { ImageGenerationRequest } from "@/lib/adapters/types";
 import {
@@ -200,6 +203,52 @@ function paymentResponse(response: Response, source: "package" | "personal" | "m
   });
 }
 
+async function auditedResponse(
+  response: Response,
+  audit: Awaited<ReturnType<typeof startRequestAudit>>,
+  patch: Parameters<Awaited<ReturnType<typeof startRequestAudit>>["finish"]>[0] = {},
+): Promise<Response> {
+  await audit.finish({ ...patch, status: response.status });
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: audit.responseHeaders(response.headers),
+  });
+}
+
+async function watermarkJsonResponse(
+  response: Response,
+  userId: number,
+  model: string,
+  audit: Awaited<ReturnType<typeof startRequestAudit>>,
+): Promise<Response> {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) return auditedResponse(response, audit);
+  try {
+    const payload = (await response.clone().json()) as JsonRecord;
+    const data = Array.isArray(payload.data) ? payload.data : [];
+    let watermarkStatus: "embedded" | "disabled" | "skipped" | "failed" = "skipped";
+    const marked = await Promise.all(data.map(async (item) => {
+      if (!isRecord(item) || typeof item.b64_json !== "string") return item;
+      const input = `data:image/png;base64,${item.b64_json.replace(/^data:image\/[^;]+;base64,/, "")}`;
+      const result = await watermarkImages([input], userId, model, {
+        requestId: audit.requestId,
+        requestFingerprint: audit.requestFingerprint,
+        parameters: audit.record.parameters,
+      });
+      watermarkStatus = result.status;
+      return { ...item, b64_json: result.images[0].replace(/^data:image\/[^;]+;base64,/, "") };
+    }));
+    const body = JSON.stringify(data.length ? { ...payload, data: marked } : payload);
+    const headers = audit.responseHeaders(response.headers);
+    headers.set("content-type", "application/json");
+    await audit.finish({ status: response.status, watermarkStatus });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+  } catch {
+    return auditedResponse(response, audit, { watermarkStatus: "failed" });
+  }
+}
+
 function imageCountFromJson(value: unknown): number {
   if (!isRecord(value) || !Array.isArray(value.data)) return 0;
   return value.data.filter(
@@ -252,6 +301,8 @@ export async function proxyImageWithCredits(
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
   const identity = authorization;
+  if (!(await isNaiModelEnabled(imageRequest.generation.model)))
+    return Response.json({ error: { message: "该 NAI 模型已被管理员停用", code: "model_disabled" } }, { status: 403 });
   const rate = checkImageRateLimit(request, identity);
   if (!rate.allowed)
     return Response.json(
@@ -275,6 +326,17 @@ export async function proxyImageWithCredits(
     );
   }
   if (apiIdentity instanceof Response) return apiIdentity;
+  const logUser = apiIdentity.username || maskKeyForLog(authorization);
+  const audit = await startRequestAudit({
+    request,
+    source: "api",
+    endpoint: pathname,
+    userId: apiIdentity.userId ?? undefined,
+    username: logUser,
+    operation: imageRequest.generation.operation,
+    model: imageRequest.generation.model,
+    parameters: imageRequest.generation as unknown as Record<string, unknown>,
+  });
 
   // 尝试从适配器获取图像服务
   const imageAdapter = await registry.getImageAdapter();
@@ -283,16 +345,15 @@ export async function proxyImageWithCredits(
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
     )(-1);
-    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), audit);
   }
   const userId = apiIdentity.userId;
-  const logUser = apiIdentity.username || maskKeyForLog(authorization);
   if (userId == null) {
     // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
     )(-1);
-    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), audit);
   }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
@@ -335,16 +396,15 @@ export async function proxyImageWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return paymentResponse(forwardResponse(managedUpstream), "newapi");
+        return auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" });
       }
-      return paymentResponse(
-        await proxyNewApi(
-          request,
-          pathname,
-          imageRequest.body,
-          imageRequest.contentType,
+      return auditedResponse(
+        paymentResponse(
+          await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType),
+          "newapi",
         ),
-        "newapi",
+        audit,
+        { paymentSource: "newapi" },
       );
     }
 
@@ -389,7 +449,7 @@ export async function proxyImageWithCredits(
           data: result.images,
           usage: result.usage,
         });
-        return settleExternalCharge(response, userId, charge);
+        return watermarkJsonResponse(await settleExternalCharge(response, userId, charge), userId, imageRequest.generation.model, audit);
       } catch (error) {
         console.error("Adapter image generation failed, falling back:", error);
         finishAdapterLog(0);
@@ -418,13 +478,13 @@ export async function proxyImageWithCredits(
       });
       finishUpstreamLog(upstream.status);
       settled = true;
-      return settleExternalCharge(upstream, userId, charge);
+      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge), userId, imageRequest.generation.model, audit);
     }
 
     throw new Error("No image service available");
   } catch (error) {
     if (charge && !settled) await refundImageCredits(userId, charge, 0);
-    return Response.json(
+    const response = Response.json(
       {
         error: {
           message: error instanceof Error ? error.message : "LFN 图像请求失败",
@@ -434,6 +494,7 @@ export async function proxyImageWithCredits(
       },
       { status: 502 },
     );
+    return auditedResponse(response, audit, { error: error instanceof Error ? error.message : "LFN 图像请求失败" });
   }
 }
 
@@ -600,6 +661,8 @@ export async function proxyNaiNativeWithCredits(
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
   const identity = authorization;
+  if (!(await isNaiModelEnabled(imageRequest.generation.model)))
+    return Response.json({ error: { message: "该 NAI 模型已被管理员停用", code: "model_disabled" } }, { status: 403 });
   const rate = checkImageRateLimit(request, identity);
   if (!rate.allowed)
     return Response.json(
@@ -617,6 +680,17 @@ export async function proxyNaiNativeWithCredits(
     );
   }
   if (apiIdentity instanceof Response) return apiIdentity;
+  const logUser = apiIdentity.username || maskKeyForLog(authorization);
+  const audit = await startRequestAudit({
+    request,
+    source: "api",
+    endpoint: pathname,
+    userId: apiIdentity.userId ?? undefined,
+    username: logUser,
+    operation: imageRequest.generation.operation,
+    model: imageRequest.generation.model,
+    parameters: imageRequest.generation as unknown as Record<string, unknown>,
+  });
 
   const preferImage = IMAGE_NATIVE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
   const nativeUpstream = preferImage
@@ -631,11 +705,10 @@ export async function proxyNaiNativeWithCredits(
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
-    return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
   }
 
   const userId = apiIdentity.userId;
-  const logUser = apiIdentity.username || maskKeyForLog(authorization);
   // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
   const fallbackEndpoint =
     newApiFallback && newApiFallback !== "unsupported"
@@ -646,7 +719,7 @@ export async function proxyNaiNativeWithCredits(
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
-    return nativeNewApiFallback(request, pathname, imageRequest, newApiFallback);
+    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
   }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
@@ -698,14 +771,12 @@ export async function proxyNaiNativeWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return paymentResponse(
-          forwardResponse(managedUpstream),
-          "newapi",
-        );
+        return auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" });
       }
-      return paymentResponse(
-        await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback),
-        "newapi",
+      return auditedResponse(
+        paymentResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), "newapi"),
+        audit,
+        { paymentSource: "newapi" },
       );
     }
 
@@ -732,9 +803,9 @@ export async function proxyNaiNativeWithCredits(
     settled = true;
     if (!upstream.ok) {
       await refundImageCredits(userId, charge, 0);
-      return paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge));
+      return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
     }
-    return paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge));
+    return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
   } catch (error) {
     if (charge && !settled) await refundImageCredits(userId, charge, 0);
     return Response.json(

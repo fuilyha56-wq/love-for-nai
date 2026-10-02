@@ -4,6 +4,8 @@ import {
   snapshotFromRawPricing,
   type RawModelPricing,
 } from "@/lib/image-pricing";
+import { getRuntimeModelPolicy } from "@/lib/runtime-config";
+import { isNaiModelEnabledForPolicy, type ModelPolicy } from "@/lib/model-policy";
 
 export type PublicModelKind = "image" | "chat";
 
@@ -73,6 +75,11 @@ const FALLBACK_MODEL_IDS = [
 
 let cached: { value: PublicCatalog; expiresAt: number } | null = null;
 let lastVerified: PublicCatalog | null = null;
+
+export function resetPublicCatalogCache(options: { keepSnapshot?: boolean } = {}): void {
+  cached = null;
+  if (!options.keepSnapshot) lastVerified = null;
+}
 
 function finiteNumber(value: unknown, fallback = 0): number {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -243,6 +250,15 @@ function makeModel(id: string, pricing: PublicModelPricing | null): PublicModel 
   };
 }
 
+function filterCatalog(catalog: PublicCatalog, policy: ModelPolicy): PublicCatalog {
+  return {
+    ...catalog,
+    models: catalog.models.filter((model) =>
+      isNaiModelEnabledForPolicy(model.id, policy),
+    ),
+  };
+}
+
 function fallbackCatalog(message?: string): PublicCatalog {
   return {
     models: FALLBACK_MODEL_IDS.map((id) => makeModel(id, null)),
@@ -321,12 +337,15 @@ async function fetchUpstreamCatalog(): Promise<PublicCatalog> {
 
 export async function getPublicCatalog(): Promise<PublicCatalog> {
   const now = Date.now();
-  if (cached && cached.expiresAt > now) return cached.value;
+  const policy = await getRuntimeModelPolicy();
+  // Cache raw catalog data only. Policy is deliberately applied on every
+  // return path so an admin toggle takes effect without waiting for TTL.
+  if (cached && cached.expiresAt > now) return filterCatalog(cached.value, policy);
   try {
     const value = await fetchUpstreamCatalog();
     cached = { value, expiresAt: now + CACHE_TTL_MS };
     lastVerified = value;
-    return value;
+    return filterCatalog(value, policy);
   } catch (error) {
     const message = error instanceof Error ? error.message : "上游价格暂不可用";
     if (lastVerified) {
@@ -338,10 +357,10 @@ export async function getPublicCatalog(): Promise<PublicCatalog> {
         message: `实时价格暂不可用，显示最近一次数据（${message}）。`,
       };
       cached = { value, expiresAt: now + CACHE_TTL_MS };
-      return value;
+      return filterCatalog(value, policy);
     }
     const value = fallbackCatalog(message);
     cached = { value, expiresAt: now + CACHE_TTL_MS };
-    return value;
+    return filterCatalog(value, policy);
   }
 }

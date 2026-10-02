@@ -2,6 +2,11 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EndpointConfig } from "@/lib/adapters/types";
+import {
+  naiModelFamily as sharedNaiModelFamily,
+  type ModelPolicy,
+  type NaiModelFamily,
+} from "@/lib/model-policy";
 
 export type AuthProviderId = "newapi" | "local";
 
@@ -32,8 +37,17 @@ export type RuntimeSettings = {
   cookieSecure: boolean;
   remoteHistoryUrl: string;
   remoteHistoryToken: string;
-  // 会话纪元：管理员「清理全部登录状态」时递增，旧纪元登录 cookie 立即失效。
   sessionEpoch: number;
+  enableV5Models: boolean;
+  enableV45Models: boolean;
+  enableDailyCheckIn: boolean;
+  enableReferral: boolean;
+  dailyCheckInReward: number;
+  referralReward: number;
+  watermarkEnabled: boolean;
+  watermarkIssuer: string;
+  watermarkLabel: string;
+  watermarkNote: string;
 };
 
 export type RuntimeConfigStore = {
@@ -79,6 +93,16 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   remoteHistoryUrl: "",
   remoteHistoryToken: "",
   sessionEpoch: 1,
+  enableV5Models: true,
+  enableV45Models: true,
+  enableDailyCheckIn: true,
+  enableReferral: true,
+  dailyCheckInReward: 20,
+  referralReward: 100,
+  watermarkEnabled: true,
+  watermarkIssuer: "love-for-nai",
+  watermarkLabel: "Love-for-NAI image provenance",
+  watermarkNote: "Generated through Love-for-NAI",
 };
 
 let lock: Promise<unknown> = Promise.resolve();
@@ -120,6 +144,16 @@ function envSettings(): RuntimeSettings {
     remoteHistoryUrl: process.env.LFN_REMOTE_HISTORY_URL?.trim() || "",
     remoteHistoryToken: process.env.LFN_REMOTE_HISTORY_TOKEN?.trim() || "",
     sessionEpoch: Number(process.env.LFN_SESSION_EPOCH || 1),
+    enableV5Models: process.env.LFN_ENABLE_V5_MODELS !== "false",
+    enableV45Models: process.env.LFN_ENABLE_V45_MODELS !== "false",
+    enableDailyCheckIn: process.env.LFN_ENABLE_DAILY_CHECKIN !== "false",
+    enableReferral: process.env.LFN_ENABLE_REFERRAL !== "false",
+    dailyCheckInReward: Number(process.env.LFN_DAILY_CHECKIN_REWARD || 20),
+    referralReward: Number(process.env.LFN_REFERRAL_REWARD || 100),
+    watermarkEnabled: process.env.LFN_WATERMARK_ENABLED !== "false",
+    watermarkIssuer: process.env.LFN_WATERMARK_ISSUER?.trim() || "love-for-nai",
+    watermarkLabel: process.env.LFN_WATERMARK_LABEL?.trim() || "Love-for-NAI image provenance",
+    watermarkNote: process.env.LFN_WATERMARK_NOTE?.trim() || "Generated through Love-for-NAI",
   };
 }
 
@@ -133,7 +167,8 @@ function mergeSettings(saved?: Partial<RuntimeSettings> | null): RuntimeSettings
     if (typeof fallback[key] === "boolean") next[key] = Boolean(value) as never;
     else if (typeof fallback[key] === "number") {
       const number = Number(value);
-      if (Number.isFinite(number) && number > 0) next[key] = number as never;
+      const allowZero = key === "dailyCheckInReward" || key === "referralReward";
+      if (Number.isFinite(number) && (number > 0 || (allowZero && number === 0))) next[key] = number as never;
     } else if (typeof value === "string") next[key] = value.trim() as never;
   }
   if (next.authProvider !== "local") next.authProvider = "newapi";
@@ -497,6 +532,42 @@ export async function runtimeRemoteHistory(): Promise<{ baseUrl: string; token: 
   const baseUrl = settings.remoteHistoryUrl.trim().replace(/\/+$/, "");
   const token = settings.remoteHistoryToken.trim();
   return baseUrl && token ? { baseUrl, token } : null;
+}
+
+export function naiModelFamily(model: string): NaiModelFamily | null {
+  return sharedNaiModelFamily(model);
+}
+
+export type { ModelPolicy, NaiModelFamily } from "@/lib/model-policy";
+
+export async function getRuntimeModelPolicy(): Promise<ModelPolicy> {
+  const settings = await getRuntimeSettings();
+  return {
+    enableV5Models: settings.enableV5Models,
+    enableV45Models: settings.enableV45Models,
+  };
+}
+
+export async function isNaiModelEnabled(model: string): Promise<boolean> {
+  const family = naiModelFamily(model);
+  if (!family) return true;
+  const settings = await getRuntimeSettings();
+  return family === "v5" ? settings.enableV5Models : settings.enableV45Models;
+}
+
+export async function runtimeRewards(): Promise<{
+  checkInEnabled: boolean;
+  checkInReward: number;
+  referralEnabled: boolean;
+  referralReward: number;
+}> {
+  const settings = await getRuntimeSettings();
+  return {
+    checkInEnabled: settings.enableDailyCheckIn,
+    checkInReward: settings.dailyCheckInReward,
+    referralEnabled: settings.enableReferral,
+    referralReward: settings.referralReward,
+  };
 }
 
 export function resetRuntimeConfigCache(): void {

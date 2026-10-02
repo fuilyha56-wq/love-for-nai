@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>抽奖</title>
+<style>
+  :root {
+    --bg: #101216;
+    --card: #181b21;
+    --card2: #1f232b;
+    --line: #2a2f39;
+    --text: #e8eaf0;
+    --muted: #8b91a0;
+    --accent: #7c9bff;
+    --accent2: #b48bff;
+    --ok: #6fd598;
+    --danger: #f07f7c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, rgba(124,155,255,.12), transparent 60%),
+      radial-gradient(1000px 500px at 90% 0%, rgba(180,139,255,.10), transparent 55%),
+      var(--bg);
+    color: var(--text);
+    font: 14px/1.6 system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+    display: flex;
+    justify-content: center;
+    padding: 32px 16px 60px;
+  }
+  .wrap { width: min(100%, 980px); }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: .5px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 24px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+  }
+  .card h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 12px; text-transform: uppercase; letter-spacing: 1px; }
+
+  /* 奖项行 */
+  .prize-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .prize-row input[type=text] {
+    flex: 1; min-width: 0;
+    background: var(--card2); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); padding: 8px 10px; font: inherit;
+  }
+  .prize-row input[type=number] {
+    width: 76px;
+    background: var(--card2); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); padding: 8px 10px; font: inherit;
+  }
+  .prize-row input:focus { outline: none; border-color: var(--accent); }
+  .icon-btn {
+    background: none; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--muted); width: 34px; height: 34px; cursor: pointer; flex: none;
+    font-size: 15px; line-height: 1;
+  }
+  .icon-btn:hover { color: var(--danger); border-color: var(--danger); }
+  .row-label { font-size: 11px; color: var(--muted); width: 76px; flex: none; text-align: center; }
+  .ghost-btn {
+    background: none; border: 1px dashed var(--line); border-radius: 8px;
+    color: var(--muted); padding: 8px 14px; cursor: pointer; font: inherit; width: 100%;
+  }
+  .ghost-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+  textarea#names {
+    width: 100%; min-height: 120px; resize: vertical;
+    background: var(--card2); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); padding: 10px; font: inherit;
+  }
+  textarea#names:focus { outline: none; border-color: var(--accent); }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+  /* 结果区 */
+  .stage { text-align: center; padding: 28px 16px; }
+  .pool { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-bottom: 20px; }
+  .chip {
+    font-size: 12px; padding: 3px 10px; border-radius: 999px;
+    background: var(--card2); border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip b { color: var(--text); font-weight: 600; }
+  .chip.empty { opacity: .35; text-decoration: line-through; }
+  #result {
+    min-height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    margin-bottom: 20px;
+  }
+  #prizeName {
+    font-size: 30px; font-weight: 700; letter-spacing: 1px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #winner { color: var(--ok); font-size: 15px; margin-top: 6px; }
+  #placeholder { color: var(--muted); font-size: 13px; }
+  #drawBtn {
+    background: linear-gradient(90deg, #5f7cf0, #9a63e8);
+    color: #fff; border: none; border-radius: 12px;
+    padding: 12px 0; width: 100%; font: inherit; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: transform .3s cubic-bezier(.2,1.4,.4,1), opacity .2s;
+  }
+  #drawBtn:hover:not(:disabled) { transform: translateY(-2px) scale(1.01); }
+  #drawBtn:active:not(:disabled) { transform: scale(.98); }
+  #drawBtn:disabled { opacity: .4; cursor: not-allowed; }
+  .spin { animation: spin-blink .12s linear infinite; }
+  @keyframes spin-blink { 50% { opacity: .45; } }
+
+  /* 记录 */
+  #history { max-height: 260px; overflow-y: auto; }
+  .h-item {
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 7px 4px; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .h-item:last-child { border-bottom: none; }
+  .h-item .t { color: var(--muted); font-size: 11px; flex: none; }
+  .h-item .p { flex: 1; text-align: left; }
+  .h-item .w { color: var(--ok); }
+  .empty-tip { color: var(--muted); font-size: 12px; text-align: center; padding: 12px 0; }
+
+  .toolbar { display: flex; gap: 8px; margin-top: 12px; }
+  .toolbar button {
+    flex: 1; background: none; border: 1px solid var(--line); border-radius: 8px;
+    color: var(--muted); padding: 7px 0; cursor: pointer; font: 12px inherit;
+  }
+  .toolbar button:hover { color: var(--text); border-color: var(--muted); }
+  .toast {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+    background: var(--card2); border: 1px solid var(--line); color: var(--text);
+    padding: 8px 18px; border-radius: 10px; font-size: 13px;
+    opacity: 0; pointer-events: none; transition: opacity .25s, transform .25s;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>抽奖</h1>
+  <div class="sub">自定义奖项与数量 · 配置自动保存在本机浏览器</div>
+
+  <div class="grid">
+    <!-- 左：配置 -->
+    <div class="card">
+      <h2>奖项配置</h2>
+      <div id="prizeList"></div>
+      <button class="ghost-btn" id="addPrize">＋ 添加奖项</button>
+
+      <h2 style="margin-top:20px">参与名单（可选）</h2>
+      <textarea id="names" placeholder="每行一个名字，抽过的人不会重复中奖&#10;留空则只抽奖品不抽人"></textarea>
+      <div class="hint" id="namesHint"></div>
+    </div>
+
+    <!-- 右：舞台 -->
+    <div>
+      <div class="card stage">
+        <div class="pool" id="pool"></div>
+        <div id="result"><div id="placeholder">配置好奖项，点击下方按钮开始</div></div>
+        <button id="drawBtn">🎰 抽 奖</button>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <h2>抽奖记录</h2>
+        <div id="history"></div>
+        <div class="toolbar">
+          <button id="undoBtn">撤销上次</button>
+          <button id="resetBtn">重置奖池</button>
+          <button id="exportBtn">导出配置</button>
+          <button id="importBtn">导入配置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<input type="file" id="importFile" accept="application/json" hidden>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const LS_CFG = 'lottery.cfg.v1';
+  const LS_STATE = 'lottery.state.v1';
+
+  // ---- 数据 ----
+  let prizes = [];        // [{name, count}] 配置里的总数
+  let names = [];         // 参与名单（原始）
+  let remaining = [];     // 与 prizes 对齐的剩余数量
+  let winnerPool = [];    // 尚未中奖的人
+  let history = [];       // [{time, prize, winner}]
+  let spinning = false;
+
+  function load() {
+    try {
+      const cfg = JSON.parse(localStorage.getItem(LS_CFG) || 'null');
+      if (cfg && Array.isArray(cfg.prizes)) {
+        prizes = cfg.prizes.filter(p => p && typeof p.name === 'string');
+        names = Array.isArray(cfg.names) ? cfg.names : [];
+      } else {
+        prizes = [{ name: '一等奖', count: 1 }, { name: '二等奖', count: 2 }, { name: '谢谢参与', count: 5 }];
+        names = [];
+      }
+      const st = JSON.parse(localStorage.getItem(LS_STATE) || 'null');
+      if (st && Array.isArray(st.remaining) && st.remaining.length === prizes.length) {
+        remaining = st.remaining.map(n => Math.max(0, n | 0));
+      } else {
+        remaining = prizes.map(p => Math.max(0, p.count | 0));
+      }
+      winnerPool = (st && Array.isArray(st.winnerPool)) ? st.winnerPool.slice() : names.slice();
+      history = (st && Array.isArray(st.history)) ? st.history : [];
+    } catch (e) { /* 损坏的存档按默认处理 */ }
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(LS_CFG, JSON.stringify({ prizes, names }));
+      localStorage.setItem(LS_STATE, JSON.stringify({ remaining, winnerPool, history }));
+    } catch (e) { /* 隐私模式等场景下忽略 */ }
+  }
+
+  // ---- 工具 ----
+  function randInt(max) { // [0, max)
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return a[0] % max;
+  }
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._timer);
+    toast._timer = setTimeout(() => t.classList.remove('show'), 1800);
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  const poolTotal = () => remaining.reduce((a, b) => a + b, 0);
+
+  // ---- 渲染 ----
+  function renderPrizeEditor() {
+    const box = $('prizeList');
+    box.innerHTML = '';
+    prizes.forEach((p, i) => {
+      const row = document.createElement('div');
+      row.className = 'prize-row';
+      const name = document.createElement('input');
+      name.type = 'text'; name.value = p.name; name.placeholder = '奖项名称';
+      name.addEventListener('input', () => { prizes[i].name = name.value; save(); renderPool(); });
+      const count = document.createElement('input');
+      count.type = 'number'; count.min = '0'; count.step = '1'; count.value = p.count;
+      count.title = '数量';
+      count.addEventListener('input', () => {
+        const v = Math.max(0, parseInt(count.value, 10) || 0);
+        prizes[i].count = v;
+        // 数量调整只影响后续抽取：剩余 = min(剩余, 新数量) 或增加剩余
+        const delta = v - (prizes[i]._old ?? v);
+        remaining[i] = Math.max(0, remaining[i] + Math.max(0, delta));
+        if (delta < 0) remaining[i] = Math.min(remaining[i], v);
+        prizes[i]._old = v;
+        save(); renderPool(); renderDrawBtn();
+      });
+      const del = document.createElement('button');
+      del.className = 'icon-btn'; del.textContent = '✕'; del.title = '删除该奖项';
+      del.addEventListener('click', () => {
+        prizes.splice(i, 1); remaining.splice(i, 1);
+        save(); renderPrizeEditor(); renderPool(); renderDrawBtn();
+      });
+      row.append(name, count, del);
+      box.appendChild(row);
+    });
+  }
+
+  function renderPool() {
+    const box = $('pool');
+    box.innerHTML = '';
+    prizes.forEach((p, i) => {
+      const c = document.createElement('span');
+      c.className = 'chip' + (remaining[i] === 0 ? ' empty' : '');
+      c.innerHTML = '<b></b> ×' + remaining[i] + '/' + p.count;
+      c.querySelector('b').textContent = p.name || '（未命名）';
+      box.appendChild(c);
+    });
+    const total = poolTotal();
+    if (total === 0 && prizes.length > 0) {
+      const c = document.createElement('span');
+      c.className = 'chip empty';
+      c.textContent = '奖池已空';
+      box.appendChild(c);
+    }
+  }
+
+  function renderHistory() {
+    const box = $('history');
+    box.innerHTML = '';
+    if (!history.length) {
+      box.innerHTML = '<div class="empty-tip">还没有抽奖记录</div>';
+    } else {
+      history.slice().reverse().forEach(h => {
+        const d = document.createElement('div');
+        d.className = 'h-item';
+        d.innerHTML = '<span class="t"></span><span class="p"></span>' + (h.winner ? '<span class="w"></span>' : '');
+        d.querySelector('.t').textContent = h.time;
+        d.querySelector('.p').textContent = h.prize;
+        if (h.winner) d.querySelector('.w').textContent = h.winner;
+        box.appendChild(d);
+      });
+    }
+    $('undoBtn').style.display = history.length ? '' : 'none';
+  }
+
+  function renderNamesHint() {
+    const n = names.filter(s => s.trim()).length;
+    $('namesHint').textContent = n ? ('共 ' + n + ' 人，未中奖 ' + winnerPool.length + ' 人') : '未填写名单，只抽奖品';
+  }
+
+  function renderDrawBtn() {
+    $('drawBtn').disabled = spinning || poolTotal() === 0;
+    $('drawBtn').textContent = spinning ? '抽奖中…' : '🎰 抽 奖';
+  }
+
+  function renderAll() {
+    renderPrizeEditor(); renderPool(); renderHistory(); renderNamesHint(); renderDrawBtn();
+  }
+
+  // ---- 抽奖 ----
+  function draw() {
+    if (spinning || poolTotal() === 0) return;
+    spinning = true; renderDrawBtn();
+    $('result').innerHTML = '<div id="prizeName" class="spin"></div>';
+
+    // 按剩余数量加权随机
+    let pick = -1, roll = randInt(poolTotal());
+    for (let i = 0; i < remaining.length; i++) {
+      roll -= remaining[i];
+      if (roll < 0) { pick = i; break; }
+    }
+    const finalPrize = prizes[pick].name || '（未命名）';
+    const avail = prizes.map((p, i) => remaining[i] > 0 ? (p.name || '（未命名）') : null).filter(Boolean);
+
+    // 滚动动画：先快速滚 1.1s，再落到结果
+    const el = $('prizeName');
+    const start = performance.now();
+    let lastSwap = 0;
+    function frame(now) {
+      const t = now - start;
+      if (t < 1100) {
+        if (now - lastSwap > 70) {
+          el.textContent = avail[randInt(avail.length)];
+          lastSwap = now;
+        }
+        requestAnimationFrame(frame);
+      } else {
+        settle();
+      }
+    }
+    function settle() {
+      remaining[pick]--;
+      let winner = '';
+      if (winnerPool.length) {
+        const wi = randInt(winnerPool.length);
+        winner = winnerPool[wi];
+        winnerPool.splice(wi, 1);
+      }
+      const now = new Date();
+      const pad = (x) => String(x).padStart(2, '0');
+      history.push({
+        time: pad(now.getMonth() + 1) + '-' + pad(now.getDate()) + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds()),
+        prize: finalPrize,
+        winner: winner
+      });
+      save();
+      el.classList.remove('spin');
+      el.textContent = finalPrize;
+      const res = $('result');
+      if (winner) {
+        const w = document.createElement('div');
+        w.id = 'winner';
+        w.textContent = '🎉 恭喜「' + winner + '」';
+        res.appendChild(w);
+      }
+      spinning = false;
+      renderPool(); renderHistory(); renderNamesHint(); renderDrawBtn();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ---- 名单 ----
+  function syncNames() {
+    names = $('names').value.split('\n').map(s => s.trim()).filter(Boolean);
+    // 名单变化时重建未中奖池（保留已中奖的人不动）
+    const drawn = new Set(history.map(h => h.winner).filter(Boolean));
+    winnerPool = names.filter(n => !drawn.has(n));
+    save(); renderNamesHint();
+  }
+
+  // ---- 工具按钮 ----
+  function undo() {
+    const last = history.pop();
+    if (!last) return;
+    const i = prizes.findIndex(p => (p.name || '（未命名）') === last.prize);
+    if (i >= 0 && remaining[i] < prizes[i].count) remaining[i]++;
+    if (last.winner) winnerPool.push(last.winner);
+    save(); renderAll();
+  }
+  function reset() {
+    if (!confirm('重置奖池并清空抽奖记录？配置（奖项/名单）会保留。')) return;
+    remaining = prizes.map(p => Math.max(0, p.count | 0));
+    winnerPool = names.slice();
+    history = [];
+    save(); renderAll();
+    $('result').innerHTML = '<div id="placeholder">奖池已重置</div>';
+    setTimeout(() => { if (!spinning) { const p = $('placeholder'); if (p) p.textContent = '配置好奖项，点击下方按钮开始'; } }, 1500);
+  }
+  function exportCfg() {
+    const data = JSON.stringify({ prizes, names, remaining, winnerPool, history }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'lottery-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+  function importCfg(file) {
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const d = JSON.parse(r.result);
+        if (!Array.isArray(d.prizes)) throw 0;
+        prizes = d.prizes.filter(p => p && typeof p.name === 'string');
+        names = Array.isArray(d.names) ? d.names : [];
+        remaining = (Array.isArray(d.remaining) && d.remaining.length === prizes.length)
+          ? d.remaining.map(n => Math.max(0, n | 0))
+          : prizes.map(p => Math.max(0, p.count | 0));
+        history = Array.isArray(d.history) ? d.history : [];
+        const drawn = new Set(history.map(h => h.winner).filter(Boolean));
+        winnerPool = (Array.isArray(d.winnerPool) && d.winnerPool.length)
+          ? d.winnerPool.slice()
+          : names.filter(n => !drawn.has(n));
+        $('names').value = names.join('\n');
+        prizes.forEach(p => { p._old = p.count; });
+        save(); renderAll();
+        toast('导入成功');
+      } catch (e) { toast('导入失败：文件格式不对'); }
+    };
+    r.readAsText(file);
+  }
+
+  // ---- 事件 ----
+  $('addPrize').addEventListener('click', () => {
+    prizes.push({ name: '', count: 1, _old: 1 });
+    remaining.push(1);
+    save(); renderPrizeEditor(); renderPool(); renderDrawBtn();
+    const rows = $('prizeList').querySelectorAll('input[type=text]');
+    rows[rows.length - 1].focus();
+  });
+  $('names').addEventListener('input', syncNames);
+  $('drawBtn').addEventListener('click', draw);
+  $('undoBtn').addEventListener('click', undo);
+  $('resetBtn').addEventListener('click', reset);
+  $('exportBtn').addEventListener('click', exportCfg);
+  $('importBtn').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', (e) => {
+    if (e.target.files[0]) importCfg(e.target.files[0]);
+    e.target.value = '';
+  });
+
+  // ---- 启动 ----
+  load();
+  prizes.forEach(p => { p._old = p.count; });
+  $('names').value = names.join('\n');
+  renderAll();
+})();
+</script>
+</body>
+</html>

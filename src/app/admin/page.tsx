@@ -36,7 +36,7 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "platform";
+type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
 type PlatformCapabilities = {
   auth: { label: string; provider: string };
@@ -97,6 +97,15 @@ type ReferralRow = {
   invitedCount: number;
   createdAt: string;
   registeredUserIds: number[];
+  registrations?: Array<{
+    registeredUserId: number;
+    registeredAt: string;
+    landingPath?: string;
+    referer?: string;
+    requestId?: string;
+    reward: number;
+    applied: boolean;
+  }>;
 };
 
 const DEFAULT_QUOTA_PER_UNIT = 500000;
@@ -139,18 +148,21 @@ export default function AdminPage() {
     };
   }, []);
 
-  const visibleModules = (modules.length
-    ? modules
-    : [
-        { id: "overview", label: "平台概览", description: "站点健康和运营数字", enabled: true },
-        { id: "users", label: "用户管理", description: "账号、角色和额度", enabled: true },
-        { id: "credits", label: "创作额度账本", description: "发放、回收和流水", enabled: true },
-        { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
-        { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
-        { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
-        { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
-      ]
-  ).filter((item) => item.enabled);
+  const visibleModules = [
+    ...(modules.length
+      ? modules
+      : [
+          { id: "overview", label: "平台概览", description: "站点健康和运营数字", enabled: true },
+          { id: "users", label: "用户管理", description: "账号、角色和额度", enabled: true },
+          { id: "credits", label: "创作额度账本", description: "发放、回收和流水", enabled: true },
+          { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
+          { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
+          { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
+          { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
+        ]
+    ).filter((item) => item.enabled),
+    { id: "audits", label: "请求审计", description: "查看请求 ID、指纹、参数摘要和签名状态", enabled: true },
+  ];
   const current = visibleModules.find((item) => item.id === tab);
 
   if (denied === null)
@@ -215,6 +227,8 @@ export default function AdminPage() {
           <GalleryPanel setMessage={setMessage} />
         ) : tab === "referrals" ? (
           <ReferralsPanel />
+        ) : tab === "audits" ? (
+          <AuditsPanel />
         ) : tab === "platform" ? (
           <PlatformConfigPanel setMessage={setMessage} />
         ) : (
@@ -1119,6 +1133,58 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
   );
 }
 
+function AuditsPanel() {
+  const [items, setItems] = useState<Array<{
+    requestId: string;
+    requestFingerprint: string;
+    createdAt: string;
+    source: string;
+    endpoint: string;
+    operation?: string;
+    model?: string;
+    userId?: number;
+    username?: string;
+    status?: number;
+    durationMs?: number;
+    historyIds: string[];
+    watermarkStatus?: string;
+  }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(async () => {
+      const response = await fetch("/api/admin/request-audits?limit=100", { cache: "no-store" });
+      const result = await response.json();
+      if (!cancelled && response.ok) setItems(Array.isArray(result.items) ? result.items : []);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-[var(--muted)]">请求体中的图片只显示摘要哈希，敏感字段不会展示；客户端 IP 仅保存不可逆摘要。</p>
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
+            <th className="px-3 py-2.5">请求 ID / 指纹</th><th className="px-3 py-2.5">账号</th><th className="px-3 py-2.5">路径 / 模型</th><th className="px-3 py-2.5">状态</th><th className="px-3 py-2.5">历史 / 签名</th><th className="px-3 py-2.5">时间</th>
+          </tr></thead>
+          <tbody>
+            {items.map((item) => <tr key={item.requestId} className="border-b border-[var(--line)] align-top last:border-0">
+              <td className="px-3 py-2.5"><p className="font-mono text-[10px]">{item.requestId}</p><p className="mt-1 font-mono text-[10px] text-[var(--muted)]">{item.requestFingerprint.slice(0, 20)}…</p></td>
+              <td className="px-3 py-2.5 text-xs">{item.username || item.userId || "-"}</td>
+              <td className="px-3 py-2.5 text-xs"><p>{item.endpoint}</p><p className="text-[var(--muted)]">{item.model || "-"} · {item.operation || "-"}</p></td>
+              <td className="px-3 py-2.5 text-xs">{item.status ?? "-"} · {item.durationMs ?? "-"}ms</td>
+              <td className="px-3 py-2.5 text-xs"><p>{item.historyIds?.join(", ") || "-"}</p><p className="text-[var(--muted)]">{item.watermarkStatus || "-"}</p></td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</td>
+            </tr>)}
+            {!items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无请求审计记录</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ReferralsPanel() {
   const [items, setItems] = useState<ReferralRow[]>([]);
   const [reward, setReward] = useState(100);
@@ -1139,7 +1205,7 @@ function ReferralsPanel() {
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-[var(--muted)]">邀请双方各得 {reward} 创作额度。这里只查看记录，不改邀请码。</p>
+      <p className="text-sm text-[var(--muted)]">邀请双方各得 {reward} 创作额度。这里可查看邀请码和每次注册的来源路径、请求 ID；IP 仅保存为不可逆摘要。</p>
       <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
         <table className="w-full text-sm">
           <thead>
@@ -1147,6 +1213,7 @@ function ReferralsPanel() {
               <th className="px-3 py-2.5">邀请人</th>
               <th className="px-3 py-2.5">邀请码</th>
               <th className="px-3 py-2.5">已注册</th>
+              <th className="px-3 py-2.5">溯源记录</th>
               <th className="px-3 py-2.5">创建时间</th>
             </tr>
           </thead>
@@ -1156,12 +1223,15 @@ function ReferralsPanel() {
                 <td className="px-3 py-2.5">{item.inviterName || item.inviterUserId}</td>
                 <td className="px-3 py-2.5 font-mono text-xs">{item.code}</td>
                 <td className="px-3 py-2.5 tabular-nums">{item.invitedCount}</td>
+                <td className="max-w-[28rem] px-3 py-2.5 text-xs text-[var(--muted)]">
+                  {item.registrations?.length ? item.registrations.map((entry) => `${entry.registeredUserId} · ${new Date(entry.registeredAt).toLocaleString("zh-CN")} · ${entry.landingPath || "-"} · ${entry.requestId || "-"}`).join("\n") : "-"}
+                </td>
                 <td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</td>
               </tr>
             ))}
             {!items.length && (
               <tr>
-                <td colSpan={4} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无邀请记录</td>
+                <td colSpan={5} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无邀请记录</td>
               </tr>
             )}
           </tbody>

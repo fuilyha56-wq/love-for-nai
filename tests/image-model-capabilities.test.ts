@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isKnownImageModel, nearestImageAspectRatio, nearestImageSize, normalizeImageModelSize, resolveImageModelCapabilities, resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
+import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageAspectRatio, nearestImageSize, normalizeImageModelSize, resolveImageModelCapabilities, resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
 
 describe("图像模型能力和协议选择", () => {
   it("NAI 保留标签、种子、采样和原生参考；GPT/Gemini 使用自然语言", () => {
@@ -12,7 +12,15 @@ describe("图像模型能力和协议选择", () => {
     expect(resolveProviderImageProtocol("auto", "https://generativelanguage.googleapis.com")).toBe("gemini");
     expect(resolveProviderImageProtocol("openai-images", "https://generativelanguage.googleapis.com")).toBe("openai-images");
     expect(resolveImageModelCapabilities("banana-alias", "gemini").edit).toBe(true);
+    expect(resolveImageModelCapabilities("nano-banana-pro")).toMatchObject({ family: "nano-banana", protocol: "gemini" });
     expect(resolveImageModelCapabilities("banana-alias", "openai-chat-images").protocol).toBe("openai-chat-images");
+  });
+  it("按产品模式区分 NAI、GPT 和 Nano Banana", () => {
+    expect(imageProductMode("nai-v5-full")).toBe("nai");
+    expect(imageProductMode("gpt-image-1.5")).toBe("gpt");
+    expect(imageProductMode("nano-banana-pro")).toBe("nano-banana");
+    expect(modelMatchesProductMode("gemini-3-pro-image-preview", "nano-banana")).toBe(true);
+    expect(modelMatchesProductMode("nai-v5-full", "gpt")).toBe(false);
   });
   it("识别图像模型且不把普通聊天 Gemini 当作图像模型", () => {
     for (const model of ["gpt-image-2", "gemini-3-pro-image-preview", "nano-banana-pro", "nanobanana", "flux-dev"]) expect(isKnownImageModel(model)).toBe(true);
