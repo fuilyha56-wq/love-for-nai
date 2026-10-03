@@ -1,4 +1,5 @@
 import { resolveImageModelCapabilities } from "./image-model-capabilities";
+import { NAI_UPSCALE_MODEL_IDS, isNaiCatalogImageModel } from "./nai-model-catalog";
 
 export const IMAGE_STUDIO_FORM_STORAGE_KEY = "lfn-image-studio-form-v1";
 export const IMAGE_EDITOR_PROMPT_HANDOFF_KEY = "lfn-image-editor-prompt-handoff-v1";
@@ -18,6 +19,11 @@ export type ImageStudioCharacterSnapshot = {
   negative?: string;
   centerX: number;
   centerY: number;
+};
+
+export type ImageStudioFormPersistenceOptions = {
+  /** Current provider/model options; omit while provider discovery is pending. */
+  validModelIds?: readonly string[];
 };
 
 export type ImageStudioFormSnapshot = {
@@ -94,7 +100,7 @@ const SAMPLERS = new Set(["k_euler", "k_euler_ancestral", "k_dpmpp_2s_ancestral"
 const SCHEDULES = new Set(["native", "karras", "exponential", "polyexponential"]);
 const REFERENCE_TYPES = new Set(["character", "style", "character&style"]);
 const CONTROL_MODELS = new Set(["canny", "hed", "midas", "mlsd", "openpose", "uniformer", "fake_scribble"]);
-const UPSCALE_MODELS = new Set(["nai-diffusion-5-full", "nai-diffusion-5-curated"]);
+const UPSCALE_MODELS = new Set(NAI_UPSCALE_MODEL_IDS);
 
 function stringValue(value: unknown, fallback: string, maxLength = 20_000): string {
   return typeof value === "string" ? value.slice(0, maxLength) : fallback;
@@ -123,12 +129,22 @@ function alignedDimension(value: unknown, fallback: number, max = 1600, multiple
   return Math.max(64, Math.min(max, Math.round(normalized / multiple) * multiple));
 }
 
-export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
+export function parseImageStudioForm(
+  input: unknown,
+  options: ImageStudioFormPersistenceOptions = {},
+): ImageStudioFormSnapshot {
   if (!input || typeof input !== "object" || Array.isArray(input)) return { ...DEFAULT_IMAGE_STUDIO_FORM, characters: DEFAULT_IMAGE_STUDIO_FORM.characters.map((item) => ({ ...item })) };
   const record = input as Record<string, unknown>;
   if (record.version !== undefined && record.version !== IMAGE_STUDIO_FORM_VERSION) return { ...DEFAULT_IMAGE_STUDIO_FORM, characters: DEFAULT_IMAGE_STUDIO_FORM.characters.map((item) => ({ ...item })) };
   const rawCharacters = Array.isArray(record.characters) ? record.characters : [];
-  const selectedModel = modelIdentifier(record.model, DEFAULT_IMAGE_STUDIO_FORM.model);
+  const requestedModel = modelIdentifier(record.model, DEFAULT_IMAGE_STUDIO_FORM.model);
+  // NAI models are a closed, canonical directory. Other providers remain
+  // extensible because their model IDs are discovered from provider APIs.
+  const selectedModel = requestedModel.startsWith("nai-") && !isNaiCatalogImageModel(requestedModel)
+    ? DEFAULT_IMAGE_STUDIO_FORM.model
+    : options.validModelIds && !options.validModelIds.includes(requestedModel)
+      ? (options.validModelIds[0] || DEFAULT_IMAGE_STUDIO_FORM.model)
+      : requestedModel;
   const selectedProtocol = record.imageProtocol === "openai-images" || record.imageProtocol === "gemini" || record.imageProtocol === "openai-chat-images" ? record.imageProtocol : "auto";
   const caps = resolveImageModelCapabilities(selectedModel, selectedProtocol);
   const characters = rawCharacters.slice(0, 6).map((item) => {
@@ -174,18 +190,23 @@ export function parseImageStudioForm(input: unknown): ImageStudioFormSnapshot {
   };
 }
 
-export function loadImageStudioForm(): ImageStudioFormSnapshot {
-  if (typeof window === "undefined") return parseImageStudioForm(null);
+export function loadImageStudioForm(
+  options: ImageStudioFormPersistenceOptions = {},
+): ImageStudioFormSnapshot {
+  if (typeof window === "undefined") return parseImageStudioForm(null, options);
   try {
     const raw = window.localStorage.getItem(IMAGE_STUDIO_FORM_STORAGE_KEY);
-    return raw ? parseImageStudioForm(JSON.parse(raw)) : parseImageStudioForm(null);
+    return raw ? parseImageStudioForm(JSON.parse(raw), options) : parseImageStudioForm(null, options);
   } catch {
-    return parseImageStudioForm(null);
+    return parseImageStudioForm(null, options);
   }
 }
 
-export function saveImageStudioForm(snapshot: ImageStudioFormSnapshot): ImageStudioFormSnapshot {
-  const normalized = parseImageStudioForm(snapshot);
+export function saveImageStudioForm(
+  snapshot: ImageStudioFormSnapshot,
+  options: ImageStudioFormPersistenceOptions = {},
+): ImageStudioFormSnapshot {
+  const normalized = parseImageStudioForm(snapshot, options);
   if (typeof window !== "undefined") {
     try { window.localStorage.setItem(IMAGE_STUDIO_FORM_STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Storage may be unavailable or full. */ }
   }

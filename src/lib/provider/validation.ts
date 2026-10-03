@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { isImageProviderProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import type { ProviderModel } from "@/lib/provider/store";
 
 export class ProviderInputError extends Error {}
 
@@ -8,6 +9,12 @@ function invalid(message: string): never { throw new ProviderInputError(message)
 export function validateImageProviderProtocol(value: unknown): ImageProviderProtocol {
   if (value === undefined) return "auto";
   if (!isImageProviderProtocol(value)) invalid("图像 API 协议无效");
+  return value;
+}
+
+export function validateProviderCapability(value: unknown): "image" | "text" | "both" {
+  if (value === undefined) return "image";
+  if (value !== "image" && value !== "text" && value !== "both") invalid("API 能力无效");
   return value;
 }
 
@@ -29,6 +36,20 @@ export function validateModels(value: unknown): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 100) invalid("模型列表最多包含 100 项");
   return [...new Set(value.map(validateModelId))];
+}
+
+export function validateProviderModelEntries(value: unknown, capability: "image" | "text" | "both"): ProviderModel[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 100) invalid("模型列表最多包含 100 项");
+  return [...new Map(value.map((entry) => {
+    if (!entry || typeof entry !== "object") invalid("模型列表格式无效");
+    const record = entry as Record<string, unknown>;
+    const id = validateModelId(record.id);
+    if (record.capabilities !== undefined && record.capabilities !== "image" && record.capabilities !== "text" && record.capabilities !== "both")
+      invalid("模型能力无效");
+    const entryCapability = record.capabilities === undefined ? capability : record.capabilities;
+    return [id, { id, capabilities: entryCapability }] as const;
+  })).values()];
 }
 
 export function validateProviderName(value: unknown): string {

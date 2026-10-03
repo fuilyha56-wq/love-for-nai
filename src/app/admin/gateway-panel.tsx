@@ -204,7 +204,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
   return (
     <div className="space-y-3">
       {/* ── 渠道池 ── */}
-      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+      <article className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
@@ -217,7 +217,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
           <button
             type="button"
             onClick={() => void load()}
-            className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)]"
+            className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-[var(--panel)] px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)]"
           >
             <RefreshCw size={13} /> 刷新
           </button>
@@ -234,13 +234,13 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
             return (
               <div
                 key={account.id}
-                className="rounded-lg border border-[var(--line)] bg-[#faf9f5] px-4 py-3"
+                className="rounded-lg border border-[var(--line)] bg-[var(--surface)] px-4 py-3"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
                       {account.name}
-                      <span className="rounded bg-[#f1eee7] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
+                      <span className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--muted)]">
                         {account.id}
                       </span>
                       <span className={`text-[10px] font-semibold ${status.className}`}>
@@ -265,7 +265,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                           enabled: !account.enabled,
                         })
                       }
-                      className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-white hover:border-[var(--rose)] disabled:opacity-50"
+                      className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-[var(--panel)] hover:border-[var(--rose)] disabled:opacity-50"
                       title={account.enabled ? "停用渠道" : "启用渠道"}
                     >
                       {account.enabled ? <PowerOff size={15} /> : <Power size={15} />}
@@ -280,7 +280,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                             `${account.name} 测试：${result.ok ? "✅ " : "❌ "}${result.message}`,
                           );
                       }}
-                      className="h-10 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
+                      className="h-10 rounded border border-[var(--line)] bg-[var(--panel)] px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
                     >
                       测试
                     </button>
@@ -288,7 +288,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                       type="button"
                       disabled={busyAccount === account.id + "account-reset"}
                       onClick={() => void accountAction(account, "account-reset")}
-                      className="h-10 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
+                      className="h-10 rounded border border-[var(--line)] bg-[var(--panel)] px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] disabled:opacity-50"
                       title="清除失败与冷却状态"
                     >
                       重置
@@ -304,7 +304,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                 </div>
 
                 {detail && typeof detail === "object" && (
-                  <div className="mt-3 rounded border border-[var(--line)] bg-white p-3 text-xs leading-6">
+                  <div className="mt-3 rounded border border-[var(--line)] bg-[var(--panel)] p-3 text-xs leading-6">
                     {"message" in detail && detail.message ? (
                       <span className="text-red-600">{detail.message}</span>
                     ) : sub ? (
@@ -328,7 +328,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                           <summary className="cursor-pointer select-none text-[11px] text-[var(--muted)]">
                             原始 NAI 返回
                           </summary>
-                          <pre className="mt-2 max-h-64 overflow-auto rounded bg-[#f5f3ed] p-2 font-mono text-[10px] leading-5 text-[var(--muted)]">
+                          <pre className="mt-2 max-h-64 overflow-auto rounded bg-[var(--surface-muted)] p-2 font-mono text-[10px] leading-5 text-[var(--muted)]">
 {JSON.stringify(detail, null, 2)}
                           </pre>
                         </details>
@@ -350,7 +350,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
       </article>
 
       {/* ── 模型计费配置 ── */}
-      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+      <article className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
         <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
           模型价格计费配置
         </p>
@@ -365,7 +365,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
             return (
               <div
                 key={model}
-                className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[#faf9f5] px-3 py-2.5"
+                className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 py-2.5"
               >
                 <b className="min-w-40 font-mono text-xs">{model}</b>
                 <PopupSelect
@@ -404,7 +404,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                 <button
                   type="button"
                   onClick={() => updateBillingEntry(model, null)}
-                  className="ml-auto grid h-9 w-9 place-items-center rounded border border-red-200 bg-white text-red-600 hover:border-red-400"
+                  className="ml-auto grid h-9 w-9 place-items-center rounded border border-red-200 bg-[var(--panel)] text-red-600 hover:border-red-400"
                   title="移除该模型的特殊计费"
                 >
                   <Trash2 size={13} />
@@ -438,7 +438,7 @@ export default function GatewaySection({ setMessage }: { setMessage: (msg: strin
                 updateBillingEntry(newModel, { mode: "auto", fixedCost: 0 });
                 setNewModel("");
               }}
-              className="h-10 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] disabled:opacity-40"
+              className="h-10 rounded border border-[var(--rose)] bg-[var(--panel)] px-3 text-xs font-semibold text-[var(--rose)] disabled:opacity-40"
             >
               添加
             </button>

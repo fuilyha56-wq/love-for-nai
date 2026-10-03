@@ -3,11 +3,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
-import { grantAffOnce } from "@/lib/aff";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 
 export type GalleryRating = "general" | "r13" | "r18";
 export type GallerySource = "other" | "lfn" | "local";
+export type GalleryStatus = "pending" | "approved" | "rejected" | "withdrawn";
+
+export const MAX_GALLERY_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export const ratingLabels: Record<GalleryRating, string> = {
   general: "全年龄",
@@ -43,6 +45,12 @@ export type GalleryItem = {
   likedBy: number[];
   weeklyLikes?: Record<string, number>;
   rewardedWeek?: string;
+  /** New submissions require moderation; legacy records default to approved. */
+  status: GalleryStatus;
+  submittedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: number;
+  reviewNote?: string;
 };
 
 type GalleryStore = { items: GalleryItem[] };
@@ -56,15 +64,28 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
   lock = current.catch(() => undefined);
   return current;
 }
+function normalizeStatus(value: unknown): GalleryStatus {
+  return value === "pending" || value === "rejected" || value === "withdrawn" ? value : "approved";
+}
+
+function normalizeItem(item: Partial<GalleryItem>): GalleryItem {
+  const createdAt = typeof item.createdAt === "string" ? item.createdAt : new Date(0).toISOString();
+  return {
+    ...(item as GalleryItem),
+    rating: normalizeRating(item.rating),
+    status: normalizeStatus(item.status),
+    submittedAt: typeof item.submittedAt === "string" ? item.submittedAt : createdAt,
+    tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : [],
+    likedBy: Array.isArray(item.likedBy) ? item.likedBy.filter((id): id is number => typeof id === "number") : [],
+    likes: typeof item.likes === "number" ? item.likes : 0,
+    parameters: item.parameters && typeof item.parameters === "object" ? item.parameters : {},
+  };
+}
+
 async function readStore(): Promise<GalleryStore> {
   try {
     const value = JSON.parse(await readFile(storePath(), "utf8")) as GalleryStore;
-    return {
-      items: (Array.isArray(value.items) ? value.items : []).map((item) => ({
-        ...item,
-        rating: normalizeRating(item.rating),
-      })),
-    };
+    return { items: (Array.isArray(value.items) ? value.items : []).map((item) => normalizeItem(item)) };
   } catch { return { items: [] }; }
 }
 async function writeStore(store: GalleryStore): Promise<void> {
@@ -74,15 +95,12 @@ async function writeStore(store: GalleryStore): Promise<void> {
   await writeFile(temp, JSON.stringify(store, null, 2), "utf8");
   await rename(temp, target);
 }
-function weekKey(date = new Date()): string {
+export function galleryWeekKey(date = new Date()): string {
   const day = new Date(date.getTime() + 8 * 3600_000);
   const monday = new Date(day);
   const offset = (monday.getUTCDay() + 6) % 7;
   monday.setUTCDate(monday.getUTCDate() - offset);
   return monday.toISOString().slice(0, 10);
-}
-function previousWeekKey(): string {
-  return weekKey(new Date(Date.now() - 7 * 24 * 3600_000));
 }
 /**
  * 校验投稿评级是否为受支持的三级年龄评级。
@@ -91,6 +109,11 @@ export function assertGalleryRating(rating: unknown): GalleryRating {
   if (rating === "general" || rating === "r13" || rating === "r18")
     return rating;
   throw new Error("内容评级不合法");
+}
+
+export function assertGalleryStatus(status: unknown): GalleryStatus {
+  if (status === "pending" || status === "approved" || status === "rejected" || status === "withdrawn") return status;
+  throw new Error("审核状态不合法");
 }
 
 export function assertNaiImage(buffer: Buffer, fileName: string): { extension: string; parameters: Record<string, unknown> } {
@@ -136,7 +159,7 @@ export async function publishFromHistory(
       tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
       prompt: sourcePrompt, negativePrompt: sourceNegative,
       parameters: input.exposeParameters ? history.parameters : {}, imageFile: file,
-      createdAt: new Date().toISOString(), likes: 0, likedBy: [], weeklyLikes: {},
+      createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
     };
     const store = await readStore();
     store.items.unshift(item);
@@ -145,23 +168,38 @@ export async function publishFromHistory(
   });
 }
 
-export async function listGallery(): Promise<GalleryItem[]> {
-  return (await readStore()).items.map((item) => ({
-    ...item,
+export function publicGalleryItem(item: GalleryItem): GalleryItem {
+  const safeItem = { ...item };
+  delete safeItem.reviewedAt;
+  delete safeItem.reviewedBy;
+  delete safeItem.reviewNote;
+  return {
+    ...safeItem,
     likedBy: [],
     weeklyLikes: undefined,
-    ...(Object.keys(item.parameters).length
-      ? {}
-      : { prompt: "", negativePrompt: "" }),
-  }));
+    ...(Object.keys(item.parameters).length ? {} : { prompt: "", negativePrompt: "" }),
+  };
+}
+
+function ownerGalleryItem(item: GalleryItem): GalleryItem {
+  return { ...item, likedBy: [], weeklyLikes: undefined, ...(Object.keys(item.parameters).length ? {} : { prompt: "", negativePrompt: "" }) };
+}
+
+export async function listGallery(): Promise<GalleryItem[]> {
+  return (await readStore()).items.filter((item) => item.status === "approved").map(publicGalleryItem);
 }
 
 export async function countGallery(): Promise<number> {
   return (await readStore()).items.length;
 }
 
-export async function listGalleryAdmin(): Promise<GalleryItem[]> {
-  return (await readStore()).items;
+export async function listGalleryAdmin(status?: GalleryStatus | "all"): Promise<GalleryItem[]> {
+  const items = (await readStore()).items;
+  return status && status !== "all" ? items.filter((item) => item.status === status) : items;
+}
+
+export async function listGalleryMine(ownerId: number): Promise<GalleryItem[]> {
+  return (await readStore()).items.filter((item) => item.ownerId === ownerId).map(ownerGalleryItem);
 }
 
 export async function updateGalleryItem(
@@ -171,6 +209,9 @@ export async function updateGalleryItem(
     authorName?: string;
     rating?: GalleryRating;
     tags?: string[];
+    status?: GalleryStatus;
+    reviewNote?: string;
+    reviewedBy?: number;
   },
 ): Promise<GalleryItem> {
   return withLock(async () => {
@@ -187,6 +228,12 @@ export async function updateGalleryItem(
     if (patch.rating) item.rating = assertGalleryRating(patch.rating);
     if (patch.tags)
       item.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40);
+    if (patch.status) {
+      item.status = patch.status;
+      item.reviewedAt = new Date().toISOString();
+      if (patch.reviewedBy !== undefined) item.reviewedBy = patch.reviewedBy;
+      if (patch.reviewNote !== undefined) item.reviewNote = patch.reviewNote.trim().slice(0, 500);
+    }
     await writeStore(store);
     return item;
   });
@@ -206,14 +253,43 @@ export async function deleteGalleryItem(id: string): Promise<boolean> {
 export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
   return (await readStore()).items.find((item) => item.id === id) || null;
 }
+
+export async function resubmitGalleryItem(ownerId: number, id: string, note?: string): Promise<GalleryItem> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find((entry) => entry.id === id && entry.ownerId === ownerId);
+    if (!item) throw new Error("投稿不存在");
+    if (item.status !== "rejected" && item.status !== "withdrawn") throw new Error("当前状态不能重新提交");
+    item.status = "pending";
+    item.submittedAt = new Date().toISOString();
+    item.reviewedAt = undefined;
+    item.reviewedBy = undefined;
+    item.reviewNote = note?.trim().slice(0, 500) || undefined;
+    await writeStore(store);
+    return ownerGalleryItem(item);
+  });
+}
+
+export async function withdrawGalleryItem(ownerId: number, id: string): Promise<GalleryItem> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find((entry) => entry.id === id && entry.ownerId === ownerId);
+    if (!item) throw new Error("投稿不存在");
+    if (item.status !== "pending" && item.status !== "approved") throw new Error("当前状态不能撤回");
+    item.status = "withdrawn";
+    item.reviewedAt = new Date().toISOString();
+    await writeStore(store);
+    return ownerGalleryItem(item);
+  });
+}
 export function galleryImagePath(file: string): string { return imagePath(file); }
 export async function toggleGalleryLike(id: string, userId: number): Promise<{ liked: boolean; likes: number }> {
   return withLock(async () => {
     const store = await readStore();
     const item = store.items.find((entry) => entry.id === id);
-    if (!item) throw new Error("图库作品不存在");
+    if (!item || item.status !== "approved") throw new Error("图库作品不存在");
     const index = item.likedBy.indexOf(userId);
-    const week = weekKey();
+    const week = galleryWeekKey();
     item.weeklyLikes ||= {};
     if (index >= 0) { item.likedBy.splice(index, 1); item.likes = Math.max(0, item.likes - 1); }
     else { item.likedBy.push(userId); item.likes += 1; item.weeklyLikes[week] = (item.weeklyLikes[week] || 0) + 1; }
@@ -222,15 +298,13 @@ export async function toggleGalleryLike(id: string, userId: number): Promise<{ l
     return { liked: index < 0, likes: item.likes };
   });
 }
-export async function settleGalleryRewards(): Promise<void> {
+/** Mark the explicitly settled weekly winners without granting credits here. */
+export async function markGalleryRewards(week: string, itemIds: string[]): Promise<void> {
   return withLock(async () => {
     const store = await readStore();
-    const week = previousWeekKey();
-    const winners = [...store.items].sort((a, b) => (b.weeklyLikes?.[week] || 0) - (a.weeklyLikes?.[week] || 0)).slice(0, 3);
-    for (const [index, item] of winners.entries()) {
-      if (!item.weeklyLikes?.[week] || item.rewardedWeek === week) continue;
-      await grantAffOnce(item.ownerId, [500, 300, 100][index], "图库周榜奖励", `gallery-week:${week}:${item.id}`);
-      item.rewardedWeek = week;
+    const ids = new Set(itemIds);
+    for (const item of store.items) {
+      if (ids.has(item.id)) item.rewardedWeek = week;
     }
     await writeStore(store);
   });
@@ -259,7 +333,7 @@ export async function publishLocalImage(
       prompt: String(metadata.parameters.prompt || input.prompt),
       negativePrompt: String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt),
       parameters: metadata.parameters,
-      imageFile, createdAt: new Date().toISOString(), likes: 0, likedBy: [], weeklyLikes: {},
+      imageFile, createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
     };
     const store = await readStore();
     store.items.unshift(item);

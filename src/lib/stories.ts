@@ -5,6 +5,18 @@ import path from "node:path";
 export const STORY_MODELS = ["sol", "luna"] as const;
 export type StoryModel = string;
 
+export type CustomStoryModelReference = { providerId: string; modelId?: string };
+
+export function parseCustomStoryModel(value: string): CustomStoryModelReference | null {
+  if (!value.startsWith("custom:")) return null;
+  const reference = value.slice("custom:".length);
+  const separator = reference.indexOf(":");
+  const providerId = separator < 0 ? reference : reference.slice(0, separator);
+  const modelId = separator < 0 ? undefined : reference.slice(separator + 1);
+  if (!providerId || (modelId !== undefined && !modelId)) return null;
+  return { providerId, ...(modelId ? { modelId } : {}) };
+}
+
 export type StoryBranch = {
   id: string;
   parentId: string | null;
@@ -59,9 +71,12 @@ function cleanText(value: unknown, maxLength: number): string {
 }
 
 function isStoryModel(value: unknown): value is StoryModel {
-  return typeof value === "string" && value.length <= 180 &&
-    (STORY_MODELS.includes(value as (typeof STORY_MODELS)[number]) ||
-      /^(newapi|custom):[a-zA-Z0-9_.:/-]{1,150}$/.test(value));
+  if (typeof value !== "string" || value.length > 180) return false;
+  if (STORY_MODELS.includes(value as (typeof STORY_MODELS)[number])) return true;
+  if (/^newapi:[a-zA-Z0-9_.:/-]{1,150}$/.test(value)) return true;
+  const custom = parseCustomStoryModel(value);
+  return Boolean(custom && /^[a-zA-Z0-9_.-]{1,100}$/.test(custom.providerId) &&
+    (custom.modelId === undefined || /^[^\u0000-\u001f\u007f]{1,150}$/.test(custom.modelId)));
 }
 
 function normalizeBranch(value: unknown): StoryBranch | null {

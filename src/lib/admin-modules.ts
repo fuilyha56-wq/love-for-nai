@@ -3,12 +3,17 @@ import { getPlatformCapabilities, type PlatformCapabilities } from "@/lib/platfo
 export type AdminModuleId =
   | "overview"
   | "users"
+  | "sessions"
   | "credits"
   | "announcements"
   | "gallery"
   | "referrals"
   | "audits"
-  | "platform";
+  | "platform"
+  | "docs"
+  | "creator"
+  | "rewards"
+  | "redeem";
 
 export type AdminModule = {
   id: AdminModuleId;
@@ -35,6 +40,12 @@ export function listAdminModules(
         ? "搜索账号、改资料、分组、上游余额和创作额度。"
         : "搜索本地账号，改资料、角色、停用状态和创作额度。",
       enabled: capabilities.admin.users,
+    },
+    {
+      id: "sessions",
+      label: "会话管理",
+      description: "查看活跃会话数，告警并批量撤销超过 25 个活跃会话的用户。",
+      enabled: capabilities.auth.provider === "newapi",
     },
     {
       id: "credits",
@@ -65,6 +76,30 @@ export function listAdminModules(
       label: "平台配置",
       description: "用 LFN 控件改账号、图像、钱包上游和全部站点环境项，保存后立即生效。",
       enabled: capabilities.admin.platform,
+    },
+    {
+      id: "docs",
+      label: "文档管理",
+      description: "线上编辑 API 与帮助文档，自动保存草稿并即时发布。",
+      enabled: capabilities.admin.platform,
+    },
+    {
+      id: "creator",
+      label: "投稿审核",
+      description: "处理创作者投稿、审核状态、拒绝原因和公开作品。",
+      enabled: true,
+    },
+    {
+      id: "rewards",
+      label: "奖励与活动",
+      description: "结算投稿/周榜奖励，管理活动和额度发放记录。",
+      enabled: capabilities.admin.credits,
+    },
+    {
+      id: "redeem",
+      label: "兑换码",
+      description: "批量生成、停用和追踪创作额度兑换码。",
+      enabled: capabilities.admin.credits,
     },
   ];
 }

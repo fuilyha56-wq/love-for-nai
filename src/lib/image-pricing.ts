@@ -1,3 +1,5 @@
+import { NAI_UPSCALE_MODEL_IDS } from "./nai-model-catalog";
+
 export type ImagePricingGeneration = {
   model: string;
   width: number;
@@ -219,10 +221,7 @@ export function snapshotFromRawPricing(
 // NAI 独立超分（/ai/upscale）按输入面积档位计费，与官网价格表逐档对齐；
 // 超过 3145728 px（1536x2048）上游直接 400 拒绝。
 export const UPSCALE_MAX_PIXELS = 3_145_728;
-export const UPSCALE_MODELS = new Set([
-  "nai-diffusion-5-full",
-  "nai-diffusion-5-curated",
-]);
+export const UPSCALE_MODELS = new Set(NAI_UPSCALE_MODEL_IDS);
 
 export function upscaleAnlasCost(width: number, height: number): number {
   const pixels = width * height;

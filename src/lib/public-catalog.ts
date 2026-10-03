@@ -6,6 +6,7 @@ import {
 } from "@/lib/image-pricing";
 import { getRuntimeModelPolicy } from "@/lib/runtime-config";
 import { isNaiModelEnabledForPolicy, type ModelPolicy } from "@/lib/model-policy";
+import { NAI_MODEL_CATALOG } from "@/lib/nai-model-catalog";
 
 export type PublicModelKind = "image" | "chat";
 
@@ -52,26 +53,7 @@ const CACHE_TTL_MS = 60_000;
 const MAX_MODELS = 120;
 const MAX_FIELD_LENGTH = 96;
 const MODEL_PATTERN = /^nai-[a-z0-9][a-z0-9._-]{0,80}$/i;
-const FALLBACK_MODEL_IDS = [
-  "nai-v5-full",
-  "nai-v5-curated",
-  "nai-v5-inpaint",
-  "nai-v5-full-limit",
-  "nai-v5-curated-limit",
-  "nai-v5-inpaint-limit",
-  "nai-v4.5-full",
-  "nai-v4.5-curated",
-  "nai-v4.5-inpaint",
-  "nai-v4.5-full-limit",
-  "nai-v4.5-curated-limit",
-  "nai-v4.5-inpaint-limit",
-  "nai-v4-curated",
-  "nai-v3",
-  "nai-v3-furry",
-  "nai-v3-inpaint",
-  "nai-v3-furry-inpaint",
-  "nai-chat",
-] as const;
+const FALLBACK_MODEL_IDS = NAI_MODEL_CATALOG.map(({ id }) => id);
 
 let cached: { value: PublicCatalog; expiresAt: number } | null = null;
 let lastVerified: PublicCatalog | null = null;

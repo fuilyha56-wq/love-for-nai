@@ -92,15 +92,62 @@ beforeEach(() => {
   });
 
   it("GET 返回当前纪元与上游活跃会话计数", async () => {
-    queryMock.mockResolvedValue({
-      rows: [
-        { user_id: 171, username: "u171", active_sessions: 51 },
-        { user_id: 2, username: "u2", active_sessions: 3 },
-      ],
-    });
+    queryMock.mockImplementation(async (sql: string) => sql.includes("total_active_sessions")
+      ? { rows: [{ total_active_sessions: 54 }] }
+      : {
+          rows: [
+            { user_id: 171, username: "u171", active_sessions: 51 },
+            { user_id: 2, username: "u2", active_sessions: 3 },
+          ],
+        });
     const response = await GET();
     const result = await response.json();
     expect(result.sessionEpoch).toBe(1);
+    expect(result.threshold).toBe(25);
+    expect(result.totalActiveSessions).toBe(54);
     expect(result.items[0]).toMatchObject({ userId: 171, activeSessions: 51 });
+  });
+
+  it("GET 支持只查询超过 25 个活跃会话的用户", async () => {
+    queryMock.mockImplementation(async (sql: string) => sql.includes("total_active_sessions")
+      ? { rows: [{ total_active_sessions: 51 }] }
+      : { rows: [{ user_id: 171, username: "u171", active_sessions: 51 }] });
+    const response = await GET(new Request("http://lfn.test/api/admin/sessions?overThreshold=true"));
+    const result = await response.json();
+    expect(result).toMatchObject({ overThreshold: true, threshold: 25 });
+    expect(result.items).toEqual([{ userId: 171, username: "u171", activeSessions: 51 }]);
+    expect(queryMock.mock.calls[0][0]).toContain("HAVING COUNT(*) > $2");
+    expect(queryMock.mock.calls[0][1]).toEqual([expect.any(Number), 25]);
+  });
+
+  it("批量清理返回逐用户和总撤销数，不递增全局纪元", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        { user_id: 171, username: "u171", active_sessions: 51, revoked_sessions: 51 },
+        { user_id: 9, username: null, active_sessions: 26, revoked_sessions: 26 },
+      ],
+    });
+    const response = await POST(jsonRequest({ overThreshold: true }));
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      scope: "over-threshold",
+      threshold: 25,
+      userCount: 2,
+      totalRevoked: 77,
+    });
+    expect(result.users).toEqual([
+      { userId: 171, username: "u171", activeSessions: 51, revokedSessions: 51 },
+      { userId: 9, username: null, activeSessions: 26, revokedSessions: 26 },
+    ]);
+    expect(settingsStore.sessionEpoch).toBe(1);
+    expect(queryMock.mock.calls[0][0]).toContain("lfn_admin_clear_over_threshold");
+    expect(queryMock.mock.calls[0][1]).toEqual([expect.any(Number), 25]);
+  });
+
+  it("拒绝无效阈值", async () => {
+    const response = await POST(jsonRequest({ overThreshold: true, threshold: -1 }));
+    expect(response.status).toBe(400);
+    expect(queryMock).not.toHaveBeenCalled();
   });
 });

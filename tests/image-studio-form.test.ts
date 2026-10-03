@@ -102,6 +102,34 @@ describe("ImageStudio 表单缓存", () => {
       .toMatchObject({ providerId: "newapi", model: DEFAULT_IMAGE_STUDIO_FORM.model });
   });
 
+  it("NAI 缓存模型必须来自统一目录，失效模型自动回退", () => {
+    expect(parseImageStudioForm({ model: "nai-v5-full" }).model).toBe("nai-v5-full");
+    expect(parseImageStudioForm({ model: "nai-v9-preview" }).model).toBe(DEFAULT_IMAGE_STUDIO_FORM.model);
+    expect(parseImageStudioForm({ model: "nai-diffusion-5-full" }).model).toBe(DEFAULT_IMAGE_STUDIO_FORM.model);
+  });
+
+  it("超分缓存模型只接受统一目录中的官方模型", () => {
+    expect(parseImageStudioForm({ upscaleModel: "nai-diffusion-5-full" }).upscaleModel).toBe("nai-diffusion-5-full");
+    expect(parseImageStudioForm({ upscaleModel: "nai-v5-full" }).upscaleModel).toBe(DEFAULT_IMAGE_STUDIO_FORM.upscaleModel);
+  });
+
+  it("恢复时只接受当前来源仍提供的模型并自动回退", () => {
+    expect(parseImageStudioForm({ model: "nai-v5-full" }, { validModelIds: ["nai-v3"] }).model).toBe("nai-v3");
+    expect(parseImageStudioForm({ model: "vendor/model" }, { validModelIds: ["vendor/other"] }).model).toBe("vendor/other");
+    expect(parseImageStudioForm({ model: "nai-v5-full" }, { validModelIds: [] }).model).toBe(DEFAULT_IMAGE_STUDIO_FORM.model);
+  });
+
+  it("保存时将失效的当前模型规范化后写回缓存", () => {
+    const localStorage = memoryStorage();
+    vi.stubGlobal("window", { localStorage });
+    const saved = saveImageStudioForm(
+      { ...DEFAULT_IMAGE_STUDIO_FORM, model: "nai-v5-full" },
+      { validModelIds: ["nai-v3"] },
+    );
+    expect(saved.model).toBe("nai-v3");
+    expect(JSON.parse(localStorage.getItem(IMAGE_STUDIO_FORM_STORAGE_KEY) || "{}").model).toBe("nai-v3");
+  });
+
   it("角色负面提示词随缓存保存和重载，并保持各角色坐标", () => {
     const localStorage = memoryStorage();
     vi.stubGlobal("window", { localStorage });

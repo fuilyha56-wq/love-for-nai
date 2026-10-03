@@ -17,9 +17,13 @@ export function validateGallerySubmitForm(form: GallerySubmitForm): string | nul
   if (!["other", "lfn", "local"].includes(form.source)) return "图片来源不合法";
   if (form.source === "lfn" && !form.historyId?.trim()) return "LFN 历史图片缺少 historyId，请从历史页发起投稿";
   if (form.source !== "lfn") {
-    if (!form.file) return "请选择要上传的图片";
-    if (!/^(image\/png|image\/jpeg)$/.test(form.file.type)) return "只支持 PNG 或 JPEG 图片";
-    if (form.file.size > 20 * 1024 * 1024) return "图片不能超过 20 MB";
+    const files = form.files?.length ? form.files : form.file ? [form.file] : [];
+    if (!files.length) return "请选择要上传的图片";
+    if (files.length > 20) return "每次最多选择 20 张图片";
+    const invalid = files.find((file) => !/^(image\/png|image\/jpeg)$/.test(file.type));
+    if (invalid) return "只支持 PNG 或 JPEG 图片";
+    const oversized = files.find((file) => file.size > 20 * 1024 * 1024);
+    if (oversized) return "图片不能超过 20 MB";
   }
   return null;
 }
@@ -33,6 +37,7 @@ export type GallerySubmitForm = {
   tags: string;
   exposeParameters: boolean;
   file?: File;
+  files?: File[];
 };
 
 function GallerySelect<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: GalleryOption<T>[]; onChange: (value: T) => void }) {
@@ -79,7 +84,7 @@ export function GallerySubmitDialog({
   form: GallerySubmitForm;
   onChange: (form: GallerySubmitForm | null) => void;
   onClose: () => void;
-  onPublished: () => void;
+  onPublished: (message?: string) => void;
   onSessionExpired?: (message: string) => void;
 }) {
   const [publishing, setPublishing] = useState(false);
@@ -95,34 +100,51 @@ export function GallerySubmitDialog({
     setPublishing(true);
     setError("");
     try {
-      const requestBody: BodyInit = form.source === "lfn" ? JSON.stringify({
-        historyId: form.historyId,
-        title: form.title,
-        authorName: form.authorName,
-        rating: form.rating,
-        source: form.source,
-        tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
-        exposeParameters: form.exposeParameters,
-      }) : (() => {
-        const data = new FormData();
-        if (form.file) data.set("file", form.file);
-        data.set("title", form.title);
-        data.set("authorName", form.authorName);
-        data.set("rating", form.rating);
-        data.set("source", form.source);
-        data.set("tags", form.tags);
-        data.set("prompt", "");
-        data.set("negativePrompt", "");
-        data.set("parameters", "{}");
-        return data;
-      })();
-      const response = await fetch("/api/gallery", {
-        method: "POST",
-        ...(form.source === "lfn" ? { headers: { "Content-Type": "application/json" } } : {}),
-        body: requestBody,
-      });
-      const result = await readJson<{ message?: string }>(response, "发布失败");
-      if (!response.ok) throw new Error(result.message || "发布失败");
+      const files = form.files?.length ? form.files : form.file ? [form.file] : [];
+      if (form.source === "lfn") {
+        const response = await fetch("/api/gallery", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            historyId: form.historyId,
+            title: form.title,
+            authorName: form.authorName,
+            rating: form.rating,
+            source: form.source,
+            tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+            exposeParameters: form.exposeParameters,
+          }),
+        });
+        const result = await readJson<{ message?: string }>(response, "发布失败");
+        if (!response.ok) throw new Error(result.message || "发布失败");
+      } else {
+        const failedFiles: File[] = [];
+        let succeeded = 0;
+        for (const file of files) {
+          const data = new FormData();
+          data.set("file", file);
+          data.set("title", form.title || file.name.replace(/\.[^.]+$/, ""));
+          data.set("authorName", form.authorName);
+          data.set("rating", form.rating);
+          data.set("source", form.source);
+          data.set("tags", form.tags);
+          data.set("prompt", "");
+          data.set("negativePrompt", "");
+          data.set("parameters", "{}");
+          const response = await fetch("/api/gallery", { method: "POST", body: data });
+          const result = await readJson<{ message?: string }>(response, "发布失败");
+          if (!response.ok) {
+            failedFiles.push(file);
+            if (files.length === 1) throw new Error(result.message || "发布失败");
+          } else {
+            succeeded += 1;
+          }
+        }
+        if (failedFiles.length) {
+          onChange({ ...form, file: failedFiles[0], files: failedFiles });
+          throw new Error(`${succeeded} 张已提交，${failedFiles.length} 张失败；失败文件通常缺少可解析的 NAI 元数据，请修正后重新选择。`);
+        }
+      }
       onChange(null);
       onPublished();
     } catch (submitError) {
@@ -142,7 +164,7 @@ export function GallerySubmitDialog({
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">PUBLIC SQUARE</p>
             <h2 className="mt-1 font-[var(--font-display)] text-2xl font-semibold">提交作品</h2>
-            <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--muted)]">作品会直接公开发布，不经过人工审核。请如实选择年龄评级，R18 作品在广场默认打码；上传图片必须包含可解析的 NAI 生成参数。</p>
+            <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--muted)]">作品提交后会进入人工审核，审核通过才会公开到图片广场。请如实选择年龄评级，R18 作品在广场默认打码；上传图片必须包含可解析的 NAI 生成参数。</p>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--ink)]"><X size={18} /></button>
         </div>
@@ -154,7 +176,7 @@ export function GallerySubmitDialog({
             <div className="text-sm font-semibold">年龄评级<GallerySelect label="年龄评级" value={form.rating} onChange={(rating) => onChange({ ...form, rating })} options={[{ value: "general", label: "全年龄 · General", description: "适合所有年龄段" }, { value: "r13", label: "R13", description: "13 岁以下不宜，轻度敏感" }, { value: "r18", label: "R18", description: "成人内容，广场默认打码" }]} /></div>
             <div className="text-sm font-semibold">图片来源<GallerySelect label="图片来源" value={form.source} onChange={(source) => onChange({ ...form, source, file: source === "lfn" ? undefined : form.file })} options={[...(hasHistory ? [{ value: "lfn" as const, label: "LFN · 历史图片", description: "从当前账号历史记录导入" }] : []), { value: "local" as const, label: "本地上传", description: "上传本地 NAI 图片" }, { value: "other" as const, label: "Other · 其他来源", description: "转载或外部 NAI 图片" }]} /></div>
           </div>
-          {form.source !== "lfn" && <label className="block text-sm font-semibold">上传含 NAI 参数的图片<span className="mt-2 flex min-h-12 cursor-pointer items-center rounded-md border border-dashed border-[var(--line)] bg-white px-4 text-sm font-normal text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"><input type="file" accept="image/png,image/jpeg" className="w-full text-xs file:mr-3 file:rounded-full file:border-0 file:bg-[#f1eee7] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[var(--ink)]" onChange={(event) => { setError(""); onChange({ ...form, file: event.target.files?.[0] }); }} required /></span><small className="mt-1 block font-normal text-[var(--muted)]">仅支持 PNG/JPEG，最大 20 MB，且必须包含 NAI 参数。</small></label>}
+          {form.source !== "lfn" && <label className="block text-sm font-semibold">上传含 NAI 参数的图片<span className="mt-2 flex min-h-12 cursor-pointer items-center rounded-md border border-dashed border-[var(--line)] bg-white px-4 text-sm font-normal text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"><input type="file" accept="image/png,image/jpeg" multiple className="w-full text-xs file:mr-3 file:rounded-full file:border-0 file:bg-[#f1eee7] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[var(--ink)]" onChange={(event) => { setError(""); const files = Array.from(event.target.files || []); onChange({ ...form, file: files[0], files }); }} required /></span><small className="mt-1 block font-normal text-[var(--muted)]">支持一次选择最多 20 张 PNG/JPEG，每张最大 20 MB，且必须包含 NAI 参数；提交后逐张进入审核。</small></label>}
           <label className="block text-sm font-semibold">公开标签<span className="field mt-2 flex h-11 items-center px-4"><input className="w-full bg-transparent outline-none" value={form.tags} onChange={(event) => onChange({ ...form, tags: event.target.value })} placeholder="例如：azure lane, blue hair, night" /></span><small className="mt-1 block font-normal text-[var(--muted)]">使用英文逗号分隔标签。</small></label>
           <label className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--line)] bg-[#f7f5ef] p-3 text-sm"><input className="mt-0.5 accent-[var(--rose)]" type="checkbox" checked={form.exposeParameters} onChange={(event) => onChange({ ...form, exposeParameters: event.target.checked })} /><span><b>公开正面与负面提示词及详细生成参数</b><small className="mt-1 block font-normal leading-5 text-[var(--muted)]">关闭后，其他用户只能查看图片和公开标签。</small></span></label>
         </div>

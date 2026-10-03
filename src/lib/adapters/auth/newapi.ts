@@ -3,7 +3,7 @@
  * 包装现有 NewAPI 认证逻辑
  */
 
-import type { AuthAdapter, AuthUserInfo, EndpointConfig } from "../types";
+import { normalizeAuthToken, type AuthAdapter, type AuthUserInfo, type EndpointConfig } from "../types";
 
 type NewApiUser = {
   id?: number | string;
@@ -131,11 +131,43 @@ export function createNewApiAuthAdapter(config: EndpointConfig): AuthAdapter {
       return toAuthUser(result.data);
     },
 
-    async logout(token: string) {
-      await fetch(`${baseUrl}/api/user/logout`, {
-        method: "POST",
-        headers: { Authorization: token },
+    async changePassword(userId: number | string, currentPassword: string, newPassword: string, token?: string, upstreamCookie?: string) {
+      const normalizedToken = normalizeAuthToken(token || "");
+      if (!normalizedToken && !upstreamCookie) throw new Error("当前登录会话缺少上游凭据，无法修改密码");
+      const response = await fetch(`${baseUrl}/api/user/self`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(normalizedToken ? { Authorization: `Bearer ${normalizedToken}` } : {}),
+          ...(upstreamCookie ? { Cookie: upstreamCookie } : {}),
+          "New-Api-User": String(userId),
+        },
+        body: JSON.stringify({ current_password: currentPassword, password: newPassword }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
       });
+      const result = await response.json().catch(() => ({})) as NewApiResponse<never>;
+      if (response.status === 404 || response.status === 405)
+        throw new Error("当前 NewAPI 版本不支持用户自助修改密码，请联系管理员处理");
+      if (!response.ok || result.success === false)
+        throw new Error(result.message || "上游拒绝修改密码");
+      if (result.success !== true)
+        throw new Error("上游未确认密码已修改，未执行成功处理");
+    },
+
+    async logout(token: string) {
+      const normalizedToken = normalizeAuthToken(token);
+      if (!normalizedToken) return;
+      try {
+        await fetch(`${baseUrl}/api/user/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${normalizedToken}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        });
+      } catch {
+        // 上游撤销是 best-effort；显式登出仍由调用方完成。
+      }
     },
 
     async getUser(id: number | string) {

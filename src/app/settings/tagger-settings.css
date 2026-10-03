@@ -1,20 +1,32 @@
-.tagger-settings { display:flex; flex-direction:column; gap:16px; }
-.tagger-settings-head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:16px; }
-.tagger-settings-head > div:first-child { min-width:0; flex:1; }
-.tagger-settings h2 { font-size:18px; font-weight:700; margin-bottom:8px; }
-.tagger-settings p { line-height:1.6; font-size:14px; }
-.tagger-settings code { padding:1px 5px; border-radius:4px; background:var(--surface); font-size:12px; }
-.tagger-settings-hint,.tagger-model-item small { color:var(--muted); font-size:13px; }
-.tagger-settings-actions { display:flex; flex-wrap:wrap; gap:8px; flex-shrink:0; }
-.tagger-settings-actions button { display:inline-flex; align-items:center; gap:7px; height:38px; }
-.tagger-model-list { display:grid; gap:8px; }
-.tagger-model-item { display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--line); border-radius:10px; background:var(--surface); }
-.tagger-model-item label { display:flex; align-items:center; gap:10px; min-width:0; flex:1; cursor:pointer; }
-.tagger-model-item label span { display:grid; gap:4px; min-width:0; overflow-wrap:anywhere; }
-.tagger-model-item input { accent-color:var(--rose); }
-.tagger-model-item button { display:grid; place-items:center; padding:8px; border-radius:6px; }
-.tagger-model-item button:hover { background:var(--surface-muted); }
-.tagger-settings-error { color:var(--danger, #b42318); font-size:14px; }
-.tagger-settings-empty { display:grid; gap:6px; padding:20px; border:1px dashed var(--line); border-radius:10px; background:var(--surface-muted); }
-.tagger-settings-empty p { margin:0; color:var(--muted); font-size:13px; }
-.tagger-settings-empty a { color:var(--rose); text-decoration:underline; text-underline-offset:3px; }
+.tagger-settings { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 84px; }
+.tagger-settings-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.tagger-settings-copy { min-width: 0; flex: 1 1 360px; }
+.tagger-settings-eyebrow { margin-bottom: 6px; color: var(--rose); font-size: 10px; font-weight: 700; letter-spacing: .14em; }
+.tagger-settings h2 { margin-bottom: 8px; font-size: 18px; font-weight: 700; }
+.tagger-settings p { font-size: 13px; line-height: 1.65; }
+.tagger-settings code { padding: 1px 5px; border-radius: 4px; background: var(--surface); font-size: 11px; }
+.tagger-settings-hint, .tagger-model-item small { color: var(--muted); }
+.tagger-settings-hint { padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-muted); font-size: 12px !important; }
+.tagger-settings-actions { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 8px; }
+.tagger-settings-actions button { min-height: 38px; }
+.tagger-settings-status, .tagger-settings-error { padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px !important; }
+.tagger-settings-error { border-color: color-mix(in srgb, var(--rose) 35%, var(--line)); color: var(--rose); }
+.tagger-model-list { display: grid; gap: 8px; }
+.tagger-model-item { display: flex; min-height: 66px; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.tagger-model-item label { display: flex; min-width: 0; flex: 1; align-items: center; gap: 11px; cursor: pointer; }
+.tagger-model-item label > input { flex: 0 0 auto; accent-color: var(--rose); }
+.tagger-model-details { display: grid; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
+.tagger-model-details b { font-size: 13px; }
+.tagger-model-item small { font-size: 11px; }
+.tagger-remove-button { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 1px solid transparent; border-radius: 6px; color: var(--rose); }
+.tagger-remove-button:hover { border-color: var(--line); background: var(--surface-muted); }
+.tagger-remove-button:disabled { opacity: .5; }
+.tagger-settings-empty { display: grid; gap: 6px; padding: 20px; border: 1px dashed var(--line); border-radius: 8px; background: var(--surface-muted); }
+.tagger-settings-empty p { margin: 0; color: var(--muted); font-size: 12px; }
+.tagger-settings-empty .tagger-empty-title { color: var(--ink); font-weight: 600; }
+.tagger-settings-empty a { color: var(--rose); text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 760px) {
+  .tagger-settings { scroll-margin-top: 145px; }
+  .tagger-settings-actions { flex: 1 1 100%; }
+  .tagger-settings-actions button { flex: 1 1 auto; }
+}

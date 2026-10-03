@@ -86,6 +86,8 @@ import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverse
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
 import { NaturalImageSettings } from "./natural-image-settings";
 import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageSize, normalizeImageModelSize, productModeProtocol, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProductMode, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, type ModelPolicy } from "@/lib/model-policy";
+import { NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
 import { ReplicaPromptEditor } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
@@ -133,6 +135,13 @@ import {
   loadEditorDraft,
   saveEditorDraft,
 } from "@/lib/image-editor-store";
+import {
+  dataUrlToBlob,
+  listLocalImageHistory,
+  readImageHistoryMode,
+  saveLocalImageHistory,
+  type ImageHistoryMode,
+} from "@/lib/local-image-history";
 
 type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
 
@@ -378,25 +387,7 @@ const CREATIVE_CENTER_LINKS: Array<{
 ];
 
 // 模型名不做内置翻译，直接显示上游真实 ID。
-const models: SelectOption[] = [
-  { value: "nai-v5-full", label: "nai-v5-full" },
-  { value: "nai-v5-curated", label: "nai-v5-curated" },
-  { value: "nai-v5-inpaint", label: "nai-v5-inpaint" },
-  { value: "nai-v5-full-limit", label: "nai-v5-full-limit" },
-  { value: "nai-v5-curated-limit", label: "nai-v5-curated-limit" },
-  { value: "nai-v5-inpaint-limit", label: "nai-v5-inpaint-limit" },
-  { value: "nai-v4.5-full", label: "nai-v4.5-full" },
-  { value: "nai-v4.5-curated", label: "nai-v4.5-curated" },
-  { value: "nai-v4.5-inpaint", label: "nai-v4.5-inpaint" },
-  { value: "nai-v4.5-full-limit", label: "nai-v4.5-full-limit" },
-  { value: "nai-v4.5-curated-limit", label: "nai-v4.5-curated-limit" },
-  { value: "nai-v4.5-inpaint-limit", label: "nai-v4.5-inpaint-limit" },
-  { value: "nai-v4-curated", label: "nai-v4-curated" },
-  { value: "nai-v3", label: "nai-v3" },
-  { value: "nai-v3-furry", label: "nai-v3-furry" },
-  { value: "nai-v3-inpaint", label: "nai-v3-inpaint" },
-  { value: "nai-v3-furry-inpaint", label: "nai-v3-furry-inpaint" },
-];
+const models: SelectOption[] = [...NAI_IMAGE_MODEL_OPTIONS];
 const samplers: SelectOption[] = [
   { value: "k_euler", label: "欧拉" },
   { value: "k_euler_ancestral", label: "欧拉祖先" },
@@ -655,6 +646,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
+  const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
+  const [modelPolicyReady, setModelPolicyReady] = useState(false);
   const [providerId, setProviderId] = useState("newapi");
   const [newApiImageProtocol, setNewApiImageProtocol] = useState<ImageProviderProtocol>("auto");
   const [productMode, setProductMode] = useState<ImageProductMode>("nai");
@@ -718,7 +711,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [referenceType, setReferenceType] = useState("character&style");
   const [controlModel, setControlModel] = useState("hed");
   // 超分（V5 扩散超分）：模型二选一 + 源图真实尺寸（决定档位费用与 2x 输出）。
-  const [upscaleModel, setUpscaleModel] = useState("nai-diffusion-5-curated");
+  const [upscaleModel, setUpscaleModel] = useState<string>(NAI_UPSCALE_MODEL_OPTIONS[0].value);
   const [upscaleSource, setUpscaleSource] = useState<{ width: number; height: number } | null>(
     null,
   );
@@ -737,6 +730,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
+  const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("account");
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
@@ -800,6 +794,42 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [customLayout, setCustomLayout] = useState(() => structuredClone(DEFAULT_CUSTOM_LAYOUT));
   const historyEnabled = !customWorkspace || customLayout.visibleModules.history;
   const assistantEnabled = !customWorkspace || customLayout.visibleModules.agent;
+  useEffect(() => {
+    const syncMode = () => setImageHistoryMode(readImageHistoryMode());
+    syncMode();
+    window.addEventListener("lfn-image-history-mode", syncMode);
+    return () => window.removeEventListener("lfn-image-history-mode", syncMode);
+  }, []);
+  useEffect(() => {
+    if (imageHistoryMode !== "local") return;
+    let active = true;
+    void listLocalImageHistory().then((items) => {
+      if (!active) return;
+      const restored = items.map((item) => ({
+        id: `local-${item.id}`,
+        image: URL.createObjectURL(item.image),
+        prompt: item.prompt || "",
+        negative: item.negative || "",
+        model: item.model || "",
+        providerId: "local",
+        imageProtocol: "auto" as ImageProviderProtocol,
+        quality: "auto",
+        imageSize: "1K",
+        background: "",
+        operation: (item.operation || "generate") as Operation,
+        createdAt: item.createdAt,
+        width,
+        height,
+        steps,
+        scale,
+        sampler,
+      }));
+      setSessionHistory((current) => current.length ? current : restored);
+    }).catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [imageHistoryMode]);
   const [customPromptCollapsed, setCustomPromptCollapsed] = useState(false);
   const [customReferenceOpen, setCustomReferenceOpen] = useState(true);
   const [customDirectorOpen, setCustomDirectorOpen] = useState(false);
@@ -831,13 +861,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   ];
   // 模型只来自上游：NewAPI 列表按图像接口过滤；上游不可用时只保留 NAI 内置列表，
   // 不伪造 GPT/Gemini 模型 ID。
+  const policyModelOptions = useMemo(() => filterNaiModelOptions(models, modelPolicy), [modelPolicy]);
   const allModelOptions = useMemo(() => providerId === "newapi"
-    ? (newApiModelsLoaded ? newApiModels : models)
+    ? (newApiModelsLoaded ? filterNaiModelOptions(newApiModels, modelPolicy) : policyModelOptions)
     : providerId === "novelai"
-      ? models.filter((item) => !item.value.endsWith("-limit"))
+      ? policyModelOptions.filter((item) => !item.value.endsWith("-limit"))
       : customProviderModels.length
         ? customProviderModels
-        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })), [providerId, newApiModelsLoaded, newApiModels, customProviderModels, selectedProvider]);
+        : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })), [providerId, newApiModelsLoaded, newApiModels, policyModelOptions, modelPolicy, customProviderModels, selectedProvider]);
   const modelOptions = useMemo(() => allModelOptions.filter((item) => modelMatchesProductMode(item.value, productMode)), [allModelOptions, productMode]);
   // 模型被外部来源（历史复用、URL 参数、缓存）改变时，接口模式跟随模型。
   useEffect(() => {
@@ -850,13 +881,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     });
   }, [model, productMode, providerId]);
   useEffect(() => {
+    if (!modelPolicyReady) return;
     const next = modelOptions[0]?.value;
     if (!next || modelOptions.some((item) => item.value === model)) return;
     void Promise.resolve().then(() => {
       setModel(next);
       if (providerId === "newapi") setNewApiImageProtocol(productModeProtocol(productMode));
     });
-  }, [modelOptions, model, providerId, productMode]);
+  }, [modelPolicyReady, modelOptions, model, providerId, productMode]);
 
   useLayoutEffect(() => {
     const previous = previousCardPositions.current;
@@ -1016,6 +1048,23 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     for (const item of results) void loadImageElement(item.image).then(decoded => {
       setSessionHistory(current => current.map(saved => saved.id === item.id ? { ...saved, width: decoded.naturalWidth, height: decoded.naturalHeight } : saved));
     }).catch(() => undefined);
+    if (imageHistoryMode === "local") {
+      void Promise.all(results.map(async (item) => {
+        try {
+          await saveLocalImageHistory({
+            id: item.id,
+            createdAt: item.createdAt,
+            image: await dataUrlToBlob(item.image),
+            prompt: item.prompt,
+            negative: item.negative,
+            model: item.model,
+            operation: item.operation,
+          });
+        } catch {
+          setNotice("图片已生成，但浏览器无法保存本地历史；请检查存储空间或权限。");
+        }
+      }));
+    }
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
@@ -1221,18 +1270,27 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       let historyId: string | undefined;
       let historyError = "";
       try {
-        historyId = await saveEditorComposite({
-          image: finalImage, model: inpaintModel, prompt, negative_prompt: negative,
-          providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
-          width: imageSize.width, height: imageSize.height, steps, scale, sampler, strength,
-        });
+        if (imageHistoryMode === "local") {
+          const localId = crypto.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await saveLocalImageHistory({ id: localId, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: inpaintModel, operation: "inpainting" });
+        } else if (imageHistoryMode === "account") {
+          historyId = await saveEditorComposite({
+            image: finalImage, model: inpaintModel, prompt, negative_prompt: negative,
+            providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
+            width: imageSize.width, height: imageSize.height, steps, scale, sampler, strength,
+          });
+        }
       } catch (error) {
         historyError = error instanceof Error ? error.message : "历史保存失败";
       }
       addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting");
       setNotice(historyError
         ? `精确重绘已完成，但${historyError}。完整图片已保留在工作台，请及时下载。`
-        : "精确重绘完成，完整合成图已保存到图片历史。");
+        : imageHistoryMode === "none"
+          ? "精确重绘完成，未保存图片历史。"
+          : imageHistoryMode === "local"
+            ? "精确重绘完成，完整合成图已保存到本机历史。"
+            : "精确重绘完成，完整合成图已保存到图片历史。" );
       await refreshWallet();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "精确重绘失败");
@@ -1406,11 +1464,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           centerY,
         })),
       };
-      saveImageStudioForm(snapshot);
+      // Keep the rest of the form persistent while provider discovery is in
+      // flight, but never write a model that is not currently selectable.
+      saveImageStudioForm(snapshot, {
+        validModelIds: modelOptions.length ? modelOptions.map((item) => item.value) : undefined,
+      });
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [
-    formCacheReady, operation, contentMode, providerId, model, prompt, negative, width, height,
+    }, [
+    formCacheReady, operation, contentMode, providerId, model, modelOptions, prompt, negative, width, height,
+
     newApiImageProtocol, imageQuality, imageResolution, imageBackground,
     steps, scale, count, batchMode, sampler, schedule, cfgRescale, seed, strength,
     vibeStrength, vibeInformationExtracted, referenceType, controlModel, upscaleModel, charactersEnabled, characters,
@@ -1665,6 +1728,50 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
   const signedIn = authenticated && sessionValid;
+  const explicitLogoutStarted = useRef(false);
+
+  // 页面被关闭或跨站离开时尽力撤销上游会话；显式登出走下面的 fetch，
+  // 先标记后不会再重复发送 beacon。sendBeacon 失败不影响页面离开。
+  useEffect(() => {
+    if (!signedIn) return;
+    const onPageHide = () => {
+      if (explicitLogoutStarted.current || !navigator.sendBeacon) return;
+      navigator.sendBeacon(
+        "/api/auth/logout",
+        new Blob(["{}"], { type: "application/json" }),
+      );
+    };
+    window.addEventListener("pagehide", onPageHide);
+    return () => window.removeEventListener("pagehide", onPageHide);
+  }, [signedIn]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const refresh = () => {
+      fetch("/api/public/image-policy", { cache: "no-store", signal: controller.signal })
+        .then(async (response) => {
+          if (response.ok) {
+            const result = await response.json() as Partial<ModelPolicy>;
+            if (typeof result.enableV5Models === "boolean" && typeof result.enableV45Models === "boolean") {
+              setModelPolicy({ enableV5Models: result.enableV5Models, enableV45Models: result.enableV45Models });
+            }
+          }
+          setModelPolicyReady(true);
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setModelPolicyReady(true);
+          // Keep the conservative client policy until the next refresh.
+        });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      controller.abort();
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -2963,7 +3070,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             ]);
             setReferenceType("character&style");
             setControlModel("hed");
-            setUpscaleModel("nai-diffusion-5-curated");
+            setUpscaleModel(NAI_UPSCALE_MODEL_OPTIONS[0].value);
             clearImageStudioForm();
             setFormCacheReady(true);
             setAdvancedOpen(false);
@@ -3282,10 +3389,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <Control label="超分模型">
               <PopupSelect
                 value={upscaleModel}
-                options={[
-                  { value: "nai-diffusion-5-curated", label: "V5 Curated（推荐）" },
-                  { value: "nai-diffusion-5-full", label: "V5 Full" },
-                ]}
+                options={[...NAI_UPSCALE_MODEL_OPTIONS]}
                 onChange={setUpscaleModel}
                 ariaLabel="超分模型"
               />
@@ -3510,6 +3614,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       sampler,
       noise_schedule: schedule,
       response_format: "b64_json",
+      ...(imageHistoryMode !== "account" ? { _lfnSkipServerHistory: true } : {}),
     };
     if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
     if (modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
@@ -3883,6 +3988,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         <b className="text-xs">本次历史</b>
         <span className="text-[10px] text-[var(--muted)]">{sessionHistory.length} 张</span>
       </div>
+      <label className="mt-2 flex items-center justify-between gap-2 rounded border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-1.5 text-[10px] text-[var(--muted)]">
+        <span>图片历史保存</span>
+        <select className="bg-transparent text-[10px] font-semibold text-[var(--ink)] outline-none" value={imageHistoryMode} onChange={(event) => {
+          const next = event.target.value as ImageHistoryMode;
+          setImageHistoryMode(next);
+          try { window.localStorage.setItem("lfn-image-history-mode-v1", next); window.dispatchEvent(new CustomEvent("lfn-image-history-mode", { detail: next })); } catch { setNotice("无法保存图片历史设置，请检查浏览器存储权限。"); }
+        }} aria-label="图片历史保存方式">
+          <option value="account">保存到 LFN</option><option value="local">仅保存本机</option><option value="none">不保存</option>
+        </select>
+      </label>
       <div className="session-history-list">
         {sessionHistory.length ? sessionHistory.map((item) => (
             <div key={item.id} className="session-history-entry">
@@ -4359,6 +4474,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <button
                 type="button"
                 onClick={async () => {
+                  explicitLogoutStarted.current = true;
                   await fetch("/api/auth/logout", { method: "POST" });
                   router.push("/sign-in");
                   router.refresh();
@@ -5192,6 +5308,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 type="button"
                 className="nai-menu-item"
                 onClick={async () => {
+                  explicitLogoutStarted.current = true;
                   await fetch("/api/auth/logout", { method: "POST" });
                   router.push("/sign-in");
                   router.refresh();

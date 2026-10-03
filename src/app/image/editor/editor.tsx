@@ -2,9 +2,11 @@
 
 import { inpaintModelFor } from "@/lib/inpaint-model";
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, isNaiModelEnabledForPolicy, type ModelPolicy } from "@/lib/model-policy";
+import { NAI_INPAINT_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
 import { normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { NaturalImageSettings } from "../natural-image-settings";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
+import { dataUrlToBlob, readImageHistoryMode, saveLocalImageHistory } from "@/lib/local-image-history";
 
 import {
   ArrowLeft,
@@ -73,14 +75,7 @@ const DEFAULT_WIDTH = 832;
 const DEFAULT_HEIGHT = 1216;
 const MASK_COLORS = ["#a83a4c", "#2d7567", "#6c7fff", "#b47c2a", "#f783ac"];
 type InpaintModelOption = readonly [string, string];
-const INPAINT_MODELS: readonly InpaintModelOption[] = [
-  ["nai-v5-inpaint", "V5 局部重绘"],
-  ["nai-v4.5-inpaint", "V4.5 局部重绘"],
-  ["nai-v5-inpaint-limit", "V5 局部重绘 · 受限"],
-  ["nai-v4.5-inpaint-limit", "V4.5 局部重绘 · 受限"],
-  ["nai-v3-inpaint", "V3 动漫局部重绘"],
-  ["nai-v3-furry-inpaint", "V3 兽人局部重绘"],
-];
+const INPAINT_MODELS: readonly InpaintModelOption[] = NAI_INPAINT_MODEL_OPTIONS;
 const SAMPLERS = [
   ["k_euler_ancestral", "欧拉祖先"],
   ["k_euler", "欧拉"],
@@ -356,6 +351,13 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState("");
   const [ready, setReady] = useState(false);
+  const [imageHistoryMode, setImageHistoryMode] = useState<import("@/lib/local-image-history").ImageHistoryMode>("account");
+  useEffect(() => {
+    const syncMode = () => setImageHistoryMode(readImageHistoryMode());
+    syncMode();
+    window.addEventListener("lfn-image-history-mode", syncMode);
+    return () => window.removeEventListener("lfn-image-history-mode", syncMode);
+  }, []);
   const [viewportSize, setViewportSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [model, setModel] = useState("nai-v5-inpaint");
   const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
@@ -851,17 +853,26 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       const nextDraft = await saveEditorDraft(createDraftPayload(applied));
       const finalImage = rgbaToDataUrl(applied.image);
       let historyId = "";
-      try {
-        historyId = await saveEditorComposite({
-          image: finalImage, model, prompt, negative_prompt: negative,
-          providerId: document.generation?.providerId || "newapi", imageProtocol,
-          quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
-          width: applied.image.width, height: applied.image.height,
-          steps, scale, sampler, strength,
-          ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
-        });
-      } catch (error) {
-        setNotice(`${error instanceof Error ? error.message : "完整合成图未写入历史"}，结果仍会返回工作台。`);
+      if (imageHistoryMode === "local") {
+        try {
+          const localId = crypto.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          await saveLocalImageHistory({ id: localId, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model, operation: "editor-composite" });
+        } catch (error) {
+          setNotice(`${error instanceof Error ? error.message : "本地历史保存失败"}，结果仍会返回工作台。`);
+        }
+      } else if (imageHistoryMode === "account") {
+        try {
+          historyId = await saveEditorComposite({
+            image: finalImage, model, prompt, negative_prompt: negative,
+            providerId: document.generation?.providerId || "newapi", imageProtocol,
+            quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
+            width: applied.image.width, height: applied.image.height,
+            steps, scale, sampler, strength,
+            ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
+          });
+        } catch (error) {
+          setNotice(`${error instanceof Error ? error.message : "完整合成图未写入历史"}，结果仍会返回工作台。`);
+        }
       }
       const historyQuery = historyId ? `&editorHistory=${encodeURIComponent(historyId)}` : "";
       syncEditorPromptToStudioForm(nextDraft.id, prompt, negative);

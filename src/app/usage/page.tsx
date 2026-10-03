@@ -5,6 +5,8 @@ import { WorkspaceNav } from "@/app/workspace-nav";
 import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ListFilter, RotateCcw } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { PopupSelect } from "@/app/ui/popup-select";
+import { DateRangePicker } from "@/app/ui/date-range-picker";
 import {
   readJson,
   SessionExpiredError,
@@ -13,6 +15,7 @@ import {
 
 type LogItem = Record<string, unknown>;
 type DateRange = { start: string; end: string };
+type Filters = DateRange & { model: string; status: string; requestId: string; startTime: string; endTime: string; sort: "asc" | "desc" };
 
 function toDateString(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -37,21 +40,78 @@ function presetRange(days: number): DateRange {
   return { start: toDateString(start), end: toDateString(end) };
 }
 
+function initialFilters(): Filters {
+  const params = typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const fallback = presetRange(7);
+  return {
+    start: params.get("dateStart") || fallback.start,
+    end: params.get("dateEnd") || fallback.end,
+    model: params.get("model") || "",
+    status: params.get("status") || "",
+    requestId: params.get("requestId") || "",
+    startTime: params.get("startTime") || "",
+    endTime: params.get("endTime") || "",
+    sort: params.get("sort") === "asc" ? "asc" : "desc",
+  };
+}
+
 export default function UsagePage() {
   const [items, setItems] = useState<LogItem[]>([]);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(() => {
+    if (typeof window === "undefined") return 1;
+    const value = Number(new URLSearchParams(window.location.search).get("page"));
+    return Number.isInteger(value) && value > 0 ? value : 1;
+  });
   const [total, setTotal] = useState(0);
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  // 日期范围：默认最近 7 天（服务端同样默认 7 天并钳位到 90 天上限）。
-  const [range, setRange] = useState<DateRange>(() => presetRange(7));
   const [reloadToken, setReloadToken] = useState(0);
+  const [filters, setFilters] = useState<Filters>(initialFilters);
+  const [advancedOpen, setAdvancedOpen] = useState(true);
+  const [modelOptions, setModelOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const range: DateRange = { start: filters.start, end: filters.end };
 
   useEffect(() => {
+    fetch("/api/models", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        const values = Array.isArray(result.items) ? result.items : [];
+        setModelOptions(values.flatMap((item: unknown) => {
+          const record = item && typeof item === "object" ? item as Record<string, unknown> : {};
+          const value = String(record.id || record.model || "");
+          return value.toLowerCase().startsWith("nai-") ? [{ value, label: String(record.name || value) }] : [];
+        }));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams();
+    params.set("page", String(page));
+    params.set("dateStart", filters.start);
+    params.set("dateEnd", filters.end);
+    if (filters.model) params.set("model", filters.model);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.requestId) params.set("requestId", filters.requestId);
+    if (filters.startTime) params.set("startTime", filters.startTime);
+    if (filters.endTime) params.set("endTime", filters.endTime);
+    if (filters.sort !== "desc") params.set("sort", filters.sort);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
     const controller = new AbortController();
-    fetch(`/api/usage?page=${page}&start=${dateToStartSeconds(range.start)}&end=${dateToEndSeconds(range.end)}`, {
+    const query = new URLSearchParams({
+      page: String(page),
+      start: String(dateToStartSeconds(filters.start)),
+      end: String(dateToEndSeconds(filters.end)),
+      sort: filters.sort,
+    });
+    if (filters.model) query.set("model", filters.model);
+    if (filters.status) query.set("status", filters.status);
+    if (filters.requestId) query.set("requestId", filters.requestId);
+    if (filters.startTime) query.set("startTime", filters.startTime);
+    if (filters.endTime) query.set("endTime", filters.endTime);
+    fetch(`/api/usage?${query}`, {
       cache: "no-store",
       signal: controller.signal,
     })
@@ -76,75 +136,31 @@ export default function UsagePage() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [page, range, reloadToken]);
+  }, [page, filters, reloadToken]);
 
-  function applyPreset(days: number) {
+  function updateFilter(patch: Partial<Filters>) {
     setLoading(true);
     setPage(1);
-    setRange(presetRange(days));
+    setFilters((current) => ({ ...current, ...patch }));
   }
 
-  function changeDate(part: "start" | "end", value: string) {
-    if (!value) return;
-    setLoading(true);
-    setPage(1);
-    setRange((current) => {
-      const next = { ...current, [part]: value };
-      if (dateToStartSeconds(next.start) > dateToEndSeconds(next.end)) {
-        return part === "start" ? { ...next, end: next.start } : { ...next, start: next.end };
-      }
-      return next;
-    });
+  function applyPreset(days: number) {
+    updateFilter(presetRange(days));
   }
 
   return (
     <ProductPage title="使用记录" icon={<ListFilter size={20} />}>
       {expired && <SessionExpiredNotice message={expired} />}
       {message && <Notice>{message}</Notice>}
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
-              GENERATION LOGS
-            </p>
-            <p className="mt-1 text-xs text-[var(--muted)]">
-              仅显示 NAI 生成记录 · 点击行展开计费与请求参数 · 默认最近 7 天，最多可查 90 天
-            </p>
+        <div className="usage-filter-card mb-4" aria-label="使用记录筛选">
+          <div className="usage-filter-primary">
+            <DateRangePicker value={range} onChange={(value) => updateFilter(value)} quickRanges={[{ label: "今天", getValue: () => presetRange(1) }, { label: "最近 7 天", getValue: () => presetRange(7) }, { label: "最近 30 天", getValue: () => presetRange(30) }]} />
+            <div className="usage-filter-field usage-filter-model"><span>模型</span><PopupSelect ariaLabel="模型筛选" value={filters.model} options={[{ value: "", label: "全部模型" }, ...modelOptions]} onChange={(value) => updateFilter({ model: value })} searchable searchPlaceholder="搜索模型" /></div>
+            <div className="usage-filter-field usage-filter-status"><span>状态</span><PopupSelect ariaLabel="状态筛选" value={filters.status} options={[{ value: "", label: "全部状态" }, { value: "pending", label: "进行中" }, { value: "success", label: "成功" }, { value: "failed", label: "失败" }]} onChange={(value) => updateFilter({ status: value })} /></div>
+            <PopupSelect ariaLabel="结果排序" value={filters.sort} options={[{ value: "desc", label: "最新优先" }, { value: "asc", label: "最早优先" }]} onChange={(value) => updateFilter({ sort: value as Filters["sort"] })} />
+            <button type="button" className="usage-filter-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)}>{advancedOpen ? "收起" : "更多筛选"}<ChevronDown size={14} className={advancedOpen ? "rotate-180" : ""} /></button>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1.5 text-xs">
-              <input
-                type="date"
-                aria-label="开始日期"
-                value={range.start}
-                max={range.end}
-                onChange={(event) => changeDate("start", event.target.value)}
-                className="field h-9 px-2.5 text-xs"
-              />
-              <span className="text-[var(--muted)]">~</span>
-              <input
-                type="date"
-                aria-label="结束日期"
-                value={range.end}
-                min={range.start}
-                onChange={(event) => changeDate("end", event.target.value)}
-                className="field h-9 px-2.5 text-xs"
-              />
-            </div>
-            <div className="flex items-center gap-1">
-              <button type="button" aria-pressed={range.start === presetRange(1).start && range.end === presetRange(1).end} onClick={() => applyPreset(1)} className="rounded border border-[var(--line)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--muted)] transition-colors hover:border-[var(--rose)] hover:text-[var(--rose)]">今天</button>
-              <button type="button" aria-pressed={range.start === presetRange(7).start && range.end === presetRange(7).end} onClick={() => applyPreset(7)} className="rounded border border-[var(--line)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--muted)] transition-colors hover:border-[var(--rose)] hover:text-[var(--rose)]">最近 7 天</button>
-              <button type="button" aria-pressed={range.start === presetRange(30).start && range.end === presetRange(30).end} onClick={() => applyPreset(30)} className="rounded border border-[var(--line)] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[var(--muted)] transition-colors hover:border-[var(--rose)] hover:text-[var(--rose)]">最近 30 天</button>
-            </div>
-            <button
-              type="button"
-              aria-label="按当前范围刷新"
-              title="刷新"
-              onClick={() => { setLoading(true); setReloadToken((token) => token + 1); }}
-              className="grid h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white text-[var(--muted)] transition-colors hover:border-[var(--rose)] hover:text-[var(--rose)]"
-            >
-              <RotateCcw size={14} />
-            </button>
-          </div>
+          {advancedOpen && <div className="usage-filter-advanced"><input className="field usage-request-input" aria-label="请求 ID" placeholder="请求 ID" value={filters.requestId} onChange={(event) => updateFilter({ requestId: event.target.value })} /><input className="field usage-time-input" aria-label="开始时间" type="time" value={filters.startTime} onChange={(event) => updateFilter({ startTime: event.target.value })} /><span className="usage-filter-separator">~</span><input className="field usage-time-input" aria-label="结束时间" type="time" value={filters.endTime} onChange={(event) => updateFilter({ endTime: event.target.value })} /><div className="usage-filter-chips"><button type="button" aria-pressed={range.start === presetRange(1).start && range.end === presetRange(1).end} onClick={() => applyPreset(1)}>今天</button><button type="button" aria-pressed={range.start === presetRange(7).start && range.end === presetRange(7).end} onClick={() => applyPreset(7)}>最近 7 天</button><button type="button" aria-pressed={range.start === presetRange(30).start && range.end === presetRange(30).end} onClick={() => applyPreset(30)}>最近 30 天</button></div><button type="button" aria-label="按当前范围刷新" title="刷新" className="usage-refresh-button" onClick={() => { setLoading(true); setReloadToken((token) => token + 1); }}><RotateCcw size={14} /></button></div>}
         </div>
         <div className="overflow-hidden rounded-md border border-[var(--line)] bg-white">
         <div className="grid grid-cols-[minmax(140px,1fr)_100px_90px_150px_24px] gap-3 border-b border-[var(--line)] bg-[#f2f0ea] px-4 py-3 text-xs font-semibold max-sm:hidden">

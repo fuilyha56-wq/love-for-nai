@@ -38,6 +38,8 @@ export type RuntimeSettings = {
   remoteHistoryUrl: string;
   remoteHistoryToken: string;
   sessionEpoch: number;
+  // 按用户撤销会话时递增；键使用字符串以兼容 JSON 持久化。
+  sessionEpochs: Record<string, number>;
   enableV5Models: boolean;
   enableV45Models: boolean;
   enableDailyCheckIn: boolean;
@@ -93,6 +95,7 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   remoteHistoryUrl: "",
   remoteHistoryToken: "",
   sessionEpoch: 1,
+  sessionEpochs: {},
   enableV5Models: true,
   enableV45Models: true,
   enableDailyCheckIn: true,
@@ -144,6 +147,7 @@ function envSettings(): RuntimeSettings {
     remoteHistoryUrl: process.env.LFN_REMOTE_HISTORY_URL?.trim() || "",
     remoteHistoryToken: process.env.LFN_REMOTE_HISTORY_TOKEN?.trim() || "",
     sessionEpoch: Number(process.env.LFN_SESSION_EPOCH || 1),
+    sessionEpochs: {},
     enableV5Models: process.env.LFN_ENABLE_V5_MODELS !== "false",
     enableV45Models: process.env.LFN_ENABLE_V45_MODELS !== "false",
     enableDailyCheckIn: process.env.LFN_ENABLE_DAILY_CHECKIN !== "false",
@@ -164,7 +168,15 @@ function mergeSettings(saved?: Partial<RuntimeSettings> | null): RuntimeSettings
   for (const key of Object.keys(EMPTY_SETTINGS) as Array<keyof RuntimeSettings>) {
     const value = saved[key];
     if (value === undefined || value === null) continue;
-    if (typeof fallback[key] === "boolean") next[key] = Boolean(value) as never;
+    if (key === "sessionEpochs") {
+      const entries = value && typeof value === "object" && !Array.isArray(value)
+        ? Object.entries(value as Record<string, unknown>).flatMap(([id, epoch]) => {
+            const number = Number(epoch);
+            return /^\d+$/.test(id) && Number.isInteger(number) && number >= 1 ? [[id, number] as const] : [];
+          })
+        : [];
+      next.sessionEpochs = Object.fromEntries(entries);
+    } else if (typeof fallback[key] === "boolean") next[key] = Boolean(value) as never;
     else if (typeof fallback[key] === "number") {
       const number = Number(value);
       const allowZero = key === "dailyCheckInReward" || key === "referralReward";

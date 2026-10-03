@@ -7,3 +7,7 @@ export function settingsSectionForHash(hash: string): SettingsSection {
   if (value === "prompts") return "prompts";
   return "appearance";
 }
+
+export function settingsHashAlias(hash: string): string {
+  return hash === "#story-providers" ? "#custom-providers" : hash;
+}

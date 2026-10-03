@@ -1,15 +1,22 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { addProvider, deleteProvider, listProviders } from "@/lib/provider/store";
-import { ProviderInputError, validateApiKey, validateModels, validateProviderBaseUrl, validateProviderName, validateImageProviderProtocol } from "@/lib/provider/validation";
+import { addProvider, deleteProvider, listProviders, listPublicRegistryEntries, type ProviderCapability } from "@/lib/provider/store";
+import { ProviderInputError, validateApiKey, validateModels, validateProviderBaseUrl, validateProviderName, validateImageProviderProtocol, validateProviderCapability, validateProviderModelEntries } from "@/lib/provider/validation";
 
 const unauthorized = () => NextResponse.json({ message: "请先登录" }, { status: 401 });
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return unauthorized();
-  try { return NextResponse.json({ items: await listProviders(session.userId) }, { headers: { "Cache-Control": "no-store" } }); }
-  catch { return NextResponse.json({ message: "无法读取第三方 API 配置" }, { status: 500 }); }
+  const modality = new URL(request.url).searchParams.get("modality");
+  if (modality && modality !== "image" && modality !== "text" && modality !== "both")
+    return NextResponse.json({ message: "modality 无效" }, { status: 400 });
+  try {
+    const items = modality
+      ? await listPublicRegistryEntries(session.userId, modality as ProviderCapability)
+      : await listProviders(session.userId);
+    return NextResponse.json({ items }, { headers: { "Cache-Control": "no-store" } });
+  } catch { return NextResponse.json({ message: "无法读取第三方 API 配置" }, { status: 500 }); }
 }
 
 export async function POST(request: Request) {
@@ -19,11 +26,21 @@ export async function POST(request: Request) {
     if (Number(request.headers.get("content-length") || 0) > 16_384) throw new ProviderInputError("请求过大");
     const body = await request.json() as Record<string, unknown> | null;
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new ProviderInputError("请求格式无效");
+    const requestedCapability = body.capability ?? (
+      Array.isArray(body.capabilities) && body.capabilities.includes("story")
+        ? (body.capabilities.includes("image") ? "both" : "text")
+        : undefined
+    );
+    const capability = validateProviderCapability(requestedCapability);
+    const models = validateModels(body.models);
+    const modelEntries = validateProviderModelEntries(body.modelEntries, capability);
     const item = await addProvider(session.userId, {
       name: validateProviderName(body.name),
       baseUrl: validateProviderBaseUrl(body.baseUrl),
       apiKey: validateApiKey(body.apiKey),
-      models: validateModels(body.models),
+      models,
+      modelEntries: modelEntries.length ? modelEntries : undefined,
+      capability,
       protocol: validateImageProviderProtocol(body.protocol),
     });
     return NextResponse.json({ item }, { status: 201, headers: { "Cache-Control": "no-store" } });
