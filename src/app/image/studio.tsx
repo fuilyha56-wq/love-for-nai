@@ -1894,11 +1894,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, [selectedProvider, signedIn]);
 
   useEffect(() => {
-    if (!formCacheReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
+    // Do not replace the restored model while the server policy is still loading.
+    // The bootstrap list intentionally hides V5/V4.5 until that policy arrives;
+    // falling back during this window used to silently select nai-v4.5-curated.
+    if (!formCacheReady || !modelPolicyReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
     void Promise.resolve().then(() => setModel((current) =>
       modelOptions.some((item) => item.value === current) ? current : modelOptions[0].value,
     ));
-  }, [formCacheReady, model, modelOptions]);
+  }, [formCacheReady, modelPolicyReady, model, modelOptions]);
 
   useEffect(() => {
     if (!signedIn) return;
