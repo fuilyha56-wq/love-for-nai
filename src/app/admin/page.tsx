@@ -1,10 +1,15 @@
 "use client";
 
 import {
+  AlertTriangle,
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  CircleGauge,
+  FileText,
   Coins,
+  ShieldAlert,
   ImageIcon,
   Megaphone,
   MessageCircle,
@@ -21,6 +26,9 @@ import type { AnnouncementItem } from "@/app/announcement-dialog";
 import CommentsDialog from "./comments-dialog";
 import GatewaySection from "./gateway-panel";
 import PlatformConfigPanel from "./platform-config-panel";
+import DocsPanel from "./docs-panel";
+import RewardsPanel from "./rewards-panel";
+import RedeemCodesPanel from "./redeem-codes-panel";
 
 type AdminUser = {
   id: number;
@@ -36,16 +44,25 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform";
+type Tab = "overview" | "users" | "sessions" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform" | "docs" | "creator" | "rewards" | "redeem";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
+type AdminNavGroup = { label: string; ids: Tab[] };
 type PlatformCapabilities = {
   auth: { label: string; provider: string };
   image: { label: string; enabled: boolean; provider?: string };
   wallet: { upstreamBalance: boolean; credits: boolean; packages: boolean };
   labels?: { upstreamBalance: string; credits: string; packages: string };
 };
+type SessionHealth = {
+  threshold: number;
+  totalActiveSessions: number | null;
+  usersWithActiveSessions: number | null;
+  overThresholdUsers: number | null;
+  configured: boolean;
+  status: string;
+};
 type OverviewData = {
-  health: { status: string; service: string; auth: string; image: string };
+  health: { status: string; service: string; auth: string; image: string; sessions?: SessionHealth };
   counts: {
     users: number | null;
     announcements: number;
@@ -88,6 +105,9 @@ type GalleryAdminItem = {
   tags: string[];
   likes: number;
   createdAt: string;
+  submittedAt: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn";
+  reviewNote?: string;
   imageUrl: string;
 };
 type ReferralRow = {
@@ -127,6 +147,7 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [denied, setDenied] = useState<boolean | null>(null);
   const [message, setMessage] = useState("");
+  const [sessionFocusUserId, setSessionFocusUserId] = useState<number | null>(null);
   const [modules, setModules] = useState<AdminModule[]>([]);
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
 
@@ -154,16 +175,28 @@ export default function AdminPage() {
       : [
           { id: "overview", label: "平台概览", description: "站点健康和运营数字", enabled: true },
           { id: "users", label: "用户管理", description: "账号、角色和额度", enabled: true },
+          { id: "sessions", label: "会话管理", description: "活跃会话数、超阈值告警和批量清理", enabled: true },
           { id: "credits", label: "创作额度账本", description: "发放、回收和流水", enabled: true },
           { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
           { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
           { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
           { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
+          { id: "docs", label: "文档管理", description: "线上编辑 API 与帮助文档", enabled: true },
+          { id: "creator", label: "投稿审核", description: "审核创作者投稿与公开作品", enabled: true },
+          { id: "rewards", label: "奖励与活动", description: "结算投稿、周榜和人工发放", enabled: true },
+          { id: "redeem", label: "兑换码", description: "批量生成和管理兑换码", enabled: true },
         ]
     ).filter((item) => item.enabled),
     { id: "audits", label: "请求审计", description: "查看请求 ID、指纹、参数摘要和签名状态", enabled: true },
   ];
+  const navGroups: AdminNavGroup[] = [
+    { label: "工作台", ids: ["overview"] },
+    { label: "账号与安全", ids: ["users", "sessions"] },
+    { label: "运营内容", ids: ["credits", "announcements", "gallery", "referrals", "creator", "rewards", "redeem"] },
+    { label: "文档与系统", ids: ["docs", "audits", "platform"] },
+  ];
   const current = visibleModules.find((item) => item.id === tab);
+  const moduleById = new Map(visibleModules.map((item) => [item.id, item]));
 
   if (denied === null)
     return (
@@ -187,13 +220,13 @@ export default function AdminPage() {
     );
 
   return (
-    <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="flex h-14 items-center justify-between gap-3 border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <ShieldCheck size={20} className="shrink-0 text-[var(--rose)]" />
-          <b className="truncate">LFN 管理中心</b>
+    <main className="admin-shell min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <header className="admin-header flex h-16 items-center justify-between gap-3 border-b border-[var(--line)] bg-[var(--panel)] px-4 sm:px-7">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="admin-brand-mark"><ShieldCheck size={19} /></span>
+          <div className="min-w-0"><b className="block truncate tracking-tight">LFN 管理中心</b><span className="hidden text-[10px] text-[var(--muted)] sm:block">运营与安全控制台</span></div>
         </div>
-        <Link href="/image" className="flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
+        <Link href="/image" className="admin-back-link flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
           <ArrowLeft size={16} />
           返回工作台
         </Link>
@@ -201,39 +234,58 @@ export default function AdminPage() {
       {message && (
         <p className="mx-auto mt-4 max-w-6xl rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{message}</p>
       )}
-      <div className="mx-auto max-w-6xl p-4 sm:p-7">
-        <div className="mb-4 grid grid-cols-2 gap-1 rounded-md border border-[var(--line)] bg-[#f5f3ed] p-1 text-xs font-semibold sm:grid-cols-3 lg:grid-cols-7">
-          {visibleModules.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setTab(item.id as Tab)}
-              className={`h-8 rounded px-2 ${tab === item.id ? "bg-white text-[var(--rose)] shadow-sm" : "text-[var(--muted)]"}`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+      <div className="admin-layout mx-auto flex max-w-7xl gap-5 p-4 sm:p-7">
+        <aside className="admin-sidebar hidden w-52 shrink-0 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2 lg:block">
+          {navGroups.map((group) => {
+            const items = group.ids.map((id) => moduleById.get(id)).filter((item): item is AdminModule => Boolean(item));
+            if (!items.length) return null;
+            return <div key={group.label} className="mb-4 last:mb-0"><p className="px-3 pb-1.5 pt-2 text-[10px] font-bold tracking-[0.14em] text-[var(--muted)]">{group.label}</p>{items.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`admin-nav-item flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${tab === item.id ? "is-active" : "text-[var(--muted)]"}`}>{item.id === "overview" ? <CircleGauge size={15} /> : item.id === "users" ? <Users size={15} /> : item.id === "sessions" ? <ShieldAlert size={15} /> : <FileText size={15} />}<span className="ml-2">{item.label}</span></button>)}</div>;
+          })}
+        </aside>
+        <div className="min-w-0 flex-1">
+          <div className="admin-mobile-nav mb-4 flex gap-1 overflow-x-auto rounded-lg border border-[var(--line)] bg-[var(--panel)] p-1 text-xs font-semibold lg:hidden">
+            {visibleModules.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`shrink-0 rounded px-3 py-2 ${tab === item.id ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"}`}>{item.label}</button>)}
+          </div>
         {current?.description && (
           <p className="mb-5 text-sm leading-6 text-[var(--muted)]">{current.description}</p>
         )}
         {tab === "overview" ? (
-          <OverviewPanel capabilities={capabilities} modules={visibleModules} setMessage={setMessage} />
+          <OverviewPanel capabilities={capabilities} modules={visibleModules} />
         ) : tab === "users" ? (
-          <UsersPanel capabilities={capabilities} setMessage={setMessage} />
+          <UsersPanel capabilities={capabilities} setMessage={setMessage} onFocusSession={(userId) => { setSessionFocusUserId(userId); setTab("sessions"); }} />
+        ) : tab === "sessions" ? (
+          <SessionManagementPanel setMessage={setMessage} focusUserId={sessionFocusUserId} onClearFocus={() => setSessionFocusUserId(null)} />
         ) : tab === "credits" ? (
           <CreditsPanel capabilities={capabilities} setMessage={setMessage} />
-        ) : tab === "gallery" ? (
+        ) : tab === "gallery" || tab === "creator" ? (
           <GalleryPanel setMessage={setMessage} />
         ) : tab === "referrals" ? (
           <ReferralsPanel />
         ) : tab === "audits" ? (
           <AuditsPanel />
+        ) : tab === "docs" ? (
+          <DocsPanel />
+        ) : tab === "rewards" ? (
+          <RewardsPanel />
+        ) : tab === "redeem" ? (
+          <RedeemCodesPanel />
         ) : tab === "platform" ? (
-          <PlatformConfigPanel setMessage={setMessage} />
+          <>
+            <PlatformConfigPanel setMessage={setMessage} />
+            {capabilities?.image?.provider === "gateway" && capabilities.image.enabled && (
+              <section className="mt-5" aria-labelledby="gateway-management-heading">
+                <div className="mb-3">
+                  <h2 id="gateway-management-heading" className="text-base font-semibold">Gateway 运营</h2>
+                  <p className="mt-1 text-sm text-[var(--muted)]">管理共享渠道池、账号健康和模型计费覆盖。</p>
+                </div>
+                <GatewaySection setMessage={setMessage} />
+              </section>
+            )}
+          </>
         ) : (
           <AnnouncementsPanel setMessage={setMessage} />
         )}
+        </div>
       </div>
     </main>
   );
@@ -242,11 +294,9 @@ export default function AdminPage() {
 function OverviewPanel({
   capabilities,
   modules,
-  setMessage,
 }: {
   capabilities: PlatformCapabilities | null;
   modules: AdminModule[];
-  setMessage: (text: string) => void;
 }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
@@ -282,9 +332,22 @@ function OverviewPanel({
     { label: "额度账本", value: counts ? String(counts.creditAccounts) : "…" },
   ];
 
+  const sessionHealth = data?.health.sessions;
   return (
     <div className="space-y-4">
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {sessionHealth && (
+        <article className={`admin-health-card rounded-lg border p-4 ${sessionHealth.status === "warning" ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <CircleGauge size={18} className={sessionHealth.status === "warning" ? "text-amber-700" : "text-emerald-700"} />
+              <div><p className="text-sm font-semibold">会话健康</p><p className="text-xs text-[var(--muted)]">复用 NewAPI 活跃会话汇总，阈值为 {sessionHealth.threshold}</p></div>
+            </div>
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${sessionHealth.status === "warning" ? "bg-amber-200 text-amber-900" : "bg-emerald-200 text-emerald-900"}`}>{sessionHealth.status === "warning" ? "需要关注" : sessionHealth.configured ? "正常" : "未接入"}</span>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3"><div><p className="text-xs text-[var(--muted)]">活跃会话</p><p className="mt-1 text-lg font-semibold tabular-nums">{sessionHealth.totalActiveSessions ?? "—"}</p></div><div><p className="text-xs text-[var(--muted)]">活跃用户</p><p className="mt-1 text-lg font-semibold tabular-nums">{sessionHealth.usersWithActiveSessions ?? "—"}</p></div><div><p className="text-xs text-[var(--muted)]">超阈值用户</p><p className="mt-1 text-lg font-semibold tabular-nums">{sessionHealth.overThresholdUsers ?? "—"}</p></div></div>
+        </article>
+      )}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {stats.map((item) => (
           <article key={item.label} className="rounded-lg border border-[var(--line)] bg-white px-4 py-3">
@@ -337,9 +400,6 @@ function OverviewPanel({
           </dl>
         </article>
       </div>
-      {capabilities?.image?.provider === "gateway" && capabilities.image.enabled && (
-        <GatewaySection setMessage={setMessage} />
-      )}
       <article className="rounded-lg border border-[var(--line)] bg-white p-5">
         <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">管理模块</p>
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -355,12 +415,130 @@ function OverviewPanel({
   );
 }
 
+type SessionRow = {
+  userId: number;
+  username: string | null;
+  activeSessions: number;
+};
+
+type SessionData = {
+  threshold: number;
+  items: SessionRow[];
+  totalActiveSessions: number;
+  upstreamError: string | null;
+};
+type SessionFilter = "all" | "over";
+
+function SessionManagementPanel({
+  setMessage,
+  focusUserId,
+  onClearFocus,
+}: {
+  setMessage: (text: string) => void;
+  focusUserId?: number | null;
+  onClearFocus?: () => void;
+}) {
+  const [data, setData] = useState<SessionData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [cleaning, setCleaning] = useState(false);
+  const [filter, setFilter] = useState<SessionFilter>("over");
+  const [dangerOpen, setDangerOpen] = useState(false);
+  const [userQuery, setUserQuery] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/admin/sessions", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) {
+        setMessage(result.message || "会话读取失败");
+        return;
+      }
+      setData(result);
+      if (result.upstreamError) setMessage(`上游会话读取失败：${result.upstreamError}`);
+    } catch {
+      setMessage("会话读取失败，请检查网络后重试");
+    } finally {
+      setLoading(false);
+    }
+  }, [setMessage]);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => load());
+  }, [load]);
+
+  const focusQuery = focusUserId == null ? "" : String(focusUserId);
+
+  async function revokeSessions(scope: "over-threshold" | "all") {
+    const prompt = scope === "all"
+      ? "危险操作：确定撤销所有用户的全部上游登录会话？所有人都需要重新登录。"
+      : `确定撤销全部超过 ${data?.threshold ?? 25} 个活跃会话的用户的全部活跃会话？`;
+    if (!window.confirm(prompt)) return;
+    setCleaning(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/admin/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(scope === "all" ? { all: true } : { overThreshold: true }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        setMessage(result.message || "批量清理失败");
+        return;
+      }
+      if (scope === "all") {
+        setMessage(`已撤销全部登录状态（上游会话 ${result.upstreamRevoked ?? 0} 条，站内会话纪元已递增）。`);
+      } else {
+        const details = (result.users || [])
+          .map((item: { username?: string | null; userId: number; revokedSessions: number }) => `${item.username || `用户 ${item.userId}`}：${item.revokedSessions} 条`)
+          .join("，");
+        setMessage(`已清理 ${result.userCount ?? 0} 个超阈值用户，共撤销 ${result.totalRevoked ?? 0} 条上游会话。${details ? `（${details}）` : ""}`);
+      }
+      await load();
+    } catch {
+      setMessage("批量清理失败，请检查网络后重试");
+    } finally {
+      setCleaning(false);
+    }
+  }
+
+  const sessionRows = data?.items || [];
+  const overThreshold = sessionRows.filter((item) => item.activeSessions > (data?.threshold ?? 25));
+  const effectiveQuery = focusQuery || userQuery;
+  const effectiveFilter: SessionFilter = focusQuery ? "all" : filter;
+  const visibleRows = (effectiveFilter === "over" ? overThreshold : sessionRows)
+    .filter((item) => !effectiveQuery.trim() || `${item.username || ""} ${item.userId}`.toLowerCase().includes(effectiveQuery.trim().toLowerCase()));
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <article className="rounded-lg border border-[var(--line)] bg-white px-4 py-3"><p className="text-xs text-[var(--muted)]">活跃会话总数</p><p className="mt-1 text-xl font-semibold tabular-nums">{loading ? "…" : data?.totalActiveSessions ?? 0}</p></article>
+        <article className="rounded-lg border border-[var(--line)] bg-white px-4 py-3"><p className="text-xs text-[var(--muted)]">超过阈值用户</p><p className="mt-1 text-xl font-semibold tabular-nums">{loading ? "…" : overThreshold.length}</p></article>
+        <article className="rounded-lg border border-[var(--line)] bg-white px-4 py-3"><p className="text-xs text-[var(--muted)]">告警阈值</p><p className="mt-1 text-xl font-semibold tabular-nums">{data?.threshold ?? 25}</p></article>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--line)] bg-white p-3">
+        <div className="flex rounded-md bg-[var(--surface-muted)] p-1 text-xs font-semibold">
+          {(["all", "over"] as const).map((value) => <button key={value} type="button" onClick={() => setFilter(value)} className={`rounded px-3 py-1.5 ${effectiveFilter === value ? "bg-white text-[var(--rose)] shadow-sm" : "text-[var(--muted)]"}`}>{value === "all" ? `全部 (${sessionRows.length})` : `超阈值 (${overThreshold.length})`}</button>)}
+        </div>
+        <input value={effectiveQuery} onChange={(event) => { setUserQuery(event.target.value); onClearFocus?.(); }} placeholder="筛选用户 / ID…" className="field h-9 w-full px-3 text-sm sm:w-52" />
+        {focusQuery && <button type="button" onClick={() => { setUserQuery(""); onClearFocus?.(); }} className="h-9 rounded border border-amber-300 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-50">清除联动筛选</button>}
+        <button type="button" onClick={() => load()} className="h-9 rounded border border-[var(--line)] px-3 text-xs font-semibold hover:border-[var(--rose)]">刷新</button>
+      </div>
+      {overThreshold.length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"><span className="flex items-center gap-2"><AlertTriangle size={16} />有用户活跃会话数超过阈值，可能触发上游登录 409。</span><button type="button" disabled={cleaning} onClick={() => revokeSessions("over-threshold")} className="h-9 rounded border border-amber-300 bg-white px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50">{cleaning ? "清理中…" : "批量撤销超阈值用户会话"}</button></div>}
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white"><table className="w-full text-sm"><thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">用户 ID</th><th className="px-3 py-2.5">活跃会话数</th><th className="px-3 py-2.5">风险</th></tr></thead><tbody>{visibleRows.map((item) => <tr key={item.userId} className="border-b border-[var(--line)] last:border-0"><td className="px-3 py-2.5 font-medium">{item.username || "未命名用户"}</td><td className="px-3 py-2.5 font-mono text-xs text-[var(--muted)]">{item.userId}</td><td className={`px-3 py-2.5 font-semibold tabular-nums ${item.activeSessions > (data?.threshold ?? 25) ? "text-amber-700" : ""}`}>{item.activeSessions}</td><td className="px-3 py-2.5 text-xs">{item.activeSessions > (data?.threshold ?? 25) ? <span className="inline-flex items-center gap-1 text-amber-700"><ShieldAlert size={13} />超阈值</span> : "正常"}</td></tr>)}{!loading && !visibleRows.length && <tr><td colSpan={4} className="px-3 py-10 text-center text-sm text-[var(--muted)]">没有匹配的活跃会话</td></tr>}</tbody></table></div>
+      <section className="rounded-lg border border-red-200 bg-red-50/60 p-4"><button type="button" onClick={() => setDangerOpen((value) => !value)} className="flex w-full items-center justify-between text-left text-sm font-semibold text-red-800"><span className="flex items-center gap-2"><ShieldAlert size={16} />危险操作区</span><ChevronDown size={16} className={dangerOpen ? "rotate-180" : ""} /></button>{dangerOpen && <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-red-200 pt-3"><p className="text-xs leading-5 text-red-800">撤销全部登录状态会使所有用户退出登录，仅在上游会话泄漏或需要紧急止损时使用。</p><button type="button" disabled={cleaning} onClick={() => revokeSessions("all")} className="h-9 rounded border border-red-300 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50">{cleaning ? "处理中…" : "撤销全部登录状态"}</button></div>}</section>
+    </div>
+  );
+}
+
 function UsersPanel({
   capabilities,
   setMessage,
+  onFocusSession,
 }: {
   capabilities: PlatformCapabilities | null;
   setMessage: (text: string) => void;
+  onFocusSession: (userId: number) => void;
 }) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [total, setTotal] = useState(0);
@@ -369,7 +547,7 @@ function UsersPanel({
   const [keyword, setKeyword] = useState("");
   const [editing, setEditing] = useState<AdminUser | null>(null);
   const [creating, setCreating] = useState(false);
-  const [clearingAll, setClearingAll] = useState(false);
+  const [sessionRisk, setSessionRisk] = useState<Record<number, number>>({});
   const pageSize = 20;
   const localAuth = capabilities?.auth.provider === "local";
   const showUpstream = capabilities?.wallet.upstreamBalance !== false;
@@ -399,6 +577,18 @@ function UsersPanel({
   useEffect(() => {
     void Promise.resolve().then(() => load(1, ""));
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/admin/sessions?overThreshold=true", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((result) => {
+        if (cancelled || !Array.isArray(result.items)) return;
+        setSessionRisk(Object.fromEntries(result.items.map((item: SessionRow) => [item.userId, item.activeSessions])));
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -436,35 +626,6 @@ function UsersPanel({
             <Plus size={15} />新建用户
           </button>
         )}
-        <button
-          type="button"
-          disabled={clearingAll}
-          onClick={async () => {
-            if (!window.confirm("确定清理全部用户的登录状态？所有人将被登出并需要重新登录。")) return;
-            setClearingAll(true);
-            setMessage("");
-            try {
-              const response = await fetch("/api/admin/sessions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ all: true }),
-              });
-              const result = await response.json();
-              setMessage(
-                response.ok
-                  ? `已清理全部登录状态（上游会话 ${result.upstreamRevoked ?? 0} 条，站内会话纪元已递增）。`
-                  : result.message || "清理失败",
-              );
-            } catch {
-              setMessage("清理失败，请检查网络后重试");
-            } finally {
-              setClearingAll(false);
-            }
-          }}
-          className="h-9 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50"
-        >
-          {clearingAll ? "清理中…" : "清理全部登录状态"}
-        </button>
         <span className="ml-auto text-xs text-[var(--muted)]">共 {total} 个用户</span>
       </div>
 
@@ -474,6 +635,7 @@ function UsersPanel({
             <tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
               <th className="px-3 py-2.5">ID</th>
               <th className="px-3 py-2.5">用户名</th>
+              <th className="px-3 py-2.5">会话风险</th>
               <th className="px-3 py-2.5">分组</th>
               <th className="px-3 py-2.5">角色</th>
               {localAuth && <th className="px-3 py-2.5">状态</th>}
@@ -488,6 +650,9 @@ function UsersPanel({
               <tr key={user.id} className="border-b border-[var(--line)] last:border-0 hover:bg-[#faf9f5]">
                 <td className="px-3 py-2.5 font-mono text-xs text-[var(--muted)]">{user.id}</td>
                 <td className="px-3 py-2.5 font-medium">{user.display_name || user.username}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  {sessionRisk[user.id] != null ? <button type="button" onClick={() => onFocusSession(user.id)} className="inline-flex items-center gap-1 font-semibold text-amber-700 hover:underline" title="在会话管理中查看该用户"><ShieldAlert size={13} />{sessionRisk[user.id]} 个活跃会话</button> : <span className="text-[var(--muted)]">正常</span>}
+                </td>
                 <td className="px-3 py-2.5">
                   <span className="rounded-full bg-[#f1eee7] px-2 py-0.5 text-xs">{user.group || "default"}</span>
                 </td>
@@ -537,7 +702,7 @@ function UsersPanel({
             ))}
             {!users.length && (
               <tr>
-                <td colSpan={9} className="px-3 py-10 text-center text-sm text-[var(--muted)]">没有匹配的用户</td>
+                <td colSpan={10} className="px-3 py-10 text-center text-sm text-[var(--muted)]">没有匹配的用户</td>
               </tr>
             )}
           </tbody>
@@ -1004,10 +1169,12 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
   const [rating, setRating] = useState("general");
   const [tags, setTags] = useState("");
   const [saving, setSaving] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | GalleryAdminItem["status"]>("pending");
 
   const load = useCallback(async () => {
     try {
-      const response = await fetch("/api/admin/gallery", { cache: "no-store" });
+      const query = statusFilter === "all" ? "" : `?status=${statusFilter}`;
+      const response = await fetch(`/api/admin/gallery${query}`, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok) {
         setMessage(result.message || "图库读取失败");
@@ -1017,7 +1184,7 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
     } catch {
       setMessage("图库读取失败");
     }
-  }, [setMessage]);
+  }, [setMessage, statusFilter]);
 
   useEffect(() => {
     void Promise.resolve().then(() => load());
@@ -1029,6 +1196,14 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
     setAuthorName(item.authorName);
     setRating(item.rating);
     setTags(item.tags.join(", "));
+  }
+
+  async function review(id: string, action: "approve" | "reject" | "withdraw") {
+    const response = await fetch(`/api/admin/gallery/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+    const result = await response.json();
+    if (!response.ok) { setMessage(result.message || "审核操作失败"); return; }
+    setMessage(action === "approve" ? "投稿已通过" : action === "reject" ? "投稿已拒绝" : "投稿已撤回");
+    load();
   }
 
   async function save() {
@@ -1069,9 +1244,10 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
 
   return (
     <div className="space-y-4">
-      <p className="flex items-center gap-2 text-sm font-semibold">
-        <ImageIcon size={16} className="text-[var(--rose)]" />图库投稿（共 {items.length} 件）
-      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="flex items-center gap-2 text-sm font-semibold"><ImageIcon size={16} className="text-[var(--rose)]" />图库投稿（共 {items.length} 件）</p>
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="field ml-auto h-9 px-2 text-xs"><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已拒绝</option><option value="withdrawn">已撤回</option><option value="all">全部</option></select>
+      </div>
       <div className="space-y-2.5">
         {items.map((item) => (
           <div key={item.id} className="flex items-center gap-3 rounded-lg border border-[var(--line)] bg-white px-4 py-3">
@@ -1082,10 +1258,13 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
               <p className="mt-0.5 text-[10px] text-[var(--muted)]">
                 {item.authorName} · {item.ownerName} · {RATING_LABELS[item.rating] || item.rating} · {item.likes} 赞
               </p>
+              <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>
             </div>
-            <div className="flex shrink-0 gap-3 text-xs font-semibold">
+            <div className="flex shrink-0 flex-wrap justify-end gap-3 text-xs font-semibold">
+              {item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
+              {item.status === "approved" && <button type="button" onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
               <button type="button" onClick={() => open(item)} className="text-[var(--rose)] hover:underline">编辑</button>
-              <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">下架</button>
+              <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
             </div>
           </div>
         ))}

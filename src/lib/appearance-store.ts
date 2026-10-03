@@ -15,6 +15,46 @@ export type AppearanceMotion = "full" | "reduced";
 export type WorkspaceLayout = "lfn" | "nlw" | "custom";
 export type HexColor = `#${string}`;
 
+/** Keep the token source shared by the provider and the pre-paint script. */
+export const APPEARANCE_THEME_TOKENS = {
+  paper: {
+    paper: "#f7f6f2",
+    panel: "#fffefa",
+    line: "#deddd7",
+    ink: "#202328",
+    muted: "#71767c",
+  },
+  dusk: {
+    paper: "#eee9e4",
+    panel: "#fffaf5",
+    line: "#d8cbc2",
+    ink: "#30282a",
+    muted: "#796c6d",
+  },
+  night: {
+    paper: "#17191d",
+    panel: "#22252b",
+    line: "#3a3e47",
+    ink: "#f1eee8",
+    muted: "#a6aab2",
+  },
+  nai: {
+    paper: "#13152c",
+    panel: "#191b31",
+    line: "#22253f",
+    ink: "#ffffff",
+    muted: "#b3b4c8",
+  },
+} as const;
+
+export const APPEARANCE_ACCENT_TOKENS = {
+  rose: { base: "#a83a4c", dark: "#7f2637" },
+  mint: { base: "#2d7567", dark: "#205649" },
+  gold: { base: "#b47c2a", dark: "#805719" },
+  violet: { base: "#7658a8", dark: "#503b7c" },
+  indigo: { base: "#6c7fff", dark: "#4a57d6" },
+} as const;
+
 /** The only modules a custom workspace may arrange. Keep this list closed. */
 export const CUSTOM_LAYOUT_MODULES = [
   "prompt",
@@ -307,6 +347,48 @@ export const DEFAULT_APPEARANCE_PREFERENCES: AppearancePreferences = {
 
 // Short aliases make the store convenient to consume from small client components.
 export const DEFAULT_PREFERENCES = DEFAULT_APPEARANCE_PREFERENCES;
+
+/**
+ * Build the tiny synchronous bootstrap used by the root layout. Keep its
+ * normalization rules in lockstep with parseAppearancePreferences so the
+ * first paint and the ready provider never disagree about persisted values.
+ */
+export function createAppearancePrepaintScript(): string {
+  const themes = JSON.stringify(APPEARANCE_THEME_TOKENS);
+  const accents = JSON.stringify(APPEARANCE_ACCENT_TOKENS);
+  const defaults = JSON.stringify(DEFAULT_APPEARANCE_PREFERENCES);
+  return `(function(){try{
+var THEMES=${themes};var ACCENTS=${accents};var DEFAULTS=${defaults};
+var raw=localStorage.getItem(${JSON.stringify(APPEARANCE_STORAGE_KEY)});var input;
+try{input=raw?JSON.parse(raw):null;}catch(e){input=null;}
+var p=!input||typeof input!=="object"||Array.isArray(input)?DEFAULTS:
+  (input.version!==undefined&&input.version!==${APPEARANCE_PREFERENCES_VERSION}?DEFAULTS:input);
+var theme=Object.prototype.hasOwnProperty.call(THEMES,p.theme)?p.theme:DEFAULTS.theme;
+var accentPreset=Object.prototype.hasOwnProperty.call(ACCENTS,p.accentPreset)?p.accentPreset:DEFAULTS.accentPreset;
+var themeTokens=THEMES[theme];var accentTokens=ACCENTS[accentPreset];
+var customAccent=typeof p.customAccent==="string"&&/^#[0-9a-fA-F]{6}$/.test(p.customAccent)?p.customAccent.toUpperCase():null;
+var rose=customAccent||accentTokens.base;
+var grid=typeof p.grid==="boolean"?p.grid:DEFAULTS.grid;
+var glass=typeof p.glass==="boolean"?p.glass:DEFAULTS.glass;
+var motion=p.motion==="reduced"||p.motion==="full"?p.motion:DEFAULTS.motion;
+var density=p.density==="compact"||p.density==="comfortable"?p.density:DEFAULTS.density;
+var strength=typeof p.glassStrength==="number"&&Number.isFinite(p.glassStrength)?Math.min(100,Math.max(0,Math.round(p.glassStrength))):DEFAULTS.glassStrength;
+var root=document.documentElement,style=root.style;
+root.dataset.theme=theme;root.dataset.glass=glass?"on":"off";root.dataset.motion=motion;
+root.dataset.grid=grid?"on":"off";root.dataset.density=density;
+style.setProperty("--paper",themeTokens.paper);style.setProperty("--panel",themeTokens.panel);style.setProperty("--line",themeTokens.line);
+style.setProperty("--ink",themeTokens.ink);style.setProperty("--muted",themeTokens.muted);
+style.setProperty("--rose",rose);style.setProperty("--rose-dark",customAccent?"color-mix(in srgb, "+rose+" 76%, #000)":accentTokens.dark);
+style.setProperty("--mint",ACCENTS.mint.base);style.setProperty("--gold",ACCENTS.gold.base);
+var glassAlpha=Math.round(46-strength*0.26),glassBlur=Math.round(12+strength*0.28);
+style.setProperty("--lfn-glass-opacity",glass?String(0.5+strength/200):"0");style.setProperty("--lfn-glass-blur",glass?glassBlur+"px":"0px");
+style.setProperty("--glass-alpha",glass?glassAlpha+"%":"100%");style.setProperty("--glass-blur",glass?glassBlur+"px":"0px");style.setProperty("--glass-saturation",glass?String(1.3+strength/250):"1");
+var tint=theme==="nai"?"rgba(255, 255, 255, 0.03)":"rgba(56, 52, 45, 0.035)";
+var layers=grid?["linear-gradient("+tint+" 1px, transparent 1px)","linear-gradient(90deg, "+tint+" 1px, transparent 1px)"]:[];
+var body=document.body.style;body.backgroundImage=layers.join(", ")||"none";body.backgroundSize=layers.map(function(){return "24px 24px";}).join(", ")||"auto";
+body.backgroundPosition=layers.map(function(){return "0 0";}).join(", ")||"0 0";body.backgroundAttachment=layers.map(function(){return "scroll";}).join(", ")||"scroll";body.backgroundColor=themeTokens.paper;
+}catch(e){}})();`;
+}
 
 /** Only six-digit CSS hex colors are accepted as user supplied colors. */
 export function isSafeHexColor(value: unknown): value is HexColor {

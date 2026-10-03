@@ -97,6 +97,30 @@ export async function authenticateLocalUser(
   return verifyPassword(password, user.passwordHash) ? user : null;
 }
 
+export async function verifyLocalUserPassword(
+  id: number,
+  password: string,
+): Promise<LocalUser | null> {
+  const user = await findLocalUserById(id);
+  if (!user || user.status !== 1 || !verifyPassword(password, user.passwordHash)) return null;
+  return user;
+}
+
+export async function changeLocalUserPassword(
+  id: number,
+  currentPassword: string,
+  newPassword: string,
+): Promise<LocalUser> {
+  const store = await readStore();
+  const user = store.users.find((item) => item.id === id);
+  if (!user || user.status !== 1) throw new Error("账号不存在或已停用");
+  if (!verifyPassword(currentPassword, user.passwordHash)) throw new Error("当前密码错误");
+  if (newPassword.length < 8 || newPassword.length > 64) throw new Error("新密码需为 8–64 个字符");
+  user.passwordHash = hashPassword(newPassword);
+  await writeStore(store);
+  return user;
+}
+
 export async function createLocalUser(input: {
   username: string;
   password: string;

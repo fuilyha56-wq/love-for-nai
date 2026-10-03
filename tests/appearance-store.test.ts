@@ -1,11 +1,74 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import {
+  APPEARANCE_STORAGE_KEY,
   CUSTOM_LAYOUT_VERSION,
+  createAppearancePrepaintScript,
   parseAppearancePreferences,
   parseCustomLayout,
 } from "@/lib/appearance-store";
 
+function createStyleStub() {
+  return {
+    values: {} as Record<string, string>,
+    setProperty(name: string, value: string) {
+      this.values[name] = value;
+    },
+  };
+}
+
 describe("外观偏好解析", () => {
+  it("pre-paint 使用与正式解析相同的字段修复规则", () => {
+    const stored = {
+      version: 1,
+      theme: "nai",
+      accentPreset: "indigo",
+      customAccent: "#aBcDef",
+      grid: false,
+      motion: "reduced",
+      density: "compact",
+      glass: true,
+      glassStrength: 101.4,
+    };
+    const parsed = parseAppearancePreferences(stored);
+    const root = { dataset: {} as Record<string, string>, style: createStyleStub() };
+    const body = { style: createStyleStub() };
+    runInNewContext(createAppearancePrepaintScript(), {
+      localStorage: { getItem: (key: string) => key === APPEARANCE_STORAGE_KEY ? JSON.stringify(stored) : null },
+      document: { documentElement: root, body },
+      Number,
+      JSON,
+      Object,
+      Math,
+      String,
+      isFinite,
+    });
+    expect(root.dataset.theme).toBe(parsed.theme);
+    expect(root.dataset.grid).toBe(parsed.grid ? "on" : "off");
+    expect(root.dataset.motion).toBe(parsed.motion);
+    expect(root.dataset.density).toBe(parsed.density);
+    expect(root.dataset.glass).toBe(parsed.glass ? "on" : "off");
+    expect(root.style.values["--rose"]).toBe(parsed.customAccent);
+    expect(root.style.values["--glass-blur"]).toBe("40px");
+  });
+
+  it("pre-paint 不会把未知版本的本地偏好应用到首帧", () => {
+    const root = { dataset: {} as Record<string, string>, style: createStyleStub() };
+    const body = { style: createStyleStub() };
+    runInNewContext(createAppearancePrepaintScript(), {
+      localStorage: { getItem: () => JSON.stringify({ version: 99, theme: "nai", grid: false }) },
+      document: { documentElement: root, body },
+      Number,
+      JSON,
+      Object,
+      Math,
+      String,
+      isFinite,
+    });
+    expect(root.dataset.theme).toBe("paper");
+    expect(root.dataset.grid).toBe("on");
+  });
+
   it("接受 nai 主题与靛蓝强调色", () => {
     const parsed = parseAppearancePreferences({
       version: 1,

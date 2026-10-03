@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parseCustomStoryModel } from "@/lib/stories";
 
 let dataDir: string;
 
@@ -16,6 +17,12 @@ afterEach(async () => {
 });
 
 describe("故事存储", () => {
+  it("解析新三段式模型并兼容旧单段式模型", () => {
+    expect(parseCustomStoryModel("custom:provider-1:model/name")).toEqual({ providerId: "provider-1", modelId: "model/name" });
+    expect(parseCustomStoryModel("custom:provider-1")).toEqual({ providerId: "provider-1" });
+    expect(parseCustomStoryModel("custom:provider-1:")).toBeNull();
+  });
+
   it("创建、更新并隔离用户故事", async () => {
     const { createStory, listStories, updateStory } = await import("@/lib/stories");
     const created = await createStory(1, { title: "盐风港", model: "luna" });

@@ -4,7 +4,9 @@ import {
   withModelConcurrencySlot,
 } from "@/lib/model-concurrency";
 import type { Story, StoryBranch } from "@/lib/stories";
+import { parseCustomStoryModel } from "@/lib/stories";
 import { findStoryProvider } from "@/lib/story-providers";
+import { resolveTextProviderModel } from "@/lib/provider/store";
 import { validateStoryProviderUrl } from "@/lib/story-provider-network";
 
 export const STORY_GENERATION_MODES = ["continue", "rewrite", "insert"] as const;
@@ -85,15 +87,20 @@ export async function generateStoryText(
   branch: StoryBranch,
   input: GenerateInput,
 ): Promise<string> {
-  const providerId = story.model.startsWith("custom:") ? story.model.slice(7) : "";
-  const provider = providerId ? await findStoryProvider(session.userId, providerId) : null;
-  if (providerId && !provider) throw new Error("模型源已删除，请在故事设置中选择其他模型");
-  const model = provider?.model || story.model.replace(/^newapi:/, "");
-  const baseUrl = provider?.kind === "openai"
-    ? await validateStoryProviderUrl(provider.baseUrl)
+  const custom = parseCustomStoryModel(story.model);
+  const legacyProvider = custom && !custom.modelId
+    ? await findStoryProvider(session.userId, custom.providerId)
+    : null;
+  const unifiedTarget = custom
+    ? await resolveTextProviderModel(session.userId, custom.providerId, custom.modelId)
+    : null;
+  if (custom && !legacyProvider && !unifiedTarget) throw new Error("模型源已删除，请在故事设置中选择其他模型");
+  const model = legacyProvider?.model || unifiedTarget?.model || story.model.replace(/^newapi:/, "");
+  const baseUrl = legacyProvider?.kind === "openai" || unifiedTarget
+    ? await validateStoryProviderUrl(legacyProvider?.baseUrl || unifiedTarget!.provider.baseUrl)
     : await resolvedNewApiBaseUrl();
-  const key = provider?.secret || await getStoryToken(session, model);
-  const endpoint = provider?.kind === "novelai"
+  const key = legacyProvider?.secret || unifiedTarget?.provider.apiKey || await getStoryToken(session, model);
+  const endpoint = legacyProvider?.kind === "novelai"
     ? "https://text.novelai.net/ai/generate"
     : `${baseUrl}${baseUrl.endsWith("/v1") ? "" : "/v1"}/chat/completions`;
   const system = story.specializedPrompt ? NOVEL_SYSTEM_PROMPT : PLAIN_SYSTEM_PROMPT;
@@ -105,7 +112,7 @@ export async function generateStoryText(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        ...(provider?.kind === "novelai" ? {
+        ...((legacyProvider?.kind === "novelai") ? {
           input: `[System: ${system}]\nUser: ${prompt}\nAssistant:`,
           model,
           parameters: { use_string: true, temperature: 0.8, max_length: 1800, min_length: 1, top_p: 0.9, top_k: 3, repetition_penalty: 1.05 },
@@ -123,7 +130,7 @@ export async function generateStoryText(
     });
     const text = await response.text();
     if (!response.ok) {
-      throw new Error(`${provider?.name || `ikun/${model}`} 返回 ${response.status}: ${readUpstreamError(text, response.status).slice(0, 4_000)}`);
+      throw new Error(`${legacyProvider?.name || unifiedTarget?.provider.name || `ikun/${model}`} 返回 ${response.status}: ${readUpstreamError(text, response.status).slice(0, 4_000)}`);
     }
     let result: ChatResponse;
     try {
@@ -131,7 +138,7 @@ export async function generateStoryText(
     } catch {
       throw new Error(`${model} 返回了无法解析的响应: ${text.slice(0, 1_000)}`);
     }
-    const content = (provider?.kind === "novelai" ? (result as ChatResponse & { output?: string }).output : result.choices?.[0]?.message?.content)?.trim();
+    const content = (legacyProvider?.kind === "novelai" ? (result as ChatResponse & { output?: string }).output : result.choices?.[0]?.message?.content)?.trim();
     if (!content) throw new Error(`${model} 未返回正文内容`);
   return content;
 }

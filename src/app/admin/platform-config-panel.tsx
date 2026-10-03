@@ -178,7 +178,6 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
       }
       setSettings({ ...EMPTY_SETTINGS, ...result.settings });
       setMessage("站点设置已保存，立即生效");
-      await load();
     } catch {
       setMessage("保存失败");
     } finally {
@@ -261,7 +260,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
 
   return (
     <div className="space-y-5">
-      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+      <article className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">站点设置</p>
@@ -271,7 +270,9 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
             <Save size={15} />{saving ? "保存中…" : "保存设置"}
           </button>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <details open className="config-group">
+          <summary className="config-group-summary">账号与基础站点</summary>
+          <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-sm font-semibold">账号提供者
             <div className="mt-1.5">
               <PopupSelect
@@ -304,6 +305,11 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="block text-sm font-semibold">公开地址
             <input value={settings.publicUrl} onChange={(event) => setSettings({ ...settings, publicUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
+          </div>
+        </details>
+        <details open className="config-group">
+          <summary className="config-group-summary">上游与图像服务</summary>
+          <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-sm font-semibold">可选 Gateway 地址
             <input value={settings.affGatewayUrl} onChange={(event) => setSettings({ ...settings, affGatewayUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="不用 Gateway 请留空" />
           </label>
@@ -328,6 +334,11 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="block text-sm font-semibold">可选图像上游令牌
             <input value={settings.imageProviderToken} onChange={(event) => setSettings({ ...settings, imageProviderToken: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="没有请留空" />
           </label>
+          </div>
+        </details>
+        <details open className="config-group">
+          <summary className="config-group-summary">网络、安全与远程历史</summary>
+          <div className="grid gap-4 sm:grid-cols-2">
           <label className="block text-sm font-semibold">远程历史地址
             <input value={settings.remoteHistoryUrl} onChange={(event) => setSettings({ ...settings, remoteHistoryUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
@@ -348,10 +359,11 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
             <input type="checkbox" checked={settings.cookieSecure} onChange={(event) => setSettings({ ...settings, cookieSecure: event.target.checked })} />
             Cookie 仅 HTTPS
           </label>
-        </div>
+          </div>
+        </details>
       </article>
 
-      <article className="rounded-lg border border-[var(--line)] bg-white p-5">
+      <article className="rounded-lg border border-[var(--line)] bg-[var(--panel)] p-5">
         <h3 className="text-sm font-semibold text-[var(--rose)]">模型与福利</h3>
         <p className="mt-1 text-xs text-[var(--muted)]">关闭模型后会从模型列表下架并拒绝对应请求；签到/邀请奖励单位为 AFF。修改后点击上方「保存站点设置」生效。</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -395,7 +407,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--muted)]">端点才是实际接入。图像端点可只开 OpenAI 兼容接口，不必开 Gateway；停用或删除即可切走。</p>
-        <button type="button" onClick={() => setEditing(emptyForm())} className="flex h-10 items-center gap-1.5 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold text-[var(--rose)] hover:border-[var(--rose)]">
+        <button type="button" onClick={() => setEditing(emptyForm())} className="flex h-10 items-center gap-1.5 rounded border border-[var(--line)] bg-[var(--panel)] px-3 text-sm font-semibold text-[var(--rose)] hover:border-[var(--rose)]">
           <Plus size={15} />添加端点
         </button>
       </div>
@@ -405,13 +417,13 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         return (
           <section key={type} className="space-y-2">
             <h3 className="text-sm font-semibold text-[var(--rose)]">{TYPE_LABELS[type]}（{items.length}）</h3>
-            {!items.length && <p className="rounded-lg border border-dashed border-[var(--line)] bg-white px-4 py-6 text-center text-sm text-[var(--muted)]">还没有{TYPE_LABELS[type]}端点</p>}
+            {!items.length && <p className="rounded-lg border border-dashed border-[var(--line)] bg-[var(--panel)] px-4 py-6 text-center text-sm text-[var(--muted)]">还没有{TYPE_LABELS[type]}端点</p>}
             {items.map((item) => (
-              <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-white px-4 py-3">
+              <div key={item.id} className="flex items-center justify-between gap-3 rounded-lg border border-[var(--line)] bg-[var(--panel)] px-4 py-3">
                 <div className="min-w-0">
                   <p className="flex flex-wrap items-center gap-2">
                     <b>{item.name}</b>
-                    <span className="rounded-full bg-[#f1eee7] px-2 py-0.5 text-[10px]">{item.adapterType}</span>
+                    <span className="rounded-full bg-[var(--surface-muted)] px-2 py-0.5 text-[10px]">{item.adapterType}</span>
                     <span className={`text-[10px] font-semibold ${item.enabled ? "text-[var(--mint)]" : "text-[var(--muted)]"}`}>
                       {item.enabled ? "启用" : "停用"}
                     </span>
@@ -421,7 +433,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
                   </p>
                 </div>
                 <div className="flex shrink-0 gap-2">
-                  <button type="button" onClick={() => toggleEndpoint(item)} className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-white hover:border-[var(--rose)]" title={item.enabled ? "停用" : "启用"}>
+                  <button type="button" onClick={() => toggleEndpoint(item)} className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-[var(--panel)] hover:border-[var(--rose)]" title={item.enabled ? "停用" : "启用"}>
                     {item.enabled ? <PowerOff size={15} /> : <Power size={15} />}
                   </button>
                   <button
@@ -436,12 +448,12 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
                       priority: String(item.priority),
                       enabled: item.enabled,
                     })}
-                    className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-white hover:border-[var(--rose)]"
+                    className="grid h-10 w-10 place-items-center rounded border border-[var(--line)] bg-[var(--panel)] hover:border-[var(--rose)]"
                     title="编辑"
                   >
                     <Pencil size={15} />
                   </button>
-                  <button type="button" onClick={() => removeEndpoint(item)} className="grid h-10 w-10 place-items-center rounded border border-red-200 bg-white text-red-600 hover:border-red-400" title="删除">
+                  <button type="button" onClick={() => removeEndpoint(item)} className="grid h-10 w-10 place-items-center rounded border border-red-200 bg-[var(--panel)] text-red-600 hover:border-red-400" title="删除">
                     <Trash2 size={15} />
                   </button>
                 </div>
@@ -452,9 +464,9 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
       })}
 
       {editing && (
-        <div className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4" onClick={() => setEditing(null)}>
-          <div className="w-full max-w-lg rounded-lg border border-[var(--line)] bg-[#fffefa]" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-[var(--line)] bg-[#f5f3ed] px-5 py-4">
+        <div className="fixed inset-0 z-[30000] grid place-items-center bg-[var(--ink)]/45 p-4" onClick={() => setEditing(null)}>
+          <div className="w-full max-w-lg rounded-lg border border-[var(--line)] bg-[var(--panel)]" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-[var(--line)] bg-[var(--surface-muted)] px-5 py-4">
               <b>{editing.id ? "编辑端点" : "添加端点"}</b>
               <button type="button" onClick={() => setEditing(null)} className="text-sm text-[var(--muted)]">关闭</button>
             </div>
@@ -503,8 +515,8 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
                 启用
               </label>
             </div>
-            <div className="flex justify-end gap-2 border-t border-[var(--line)] bg-[#f5f3ed] px-5 py-3.5">
-              <button type="button" onClick={() => setEditing(null)} className="h-10 rounded border border-[var(--line)] bg-white px-4 text-sm font-semibold">取消</button>
+            <div className="flex justify-end gap-2 border-t border-[var(--line)] bg-[var(--surface-muted)] px-5 py-3.5">
+              <button type="button" onClick={() => setEditing(null)} className="h-10 rounded border border-[var(--line)] bg-[var(--panel)] px-4 text-sm font-semibold">取消</button>
               <button type="button" disabled={saving} onClick={saveEndpoint} className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white disabled:opacity-60">
                 <Save size={15} />{saving ? "保存中…" : "保存"}
               </button>

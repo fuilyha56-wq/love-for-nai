@@ -11,7 +11,9 @@ import {
   type ReactNode,
 } from "react";
 import {
+  APPEARANCE_ACCENT_TOKENS,
   APPEARANCE_STORAGE_KEY,
+  APPEARANCE_THEME_TOKENS,
   DEFAULT_APPEARANCE_PREFERENCES,
   deleteBackgroundImage,
   loadAppearancePreferences,
@@ -20,55 +22,7 @@ import {
   saveAppearancePreferences,
   saveBackgroundImage,
   type AppearancePreferences,
-  type AppearanceTheme,
 } from "@/lib/appearance-store";
-
-type ThemeTokens = {
-  paper: string;
-  panel: string;
-  line: string;
-  ink: string;
-  muted: string;
-};
-
-const THEME_TOKENS: Record<AppearanceTheme, ThemeTokens> = {
-  paper: {
-    paper: "#f7f6f2",
-    panel: "#fffefa",
-    line: "#deddd7",
-    ink: "#202328",
-    muted: "#71767c",
-  },
-  dusk: {
-    paper: "#eee9e4",
-    panel: "#fffaf5",
-    line: "#d8cbc2",
-    ink: "#30282a",
-    muted: "#796c6d",
-  },
-  night: {
-    paper: "#17191d",
-    panel: "#22252b",
-    line: "#3a3e47",
-    ink: "#f1eee8",
-    muted: "#a6aab2",
-  },
-  nai: {
-    paper: "#13152c",
-    panel: "#191b31",
-    line: "#22253f",
-    ink: "#ffffff",
-    muted: "#b3b4c8",
-  },
-};
-
-const ACCENT_TOKENS = {
-  rose: { base: "#a83a4c", dark: "#7f2637" },
-  mint: { base: "#2d7567", dark: "#205649" },
-  gold: { base: "#b47c2a", dark: "#805719" },
-  violet: { base: "#7658a8", dark: "#503b7c" },
-  indigo: { base: "#6c7fff", dark: "#4a57d6" },
-} as const;
 
 type AppearanceContextValue = {
   preferences: AppearancePreferences;
@@ -152,8 +106,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const root = document.documentElement;
-    const theme = THEME_TOKENS[preferences.theme];
-    const accent = ACCENT_TOKENS[preferences.accentPreset];
+    if (!ready) return;
+
+    const theme = APPEARANCE_THEME_TOKENS[preferences.theme];
+    const accent = APPEARANCE_ACCENT_TOKENS[preferences.accentPreset];
     const rose = preferences.customAccent || accent.base;
 
     root.dataset.theme = preferences.theme;
@@ -180,8 +136,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
         ? `color-mix(in srgb, ${rose} 76%, #000)`
         : accent.dark,
     );
-    root.style.setProperty("--mint", ACCENT_TOKENS.mint.base);
-    root.style.setProperty("--gold", ACCENT_TOKENS.gold.base);
+    root.style.setProperty("--mint", APPEARANCE_ACCENT_TOKENS.mint.base);
+    root.style.setProperty("--gold", APPEARANCE_ACCENT_TOKENS.gold.base);
     // 玻璃曲线：0% 也要有明显的液态玻璃感（模糊 12px 起 + 饱和度提升 +
     // 半透明 + 边缘高光），强度只在此基础上继续增强。
     const glassAlpha = Math.round(46 - preferences.glassStrength * 0.26);
@@ -235,7 +191,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       ...imageLayer.map(() => "fixed"),
     ].join(", ") || "scroll";
     document.body.style.backgroundColor = theme.paper;
-  }, [backgroundUrl, preferences]);
+  }, [backgroundUrl, preferences, ready]);
 
   const setPreferences = useCallback((next: AppearancePreferences) => {
     setPreferencesState(parseAppearancePreferences(next));

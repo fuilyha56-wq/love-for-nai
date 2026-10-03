@@ -6,8 +6,12 @@ import {
   updateRuntimeSettings,
 } from "@/lib/runtime-config";
 import {
+  ACTIVE_SESSION_WARNING_THRESHOLD,
+  countNewApiActiveSessions,
   listNewApiUserSessions,
+  listNewApiUsersOverSessionThreshold,
   revokeNewApiUserSessions,
+  revokeNewApiUsersOverSessionThreshold,
 } from "@/lib/newapi-sessions";
 import { newApiDbConfigured } from "@/lib/newapi-db";
 
@@ -31,9 +35,51 @@ export async function POST(request: Request) {
     return invalidJsonResponse(error);
   }
   const userId = optionalNumber(raw.userId);
+  const overThreshold = raw.overThreshold === true;
+  const requestedThreshold = optionalNumber(raw.threshold);
+  const threshold = requestedThreshold ?? ACTIVE_SESSION_WARNING_THRESHOLD;
   const upstream = raw.upstream !== false;
   if (userId != null && (!Number.isInteger(userId) || userId <= 0))
     return NextResponse.json({ message: "用户 ID 无效" }, { status: 400 });
+  if (!Number.isInteger(threshold) || threshold < 0)
+    return NextResponse.json({ message: "会话阈值无效" }, { status: 400 });
+  if (overThreshold && userId != null)
+    return NextResponse.json(
+      { message: "超阈值批量清理不能同时指定用户 ID" },
+      { status: 400 },
+    );
+
+  if (overThreshold) {
+    if (!upstream || !newApiDbConfigured()) {
+      return NextResponse.json({
+        success: true,
+        scope: "over-threshold",
+        threshold,
+        users: [],
+        userCount: 0,
+        totalRevoked: 0,
+        upstreamSkipped: true,
+      });
+    }
+    try {
+      const result = await revokeNewApiUsersOverSessionThreshold(threshold);
+      return NextResponse.json({
+        success: true,
+        scope: "over-threshold",
+        threshold,
+        users: result.users,
+        userCount: result.users.length,
+        totalRevoked: result.totalRevoked,
+        upstreamSkipped: false,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "";
+      return NextResponse.json(
+        { message: `上游会话批量清理失败：${detail || "请检查 NewAPI 数据库连接"}` },
+        { status: 502 },
+      );
+    }
+  }
 
   let upstreamRevoked = 0;
   let upstreamSkipped = false;
@@ -80,21 +126,39 @@ export async function POST(request: Request) {
 }
 
 // 列出上游各用户的活跃登录会话数（定位撞上限的账号）。
-export async function GET() {
+export async function GET(request?: Request) {
   const gate = await requireAdmin();
   if ("error" in gate)
     return NextResponse.json({ message: gate.error }, { status: 403 });
   const settings = await getRuntimeSettings();
+  const url = new URL(request?.url || "http://lfn.local/api/admin/sessions");
+  const rawThreshold = url.searchParams.get("threshold");
+  const requestedThreshold = rawThreshold == null ? NaN : Number(rawThreshold);
+  const threshold = Number.isFinite(requestedThreshold) && Number.isInteger(requestedThreshold) && requestedThreshold >= 0
+    ? requestedThreshold
+    : ACTIVE_SESSION_WARNING_THRESHOLD;
+  const overThreshold = url.searchParams.get("overThreshold") === "true";
   let items: Awaited<ReturnType<typeof listNewApiUserSessions>> = [];
+  let totalActiveSessions = 0;
   let upstreamError: string | null = null;
   try {
-    items = await listNewApiUserSessions();
+    const [listed, total] = await Promise.all([
+      overThreshold
+        ? listNewApiUsersOverSessionThreshold(threshold)
+        : listNewApiUserSessions(),
+      countNewApiActiveSessions(),
+    ]);
+    items = listed;
+    totalActiveSessions = total;
   } catch (error) {
     upstreamError = error instanceof Error ? error.message : "读取失败";
   }
   return NextResponse.json({
     sessionEpoch: settings.sessionEpoch,
+    threshold,
+    overThreshold,
     items,
+    totalActiveSessions,
     upstreamError,
   });
 }

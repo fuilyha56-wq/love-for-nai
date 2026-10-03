@@ -1,6 +1,5 @@
 "use client";
 
-import StoryProviderSettings from "./story-provider-settings";
 import ProviderSettings from "./provider-settings";
 import TaggerSettings from "./tagger-settings";
 
@@ -22,7 +21,8 @@ import {
   SessionExpiredNotice,
 } from "@/app/session-notice";
 
-type ModelItem = { id: string; kind: string };
+type ModelCapability = "image" | "story";
+type ModelItem = { id: string; kind: string; capabilities?: unknown };
 type TokenItem = {
   id: number;
   name: string;
@@ -39,6 +39,19 @@ type TokenItem = {
   allow_ips?: string;
 };
 type GroupItem = { name: string; desc: string; ratio: number };
+
+function modelCapabilities(item: ModelItem): ModelCapability[] {
+  if (Array.isArray(item.capabilities)) {
+    const values = item.capabilities.filter((value): value is ModelCapability => value === "image" || value === "story");
+    if (values.length) return [...new Set(values)];
+  }
+  return item.kind === "图像模型" ? ["image"] : ["story"];
+}
+
+function modelCapabilityLabel(item: ModelItem): string {
+  const values = modelCapabilities(item);
+  return values.includes("image") && values.includes("story") ? "图像 + 故事" : values[0] === "image" ? "图像" : "故事";
+}
 
 const EXPIRE_PRESETS = [
   { label: "永不过期", value: "0" },
@@ -258,20 +271,13 @@ export default function ModelKeySettings() {
     }
   }
 
-  const imageModels = models.filter((item) => item.kind === "图像模型");
-  const assistantModels = models.filter((item) => item.kind !== "图像模型");
+  const imageModels = models.filter((item) => modelCapabilities(item).includes("image"));
+  const storyModels = models.filter((item) => modelCapabilities(item).includes("story"));
 
   return (
     <div className="space-y-6">
-      <nav className="settings-model-links" aria-label="模型密钥分类">
-        <a href="#custom-providers">图像来源与 Key</a>
-        <a href="#story-providers">故事来源与 Key</a>
-        <a href="#local-tagger">本地 ONNX 反推</a>
-        <a href="#api-tokens">LFN 对外密钥</a>
-      </nav>
       <ProviderSettings />
       <TaggerSettings />
-        <StoryProviderSettings />
         {expired && <SessionExpiredNotice message={expired} />}
         {message && (
           <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
@@ -286,7 +292,7 @@ export default function ModelKeySettings() {
               MODELS · 可用模型
             </p>
             <p className="text-xs text-[var(--muted)]">
-              图像 {imageModels.length} · 助手 {assistantModels.length}
+              图像 {imageModels.length} · 故事 {storyModels.length}
             </p>
           </div>
           {!models.length && modelLoadState === "loading" && (
@@ -318,14 +324,14 @@ export default function ModelKeySettings() {
                   key={item.id}
                   className="flex items-center gap-2.5 rounded-md border border-[var(--line)] bg-[var(--panel)] px-3 py-2.5"
                 >
-                  {item.kind === "图像模型" ? (
+                  {modelCapabilities(item).includes("image") ? (
                     <ImageIcon size={16} className="shrink-0 text-[var(--rose)]" />
                   ) : (
                     <Sparkles size={16} className="shrink-0 text-emerald-700" />
                   )}
                   <div className="min-w-0">
                     <b className="block truncate text-xs">{item.id}</b>
-                    <span className="text-[10px] text-[var(--muted)]">{item.kind}</span>
+                    <span className="text-[10px] text-[var(--muted)]">{modelCapabilityLabel(item)}</span>
                   </div>
                 </div>
               ))}
@@ -395,30 +401,38 @@ export default function ModelKeySettings() {
                     onChange={setExpireDays}
                   />
                 </div>
-                <div>
+                <div className="token-quota-field">
                   <span className="mb-1 block text-xs font-semibold">额度</span>
-                  <label className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={unlimited}
-                      onChange={(event) => setUnlimited(event.target.checked)}
+                  <div className="token-quota-control">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={unlimited}
                       aria-label="无限额度"
-                    />
-                    无限额度
-                  </label>
-                  {!unlimited && (
-                    <input
-                      type="number"
-                      min="0"
-                      max="1000000000"
-                      step="0.01"
-                      className="field mt-2 w-full px-3"
-                      value={remainDollars}
-                      onChange={(event) => setRemainDollars(event.target.value)}
-                      aria-label="剩余额度（美元）"
-                      placeholder="剩余额度（美元）"
-                    />
-                  )}
+                      onClick={() => setUnlimited((current) => !current)}
+                      className={`token-quota-switch ${unlimited ? "is-on" : ""}`}
+                    >
+                      <span className="token-quota-switch-track" aria-hidden="true">
+                        <span className="token-quota-switch-thumb" />
+                      </span>
+                      <span className="token-quota-switch-label">无限额度</span>
+                    </button>
+                    <div className="token-quota-input-wrap">
+                      <input
+                        type="number"
+                        min="0"
+                        max="1000000000"
+                        step="0.01"
+                        disabled={unlimited}
+                        tabIndex={unlimited ? -1 : 0}
+                        className="field px-3"
+                        value={remainDollars}
+                        onChange={(event) => setRemainDollars(event.target.value)}
+                        aria-label="剩余额度（美元）"
+                        placeholder="剩余额度（美元）"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">

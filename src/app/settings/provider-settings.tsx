@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { PopupSelect } from "@/app/ui/popup-select";
 import {
+  BookOpen,
   CircleCheck,
   CircleHelp,
   KeyRound,
@@ -13,17 +14,26 @@ import {
   Trash2,
 } from "lucide-react";
 
+type ProviderCapability = "image" | "story";
+type CapabilityChoice = ProviderCapability | "both";
+
 type Provider = {
   id: string;
   name: string;
   baseUrl: string;
   models: string[];
+  storyModel?: string;
+  kind?: "openai" | "novelai";
+  capabilities: ProviderCapability[];
+  source: "providers" | "story-providers";
   protocol?: ImageProviderProtocol;
   hasKey: boolean;
-  createdAt: string;
+  createdAt?: string;
 };
 
 type DiscoveredModel = { id: string; kind: string };
+type Account = { tier?: number; active?: boolean; expiresAt?: number; anlas?: number; contextTokens?: number; priority?: number; nextRefillAt?: number; banStatus?: string };
+type ProviderResult = { items?: unknown; item?: unknown; message?: string; capabilities?: unknown; supportsStoryProviders?: boolean };
 
 type NovelAiAccount = {
   connected: boolean;
@@ -47,6 +57,57 @@ const tierNames: Record<number, string> = {
 
 function modelIds(value: string): string[] {
   return [...new Set(value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean))];
+}
+
+function capabilityChoice(value: unknown): CapabilityChoice | null {
+  if (value === "both") return "both";
+  if (value === "image" || value === "story" || value === "text") return value === "text" ? "story" : value;
+  if (Array.isArray(value)) {
+    const values = value.map((item) => item === "text" ? "story" : item).filter((item): item is ProviderCapability => item === "image" || item === "story");
+    if (values.includes("image") && values.includes("story")) return "both";
+    return values[0] || null;
+  }
+  return null;
+}
+
+function normalizeProvider(item: unknown, source: Provider["source"]): Provider | null {
+  if (!item || typeof item !== "object") return null;
+  const value = item as Record<string, unknown>;
+  if (typeof value.id !== "string" || typeof value.name !== "string") return null;
+  const modelEntries = Array.isArray(value.modelEntries) ? value.modelEntries : [];
+  const entryCapabilities = modelEntries.map((entry) => entry && typeof entry === "object" ? capabilityChoice((entry as Record<string, unknown>).capabilities) : null).filter((item): item is CapabilityChoice => item !== null);
+  const explicit = capabilityChoice(value.capabilities) || capabilityChoice(value.capability);
+  const isStory = value.kind === "openai" || value.kind === "novelai" || typeof value.model === "string";
+  const selected = explicit || (entryCapabilities.includes("both") || entryCapabilities.includes("image") && entryCapabilities.includes("story") ? "both" : entryCapabilities[0]) || (isStory ? "story" : "image");
+  const capabilities: ProviderCapability[] = selected === "both" ? ["image", "story"] : [selected];
+  const models = Array.isArray(value.models)
+    ? value.models.filter((model): model is string => typeof model === "string")
+    : modelEntries
+      .filter((entry) => entry && typeof entry === "object" && capabilityChoice((entry as Record<string, unknown>).capabilities) !== "story")
+      .map((entry) => (entry as Record<string, unknown>).id)
+      .filter((model): model is string => typeof model === "string");
+  const storyEntry = modelEntries.find((entry) => entry && typeof entry === "object" && ["story", "both"].includes(capabilityChoice((entry as Record<string, unknown>).capabilities) || ""));
+  const storyModel = typeof value.model === "string" ? value.model : storyEntry && typeof storyEntry === "object" && typeof (storyEntry as Record<string, unknown>).id === "string" ? (storyEntry as Record<string, unknown>).id as string : undefined;
+  const baseUrl = typeof value.baseUrl === "string" ? value.baseUrl : "";
+  const kind = value.kind === "openai" || value.kind === "novelai" ? value.kind : /text\.novelai\.net/i.test(baseUrl) ? "novelai" : undefined;
+  return {
+    id: value.id,
+    name: value.name,
+    baseUrl,
+    models: [...new Set(models)],
+    storyModel,
+    kind,
+    capabilities,
+    source,
+    protocol: value.protocol === "auto" || value.protocol === "openai-images" || value.protocol === "gemini" ? value.protocol : undefined,
+    hasKey: value.hasKey === true,
+    createdAt: typeof value.createdAt === "string" ? value.createdAt : undefined,
+  };
+}
+
+function capabilityLabel(capabilities: ProviderCapability[]): string {
+  if (capabilities.includes("image") && capabilities.includes("story")) return "图像 + 故事";
+  return capabilities.includes("story") ? "故事模型" : "图像模型";
 }
 
 /** 手动模型 ID 的产品分类标签（仅用于展示，不做能力判断）。 */
@@ -128,6 +189,11 @@ export default function ProviderSettings() {
   const [apiKey, setApiKey] = useState("");
   const [manualModels, setManualModels] = useState("");
   const [protocol, setProtocol] = useState<ImageProviderProtocol>("auto");
+  const [capability, setCapability] = useState<CapabilityChoice>("image");
+  const [storyKind, setStoryKind] = useState<"openai" | "novelai">("openai");
+  const [storyModel, setStoryModel] = useState("");
+  const [storyAccounts, setStoryAccounts] = useState<Record<string, Account>>({});
+  const [editingStoryId, setEditingStoryId] = useState("");
   const [discoveredModels, setDiscoveredModels] = useState<Record<string, DiscoveredModel[]>>({});
   const [discoveryWarning, setDiscoveryWarning] = useState<Record<string, string>>({});
   const [account, setAccount] = useState<NovelAiAccount | null>(null);
@@ -149,8 +215,19 @@ export default function ProviderSettings() {
     setProvidersLoading(true);
     setProvidersError("");
     try {
-      const result = await readJson<{ items: Provider[] }>(await fetch("/api/providers", { cache: "no-store" }));
-      setProviders(Array.isArray(result.items) ? result.items : []);
+      const result = await readJson<ProviderResult>(await fetch("/api/providers", { cache: "no-store" }));
+      const merged = Array.isArray(result.items)
+        ? result.items.map((item) => normalizeProvider(item, "providers")).filter((item): item is Provider => item !== null)
+        : [];
+      // Older deployments expose story sources separately. Only use that endpoint when the unified response has none.
+      if (!merged.some((item) => item.capabilities.includes("story"))) {
+        const storyResult = await readJson<ProviderResult>(await fetch("/api/story-providers", { cache: "no-store" }));
+        const stories = Array.isArray(storyResult.items)
+          ? storyResult.items.map((item) => normalizeProvider(item, "story-providers")).filter((item): item is Provider => item !== null)
+          : [];
+        merged.push(...stories);
+      }
+      setProviders(merged);
     } catch (cause) {
       setProvidersError(cause instanceof Error ? cause.message : "读取接口失败。");
     } finally {
@@ -176,34 +253,8 @@ export default function ProviderSettings() {
   }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetch("/api/providers", { cache: "no-store", signal: controller.signal })
-      .then((response) => readJson<{ items: Provider[] }>(response))
-      .then((result) => {
-        if (!controller.signal.aborted) setProviders(Array.isArray(result.items) ? result.items : []);
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted) setProvidersError(cause instanceof Error ? cause.message : "读取接口失败。");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setProvidersLoading(false);
-      });
-    fetch("/api/providers/novelai", { cache: "no-store", signal: controller.signal })
-      .then((response) => readJson<{ account: NovelAiAccount | null; keySaved?: boolean; error?: string }>(response))
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        setAccount(result.account || null);
-        setNovelAiKeySaved(Boolean(result.keySaved || result.account));
-        if (result.error) setAccountError(result.error);
-      })
-      .catch((cause) => {
-        if (!controller.signal.aborted) setAccountError(cause instanceof Error ? cause.message : "读取 NovelAI 账号失败。");
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setAccountLoading(false);
-      });
-    return () => controller.abort();
-  }, []);
+    void Promise.resolve().then(() => Promise.all([loadProviders(), loadAccount()]));
+  }, [loadAccount, loadProviders]);
 
   async function addProvider(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -211,24 +262,70 @@ export default function ProviderSettings() {
     setProvidersMessage("");
     setProviderBusy("create");
     try {
-      const result = await readJson<{ item: Provider }>(await fetch("/api/providers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (capability === "story") {
+        const storyPayload = {
+          id: editingStoryId || undefined,
           name: providerName.trim(),
-          baseUrl: baseUrl.trim(),
-          apiKey: apiKey.trim(),
-          models: modelIds(manualModels),
-          protocol,
-        }),
-      }));
-      setProviders((current) => [...current, result.item]);
+          kind: storyKind,
+          baseUrl: storyKind === "novelai" ? "https://text.novelai.net" : baseUrl.trim(),
+          model: storyModel.trim(),
+          key: apiKey.trim(),
+        };
+        let result: ProviderResult;
+        let source: Provider["source"] = "providers";
+        try {
+          if (storyKind === "novelai" || editingStoryId) throw new Error("使用兼容故事模型源接口");
+          result = await readJson<ProviderResult>(await fetch("/api/providers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: storyPayload.id,
+              name: storyPayload.name,
+              baseUrl: storyPayload.baseUrl,
+              apiKey: storyPayload.key,
+              capability: "text",
+              modelEntries: [{ id: storyPayload.model, capabilities: "text" }],
+            }),
+          }));
+        } catch {
+          // Older deployments have not merged story providers into /api/providers yet.
+          source = "story-providers";
+          result = await readJson<ProviderResult>(await fetch("/api/story-providers", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(storyPayload),
+          }));
+        }
+        const item = normalizeProvider(result.item, source);
+        if (!item) throw new Error("保存接口返回的数据无效");
+        setProviders((current) => [item, ...current.filter((entry) => !(entry.id === item.id && entry.source === item.source))]);
+        setProvidersMessage(`已保存「${item.name}」。可在故事工作台的模型菜单中选择。`);
+      } else {
+        const result = await readJson<ProviderResult>(await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: providerName.trim(),
+            baseUrl: baseUrl.trim(),
+            apiKey: apiKey.trim(),
+            models: modelIds(manualModels),
+            protocol,
+            capabilities: capability === "both" ? ["image", "story"] : ["image"],
+          }),
+        }));
+        const item = normalizeProvider(result.item, "providers");
+        if (!item) throw new Error("保存接口返回的数据无效");
+        setProviders((current) => [...current, item]);
+        setProvidersMessage(`已保存「${item.name}」。可在生图工作台的模型菜单中选择。`);
+      }
       setProviderName("");
       setBaseUrl("");
       setApiKey("");
       setManualModels("");
+      setStoryModel("");
+      setEditingStoryId("");
       setProtocol("auto");
-      setProvidersMessage(`已保存「${result.item.name}」。可在生图工作台的模型菜单中选择。`);
+      setCapability("image");
     } catch (cause) {
       setProvidersError(cause instanceof Error ? cause.message : "保存接口失败。");
     } finally {
@@ -242,14 +339,39 @@ export default function ProviderSettings() {
     setProvidersMessage("");
     setProviderBusy(provider.id);
     try {
-      await readJson<{ ok: true }>(await fetch(`/api/providers?id=${encodeURIComponent(provider.id)}`, { method: "DELETE" }));
+      const endpoint = provider.source === "story-providers" ? "/api/story-providers" : "/api/providers";
+      await readJson<{ ok?: true; success?: true }>(await fetch(`${endpoint}?id=${encodeURIComponent(provider.id)}`, { method: "DELETE" }));
       setProviders((current) => current.filter((item) => item.id !== provider.id));
+      setStoryAccounts((current) => { const next = { ...current }; delete next[provider.id]; return next; });
       setProvidersMessage(`已删除「${provider.name}」。`);
     } catch (cause) {
       setProvidersError(cause instanceof Error ? cause.message : "删除接口失败。");
     } finally {
       setProviderBusy("");
     }
+  }
+
+  async function readStoryAccount(provider: Provider) {
+    setProviderBusy(provider.id);
+    setProvidersError("");
+    try {
+      const result = await readJson<Account>(await fetch(`/api/story-providers/${encodeURIComponent(provider.id)}/account`, { cache: "no-store" }));
+      setStoryAccounts((current) => ({ ...current, [provider.id]: result }));
+    } catch (cause) {
+      setProvidersError(cause instanceof Error ? cause.message : "账号读取失败。");
+    } finally {
+      setProviderBusy("");
+    }
+  }
+
+  function editStoryProvider(provider: Provider) {
+    setCapability("story");
+    setEditingStoryId(provider.id);
+    setStoryKind(provider.kind || "openai");
+    setProviderName(provider.name);
+    setBaseUrl(provider.kind === "novelai" ? "" : provider.baseUrl);
+    setStoryModel(provider.storyModel || "");
+    setApiKey("");
   }
 
   async function discoverModels(provider: Provider) {
@@ -317,8 +439,8 @@ export default function ProviderSettings() {
           <Heading
             icon={<Layers3 size={18} />}
             eyebrow="MODEL SOURCES · 模型来源"
-            title="接入自己的图像 API"
-            detail="支持 OpenAI Images、Gemini／Nano Banana 原生接口，以及兼容聊天生图的网关；模型 ID 可手动填写或从接口读取。"
+            title="管理模型来源"
+            detail="统一管理图像与故事模型来源；列表会标记图像、故事或两者能力。"
           />
           <button
             type="button"
@@ -337,7 +459,7 @@ export default function ProviderSettings() {
             providers.map((provider) => {
               const discovered = discoveredModels[provider.id];
               return (
-                <div key={provider.id} className="rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-4">
+                <div key={`${provider.source}:${provider.id}`} className="rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
@@ -345,21 +467,27 @@ export default function ProviderSettings() {
                         <span className="inline-flex items-center gap-1 rounded bg-[color-mix(in_srgb,var(--mint)_10%,var(--surface))] px-2 py-0.5 text-[10px] font-semibold text-[var(--mint)]">
                           <CircleCheck size={11} /> 已保存 key
                         </span>
+                        <span className="inline-flex items-center gap-1 rounded border border-[var(--line)] px-2 py-0.5 text-[10px] font-semibold">
+                          {provider.capabilities.includes("story") ? <BookOpen size={11} /> : <Layers3 size={11} />}
+                          {capabilityLabel(provider.capabilities)}
+                        </span>
                       </p>
-                      <p className="mt-1 break-all font-mono text-[11px] text-[var(--muted)]">{provider.baseUrl}</p>
+                      <p className="mt-1 break-all font-mono text-[11px] text-[var(--muted)]">{provider.kind === "novelai" ? "NovelAI 官方直连" : provider.baseUrl || "统一模型来源"}</p>
                       <p className="mt-1.5 text-xs text-[var(--muted)]">
-                        {provider.models.length ? `手动模型：${provider.models.join("、")}` : "尚未填写手动模型；可尝试读取接口模型。"}
+                        {provider.capabilities.includes("story") ? `故事模型：${provider.storyModel || "未提供"}` : provider.models.length ? `手动模型：${provider.models.join("、")}` : "尚未填写手动模型；可尝试读取接口模型。"}
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-2">
-                      <button
+                      {provider.capabilities.includes("image") && <button
                         type="button"
                         disabled={!!providerBusy}
                         onClick={() => void discoverModels(provider)}
                         className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50"
                       >
                         <RefreshCw size={13} /> {providerBusy === provider.id ? "读取中…" : "读取模型"}
-                      </button>
+                      </button>}
+                      {provider.capabilities.includes("story") && provider.kind === "novelai" && <button type="button" disabled={!!providerBusy} onClick={() => void readStoryAccount(provider)} className="flex h-9 items-center gap-1.5 rounded border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50"><RefreshCw size={13} />读取账号</button>}
+                      {provider.capabilities.includes("story") && <button type="button" disabled={!!providerBusy} onClick={() => editStoryProvider(provider)} className="h-9 rounded border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50">编辑</button>}
                       <button
                         type="button"
                         disabled={!!providerBusy}
@@ -372,6 +500,14 @@ export default function ProviderSettings() {
                       </button>
                     </div>
                   </div>
+                  {storyAccounts[provider.id] && (
+                    <dl className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--line)] pt-3 text-xs">
+                      <div><dt className="text-[var(--muted)]">订阅等级</dt><dd>{tierNames[storyAccounts[provider.id].tier ?? -1] || "未知"} · {storyAccounts[provider.id].active === false ? "已停用" : "有效"}</dd></div>
+                      <div><dt className="text-[var(--muted)]">Anlas</dt><dd>{storyAccounts[provider.id].anlas?.toLocaleString("zh-CN") ?? "未提供"}</dd></div>
+                      <div><dt className="text-[var(--muted)]">有效至</dt><dd>{formatExpiry(storyAccounts[provider.id].expiresAt ?? null)}</dd></div>
+                      <div><dt className="text-[var(--muted)]">优先级 / 上下文</dt><dd>{storyAccounts[provider.id].priority ?? "--"} / {storyAccounts[provider.id].contextTokens ?? "--"}</dd></div>
+                    </dl>
+                  )}
                   {discovered && (
                     <div className="mt-3 border-t border-[var(--line)] pt-3">
                       <p className="text-xs font-semibold">可选模型（{discovered.length}）</p>
@@ -401,62 +537,24 @@ export default function ProviderSettings() {
           <Notice message={providersMessage} />
         </div>
 
-        <form onSubmit={(event) => void addProvider(event)} className="mt-5 border-t border-[var(--line)] pt-5">
-          <h3 className="flex items-center gap-2 text-sm font-semibold"><Plus size={15} className="text-[var(--rose)]" /> 添加第三方 API</h3>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <label className="text-xs font-semibold">
-              名称
-              <input required maxLength={80} className="field mt-1.5 h-10 w-full px-3 text-sm" value={providerName} onChange={(event) => setProviderName(event.target.value)} placeholder="例如：我的图像接口" />
-            </label>
-            <label className="text-xs font-semibold">
-              API 地址
-              <input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1（GPT/NAI）或 https://generativelanguage.googleapis.com（Nano Banana）" autoComplete="url" spellCheck={false} />
-            </label>
-            <label className="text-xs font-semibold sm:col-span-2">
-              API key
-              <input required type="password" className="field mt-1.5 h-10 w-full px-3 text-sm" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="粘贴此接口的 key" autoComplete="new-password" spellCheck={false} />
-            </label>
-            <label className="text-xs font-semibold sm:col-span-2">
-              图像接口协议
-              <div className="mt-1.5">
-                <PopupSelect
-                  value={protocol}
-                  onChange={(value) => setProtocol(value as ImageProviderProtocol)}
-                  ariaLabel="图像接口协议"
-                  options={[
-                    { value: "auto", label: "NAI 原生", description: "按模型自动适配" },
-                    { value: "openai-images", label: "GPT Images", description: "OpenAI Images 接口" },
-                    { value: "gemini", label: "Nano Banana", description: "Gemini 原生接口" },
-                  ]}
-                />
-              </div>
-              <span className="mt-1 block text-[11px] font-normal leading-5 text-[var(--muted)]">Google 地址可填写 https://generativelanguage.googleapis.com；Nano Banana 的官方模型 ID 以 Gemini 图像模型为准。</span>
-            </label>
-            <div className="rounded-md border border-[var(--line)] bg-[var(--surface-muted)] p-4 sm:col-span-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-semibold">自定义模型 ID（可选）</p>
-                {manualList.length > 0 && <span className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[10px] font-semibold">{manualList.length} 个模型</span>}
-              </div>
-              <textarea className="field mt-2 min-h-20 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\ngpt-image-1.5（GPT）\nnai-v5-full（NAI）\nnano-banana-pro（Nano Banana）"} spellCheck={false} />
-              {manualList.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {manualList.map((id) => (
-                    <span key={id} className="rounded bg-[var(--panel)] px-2 py-0.5 font-mono text-[10px]">
-                      {id} · {manualTag(id)}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <span className="mt-2 block text-[11px] font-normal leading-5 text-[var(--muted)]">也可用逗号分隔。保存后会尝试从接口读取模型；手动填写的 ID 始终可选。</span>
-            </div>
+        <form onSubmit={(event) => void addProvider(event)} className="mt-5 grid gap-5 border-t border-[var(--line)] pt-5 lg:grid-cols-2">
+          <div className="min-w-0 space-y-3">
+            <h3 className="flex items-center gap-2 text-sm font-semibold"><Plus size={15} className="text-[var(--rose)]" /> {editingStoryId ? "编辑故事来源" : "添加模型来源"}</h3>
+            <label className="block text-xs font-semibold">模型能力<div className="mt-1.5"><PopupSelect value={capability} onChange={(value) => { setCapability(value as CapabilityChoice); if (value !== "story") setEditingStoryId(""); }} ariaLabel="模型能力" options={[{ value: "image", label: "图像", description: "生图与图像模型" }, { value: "story", label: "故事", description: "故事文本生成" }, { value: "both", label: "图像 + 故事", description: "统一来源同时提供两类模型" }]} /></div></label>
+            <label className="block text-xs font-semibold">名称<input required maxLength={80} className="field mt-1.5 h-10 w-full px-3 text-sm" value={providerName} onChange={(event) => setProviderName(event.target.value)} placeholder={capability === "story" ? "例如：我的文本模型" : "例如：我的图像接口"} /></label>
+            {capability === "story" ? <>
+              <label className="block text-xs font-semibold">来源<select value={storyKind} onChange={(event) => { const value = event.target.value as "openai" | "novelai"; setStoryKind(value); setStoryModel(value === "novelai" ? "llama-3-erato-v1" : ""); }} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="openai">OpenAI 兼容 API</option><option value="novelai">NovelAI 官方持久 Key</option></select></label>
+              {storyKind === "openai" && <label className="block text-xs font-semibold">API 地址<input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" autoComplete="url" spellCheck={false} /></label>}
+              <label className="block text-xs font-semibold">模型 ID{storyKind === "novelai" ? <select value={storyModel} onChange={(event) => setStoryModel(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="llama-3-erato-v1">Erato</option><option value="kayra-v1">Kayra</option></select> : <input required maxLength={120} value={storyModel} onChange={(event) => setStoryModel(event.target.value)} placeholder="上游真实模型 ID" className="field mt-1.5 h-10 w-full px-3 text-sm" />}</label>
+            </> : <>
+              <label className="block text-xs font-semibold">API 地址<input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false} /></label>
+              <label className="block text-xs font-semibold">图像接口协议<div className="mt-1.5"><PopupSelect value={protocol} onChange={(value) => setProtocol(value as ImageProviderProtocol)} ariaLabel="图像接口协议" options={[{ value: "auto", label: "NAI 原生", description: "按模型自动适配" }, { value: "openai-images", label: "GPT Images", description: "OpenAI Images 接口" }, { value: "gemini", label: "Nano Banana", description: "Gemini 原生接口" }]} /></div></label>
+            </>}
+            <label className="block text-xs font-semibold">{capability === "story" ? "API Key" : "API key"}<input required={!editingStoryId} type="password" className="field mt-1.5 h-10 w-full px-3 text-sm" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={editingStoryId ? "留空则保留原密钥" : "输入密钥"} autoComplete="new-password" spellCheck={false} /></label>
           </div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <p className="flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]">
-              <CircleHelp size={13} className="mt-0.5 shrink-0" /> key 保存在服务端，页面不会再次显示；仅导入你有权使用的接口。
-            </p>
-            <button type="submit" disabled={!!providerBusy} className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-xs font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-50">
-              <Plus size={15} /> {providerBusy === "create" ? "保存中…" : "保存接口"}
-            </button>
+          <div className="min-w-0 space-y-3">
+            {capability !== "story" ? <><h3 className="text-sm font-semibold">模型 ID</h3><textarea required className="field min-h-32 w-full px-3 py-2 font-mono text-xs" value={manualModels} onChange={(event) => setManualModels(event.target.value)} placeholder={"每行一个，例如：\ngpt-image-1.5\nnai-v5-full\nnano-banana-pro"} spellCheck={false} /><div className="flex flex-wrap gap-1.5">{manualList.map((id) => <span key={id} className="rounded border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-1 font-mono text-[10px]">{id} · {manualTag(id)}</span>)}</div><p className="text-[11px] leading-5 text-[var(--muted)]">也可用逗号分隔。保存后会尝试从接口读取模型；手动填写的 ID 始终可选。</p></> : <p className="text-xs leading-5 text-[var(--muted)]">故事来源会显示在同一列表中，并可在这里编辑或读取 NovelAI 账号状态。</p>}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2"><p className="flex items-start gap-1.5 text-[11px] leading-5 text-[var(--muted)]"><CircleHelp size={13} className="mt-0.5 shrink-0" /> key 保存在服务端，页面不会再次显示。</p><div className="flex gap-2">{editingStoryId && <button type="button" onClick={() => { setEditingStoryId(""); setCapability("image"); }} className="h-10 rounded border border-[var(--line)] px-3 text-xs font-semibold">取消</button>}<button type="submit" disabled={!!providerBusy} className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-4 text-xs font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-50"><Plus size={15} /> {providerBusy === "create" ? "保存中…" : editingStoryId ? "保存修改" : "保存接口"}</button></div></div>
           </div>
         </form>
       </article>

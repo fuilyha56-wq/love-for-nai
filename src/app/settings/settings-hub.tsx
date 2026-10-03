@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowLeft, BookOpen, KeyRound, Palette, Settings, UserRound } from "lucide-react";
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { settingsSectionForHash, type SettingsSection } from "@/lib/settings-navigation";
+import { settingsHashAlias, settingsSectionForHash, type SettingsSection } from "@/lib/settings-navigation";
 import AppearanceSettings from "./appearance-settings";
 import GuideSettings from "./guide-settings";
 import ModelKeySettings from "./model-key-settings";
@@ -28,7 +28,10 @@ export default function SettingsHub() {
   const navigation = useRef<HTMLElement>(null);
   const current = sections.find((item) => item.id === active)!;
   useEffect(() => {
-    const hash = window.location.hash;
+    const hash = settingsHashAlias(window.location.hash);
+    if (hash !== window.location.hash) {
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}${hash}`);
+    }
     if (!hash || hash === `#${active}`) {
       window.scrollTo({ top: 0, behavior: "instant" });
       return;

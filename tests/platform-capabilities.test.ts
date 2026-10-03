@@ -49,12 +49,18 @@ describe("平台能力探测", () => {
     expect(modules.map((item) => item.id)).toEqual([
       "overview",
       "users",
+      "sessions",
       "credits",
       "announcements",
       "gallery",
       "referrals",
       "platform",
+      "docs",
+      "creator",
+      "rewards",
+      "redeem",
     ]);
-    expect(modules.every((item) => item.enabled && item.description)).toBe(true);
+    expect(modules.filter((item) => item.enabled).every((item) => item.description)).toBe(true);
+    expect(modules.find((item) => item.id === "sessions")).toMatchObject({ enabled: false });
   });
 });

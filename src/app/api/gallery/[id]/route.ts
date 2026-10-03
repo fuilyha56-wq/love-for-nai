@@ -1,23 +1,20 @@
 import { NextResponse } from "next/server";
-import { getGalleryItem } from "@/lib/gallery";
+import { getGalleryItem, publicGalleryItem } from "@/lib/gallery";
+import { getSession } from "@/lib/session";
 
-// 详情接口公开访问，分享链接无需登录即可查看。
+// 详情接口仅公开已审核投稿；投稿者仍可查看自己的待审/拒绝/撤回记录。
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const item = await getGalleryItem((await params).id);
-  if (!item)
+  const session = await getSession();
+  if (!item || (item.status !== "approved" && session?.userId !== item.ownerId))
     return NextResponse.json({ message: "作品不存在" }, { status: 404 });
   return NextResponse.json({
     item: {
-      ...item,
-      likedBy: [],
-      weeklyLikes: undefined,
+      ...publicGalleryItem(item),
       imageUrl: `/api/gallery/${item.id}/image`,
-      ...(Object.keys(item.parameters).length
-        ? {}
-        : { prompt: "", negativePrompt: "" }),
     },
   });
 }

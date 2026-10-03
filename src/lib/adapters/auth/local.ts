@@ -3,7 +3,7 @@
  * 使用 LFN 内部 PostgreSQL 存储用户信息
  */
 
-import type { AuthAdapter, AuthUserInfo, EndpointConfig } from "../types";
+import { normalizeAuthToken, type AuthAdapter, type AuthUserInfo, type EndpointConfig } from "../types";
 import { db } from "@/lib/db";
 import { pbkdf2, randomBytes } from "node:crypto";
 
@@ -114,7 +114,7 @@ export function createLocalAuthAdapter(config: EndpointConfig): AuthAdapter {
          FROM lfn_sessions s
          JOIN lfn_users u ON u.id = s.user_id
          WHERE s.token = $1 AND s.expires_at > NOW()`,
-        [token.replace(/^Bearer\s+/i, "")]
+        [normalizeAuthToken(token)]
       );
       if (!session) return null;
       return {
@@ -127,8 +127,24 @@ export function createLocalAuthAdapter(config: EndpointConfig): AuthAdapter {
       };
     },
 
+    async changePassword(userId: number | string, currentPassword: string, newPassword: string) {
+      const user = await db.oneOrNone(
+        "SELECT password_hash, status FROM lfn_users WHERE id = $1",
+        [typeof userId === "number" ? userId : Number(userId)],
+      );
+      if (!user || user.status === 0) throw new Error("账号不存在或已停用");
+      if (!(await compare(currentPassword, user.password_hash))) throw new Error("当前密码错误");
+      if (newPassword.length < 8 || newPassword.length > 64) throw new Error("新密码需为 8–64 个字符");
+      await db.none("UPDATE lfn_users SET password_hash = $1 WHERE id = $2", [await hash(newPassword), typeof userId === "number" ? userId : Number(userId)]);
+      await db.none("DELETE FROM lfn_sessions WHERE user_id = $1", [typeof userId === "number" ? userId : Number(userId)]);
+    },
+
     async logout(token: string) {
-      await db.none("DELETE FROM lfn_sessions WHERE token = $1", [token.replace(/^Bearer\s+/i, "")]);
+      try {
+        await db.none("DELETE FROM lfn_sessions WHERE token = $1", [normalizeAuthToken(token)]);
+      } catch {
+        // 登出是 best-effort；调用方仍应清除客户端会话凭据。
+      }
     },
 
     async getUser(id: number | string) {

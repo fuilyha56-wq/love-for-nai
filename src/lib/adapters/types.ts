@@ -21,6 +21,10 @@ export type AuthUserInfo = {
   metadata?: Record<string, unknown>;
 };
 
+export function normalizeAuthToken(token: string): string {
+  return token.trim().replace(/^Bearer\s+/i, "").trim();
+}
+
 export type AuthAdapter = {
   type: AuthAdapterType;
   name: string;
@@ -29,6 +33,9 @@ export type AuthAdapter = {
   login(username: string, password: string): Promise<{ token: string; user: AuthUserInfo }>;
   register?(username: string, password: string, metadata?: Record<string, unknown>): Promise<{ token: string; user: AuthUserInfo }>;
   verifyToken(token: string): Promise<AuthUserInfo | null>;
+  // 用户自助修改密码；不支持时必须明确抛错，不能返回伪成功。
+  changePassword?(userId: number | string, currentPassword: string, newPassword: string, token?: string, upstreamCookie?: string): Promise<void>;
+  // 登出接受原始 token 或 Bearer token；撤销失败按 best-effort 处理，不阻塞本地登出。
   logout?(token: string): Promise<void>;
   
   // 用户管理

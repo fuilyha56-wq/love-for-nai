@@ -13,6 +13,7 @@ import {
   Megaphone,
   Palette,
   UserRound,
+  BriefcaseBusiness,
 } from "lucide-react";
 
 const destinations = [
@@ -52,10 +53,24 @@ const destinations = [
     group: "创作",
   },
   {
+    href: "/studio",
+    label: "创作者工作台",
+    detail: "查看投稿审核状态，管理创作者资料。",
+    icon: BriefcaseBusiness,
+    group: "创作",
+  },
+  {
     href: "/usage",
     label: "使用记录",
     detail: "查看每一次调用与余额消耗。",
     icon: Coins,
+    group: "账号",
+  },
+  {
+    href: "/profile",
+    label: "个人资料",
+    detail: "编辑显示名称、奖励和账户安全。",
+    icon: UserRound,
     group: "账号",
   },
   {
@@ -79,8 +94,10 @@ export function WorkspaceNav() {
   const current =
     destinations.find((item) => item.href === pathname) ??
     (pathname === "/keys" || pathname === "/resources"
-      ? destinations[6]
-      : destinations[1]);
+      ? destinations[8]
+      : pathname === "/profile"
+        ? destinations[7]
+        : destinations[1]);
   return (
     <div className="workspace-heading">
       <nav className="workspace-tabs" aria-label="工作台页面导航">

@@ -101,6 +101,7 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
     "_lfnRequestFingerprint",
     "_lfnSkipWatermark",
     "_lfnWatermarkStatus",
+    "_lfnSkipServerHistory",
   ]);
   return Object.fromEntries(
     Object.keys(body)
@@ -131,6 +132,8 @@ export async function saveHistory(
   usage: unknown,
   options: SaveHistoryOptions = {},
 ) {
+  // 客户端可选择仅在本机保存或完全不保存；服务端仍负责鉴权、计费和审计。
+  if (body._lfnSkipServerHistory === true) return [];
   const effectiveOptions: SaveHistoryOptions = {
     ...options,
     requestId: options.requestId || (typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined),

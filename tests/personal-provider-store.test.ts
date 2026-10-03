@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { addProvider, deleteProvider, getNovelaiKey, getProvider, listProviders, setNovelaiKey } from "@/lib/provider/store";
-import { isPublicIp, validateApiKey, validateImageProviderProtocol, validateProviderBaseUrl } from "@/lib/provider/validation";
+import { addProvider, deleteProvider, getNovelaiKey, getProvider, listProviders, listRegistryEntries, listTextProviders, resolveTextProviderModel, setNovelaiKey } from "@/lib/provider/store";
+import { isPublicIp, validateApiKey, validateImageProviderProtocol, validateProviderBaseUrl, validateProviderCapability } from "@/lib/provider/validation";
 import { parseNovelaiSubscription } from "@/lib/provider/novelai";
 
 let directory: string;
@@ -41,6 +42,52 @@ describe("个人提供商密钥", () => {
     expect(await getNovelaiKey(71002)).toBeNull();
     expect(await deleteProvider(71001, item.id)).toBe(true);
     expect(await listProviders(71001)).toEqual([]);
+  });
+
+  it("按模型能力提供故事模型并解析三段式引用", async () => {
+    const item = await addProvider(71003, {
+      name: "Unified Text", baseUrl: "https://text.example.com", apiKey: "text-provider-key",
+      models: [], modelEntries: [
+        { id: "vision-only", capabilities: "image" },
+        { id: "writer-a", capabilities: "text" },
+        { id: "writer-b", capabilities: "both" },
+      ], capability: "both",
+    });
+    expect((await listTextProviders(71003))[0].modelEntries).toEqual([
+      { id: "vision-only", capabilities: "image" },
+      { id: "writer-a", capabilities: "text" },
+      { id: "writer-b", capabilities: "both" },
+    ]);
+    expect(await resolveTextProviderModel(71003, item.id, "writer-b")).toMatchObject({ model: "writer-b" });
+    expect(await resolveTextProviderModel(71003, item.id, "vision-only")).toBeNull();
+    expect(validateProviderCapability("both")).toBe("both");
+  });
+
+  it("迁移旧图像 providers 文件和旧 story-providers 文件到同一加密 registry", async () => {
+    const userId = 71004;
+    const providerKey = createHash("sha256").update("lfn-personal-providers-v1\0").update(process.env.LFN_PROVIDER_ENCRYPTION_KEY!).digest();
+    const imageIv = randomBytes(12);
+    const imageCipher = createCipheriv("aes-256-gcm", providerKey, imageIv);
+    const imagePayload = { version: 1, items: [{ id: "legacy-image", name: "旧图像", baseUrl: "https://legacy.example.com", apiKey: "legacy-image-secret", models: ["flux-old"], createdAt: "2025-01-01T00:00:00.000Z" }], novelaiKey: null };
+    const imageBytes = Buffer.concat([imageCipher.update(JSON.stringify(imagePayload), "utf8"), imageCipher.final()]);
+    await mkdir(path.join(directory, "providers"), { recursive: true });
+    await writeFile(path.join(directory, "providers", `${userId}.enc`), ["v1", imageIv.toString("base64url"), imageCipher.getAuthTag().toString("base64url"), imageBytes.toString("base64url")].join("."));
+
+    const storyKey = createHash("sha256").update("lfn-development-secret-change-me").update("story-provider-secrets-v1").digest();
+    const storyIv = randomBytes(12);
+    const storyCipher = createCipheriv("aes-256-gcm", storyKey, storyIv);
+    const storyBytes = Buffer.concat([storyCipher.update("legacy-story-secret", "utf8"), storyCipher.final()]);
+    await mkdir(path.join(directory, "story-providers"), { recursive: true });
+    await writeFile(path.join(directory, "story-providers", `${userId}.json`), JSON.stringify([{ id: "legacy-story", kind: "openai", name: "旧故事", model: "writer-old", baseUrl: "https://story.example.com", encryptedKey: [storyIv.toString("base64url"), storyCipher.getAuthTag().toString("base64url"), storyBytes.toString("base64url")].join(".") }]));
+
+    const entries = await listRegistryEntries(userId);
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "legacy-image", secret: "legacy-image-secret", modelEntries: [{ id: "flux-old", capabilities: "image" }] }),
+      expect.objectContaining({ id: "legacy-story", secret: "legacy-story-secret", modelEntries: [{ id: "writer-old", capabilities: "text" }] }),
+    ]));
+    expect((await listRegistryEntries(userId, "image")).map((entry) => entry.id)).toContain("legacy-image");
+    expect((await listRegistryEntries(userId, "text")).map((entry) => entry.id)).toContain("legacy-story");
+    expect((await readFile(path.join(directory, "providers", `${userId}.enc`), "utf8"))).toMatch(/^v2\./);
   });
 
   it("拒绝本机、内网、非 HTTPS 和可注入请求头的 Key", () => {
