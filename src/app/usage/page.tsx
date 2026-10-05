@@ -387,47 +387,42 @@ function GenerationCard({
     typeof generation[key] === "string" ? (generation[key] as string) : "";
   const num = (key: string) =>
     generation[key] == null ? "-" : String(generation[key]);
-  const rows: [string, string][] = [
-    ["模式", text("operation") || "-"],
-    [
-      "尺寸",
-      generation.width ? `${num("width")}×${num("height")}` : "-",
-    ],
-    ["步数", num("steps")],
-    ["提示词相关性", num("scale")],
-    ["采样器", text("sampler") || "-"],
-    ["噪声调度", text("noise_schedule") || "-"],
-    ["种子", num("seed")],
-  ];
-  if (generation.n != null) rows.push(["张数", num("n")]);
-  if (generation.strength != null) rows.push(["重绘强度", num("strength")]);
-  if (generation.cfg_rescale != null) rows.push(["CFG 重缩放", num("cfg_rescale")]);
-  if (generation.sm != null) rows.push(["SMEA", generation.sm ? "启用" : "禁用"]);
-  if (generation.sm_dyn != null) rows.push(["SMEA DYN", generation.sm_dyn ? "启用" : "禁用"]);
-  if (generation.uncond_scale != null) rows.push(["无条件尺度", num("uncond_scale")]);
-  if (generation.ucPreset != null) rows.push(["负向预设", num("ucPreset")]);
-  if (generation.qualityToggle != null) rows.push(["品质标签", generation.qualityToggle ? "启用" : "禁用"]);
-  if (generation.add_original_image != null) rows.push(["附加原图", generation.add_original_image ? "是" : "否"]);
-  if (generation.controlnet_strength != null) rows.push(["ControlNet 强度", num("controlnet_strength")]);
-  if (generation.dynamic_thresholding != null) rows.push(["动态阈值", generation.dynamic_thresholding ? "启用" : "禁用"]);
-  if (generation.legacy != null) rows.push(["遗留模式", generation.legacy ? "是" : "否"]);
-  if (generation.v4_negative != null) rows.push(["V4 负向", generation.v4_negative ? "启用" : "禁用"]);
-  if (generation.v4_prompt != null) rows.push(["V4 提示词", generation.v4_prompt ? "启用" : "禁用"]);
-  if (generation.params_version != null) rows.push(["参数版本", num("params_version")]);
-  if (generation.reference_image_multiple != null) rows.push(["参考图数量", String((generation.reference_image_multiple as unknown[]).length)]);
+  const labels: Record<string, string> = {
+    operation: "模式 / Operation", width: "宽度 / Width", height: "高度 / Height", steps: "步数 / Steps", scale: "引导强度 / Scale",
+    sampler: "采样器 / Sampler", noise_schedule: "噪声调度 / Noise schedule", seed: "种子 / Seed", n: "生成数量 / Samples", n_samples: "NAI 生成数量 / NAI samples",
+    cfg_rescale: "CFG 重缩放 / CFG rescale", strength: "重绘强度 / Strength", noise: "噪声 / Noise", params_version: "参数版本 / Params version",
+    ucPreset: "负向预设 / UC preset", qualityToggle: "品质标签 / Quality tags", add_original_image: "附加原图 / Add original image", autoSmea: "自动 SMEA / Auto SMEA",
+    deliberate_euler_ancestral_bug: "Euler ancestral 兼容 / Compatibility", prefer_brownian: "Brownian 噪声 / Brownian noise", sm: "SMEA / SMEA", sm_dyn: "动态 SMEA / SMEA dynamic",
+    uncond_scale: "无条件尺度 / Uncond scale", v4_negative: "V4 负向 / V4 negative", v4_prompt: "V4 提示词 / V4 prompt", dynamic_thresholding: "动态阈值 / Dynamic thresholding",
+    controlnet_strength: "ControlNet 强度 / ControlNet strength", legacy: "遗留模式 / Legacy", emotion: "表情 / Emotion", defry: "去伪影 / Defry",
+    use_coords: "使用坐标 / Use coordinates", reference_strength: "参考图强度 / Reference strength", reference_information_extracted: "参考信息提取 / Reference information extracted",
+    quality: "质量 / Quality", imageSize: "图像尺寸 / Image size", background: "背景 / Background", providerId: "服务商 / Provider", imageProtocol: "图像协议 / Image protocol",
+  };
+  const preferredKeys = ["operation", "width", "height", "steps", "scale", "sampler", "noise_schedule", "seed", "n", "n_samples", "cfg_rescale", "strength", "noise", "params_version", "ucPreset", "qualityToggle", "add_original_image", "autoSmea", "deliberate_euler_ancestral_bug", "prefer_brownian", "sm", "sm_dyn", "uncond_scale", "v4_negative", "v4_prompt", "dynamic_thresholding", "controlnet_strength", "legacy", "emotion", "defry", "use_coords", "reference_strength", "reference_information_extracted", "quality", "imageSize", "background", "providerId", "imageProtocol"];
+  const rows: [string, string][] = preferredKeys.filter((key) => generation[key] != null).map((key) => {
+    const value = generation[key];
+    const display = typeof value === "boolean" ? (value ? "启用 / Enabled" : "禁用 / Disabled") : typeof value === "object" ? JSON.stringify(value) : String(value);
+    return [labels[key] || `${key} / ${key}`, display];
+  });
+  const displayedKeys = new Set(preferredKeys);
+  for (const [key, value] of Object.entries(generation)) {
+    if (displayedKeys.has(key) || value == null || ["prompt", "negative_prompt"].includes(key)) continue;
+    rows.push([`${key} / ${key}`, typeof value === "object" ? JSON.stringify(value) : String(value)]);
+  }
   return (
     <div className="rounded-md border border-[var(--line)] bg-white p-3 sm:col-span-2 lg:col-span-1">
       <p className="text-[10px] font-semibold tracking-[0.12em] text-[var(--rose)]">
-        生成参数 · LFN 工作台记录
+        生成参数 / Generation parameters · LFN 工作台记录 / Studio record
       </p>
       {text("prompt") && (
-        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5">
+        <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5" title="提示词 / Prompt">
+          <span className="font-semibold text-[var(--muted)]">提示词 / Prompt： </span>
           {text("prompt")}
         </p>
       )}
       {text("negative_prompt") && (
-        <p className="mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--muted)]">
-          负向：{text("negative_prompt")}
+        <p className="mt-1.5 whitespace-pre-wrap break-words text-[11px] leading-5 text-[var(--muted)]" title="反向提示词 / Negative prompt">
+          反向提示词 / Negative prompt：{text("negative_prompt")}
         </p>
       )}
       <dl className="mt-2 space-y-1.5">

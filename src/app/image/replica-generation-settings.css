@@ -19,6 +19,7 @@
 .rgs-shell[data-replica-variant="nlw"] .rgs-nlw-summary { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 10px 12px; background: var(--rgs-surface); border: 0; border-top: 1px solid var(--rgs-line); border-bottom: 1px solid var(--rgs-line); text-align: left; }
 .rgs-shell[data-replica-variant="nlw"] .rgs-model-name { margin-left: auto; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rgs-shell[data-replica-variant] .rgs-panel { position: absolute; bottom: 0; left: 0; right: 0; z-index: 50; max-height: min(580px, calc(100dvh - 120px)); display: flex; flex-direction: column; background: var(--rgs-surface); border: 1px solid var(--rgs-line); border-radius: 8px; box-shadow: 0 -4px 18px color-mix(in srgb, var(--ink) 12%, transparent); overflow: hidden; }
+.rgs-shell.rgs-mobile-inline .rgs-panel { position: static; z-index: auto; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
 .rgs-popup[data-replica-variant="nai"] { z-index: 50; }
 .rgs-popup[data-replica-variant="nai"] > .rgs-panel { position: static; max-height: inherit; width: 100%; }
 .rgs-shell[data-replica-variant="nlw"] .rgs-panel { bottom: calc(100% - 1px); border-radius: 10px 10px 0 0; max-height: min(640px, calc(100dvh - 210px)); }

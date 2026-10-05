@@ -15,6 +15,13 @@
 .settings-section-heading span { display: block; margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.7; }
 .settings-section-body { animation: settings-section-enter .2s ease both; }
 .settings-content code { min-width: 0; overflow-wrap: anywhere; }
+.settings-profile-links { display: grid; gap: 16px; }
+.settings-profile-link-heading { display: flex; align-items: flex-start; gap: 12px; }
+.settings-profile-link-heading > div { min-width: 0; }
+.settings-profile-link-heading p { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.settings-profile-icon { display: grid; width: 36px; height: 36px; flex: 0 0 auto; place-items: center; border-radius: 8px; background: var(--surface-muted); color: var(--rose); }
+.settings-profile-link-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.settings-profile-link-grid .settings-secondary-button { flex: 1 1 180px; justify-content: center; }
 .settings-primary-button, .settings-secondary-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); font-size: 12px; font-weight: 600; transition: border-color .15s, opacity .15s; }
 .settings-secondary-button:hover:not(:disabled) { border-color: var(--rose); color: var(--rose); }
 .settings-primary-button { border-color: var(--rose); background: var(--rose); color: white; }

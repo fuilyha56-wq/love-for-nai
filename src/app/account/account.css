@@ -1,0 +1,33 @@
+.account-page-header { background: var(--panel) !important; }
+.account-status-notice { border: 1px solid color-mix(in srgb, #d9a441 42%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #fff3cf 72%, var(--panel)); padding: 12px; color: #77531e; font-size: 13px; line-height: 1.5; }
+.account-muted-error { margin-top: 12px; color: #77531e; font-size: 12px; }
+.account-summary-grid { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 16px; }
+.account-identity-card, .account-wallet-card, .account-next-steps { min-width: 0; }
+.account-avatar { display: grid; width: 56px; height: 56px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--surface-muted); color: var(--rose); }
+.account-wallet-card dl dd { min-width: 0; overflow-wrap: anywhere; }
+.account-wallet-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; margin-top: 16px; }
+.account-checkin-summary { display: flex; min-height: 38px; align-items: center; gap: 8px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 11px; line-height: 1.4; }
+.account-checkin-summary span { min-width: 0; overflow-wrap: anywhere; }
+.account-package-purchase { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: start; }
+.account-package-count { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 0 10px; }
+.account-package-count label, .account-package-count span { flex: 0 0 auto; color: var(--muted); font-size: 11px; font-weight: 600; }
+.account-package-count input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--ink); text-align: center; font-size: 13px; outline: none; }
+.account-package-purchase > p { grid-column: 1 / -1; margin: -3px 0 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.account-next-steps { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 18px; }
+.account-kicker { color: var(--rose); font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+.account-next-steps h2 { margin-top: 7px; font-size: 15px; font-weight: 700; }
+.account-next-steps p:not(.account-kicker) { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.account-next-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+@media (max-width: 760px) {
+  .account-summary-grid { grid-template-columns: 1fr; gap: 12px; }
+  .account-wallet-actions { grid-template-columns: 1fr; }
+  .account-package-purchase { grid-template-columns: minmax(0, 1fr); }
+  .account-package-purchase .settings-primary-button { width: 100%; }
+  .account-next-steps { display: grid; gap: 14px; }
+  .account-next-actions { display: grid; grid-template-columns: 1fr; justify-content: stretch; }
+  .account-next-actions > * { width: 100%; }
+}
+@media (max-width: 360px) {
+  .account-identity-card, .account-wallet-card, .account-next-steps { padding: 14px !important; }
+  .account-identity-card .feature-link { min-width: 0; padding-inline: 8px; font-size: 11px; }
+}

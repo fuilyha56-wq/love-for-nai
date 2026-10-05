@@ -1934,6 +1934,7 @@ button, a, input, textarea, select {
 .workspace-tabs a:hover { background: var(--surface-muted); color: var(--ink); }
 .workspace-tabs a[aria-current="page"] { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); }
 .workspace-tabs a:focus-visible, .workspace-help:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+.workspace-mobile-nav { display: none; }
 .workspace-intro { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 34px 0 12px; }
 .workspace-eyebrow { font-size: 10px; letter-spacing: .16em; font-weight: 700; color: var(--rose); }
 .workspace-eyebrow span { color: var(--muted); letter-spacing: .06em; margin-left: 8px; }
@@ -1946,15 +1947,33 @@ button, a, input, textarea, select {
 .workspace-page .field { border-radius: 9px; min-height: 42px; background: var(--surface); }
 .workspace-page table th { font-size: 11px; letter-spacing: .04em; padding-block: 14px; }
 .workspace-page table td { padding-block: 14px; }
+.history-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 16px; align-items: start; }
 html[data-theme="night"] { --surface: #272b2d; --surface-muted: #222628; }
 @media (max-width: 640px) {
-  .workspace-heading { padding: 16px 16px 0; }
-  .workspace-tabs a { padding: 10px 12px; font-size: 12px; }
-  .workspace-intro { padding-top: 25px; align-items: flex-start; }
+  .workspace-heading { padding: 12px 12px 0; }
+  .workspace-tabs { display: none; }
+  .workspace-mobile-nav { position: relative; display: block; z-index: 25; }
+  .workspace-mobile-primary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+  .workspace-mobile-primary > :is(a, button) { display: flex; min-width: 0; min-height: 46px; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 650; text-decoration: none; }
+  .workspace-mobile-primary > :is(a, button):hover, .workspace-mobile-primary > :is(a, button)[aria-current="page"], .workspace-mobile-primary > button[aria-expanded="true"] { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); }
+  .workspace-mobile-primary > :is(a, button):focus-visible, .workspace-mobile-more a:focus-visible, .workspace-mobile-more button:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+  .workspace-mobile-backdrop { position: fixed; z-index: 40; inset: 0; width: 100%; border: 0; background: rgb(24 27 28 / 28%); }
+  .workspace-mobile-more { position: absolute; z-index: 45; top: calc(100% + 8px); right: 0; left: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: 0 18px 50px rgb(32 35 40 / 16%); }
+  .workspace-mobile-more-heading { display: flex; min-height: 46px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 700; }
+  .workspace-mobile-more-heading button { display: grid; width: 36px; height: 36px; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--muted); }
+  .workspace-mobile-more-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; padding: 8px; }
+  .workspace-mobile-more-grid a { display: flex; min-width: 0; min-height: 60px; align-items: flex-start; gap: 9px; padding: 10px; border-radius: 9px; color: var(--muted); text-decoration: none; }
+  .workspace-mobile-more-grid a:hover, .workspace-mobile-more-grid a[aria-current="page"] { background: var(--surface-muted); color: var(--rose); }
+  .workspace-mobile-more-grid a > span { display: grid; min-width: 0; gap: 3px; }
+  .workspace-mobile-more-grid b { overflow: hidden; color: var(--ink); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-mobile-more-grid small { overflow: hidden; color: var(--muted); font-size: 10px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-intro { padding-top: 22px; align-items: flex-start; }
   .workspace-help { margin-top: 3px; font-size: 11px; }
-  .workspace-page > section { padding: 16px 16px 36px; }
-  .workspace-page > header { align-items: flex-start; }
+  .workspace-page > section { padding: 16px 12px 36px; }
+  .workspace-page > header { align-items: flex-start; padding-inline: 12px; }
 }
+@media (min-width: 641px) { .workspace-mobile-nav { display: none; } }
+@media (prefers-reduced-motion: reduce) { .workspace-mobile-more { scroll-behavior: auto; } }
 /* Give the drawer's nested tools the same hierarchy as secondary pages. */
 html[data-theme="nai"] .nai-menu { padding: 8px 8px 16px; box-shadow: -20px 0 60px #0004; }
 html[data-theme="nai"] .nai-menu-label { margin-top: 22px; margin-bottom: 8px; font-size: 10px; letter-spacing: .14em; }

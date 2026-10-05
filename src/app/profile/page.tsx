@@ -2,10 +2,11 @@
 
 import { WorkspaceNav } from "@/app/workspace-nav";
 
-import { ArrowLeft, CalendarCheck, ChevronLeft, ChevronRight, Copy, LockKeyhole, Save, UserRound } from "lucide-react";
+import { ArrowLeft, CalendarCheck, ChevronLeft, ChevronRight, Copy, LockKeyhole, Save, UserRound, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./profile.css";
+import { PROFILE_SECTION_IDS, profileSectionForHash } from "@/lib/profile-navigation";
 import {
   readJson,
   SessionExpiredError,
@@ -76,6 +77,7 @@ export default function ProfilePage() {
   const [referralError, setReferralError] = useState("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
   const [ledgerMonth, setLedgerMonth] = useState(() => new Date());
+  const [activeSection, setActiveSection] = useState("profile-rewards");
   const referralInput = useRef<HTMLInputElement>(null);
 
   const loadProfile = useCallback(async () => {
@@ -150,6 +152,26 @@ export default function ProfilePage() {
       loadLedger();
     });
   }, [loadLedger, loadProfile, loadReferral, loadWallet]);
+
+  useEffect(() => {
+    const updateFromHash = () => {
+      setActiveSection(profileSectionForHash(window.location.hash));
+    };
+    updateFromHash();
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      if (visible) setActiveSection(visible.target.id);
+    }, { rootMargin: "-104px 0px -58%", threshold: [0.1, 0.35, 0.7] });
+    PROFILE_SECTION_IDS.forEach((id) => {
+      const element = document.getElementById(id);
+      if (element) observer.observe(element);
+    });
+    window.addEventListener("hashchange", updateFromHash);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("hashchange", updateFromHash);
+    };
+  }, []);
 
   async function checkIn() {
     if (!aff?.checkInEnabled) return;
@@ -253,7 +275,7 @@ export default function ProfilePage() {
 
   return (
     <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
+      <header className="profile-page-header flex h-14 items-center justify-between border-b border-[var(--line)] px-4 sm:px-7">
         <div className="flex items-center gap-3">
           <UserRound size={20} className="text-[var(--rose)]" />
           <b>个人资料</b>
@@ -273,7 +295,7 @@ export default function ProfilePage() {
       )}
       <section className="profile-layout">
         <aside className="profile-sidebar">
-          <div className="grid h-16 w-16 place-items-center rounded-full bg-[#292d2c] text-white">
+          <div className="profile-avatar">
             <UserRound size={27} />
           </div>
           <h1 className="mt-4 text-xl font-semibold">
@@ -325,15 +347,16 @@ export default function ProfilePage() {
               <button type="button" onClick={() => void loadWallet()} className="settings-secondary-button">重试</button>
             </div>
           )}
+          <Link href="/account" className="profile-account-link"><WalletCards size={14} /> 钱包与创作额度</Link>
           <nav className="profile-sidebar-nav" aria-label="个人资料分区">
-            <a href="#profile-rewards" aria-current="location">奖励与流水</a>
-            <a href="#profile-info">资料信息</a>
-            <a href="#profile-security">密码与安全</a>
+            <a href="#profile-rewards" aria-current={activeSection === "profile-rewards" ? "location" : undefined}>奖励与流水</a>
+            <a href="#profile-info" aria-current={activeSection === "profile-info" ? "location" : undefined}>资料信息</a>
+            <a href="#profile-security" aria-current={activeSection === "profile-security" ? "location" : undefined}>密码与安全</a>
           </nav>
         </aside>
         <div className="profile-content">
         <div id="profile-rewards" className="profile-section">
-          <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[0_10px_30px_rgba(54,47,39,.05)]" aria-labelledby="checkin-heading">
+          <section className="profile-card" aria-labelledby="checkin-heading">
             <div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-muted)] text-[var(--rose)]"><CalendarCheck size={16} /></span><div><h2 id="checkin-heading" className="text-base font-semibold">每日签到</h2><p className="mt-1 text-xs text-[var(--muted)]">每个中国标准时间日可签到一次，奖励直接进入个人 AFF。</p></div></div>
             <div className="mt-5 flex items-center justify-between"><button type="button" className="grid h-7 w-7 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-muted)]" aria-label="上个月" onClick={() => setLedgerMonth((value) => new Date(value.getFullYear(), value.getMonth() - 1, 1))}><ChevronLeft size={15} /></button><span className="text-sm font-semibold">{ledgerMonth.getFullYear()} 年 {ledgerMonth.getMonth() + 1} 月</span><button type="button" className="grid h-7 w-7 place-items-center rounded-full text-[var(--muted)] hover:bg-[var(--surface-muted)]" aria-label="下个月" disabled={ledgerMonth.getFullYear() === new Date().getFullYear() && ledgerMonth.getMonth() >= new Date().getMonth()} onClick={() => setLedgerMonth((value) => new Date(value.getFullYear(), value.getMonth() + 1, 1))}><ChevronRight size={15} /></button></div>
             <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] text-[var(--muted)]">{["一","二","三","四","五","六","日"].map((day) => <span key={day}>{day}</span>)}{Array.from({ length: monthOffset }).map((_, index) => <span key={`empty-${index}`} />)}{Array.from({ length: monthDays }, (_, index) => { const day = index + 1; const key = `${monthKey}-${String(day).padStart(2, "0")}`; return <span key={key} className={`grid aspect-square place-items-center rounded ${checkInDays.has(key) ? "bg-[color-mix(in_srgb,var(--rose)_16%,transparent)] font-semibold text-[var(--rose)]" : "bg-[var(--surface-muted)] text-[var(--muted)]"}`}>{day}</span>; })}</div>
@@ -357,6 +380,11 @@ export default function ProfilePage() {
               className="field w-full px-3"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
+              required
+              minLength={3}
+              maxLength={32}
+              pattern="[a-zA-Z0-9_.\\-]{3,32}"
+              autoComplete="username"
               disabled={!profile}
             />
           </div>
@@ -372,6 +400,9 @@ export default function ProfilePage() {
               className="field w-full px-3"
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
+              required
+              maxLength={40}
+              autoComplete="nickname"
               disabled={!profile}
             />
           </div>
@@ -381,11 +412,7 @@ export default function ProfilePage() {
               {profile?.email || "未公开"}
             </div>
           </div>
-          {message && (
-            <p className="rounded border border-[var(--line)] bg-white p-3 text-sm">
-              {message}
-            </p>
-          )}
+          {message && <p className="profile-status-notice">{message}</p>}
           <button
             type="submit"
             disabled={!profile || saving}

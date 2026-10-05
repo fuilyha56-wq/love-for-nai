@@ -52,22 +52,28 @@ describe("本次历史操作入口", () => {
     expect(onUse).toHaveBeenCalledExactlyOnceWith(item, operation);
   });
 
-  it("在参数详情中显示当前历史记录的图像模型", () => {
-    const withModel: ReplicaHistoryItem = { ...item, model: "gpt-image-1.5", providerId: "personal-provider", imageProtocol: "openai-images", quality: "high", imageSize: "1K", background: "transparent" };
+  it("在参数详情中显示当前历史记录的全部参数", () => {
+    const withModel: ReplicaHistoryItem = { ...item, model: "gpt-image-1.5", providerId: "personal-provider", imageProtocol: "openai-images", quality: "high", imageSize: "1K", background: "transparent", noise_schedule: "native", cfg_rescale: 0.2, strength: 0.65, n: 2 };
     const history = ReplicaHistory({ items: [withModel], onOpen: vi.fn(), onUse: vi.fn(), onDelete: vi.fn() });
     const card = descendants(history).find((element) => typeof element.type === "function");
     const renderCard = card!.type as (props: unknown) => ReactNode;
     const details = descendants(renderCard(card!.props)).find((element) => element.type === "details");
     expect(details).toBeDefined();
     expect(descendants(details).find((element) => element.type === "summary")?.props.children).toBe("参数详情");
-    expect(descendants(details).find((element) => element.type === "dt")?.props.children).toBe("模型");
-    expect(descendants(details).find((element) => element.type === "dd")?.props.children).toBe("gpt-image-1.5");
+    const modelLabel = descendants(details).find((element) => element.type === "dt" && element.props.children === "模型 / Model");
+    expect(modelLabel).toBeDefined();
+    const detailValues = descendants(details).filter((element) => element.type === "dd").map((element) => element.props.children);
+    expect(detailValues).toContain("gpt-image-1.5");
+    const values = descendants(details).filter((element) => element.type === "dd").map((element) => element.props.children);
+    expect(values).toEqual(expect.arrayContaining(["1girl", "blurry", "832", "1216", "28", "5", "k_euler_ancestral", "42", "native", "0.2", "0.65", "2", "personal-provider", "openai-images", "high", "1K", "transparent"]));
   });
 
-  it("没有模型字段的旧历史记录不显示空参数详情", () => {
+  it("没有模型字段的旧历史记录仍显示已有参数详情", () => {
     const history = ReplicaHistory({ items: [item], onOpen: vi.fn(), onUse: vi.fn(), onDelete: vi.fn() });
     const card = descendants(history).find((element) => typeof element.type === "function");
     const renderCard = card!.type as (props: unknown) => ReactNode;
-    expect(descendants(renderCard(card!.props)).some((element) => element.type === "details")).toBe(false);
+    const details = descendants(renderCard(card!.props)).find((element) => element.type === "details");
+    expect(details).toBeDefined();
+    expect(descendants(details).map((element) => element.props.children)).toContain("1girl");
   });
 });

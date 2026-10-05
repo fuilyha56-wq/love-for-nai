@@ -7,6 +7,7 @@
 
 import { Check, ChevronDown, Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { readJson, SessionExpiredError } from "@/app/session-notice";
 
 type Rating = "general" | "r13" | "r18";
@@ -157,9 +158,11 @@ export function GallerySubmitDialog({
     }
   }
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div className="fixed inset-0 z-50 grid place-items-center bg-[#202328]/45 p-4 backdrop-blur-[2px]">
-      <div className="max-h-[min(720px,calc(100vh-32px))] w-full max-w-xl overflow-y-auto rounded-xl border border-[var(--line)] bg-[#fffefa] p-5 text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)] sm:p-6">
+      <div role="dialog" aria-modal="true" aria-label="提交作品" className="max-h-[min(720px,calc(100dvh-32px))] w-full max-w-xl overflow-y-auto rounded-xl border border-[var(--line)] bg-[#fffefa] p-5 text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)] sm:p-6">
         <div className="flex items-start justify-between gap-5">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">PUBLIC SQUARE</p>
@@ -182,6 +185,6 @@ export function GallerySubmitDialog({
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-[var(--line)] pt-5"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-white px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "直接发布"}</button></div>
       </div>
-    </div>
+    </div>, document.body
   );
 }

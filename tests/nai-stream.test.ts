@@ -29,6 +29,17 @@ describe("NAI native stream protocol", () => {
     expect(body.parameters).toMatchObject({ qualityToggle: true, ucPreset: 0 });
   });
 
+  it("generates a random seed when omitted and preserves negative seeds", () => {
+    const random = naiNativeGenerationBody({ model: "nai-v4.5-full", prompt: "1girl" });
+    expect(random.parameters).toEqual(expect.objectContaining({ seed: expect.any(Number) }));
+    const randomSeed = (random.parameters as { seed: number }).seed;
+    expect(randomSeed).toBeGreaterThan(0);
+    expect(randomSeed).toBeLessThanOrEqual(0xffffffff);
+
+    const negative = naiNativeGenerationBody({ model: "nai-v4.5-full", prompt: "1girl", seed: -42 });
+    expect(negative.parameters).toMatchObject({ seed: -42 });
+  });
+
   it.each([
     { qualityToggle: "false", ucPreset: "3" },
     { qualityToggle: 0, ucPreset: -1 },

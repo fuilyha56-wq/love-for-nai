@@ -3,10 +3,8 @@
 import { ArrowLeft, ArrowRight, Compass, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { GUIDE_OPEN_EVENT, guideLauncherVisible, setGuideLauncherVisible, subscribeGuideVisibility } from "@/lib/guide-preferences";
+import { GUIDE_KEY, GUIDE_OPEN_EVENT, guideLauncherVisible, setGuideActive, setGuideLauncherVisible, subscribeGuideVisibility } from "@/lib/guide-preferences";
 import "./onboarding-guide.css";
-
-const GUIDE_KEY = "lfn-onboarding-v1";
 
 type Step = { title: string; body: string; path: string; target?: string; action?: string };
 
@@ -38,7 +36,7 @@ export function OnboardingGuide() {
   const [spotlight, setSpotlight] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
-    const openGuide = () => { setStepIndex(0); setOpen(true); setResuming(false); };
+    const openGuide = () => { setGuideActive(true); setStepIndex(0); setOpen(true); setResuming(false); };
     window.addEventListener(GUIDE_OPEN_EVENT, openGuide);
     return () => window.removeEventListener(GUIDE_OPEN_EVENT, openGuide);
   }, []);
@@ -46,7 +44,7 @@ export function OnboardingGuide() {
   useEffect(() => {
     if (pathname === "/sign-in") return;
     const stored = window.localStorage.getItem(GUIDE_KEY);
-    if (!stored) queueMicrotask(() => setOpen(true));
+    if (!stored) queueMicrotask(() => { setGuideActive(true); setOpen(true); });
   }, [pathname]);
 
   useEffect(() => {
@@ -92,7 +90,7 @@ export function OnboardingGuide() {
   }, [pathname, open, resuming, stepIndex]);
 
   const step = steps[stepIndex];
-  const close = () => { window.localStorage.setItem(GUIDE_KEY, "done"); setOpen(false); setResuming(false); };
+  const close = () => { window.localStorage.setItem(GUIDE_KEY, "done"); setGuideActive(false); setOpen(false); setResuming(false); };
   const next = () => {
     if (stepIndex === steps.length - 1) return close();
     const nextStep = steps[stepIndex + 1];
@@ -111,7 +109,7 @@ export function OnboardingGuide() {
   if (pathname === "/sign-in") return null;
   return <>
     {launcherVisible && <div className="guide-launcher-group">
-      <button type="button" className="guide-launcher" onClick={() => { if (!resuming) setStepIndex(0); setOpen(true); }} aria-label={resuming ? "继续新手教程" : "打开新手教程"} title="新手教程"><Compass size={18} /><span>{resuming ? "继续指南" : "指南"}</span></button>
+      <button type="button" className="guide-launcher" onClick={() => { setGuideActive(true); if (!resuming) setStepIndex(0); setOpen(true); }} aria-label={resuming ? "继续新手教程" : "打开新手教程"} title="新手教程"><Compass size={18} /><span>{resuming ? "继续指南" : "指南"}</span></button>
       <button type="button" className="guide-hide-launcher" onClick={() => setGuideLauncherVisible(false)} aria-label="隐藏指南按钮" title="隐藏指南，可在设置的外观与界面中恢复"><X size={13} /></button>
     </div>}
     {open && <div className={`guide-backdrop${spotlight ? " has-spotlight" : ""}`} role="presentation">
