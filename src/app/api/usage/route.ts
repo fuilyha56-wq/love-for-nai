@@ -278,9 +278,9 @@ async function attachGenerationParams(userId: number, items: LogEntry[]) {
     const model = String(item.model_name || "");
     if (!Number.isFinite(logTime) || !model) return item;
     let match: (typeof available)[number] | null = null;
-    let bestDelta = 30_000;
+    let bestDelta = 5 * 60_000;
     for (const entry of available) {
-      if (used.has(entry.id) || entry.parameters.model !== model) continue;
+      if (used.has(entry.id) || !sameNaiModel(entry.parameters.model, model)) continue;
       const delta = Math.abs(Date.parse(entry.createdAt) - logTime);
       if (delta <= bestDelta) {
         bestDelta = delta;
@@ -291,4 +291,20 @@ async function attachGenerationParams(userId: number, items: LogEntry[]) {
     used.add(match.id);
     return { ...item, generation: match.parameters };
   });
+}
+
+function sameNaiModel(historyModel: unknown, usageModel: string): boolean {
+  const left = normalizeNaiModel(historyModel);
+  const right = normalizeNaiModel(usageModel);
+  return Boolean(left && right && left === right);
+}
+
+function normalizeNaiModel(value: unknown): string {
+  const model = String(value || "").toLowerCase();
+  if (!model.startsWith("nai")) return model;
+  return model
+    .replace(/^nai[-_]?diffusion[-_]?/, "nai")
+    .replace(/^nai[-_]?v/, "nai")
+    .replace(/[-_.]/g, "")
+    .replace(/limit$/, "");
 }
