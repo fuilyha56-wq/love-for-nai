@@ -44,7 +44,9 @@ import {
   Plus,
   Redo2,
   Search,
+  Scan,
   RotateCcw,
+  Ruler,
   Save,
   ShieldCheck,
   SlidersHorizontal,
@@ -93,6 +95,7 @@ import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
 import { ReplicaHistory, type ReplicaHistoryItem } from "./replica-history";
 import { ReplicaNavigation, ReplicaGenerationFooter } from "./replica-shell";
+import { MobileStudioLauncher, type MobileStudioSheet } from "./mobile-studio-launcher";
 import { GalleryPicker } from "./gallery-picker";
 import {
   clearEditorPromptHandoff,
@@ -110,6 +113,9 @@ import {
   type CustomLayoutModule,
 } from "@/lib/appearance-store";
 import {
+  cloneElement,
+  Fragment,
+  isValidElement,
   useCallback,
   useEffect,
   useId,
@@ -218,6 +224,12 @@ type SessionResult = ReplicaHistoryItem & {
   historyId?: string;
   operation: Operation;
   createdAt: number;
+};
+type RemoteHistoryItem = {
+  id: string;
+  createdAt: string;
+  imageUrl: string;
+  parameters: GenerationParameters;
 };
 
 async function consumeImageStream(
@@ -718,9 +730,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [notice, setNotice] = useState("");
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
-  const [mobilePanel, setMobilePanel] = useState(false);
-  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
-  const [mobileToolsPane, setMobileToolsPane] = useState<"history" | "assistant">("history");
+  const [mobileSheet, setMobileSheet] = useState<MobileStudioSheet | null>(null);
+  const [mobileViewportReady, setMobileViewportReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [wallet, setWallet] = useState<WalletState | null>(null);
   const [aff, setAff] = useState<Aff | null>(null);
@@ -730,6 +741,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
+  const [mobileHistory, setMobileHistory] = useState<ReplicaHistoryItem[]>([]);
+  const [mobileHistoryRefresh, setMobileHistoryRefresh] = useState(0);
   const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("account");
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
@@ -772,12 +785,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantTimeoutRef = useRef<number | null>(null);
-  const mobilePanelRef = useRef<HTMLElement>(null);
-  const mobileToolsRef = useRef<HTMLElement>(null);
-  const mobilePanelTriggerRef = useRef<HTMLButtonElement>(null);
-  const mobileToolsTriggerRef = useRef<HTMLButtonElement>(null);
-  const previousMobilePanelRef = useRef(false);
-  const previousMobileToolsRef = useRef(false);
+  const mobileSheetRef = useRef<HTMLElement>(null);
+  const mobileSheetTriggerRef = useRef<HTMLButtonElement>(null);
+  const mobileReferenceFileRef = useRef<HTMLInputElement>(null);
+  const previousMobileSheetRef = useRef<MobileStudioSheet | null>(null);
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
@@ -794,6 +805,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [customLayout, setCustomLayout] = useState(() => structuredClone(DEFAULT_CUSTOM_LAYOUT));
   const historyEnabled = !customWorkspace || customLayout.visibleModules.history;
   const assistantEnabled = !customWorkspace || customLayout.visibleModules.agent;
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1023px)");
+    const syncViewport = () => setMobileViewportReady(media.matches);
+    syncViewport();
+    media.addEventListener("change", syncViewport);
+    return () => media.removeEventListener("change", syncViewport);
+  }, []);
+
   useEffect(() => {
     const syncMode = () => setImageHistoryMode(readImageHistoryMode());
     syncMode();
@@ -830,6 +849,68 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       active = false;
     };
   }, [imageHistoryMode]);
+  useEffect(() => {
+    if (!mobileViewportReady) return;
+    const controller = new AbortController();
+    void fetch("/api/history", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return null;
+        return await response.json() as { items?: RemoteHistoryItem[] };
+      })
+      .then((result) => {
+        if (!result?.items) return;
+        setMobileHistory(result.items.map((item) => {
+          const parameters = item.parameters || {};
+          return {
+            image: item.imageUrl,
+            prompt: String(parameters.prompt || ""),
+            negative: String(parameters.negative_prompt || ""),
+            seed: typeof parameters.seed === "number" ? parameters.seed : undefined,
+            width: Number(parameters.width) || width,
+            height: Number(parameters.height) || height,
+            operation: parameters.operation || "generate",
+            createdAt: Date.parse(item.createdAt) || Date.now(),
+            steps: Number(parameters.steps) || steps,
+            scale: Number(parameters.scale) || scale,
+            sampler: String(parameters.sampler || "k_euler_ancestral"),
+            noise_schedule: parameters.noise_schedule,
+            cfg_rescale: typeof parameters.cfg_rescale === "number" ? parameters.cfg_rescale : undefined,
+            strength: typeof parameters.strength === "number" ? parameters.strength : undefined,
+            n: typeof parameters.n === "number" ? parameters.n : undefined,
+            n_samples: typeof parameters.n_samples === "number" ? parameters.n_samples : undefined,
+            noise: typeof parameters.noise === "number" ? parameters.noise : undefined,
+            params_version: typeof parameters.params_version === "number" ? parameters.params_version : undefined,
+            qualityToggle: typeof parameters.qualityToggle === "boolean" ? parameters.qualityToggle : undefined,
+            ucPreset: typeof parameters.ucPreset === "number" ? parameters.ucPreset : undefined,
+            legacy: typeof parameters.legacy === "boolean" ? parameters.legacy : undefined,
+            add_original_image: typeof parameters.add_original_image === "boolean" ? parameters.add_original_image : undefined,
+            autoSmea: typeof parameters.autoSmea === "boolean" ? parameters.autoSmea : undefined,
+            deliberate_euler_ancestral_bug: typeof parameters.deliberate_euler_ancestral_bug === "boolean" ? parameters.deliberate_euler_ancestral_bug : undefined,
+            prefer_brownian: typeof parameters.prefer_brownian === "boolean" ? parameters.prefer_brownian : undefined,
+            sm: typeof parameters.sm === "boolean" ? parameters.sm : undefined,
+            sm_dyn: typeof parameters.sm_dyn === "boolean" ? parameters.sm_dyn : undefined,
+            uncond_scale: typeof parameters.uncond_scale === "number" ? parameters.uncond_scale : undefined,
+            v4_negative: typeof parameters.v4_negative === "boolean" ? parameters.v4_negative : undefined,
+            v4_prompt: typeof parameters.v4_prompt === "boolean" ? parameters.v4_prompt : undefined,
+            dynamic_thresholding: typeof parameters.dynamic_thresholding === "boolean" ? parameters.dynamic_thresholding : undefined,
+            controlnet_strength: typeof parameters.controlnet_strength === "number" ? parameters.controlnet_strength : undefined,
+            emotion: typeof parameters.emotion === "string" ? parameters.emotion : undefined,
+            defry: typeof parameters.defry === "number" ? parameters.defry : undefined,
+            use_coords: typeof parameters.use_coords === "boolean" ? parameters.use_coords : undefined,
+            reference_strength: typeof parameters.reference_strength === "number" ? parameters.reference_strength : undefined,
+            reference_information_extracted: typeof parameters.reference_information_extracted === "number" ? parameters.reference_information_extracted : undefined,
+            model: parameters.model,
+            providerId: parameters.providerId,
+            imageProtocol: parameters.imageProtocol,
+            quality: parameters.quality,
+            imageSize: parameters.imageSize,
+            background: parameters.background,
+          };
+        }));
+      })
+      .catch((error) => { if (!(error instanceof Error && error.name === "AbortError")) setMobileHistory([]); });
+    return () => controller.abort();
+  }, [mobileViewportReady, mobileHistoryRefresh, width, height, steps, scale]);
   const [customPromptCollapsed, setCustomPromptCollapsed] = useState(false);
   const [customReferenceOpen, setCustomReferenceOpen] = useState(true);
   const [customDirectorOpen, setCustomDirectorOpen] = useState(false);
@@ -1122,7 +1203,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
     setOperation(nextOperation);
     setSelectedImageIndex(0);
-    if (window.matchMedia("(max-width: 1023px)").matches) setMobilePanel(true);
+    if (window.matchMedia("(max-width: 1023px)").matches) setMobileSheet("reference");
     setNotice("已将当前图片载入工作台。");
   }
 
@@ -1304,8 +1385,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       return;
     }
     if (window.innerWidth < 1024) {
-      setMobileToolsPane("assistant");
-      setMobileToolsOpen(true);
+      setMobileSheet("assistant");
     } else {
       setReplicaAssistantOpenRequest(value => value + 1);
     }
@@ -1490,35 +1570,23 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, []);
 
   useEffect(() => {
-    if (!mobilePanel && !mobileToolsOpen && !menuOpen) return;
+    if (!mobileSheet && !menuOpen) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if ((event.target as Element).closest?.(".rgs-panel, [data-replica-menu]")) return;
       event.preventDefault();
-      setMobilePanel(false);
-      setMobileToolsOpen(false);
+      setMobileSheet(null);
       setMenuOpen(false);
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [mobilePanel, mobileToolsOpen, menuOpen]);
+  }, [mobileSheet, menuOpen]);
 
   useEffect(() => {
-    if (mobilePanel) mobilePanelRef.current?.focus();
-    else if (previousMobilePanelRef.current) mobilePanelTriggerRef.current?.focus();
-    previousMobilePanelRef.current = mobilePanel;
-  }, [mobilePanel]);
-
-  useEffect(() => {
-    if (mobileToolsOpen) mobileToolsRef.current?.focus();
-    else if (previousMobileToolsRef.current) {
-      const trigger = mobileToolsTriggerRef.current;
-      if (trigger?.getClientRects().length) trigger.focus();
-      else Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="打开站内菜单"]'))
-        .find(button => button.getClientRects().length)?.focus();
-    }
-    previousMobileToolsRef.current = mobileToolsOpen;
-  }, [mobileToolsOpen]);
+    if (mobileSheet) mobileSheetRef.current?.focus();
+    else if (previousMobileSheetRef.current) mobileSheetTriggerRef.current?.focus();
+    previousMobileSheetRef.current = mobileSheet;
+  }, [mobileSheet]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("lfn-layout");
@@ -2414,7 +2482,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     )
       setScale(parameters.scale);
     // seed 0 = 随机，不填入种子框（保持为空即随机）。
-    if (modelCapabilities.seed && parameters.seed != null && parameters.seed > 0)
+    if (modelCapabilities.seed && parameters.seed != null && parameters.seed !== 0)
       setSeed(String(parameters.seed));
     if (
       modelCapabilities.sampling && parameters.sampler &&
@@ -4506,7 +4574,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   const legacyGenerationFooter = (
-    <div className="nai-generation-footer" data-layout-module="generate">
+    <div className="nai-generation-footer mobile-generation-footer" data-layout-module="generate">
       {!sidebarPromptLayout && generationParameters}
       {operation !== "suggest-tags" && providerId === "newapi" && (
         <NaiBalanceMeter
@@ -4561,6 +4629,22 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   const assistantPanel = agentBlockInner;
+
+  function handleMobileReferenceUpload(file: File | undefined) {
+    if (!file) return;
+    const validation = validateUploadFile(file);
+    if (validation) { setNotice(validation); return; }
+    const reader = new FileReader();
+    reader.onerror = () => setNotice("读取图片失败，请重试。");
+    reader.onload = () => {
+      if (typeof reader.result !== "string") return;
+      setSource({ data: reader.result, name: file.name });
+      setMask(null);
+      setOperation("img2img");
+      setNotice("已载入图片。");
+    };
+    reader.readAsDataURL(file);
+  }
 
   const replicaVariant = naiLayout ? "nai" as const : "nlw" as const;
   const replicaBalance = providerId === "newapi"
@@ -4633,6 +4717,56 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
   const replicaHistoryPanel = <ReplicaHistory items={sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
     onUse={reuseHistory} onDelete={(index) => setSessionHistory(current => current.filter((_, itemIndex) => index !== itemIndex))} />;
+  const mobileHistoryPanel = <ReplicaHistory items={mobileHistory.length ? mobileHistory : sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
+    onUse={reuseHistory} onDelete={(index) => {
+      const item = mobileHistory[index];
+      if (!item) { setSessionHistory(current => current.filter((_, itemIndex) => index !== itemIndex)); return; }
+      void fetch(`/api/history?id=${encodeURIComponent(item.image.split("/").at(-2) || "")}`, { method: "DELETE" }).finally(() => setMobileHistory(current => current.filter((_, itemIndex) => index !== itemIndex)));
+    }} />;
+  const mobileControlsFor = (section: "prompt" | "reference" | "size" | "tools") =>
+    isValidElement(controls) && controls.type !== Fragment
+      ? cloneElement(controls as React.ReactElement<{ mobileSection?: string }>, { mobileSection: section })
+      : controls;
+  const mobileLegacyPrompt = <div className="mobile-legacy-sheet-section">
+    <div className="mobile-legacy-sheet-heading"><Paintbrush size={17} /><b>提示词</b></div>
+    {promptFields}
+    {characterControls}
+  </div>;
+  const mobileLegacySize = <div className="mobile-legacy-sheet-section">
+    <ReplicaImageSize variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+  </div>;
+  const mobileLegacyParameters = <div className="mobile-legacy-sheet-section">
+    <div className="mobile-legacy-sheet-heading"><SlidersHorizontal size={17} /><b>生成参数</b></div>
+    {generationParameters}
+  </div>;
+  const mobilePromptContent = <div className="mobile-prompt-panel">
+    {replicaLayout ? mobileControlsFor("prompt") : mobileLegacyPrompt}
+    {replicaLayout ? <ReplicaImageSize variant={replicaVariant} width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : mobileLegacySize}
+    {replicaLayout ? <ReplicaGenerationSettings mobileInline variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
+      steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+      setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
+      count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : mobileLegacyParameters}
+  </div>;
+  const mobileSheetContent = mobileSheet === "prompt"
+    ? mobilePromptContent
+    : mobileSheet === "reference"
+      ? mobileControlsFor("reference")
+      : mobileSheet === "size"
+        ? replicaLayout ? mobileControlsFor("size") : mobileLegacySize
+        : mobileSheet === "tools"
+          ? mobileControlsFor("tools")
+          : mobileSheet === "parameters"
+            ? replicaLayout ? <ReplicaGenerationSettings mobileInline variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
+                steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+                setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
+                count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : mobileLegacyParameters
+            : mobileSheet === "history"
+              ? <ReplicaRightDock storageKey={null} history={replicaHistoryPanel} assistant={assistantPanel} historyEnabled={historyEnabled} assistantEnabled={false} initialHistoryOpen />
+              : mobileSheet === "assistant"
+                ? <div className="mobile-studio-assistant-content">{assistantPanel}</div>
+                : mobileSheet === "session"
+                  ? <div className="mobile-studio-session-content">{walletBlock}<Link href="/account" className="settings-secondary-button">打开账号页面</Link></div>
+                  : null;
 
   const displayedImages = images.length ? images : previewDrafts;
 
@@ -4646,7 +4780,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       data-left-collapsed={nlwLayout && nlwLeftCollapsed ? "true" : undefined}
       className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
     >
-      {!replicaLayout && (
+      {(!replicaLayout || mobileViewportReady) && (
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
           <div className="flex items-center gap-3">
             <Link href="/" aria-label="返回 Love for NAI 首页" className="flex items-center gap-3">
@@ -4825,27 +4959,36 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onDoubleClick={() => { const value = naiLayout ? 447 : nlwLayout ? 400 : 310; setLeftWidth(value); savePanelWidths(value, rightWidth); }}
         />
         <section className="studio-canvas flex min-h-0 flex-col" data-layout-module="canvas">
-          <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3 lg:hidden">
-            <button
-              ref={mobilePanelTriggerRef}
-              onClick={() => setMobilePanel(true)}
-              className="flex items-center gap-2 text-sm"
-            >
-              <Menu size={18} />
-              图像设置
-            </button>
-            <span className="text-xs text-[var(--muted)]">
-              {width}×{height}
-            </span>
-            <button
-              ref={mobileToolsTriggerRef}
-              onClick={() => { setMobileToolsPane("history"); setMobileToolsOpen(true); }}
-              className="flex items-center gap-2 text-sm"
-            >
-              <Images size={18} />
-              功能区
-            </button>
-          </div>
+          {mobileViewportReady && <div className="mobile-studio-mount">
+            <MobileStudioLauncher
+              promptSummary={prompt.trim().split("\\n")[0]?.slice(0, 56) || ""}
+              model={modelOptions.find(item => item.value === model)?.label || model}
+              operation={modes.find(item => item.id === operation)?.label || "生成"}
+              width={width}
+              height={height}
+              isInpainting={operation === "inpainting"}
+              hasResults={displayedImages.length > 0}
+              resultContent={displayedImages.length > 0 ? <ReplicaMedia variant={replicaVariant} images={displayedImages} width={width} height={height} seed={seed} progress={generating ? streamProgress || batchProgress || "正在生成…" : undefined} onOpen={setLightboxIndex} onUse={(image, value) => applyImageAsSource(image, value as Operation)} /> : undefined}
+              historyContent={historyEnabled ? mobileHistoryPanel : undefined}
+              promptContent={mobilePromptContent}
+              onRefreshHistory={() => setMobileHistoryRefresh((value) => value + 1)}
+              referenceContent={<div className="mobile-reference-tools">
+                <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
+                <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
+                <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
+                <button type="button" className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor("canvas")}><Scan size={18} />打开图像编辑器</button>
+                {source && <div className="mobile-reference-current"><Image src={source.data} alt={source.name} width={160} height={160} unoptimized /><span>{source.name}</span></div>}
+              </div>}
+              moreContent={<>{creativeCenterLinks}<nav className="grid gap-2"><Link className="nai-menu-item" href="/image/editor"><Scan size={16} />图像编辑器</Link><Link className="nai-menu-item" href="/settings#models"><KeyRound size={16} />模型与 API 配置</Link><Link className="nai-menu-item" href="/settings"><Paintbrush size={16} />主题与外观</Link><Link className="nai-menu-item" href="/account"><UserRound size={16} />账户与额度</Link></nav></>}
+              onSelectOperation={(next) => selectOperation(next)}
+              onOpenSheet={(next) => setMobileSheet(next)}
+              sheet={mobileSheet}
+              sheetRef={mobileSheetRef}
+              onCloseSheet={() => setMobileSheet(null)}
+              sheetContent={mobileSheetContent}
+              footerContent={naiGenerationFooter}
+            />
+          </div>}
           {!sidebarPromptLayout &&
             (promptModes.has(operation) || operation === "suggest-tags") && (
               <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
@@ -5171,80 +5314,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onNavigate={() => {}}
         />
       )}
-      {mobilePanel && (
-        <div
-          className="fixed inset-0 z-40 bg-black/35 lg:hidden"
-          onClick={() => setMobilePanel(false)}
-        >
-          <aside
-            ref={mobilePanelRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="图像设置"
-            tabIndex={-1}
-            className="studio-controls-panel panel flex h-full w-[min(90vw,350px)] flex-col"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--line)] px-4">
-              <b className="flex items-center gap-2 text-sm">
-                <SlidersHorizontal size={15} className="text-[var(--rose)]" />{" "}
-                图像设置
-              </b>
-              <button
-                onClick={() => setMobilePanel(false)}
-                aria-label="关闭图像设置"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            {controls}
-            {sidebarPromptLayout && naiGenerationFooter}
-          </aside>
-        </div>
-      )}
-      {mobileToolsOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/35 lg:hidden"
-          onClick={() => setMobileToolsOpen(false)}
-        >
-          <aside
-            ref={mobileToolsRef}
-            role="dialog"
-            aria-modal="true"
-            aria-label="功能区"
-            tabIndex={-1}
-            className="panel ml-auto flex h-full w-[min(90vw,350px)] flex-col"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="flex h-12 shrink-0 items-center justify-between border-b border-[var(--line)] px-4">
-              <b className="flex items-center gap-2 text-sm">
-                <Images size={15} className="text-[var(--rose)]" /> 功能区
-              </b>
-              <button
-                onClick={() => setMobileToolsOpen(false)}
-                aria-label="关闭功能区"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            {aaaliceDock ? <ReplicaRightDock
-              storageKey={null}
-              history={replicaHistoryPanel}
-              assistant={assistantPanel}
-              historyEnabled={historyEnabled}
-              assistantEnabled={assistantEnabled}
-              initialHistoryOpen={mobileToolsPane === "history"}
-              assistantOpenRequest={mobileToolsPane === "assistant" ? 1 : 0}
-              onCollapsedChange={(allCollapsed) => { if (allCollapsed && (historyEnabled || assistantEnabled)) setMobileToolsOpen(false); }}
-            /> : toolsPanel}
-            {aaaliceDock && <details className="studio-mobile-session">
-              <summary>会话与功能入口</summary>
-              <div className="p-4">{creativeCenterLinks}</div>
-              {walletBlock}
-            </details>}
-          </aside>
-        </div>
-      )}
       {(replicaLayout || customWorkspace) && menuOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/35"
@@ -5372,8 +5441,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               className="nai-menu-item lg:hidden"
               onClick={() => {
                 setMenuOpen(false);
-                setMobileToolsPane("history");
-                setMobileToolsOpen(true);
+                setMobileSheet("history");
               }}
             >
               <History size={16} /> 本次历史
@@ -5385,7 +5453,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 setMenuOpen(false);
                 openAssistantPanel();
                 window.setTimeout(() => {
-                  const panel = window.innerWidth < 1024 ? mobileToolsRef.current : document.querySelector(".studio-tools-panel");
+                  const panel = window.innerWidth < 1024 ? mobileSheetRef.current : document.querySelector(".studio-tools-panel");
                   panel?.querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
                     ?.focus();
                 }, 60);

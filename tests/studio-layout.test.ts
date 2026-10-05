@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_APPEARANCE_PREFERENCES } from "@/lib/appearance-store";
 import { balancePreview } from "@/app/image/balance-preview";
 import { NaiBalanceMeter } from "@/app/image/nai-balance-meter";
+import { MobileStudioLauncher } from "@/app/image/mobile-studio-launcher";
 
 const appearance = vi.hoisted(() => ({ theme: "paper", workspaceLayout: "lfn" }));
 vi.mock("@/app/appearance", () => ({
@@ -83,6 +84,40 @@ function expectCollapsedTools(tools: string) {
   expect(tools).not.toContain('class="right-dock-rail"');
   expect(tools).not.toContain('aria-label="调整助手面板高度"');
 }
+
+describe("移动端 NAI 启动器契约", () => {
+  it("按 WorldPainter 式生成页保留任务入口、结果区和唯一操作栏", () => {
+    const html = renderToStaticMarkup(createElement(MobileStudioLauncher, {
+      promptSummary: "白发少女",
+      model: "nai-v5-full",
+      operation: "生成",
+      width: 832,
+      height: 1216,
+      hasResults: false,
+      onOpenSheet: vi.fn(),
+      sheet: null,
+      onCloseSheet: vi.fn(),
+      footerContent: createElement("footer", { className: "replica-generation-footer", "data-replica-footer": "nai" }, "生成"),
+      sheetContent: null,
+    }));
+    expect(html).toContain('data-mobile-studio-launcher="true"');
+    for (const label of ["历史", "生成", "更多", "文生图", "局部重绘", "提示词", "画布等待你的想象"]) expect(html).toContain(label);
+    expect(html).toContain('aria-label="移动工作台导航"');
+    expect(html).toContain('data-replica-footer="nai"');
+    expect(html).not.toContain("移动创作入口");
+  });
+
+  it("底部 sheet 打开时提供可读标题、关闭按钮和安全区容器", () => {
+    const html = renderToStaticMarkup(createElement(MobileStudioLauncher, {
+      promptSummary: "", model: "nai-v5-full", operation: "生成", width: 832, height: 1216,
+hasResults: true, onOpenSheet: vi.fn(), sheet: "parameters", onCloseSheet: vi.fn(),
+sheetContent: createElement("div", null, "参数"),
+    }));
+    expect(html).toContain('role="dialog" aria-modal="true" aria-label="生成参数"');
+    expect(html).toContain('aria-label="关闭生成参数"');
+    expect(html).toContain("mobile-studio-sheet-content");
+  });
+});
 
 describe("工作台布局按主题隔离", () => {
   it.each(["paper", "dusk", "night"])("LFN %s 保留原有品牌、功能入口、参数和三栏结构", (theme) => {

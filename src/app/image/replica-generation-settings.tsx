@@ -153,6 +153,7 @@ function SliderField({ label, value, onChange, min, max, step }: {
 
 export type ReplicaGenerationSettingsProps = {
   variant: Variant; model: string; providerControls?: ReactNode; modelControls?: ReactNode;
+  mobileInline?: boolean;
   naturalSettings?: ReactNode;
   steps: number; scale: number; seed: string; sampler: string; schedule: string; cfgRescale: number;
   setSteps: (value: number) => void; setScale: (value: number) => void; setSeed: (value: string) => void;
@@ -162,7 +163,7 @@ export type ReplicaGenerationSettingsProps = {
 };
 
 export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps) {
-  const { variant, model, providerControls, modelControls, steps, scale, seed, sampler, schedule, cfgRescale,
+  const { variant, model, providerControls, modelControls, mobileInline = false, steps, scale, seed, sampler, schedule, cfgRescale,
     setSteps, setScale, setSeed, setSampler, setSchedule, setCfgRescale, count, setCount, batchMode, setBatchMode } = props;
   const { open, present, setOpen } = useAnimatedDisclosure();
   const [advanced, setAdvanced] = useState(false);
@@ -247,7 +248,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
     setSteps(23); setScale(7); setSeed(""); setSampler("k_euler_ancestral"); setSchedule("native"); setCfgRescale(0);
   }
 
-  const settingsPanel = <section ref={panel} id={panelId} className={`rgs-panel${open ? "" : " is-closing"}`} role="dialog" aria-label="生成参数设置" aria-hidden={!open} inert={!open}>
+  const settingsPanel = <section ref={panel} id={panelId} className={`rgs-panel${open || mobileInline ? "" : " is-closing"}`} role="dialog" aria-label="生成参数设置" aria-hidden={mobileInline ? false : !open} inert={mobileInline ? undefined : !open}>
       <div className="rgs-panel-header"><span>{variant === "nai" ? "AI设置" : "生成参数"}</span>
         <div><button type="button" aria-label="重置生成参数" title="重置生成参数" onClick={resetSampling}><RotateCcw size={15} /></button>
           <button type="button" aria-label="收起生成参数" onClick={closePanel}><ChevronDown size={20} /></button></div>
@@ -282,6 +283,8 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
         </div>}
       </div>
     </section>;
+
+  if (mobileInline) return <div ref={root} className="rgs-shell rgs-mobile-inline" data-replica-variant={variant}>{settingsPanel}</div>;
 
   return <div ref={root} className={`rgs-shell${open ? " is-open" : ""}`} data-replica-variant={variant}>
     {variant === "nai" && !props.naturalSettings ? <div className="rgs-summary">

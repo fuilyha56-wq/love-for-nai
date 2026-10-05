@@ -57,4 +57,7 @@
   [data-replica-studio] .studio-controls-panel[role="dialog"]>.replica-controls { min-height:0; }
   [data-replica-studio="nai"][data-has-images="false"] .studio-layout>.studio-controls-panel { display:flex; flex:1; flex-direction:column; width:100%; min-height:0; }
   [data-replica-studio="nai"][data-has-images="false"] .studio-layout>.studio-canvas { display:none; }
+  [data-replica-studio] .studio-layout,
+  [data-replica-studio] .studio-canvas,
+  [data-replica-studio] .mobile-studio-mount { min-height:0; max-height:100%; }
 }

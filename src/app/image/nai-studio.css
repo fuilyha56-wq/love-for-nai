@@ -649,6 +649,12 @@ html[data-theme="nai"] .nai-balance-meter > a {
 html[data-theme="nai"] .nai-balance-meter > a:hover {
   text-decoration: underline;
 }
+html[data-theme="nai"] .nai-balance-meter-guest { gap: 8px; }
+html[data-theme="nai"] .nai-balance-guest-status { display: grid; min-width: 0; gap: 1px; }
+html[data-theme="nai"] .nai-balance-guest-status b { color: var(--ink); font-size: 11px; font-weight: 700; }
+html[data-theme="nai"] .nai-balance-guest-status small { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme="nai"] .nai-balance-meter-guest .nai-balance-login { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--rose); border-radius: 7px; background: var(--rose); padding: 0 10px; color: #fff; font-size: 11px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+html[data-theme="nai"] .nai-balance-meter-guest .nai-balance-login:hover { border-color: #8f2d3e; background: #8f2d3e; color: #fff; text-decoration: none; }
 html[data-theme="nai"] .nai-balance-track {
   width: 100%;
   height: 4px;

@@ -1,4 +1,5 @@
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
+const NAI_SEED_RANGE = 2 ** 32;
 
 const modelAliases: Record<string, string> = {
   "nai-v4.5-full": "nai-diffusion-4-5-full",
@@ -33,6 +34,16 @@ export function naiUpstreamModel(model: string): string {
   const trimmed = model.trim();
   const withoutLimit = trimmed.replace(/-limit$/i, "");
   return modelAliases[withoutLimit] || trimmed;
+}
+
+export function randomNaiSeed(): number {
+  const cryptoObject = globalThis.crypto;
+  if (cryptoObject) {
+    const bytes = new Uint32Array(1);
+    cryptoObject.getRandomValues(bytes);
+    return bytes[0] || 1;
+  }
+  return Math.floor(Math.random() * (NAI_SEED_RANGE - 1)) + 1;
 }
 
 function actionFor(operation: string): string {
@@ -111,7 +122,7 @@ export function naiNativeGenerationBody(
     cfg_rescale: body.cfg_rescale ?? 0,
     noise_schedule: body.noise_schedule ?? "karras",
     noise: body.noise ?? 0,
-    seed: body.seed ?? 0,
+    seed: typeof body.seed === "number" && Number.isSafeInteger(body.seed) ? body.seed : randomNaiSeed(),
     negative_prompt: negative,
     legacy: false,
     add_original_image: true,

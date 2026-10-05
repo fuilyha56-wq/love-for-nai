@@ -227,7 +227,7 @@ export default function HistoryPage() {
             正在读取历史…
           </p>
         ) : items.length ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="history-grid">
             {items.map((item) => (
               <article
                 key={item.id}

@@ -1,8 +1,9 @@
 "use client";
 
 import { Megaphone, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { MarkdownView } from "@/app/markdown";
+import { isGuideActive, subscribeGuideActive } from "@/lib/guide-preferences";
 
 export type AnnouncementItem = {
   id: string;
@@ -40,6 +41,7 @@ export function AnnouncementDialog({
   const [visible, setVisible] = useState(false);
   const [index, setIndex] = useState(0);
   const [seen, setSeen] = useState<string[]>([]);
+  const guideActive = useSyncExternalStore(subscribeGuideActive, isGuideActive, () => true);
 
   useEffect(() => {
     // localStorage 读取放进异步微任务，避免 effect 内同步 setState。
@@ -74,7 +76,7 @@ export function AnnouncementDialog({
     if (unread.length <= 1) setVisible(false);
   }
 
-  if (!visible || !current) return null;
+  if (guideActive || !visible || !current) return null;
 
   return (
     <div className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4">

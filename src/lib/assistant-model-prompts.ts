@@ -130,7 +130,7 @@ export function adaptAssistantSuggestion(suggestion: TagSuggestion, target: Assi
     if (noiseSchedule && SCHEDULES.has(noiseSchedule)) parameters.noiseSchedule = noiseSchedule;
   }
   const seed = suggestion.parameters.seed;
-  if (caps.seed && seed != null && Number.isSafeInteger(seed) && seed > 0 && seed <= 0xffffffff) parameters.seed = seed;
+  if (caps.seed && seed != null && Number.isSafeInteger(seed) && seed >= -0xffffffff && seed <= 0xffffffff) parameters.seed = seed;
   if (caps.promptStyle === "tags") return { ...suggestion, parameters };
   const avoidance = suggestion.negativePrompt.trim();
   return {

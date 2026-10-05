@@ -9,6 +9,7 @@ import {
 import { embedWatermark } from "@/lib/image-watermark";
 
 export type GenerationParameters = {
+  [key: string]: unknown;
   operation: string;
   model?: string;
   providerId?: string;

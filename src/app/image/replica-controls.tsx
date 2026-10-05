@@ -16,6 +16,7 @@ export type ReplicaCharacter = { id: string; prompt: string; negative?: string; 
 type Source = { data: string; name: string } | null;
 type Props = {
   variant: "nai" | "nlw";
+  mobileSection?: "prompt" | "reference" | "size" | "tools";
   prompt: string; negative: string; model: string; operation: string;
   assistantModel: string;
   imageProtocol?: ImageProviderProtocol;
@@ -190,6 +191,7 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
 
 export function ReplicaControls(p: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const visible = (section: NonNullable<Props["mobileSection"]>) => !p.mobileSection || p.mobileSection === section;
   const uploadTarget = useRef("img2img");
   const [seedLocked, setSeedLocked] = useState(false);
   const capabilities = resolveImageModelCapabilities(p.model, p.imageProtocol);
@@ -209,14 +211,14 @@ export function ReplicaControls(p: Props) {
       {p.variant === "nai" ? <><Link href="/" aria-label="返回首页"><Image className="replica-nai-mark" src="/nai/novelai.png" width={24} height={24} alt="NovelAI" unoptimized /></Link><div className="replica-wallet"><span>AFF: <b>{p.balance}</b></span><Link href="/account" aria-label="打开钱包"><Plus size={22} /></Link></div><button type="button" onClick={p.onMenu} aria-label="打开站内菜单"><Menu size={22} /></button></> : <><Brush size={18} /><b>画布</b><button type="button" onClick={p.onCollapse} aria-label="收起参数栏"><ArrowLeftToLine size={18} /></button></>}
     </div>
     <div className="replica-controls-scroll">
-      {p.variant === "nai" && <div className="replica-model-controls">{p.modelControls}</div>}
-      {p.variant === "nlw" && <><ReplicaImageSize variant="nlw" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />{capabilities.seed && <div className="replica-seed"><b>种子</b><div><input aria-label="种子" value={p.seed} inputMode="numeric" placeholder="随机" onChange={event => p.setSeed(event.target.value.replace(/[^0-9]/g, ""))} />{p.seed && <><button type="button" onClick={() => void navigator.clipboard.writeText(p.seed)} aria-label="复制种子"><Copy size={17} /></button><button type="button" onClick={() => p.setSeed("")} aria-label="清空种子"><X size={17} /></button></>}<button type="button" onClick={() => { if (!seedLocked && !p.seed) p.setSeed(String(crypto.getRandomValues(new Uint32Array(1))[0])); setSeedLocked(!seedLocked); }} aria-label={seedLocked ? "解锁种子" : "锁定种子"} aria-pressed={seedLocked}>{seedLocked ? <LockKeyhole size={20} /> : <UnlockKeyhole size={20} />}</button></div></div>}</>}
-      {prompt}
-      <ReplicaCharacters variant={p.variant} model={p.model} imageProtocol={p.imageProtocol} characters={p.characters} setCharacters={p.setCharacters} charactersEnabled={p.charactersEnabled} setCharactersEnabled={p.setCharactersEnabled} aiAutoPosition={p.aiAutoPosition} setAiAutoPosition={p.setAiAutoPosition} />
+      {p.variant === "nai" && visible("prompt") && <div className="replica-model-controls">{p.modelControls}</div>}
+      {p.variant === "nlw" && visible("size") && <><ReplicaImageSize variant="nlw" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />{capabilities.seed && <div className="replica-seed"><b>种子</b><div><input aria-label="种子" value={p.seed} inputMode="numeric" placeholder="随机" onChange={event => p.setSeed(event.target.value.replace(/[^0-9]/g, ""))} />{p.seed && <><button type="button" onClick={() => void navigator.clipboard.writeText(p.seed)} aria-label="复制种子"><Copy size={17} /></button><button type="button" onClick={() => p.setSeed("")} aria-label="清空种子"><X size={17} /></button></>}<button type="button" onClick={() => { if (!seedLocked && !p.seed) p.setSeed(String(crypto.getRandomValues(new Uint32Array(1))[0])); setSeedLocked(!seedLocked); }} aria-label={seedLocked ? "解锁种子" : "锁定种子"} aria-pressed={seedLocked}>{seedLocked ? <LockKeyhole size={20} /> : <UnlockKeyhole size={20} />}</button></div></div>}</>}
+      {visible("prompt") && prompt}
+      {visible("prompt") && <ReplicaCharacters variant={p.variant} model={p.model} imageProtocol={p.imageProtocol} characters={p.characters} setCharacters={p.setCharacters} charactersEnabled={p.charactersEnabled} setCharactersEnabled={p.setCharactersEnabled} aiAutoPosition={p.aiAutoPosition} setAiAutoPosition={p.setAiAutoPosition} />}
       {p.variant === "nai" ? <>
-        <ReplicaNaiReference model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} source={p.source} onRemoveSource={p.onRemoveSource} onSelectOperation={p.onSelectOperation} onUpload={p.onUpload} onOpenEditor={p.onOpenEditor} strength={p.strength} setStrength={p.setStrength} />
-        <ReplicaImageSize variant="nai" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />
-      </> : <>
+        {visible("reference") && <ReplicaNaiReference model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} source={p.source} onRemoveSource={p.onRemoveSource} onSelectOperation={p.onSelectOperation} onUpload={p.onUpload} onOpenEditor={p.onOpenEditor} strength={p.strength} setStrength={p.setStrength} />}
+        {visible("size") && <ReplicaImageSize variant="nai" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />}
+      </> : visible("reference") ? <>
         {reverseSection}
         {capabilities.edit && <Section title="图生图" icon={<ImagePlus size={20} />}>
           <b>源图像</b><SourcePreview source={activeSource("img2img")} onRemove={p.onRemoveSource} />
@@ -235,10 +237,10 @@ export function ReplicaControls(p: Props) {
           <label className="replica-reference-type">参考类型<select value={p.referenceType} onChange={event => p.setReferenceType(event.target.value)}><option value="character&style">角色与风格</option><option value="character">角色</option><option value="style">风格</option></select></label>
           <button type="button" className="replica-library-button" onClick={() => p.onGallery("precise-reference")}><Folder size={18} />从库导入</button>
         </Section>}
-      </>}
-      {capabilities.operations.includes("inpainting") && p.operation === "inpainting" && <><button type="button" className="replica-tonal-button" onClick={() => upload("inpainting")}><FileUp size={18} />上传重绘源图片</button><SourcePreview source={activeSource("inpainting")} onRemove={p.onRemoveSource} /><button type="button" className="replica-tonal-button" disabled={!p.source} onClick={p.onOpenMaskEditor}><Brush size={18} />绘制蒙版与精确重绘</button></>}
-      {p.operation !== "generate" && <button type="button" className="replica-back-generate" onClick={() => p.onSelectOperation("generate")}><Sparkles size={16} />返回文生图</button>}
-      {capabilities.edit && <details className="replica-more-tools"><summary>图像工具</summary><div>{[['inpainting', '局部重绘'], ['upscale', '放大'], ['director-lineart', '提取线稿'], ['director-bg-remover', '移除背景']].filter(([value]) => capabilities.operations.includes(value)).map(([value,label]) => <button key={value} type="button" onClick={() => p.onSelectOperation(value)}>{label}</button>)}</div></details>}
+      </> : null}
+      {visible("tools") && capabilities.operations.includes("inpainting") && p.operation === "inpainting" && <><button type="button" className="replica-tonal-button" onClick={() => upload("inpainting")}><FileUp size={18} />上传重绘源图片</button><SourcePreview source={activeSource("inpainting")} onRemove={p.onRemoveSource} /><button type="button" className="replica-tonal-button" disabled={!p.source} onClick={p.onOpenMaskEditor}><Brush size={18} />绘制蒙版与精确重绘</button></>}
+      {visible("tools") && p.operation !== "generate" && <button type="button" className="replica-back-generate" onClick={() => p.onSelectOperation("generate")}><Sparkles size={16} />返回文生图</button>}
+      {visible("tools") && capabilities.edit && <details className="replica-more-tools"><summary>图像工具</summary><div>{[['inpainting', '局部重绘'], ['upscale', '放大'], ['director-lineart', '提取线稿'], ['director-bg-remover', '移除背景']].filter(([value]) => capabilities.operations.includes(value)).map(([value,label]) => <button key={value} type="button" onClick={() => p.onSelectOperation(value)}>{label}</button>)}</div></details>}
     </div>
   </div>;
 }

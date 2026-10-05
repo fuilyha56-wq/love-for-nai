@@ -19,6 +19,33 @@ export type ReplicaHistoryItem = {
   steps: number;
   scale: number;
   sampler: string;
+  noise_schedule?: string;
+  cfg_rescale?: number;
+  strength?: number;
+  n?: number;
+  n_samples?: number;
+  noise?: number;
+  params_version?: number;
+  qualityToggle?: boolean;
+  ucPreset?: number;
+  legacy?: boolean;
+  add_original_image?: boolean;
+  autoSmea?: boolean;
+  deliberate_euler_ancestral_bug?: boolean;
+  prefer_brownian?: boolean;
+  sm?: boolean;
+  sm_dyn?: boolean;
+  uncond_scale?: number;
+  v4_negative?: boolean;
+  v4_prompt?: boolean;
+  dynamic_thresholding?: boolean;
+  controlnet_strength?: number;
+  emotion?: string;
+  defry?: number;
+  use_coords?: boolean;
+  reference_strength?: number;
+  reference_information_extracted?: number;
+  [key: string]: unknown;
   model?: string;
   providerId?: string;
   imageProtocol?: ImageProviderProtocol;
@@ -26,6 +53,43 @@ export type ReplicaHistoryItem = {
   imageSize?: string;
   background?: string;
 };
+
+const HISTORY_PARAMETER_LABELS: Array<[string, string]> = [
+  ["prompt", "提示词 / Prompt"], ["negative", "反向提示词 / Negative prompt"],
+  ["model", "模型 / Model"], ["providerId", "服务商 / Provider"], ["imageProtocol", "图像协议 / Image protocol"],
+  ["operation", "操作 / Operation"], ["width", "宽度 / Width"], ["height", "高度 / Height"],
+  ["steps", "步数 / Steps"], ["scale", "引导强度 / Scale"], ["sampler", "采样器 / Sampler"],
+  ["noise_schedule", "噪声调度 / Noise schedule"], ["cfg_rescale", "CFG 重缩放 / CFG rescale"],
+  ["strength", "重绘强度 / Strength"], ["seed", "种子 / Seed"], ["n", "生成数量 / Samples"], ["n_samples", "NAI 生成数量 / NAI samples"],
+  ["noise", "噪声 / Noise"], ["params_version", "参数版本 / Params version"], ["quality", "质量 / Quality"],
+  ["qualityToggle", "品质标签 / Quality tags"], ["ucPreset", "负向预设 / UC preset"], ["imageSize", "图像尺寸 / Image size"], ["background", "背景 / Background"],
+  ["legacy", "遗留模式 / Legacy"], ["add_original_image", "附加原图 / Add original image"], ["autoSmea", "自动 SMEA / Auto SMEA"],
+  ["sm", "SMEA / SMEA"], ["sm_dyn", "动态 SMEA / SMEA dynamic"], ["uncond_scale", "无条件尺度 / Uncond scale"],
+  ["v4_negative", "V4 负向 / V4 negative"], ["v4_prompt", "V4 提示词 / V4 prompt"], ["dynamic_thresholding", "动态阈值 / Dynamic thresholding"],
+  ["controlnet_strength", "ControlNet 强度 / ControlNet strength"], ["emotion", "表情 / Emotion"], ["defry", "去伪影 / Defry"],
+  ["use_coords", "使用坐标 / Use coordinates"], ["reference_strength", "参考图强度 / Reference strength"],
+  ["reference_information_extracted", "参考信息提取 / Reference information extracted"],
+];
+
+function displayHistoryParameter(value: unknown): string {
+  if (typeof value === "string") return value || "（空）";
+  if (value === undefined || value === null) return "";
+  if (typeof value === "boolean") return value ? "启用 / Enabled" : "禁用 / Disabled";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function historyParameterEntries(item: ReplicaHistoryItem): Array<[string, string, unknown]> {
+  const knownKeys = new Set(HISTORY_PARAMETER_LABELS.map(([key]) => key));
+  const entries = HISTORY_PARAMETER_LABELS
+    .map(([key, label]) => [key, label, item[key]] as [string, string, unknown])
+    .filter(([, , value]) => value !== undefined);
+  for (const [key, value] of Object.entries(item)) {
+    if (knownKeys.has(key) || value === undefined || ["image", "createdAt"].includes(key)) continue;
+    entries.push([key, `${key} / ${key}`, value]);
+  }
+  return entries;
+}
 
 export type ReplicaHistoryProps = {
   items: ReplicaHistoryItem[];
@@ -128,9 +192,9 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
           }}
         />
       </button>
-      {item.model && <details className="px-3 py-2 text-xs">
+      {historyParameterEntries(item).length > 0 && <details className="px-3 py-2 text-xs">
         <summary className="cursor-pointer text-[var(--muted)]">参数详情</summary>
-        <dl className="mt-2"><div className="flex items-start gap-2"><dt className="shrink-0 text-[var(--muted)]">模型</dt><dd className="min-w-0 break-all">{item.model}</dd></div></dl>
+        <dl className="mt-2 space-y-1">{historyParameterEntries(item).map(([key, label, value]) => <div className="flex items-start gap-2" key={key}><dt className="shrink-0 text-[var(--muted)]">{label}</dt><dd className="min-w-0 break-all whitespace-pre-wrap">{displayHistoryParameter(value)}</dd></div>)}</dl>
       </details>}
       <div className="replica-history-actions" role="group" aria-label={`第 ${index + 1} 张历史图像操作`}>
         <button type="button" aria-label={`复制第 ${index + 1} 张历史原图`} title={copying ? "正在复制…" : "复制原图"} disabled={copying} onClick={() => void onCopy(item)}><Copy size={16} /></button>

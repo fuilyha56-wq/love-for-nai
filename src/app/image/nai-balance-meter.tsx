@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { LogIn } from "lucide-react";
 import { balancePreview } from "./balance-preview";
 
 export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
@@ -10,7 +11,12 @@ export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
   signedIn: boolean;
 }) {
   if (!signedIn) {
-    return <div className="nai-balance-meter"><span>体验模式 · 不扣费</span><Link href="/sign-in">登录</Link></div>;
+    return (
+      <div className="nai-balance-meter nai-balance-meter-guest">
+        <span className="nai-balance-guest-status"><b>体验模式</b><small>登录后保存创作与额度</small></span>
+        <Link className="nai-balance-login" href="/sign-in"><LogIn size={15} aria-hidden="true" /><span>登录账号</span></Link>
+      </div>
+    );
   }
   const preview = cost == null ? null : balancePreview(balance, cost);
   if (!preview) {

@@ -233,6 +233,13 @@
 .editor-mobile-sheet { display: none; }
 .editor-loading,
 .editor-error { display: grid; width: min(420px, calc(100vw - 30px)); place-items: center; align-self: center; justify-self: center; gap: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 24px; color: var(--muted); text-align: center; box-shadow: var(--editor-shadow); }
+.image-editor-page > :is(.editor-loading, .editor-error) { grid-row: 1 / -1; }
+
+@media (max-width: 900px) {
+  .image-editor-page { min-height: 100dvh; grid-template-rows: 54px minmax(0, 1fr) auto; }
+  .image-editor-page > .editor-error,
+  .image-editor-page > .editor-loading { align-self: center; justify-self: center; margin: 16px auto; }
+}
 
 html[data-density="compact"] .editor-left-panel { padding: 10px; }
 html[data-density="compact"] .editor-right-panel details > div { gap: 9px; padding-inline: 10px; }

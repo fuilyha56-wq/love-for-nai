@@ -6,15 +6,14 @@ import {
   ArrowLeft,
   CalendarCheck,
   Coins,
-  Copy,
   Images,
   Package,
-  Save,
   UserRound,
   WalletCards,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import "./account.css";
 import {
   readJson,
   SessionExpiredError,
@@ -59,11 +58,6 @@ type WalletCapabilities = {
   };
   image?: { label: string };
 };
-type Referral = {
-  link: string;
-  invitedCount: number;
-  registrationReward: number;
-};
 const formatDollars = (value: number): string =>
   `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
 
@@ -84,20 +78,14 @@ function browserUuid(): string {
 
 export default function AccountPage() {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [username, setUsername] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
-  const [saving, setSaving] = useState(false);
   const [aff, setAff] = useState<Aff | null>(null);
   const [newApi, setNewApi] = useState<NewApiWallet | null>(null);
   const [imagePackage, setImagePackage] = useState<ImagePackage | null>(null);
   const [capabilities, setCapabilities] = useState<WalletCapabilities | null>(null);
   const [packageCount, setPackageCount] = useState(1);
   const [purchasing, setPurchasing] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
-  const [referral, setReferral] = useState<Referral | null>(null);
-  const [copyingReferral, setCopyingReferral] = useState(false);
   const [profileState, setProfileState] = useState<"loading" | "loaded" | "error">(
     "loading",
   );
@@ -106,11 +94,6 @@ export default function AccountPage() {
     "loading",
   );
   const [walletError, setWalletError] = useState("");
-  const [referralState, setReferralState] = useState<
-    "loading" | "loaded" | "error"
-  >("loading");
-  const [referralError, setReferralError] = useState("");
-  const referralInput = useRef<HTMLInputElement>(null);
 
   const loadProfile = useCallback(async () => {
     setProfileState("loading");
@@ -125,8 +108,6 @@ export default function AccountPage() {
         return;
       }
       setProfile(result.user);
-      setUsername(result.user.username || "");
-      setDisplayName(result.user.displayName || "");
       setProfileState("loaded");
     } catch (error) {
       const nextError = error instanceof Error ? error.message : "读取账号信息失败";
@@ -159,57 +140,12 @@ export default function AccountPage() {
       setWalletState("error");
     }
   }, []);
-  const loadReferral = useCallback(async () => {
-    setReferralState("loading");
-    setReferralError("");
-    try {
-      const response = await fetch("/api/aff/referral", { cache: "no-store" });
-      const result = await readJson<Referral>(response, "读取邀请链接失败");
-      if (!result.link) throw new Error("邀请链接暂不可用");
-      setReferral(result);
-      setReferralState("loaded");
-    } catch (error) {
-      if (error instanceof SessionExpiredError) setExpired(error.message);
-      const nextError = error instanceof Error ? error.message : "读取邀请链接失败";
-      setReferralError(nextError);
-      setReferralState("error");
-    }
-  }, []);
-
   useEffect(() => {
     void Promise.resolve().then(() => {
       loadProfile();
       loadWallet();
-      loadReferral();
     });
-  }, [loadProfile, loadReferral, loadWallet]);
-
-  async function checkIn() {
-    setCheckingIn(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/aff/check-in", { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "签到失败");
-      setAff((current) => ({
-        balance: result.balance,
-        packageBalance: result.packageBalance ?? current?.packageBalance ?? 0,
-        totalBalance:
-          result.totalBalance ??
-          result.balance + (result.packageBalance ?? current?.packageBalance ?? 0),
-        packageRateLimitRemaining: current?.packageRateLimitRemaining ?? 10,
-        checkedInToday: result.checkedInToday ?? true,
-        checkInReward: current?.checkInReward || 20,
-      }));
-      setMessage(
-        result.reward ? `签到成功，获得 ${result.reward} AFF。` : "今日已签到。",
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "签到失败");
-    } finally {
-      setCheckingIn(false);
-    }
-  }
+  }, [loadProfile, loadWallet]);
 
   const maxAffordablePackages = imagePackage && newApi
     ? Math.min(10, Math.max(0, Math.floor(newApi.balance / imagePackage.priceUsd)))
@@ -256,49 +192,14 @@ export default function AccountPage() {
     }
   }
 
-  async function copyReferral() {
-    if (!referral) return;
-    setCopyingReferral(true);
-    try {
-      await navigator.clipboard.writeText(referral.link);
-      setMessage("邀请链接已复制。");
-    } catch {
-      referralInput.current?.select();
-      const copied = document.execCommand("copy");
-      setMessage(copied ? "邀请链接已复制。" : "邀请链接已选中，请手动复制。");
-    } finally {
-      setCopyingReferral(false);
-    }
-  }
-
-  async function save(event: React.FormEvent) {
-    event.preventDefault();
-    setSaving(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/me", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, displayName }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "保存失败");
-      setMessage("个人资料已更新。重新登录后，页头名称也会同步更新。");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "保存失败");
-    } finally {
-      setSaving(false);
-    }
-  }
-
   return (
-    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
-      <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4 backdrop-blur sm:px-7">
+    <main className="workspace-page account-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <header className="account-page-header sticky top-0 z-10 flex h-14 items-center justify-between border-b border-[var(--line)] px-4 backdrop-blur sm:px-7">
         <div className="flex items-center gap-3">
           <UserRound size={20} className="text-[var(--rose)]" />
           <b>我的账号</b>
           <span className="hidden text-xs text-[var(--muted)] sm:inline">
-            资料 · 钱包 · 签到 · 邀请
+            钱包 · 额度 · 图包购买
           </span>
         </div>
         <Link href="/image" className="flex items-center gap-2 text-sm font-semibold">
@@ -313,16 +214,16 @@ export default function AccountPage() {
       )}
       <section className="mx-auto max-w-5xl space-y-6 p-4 sm:p-8">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--line)] pb-4">
-          <div><b className="text-sm">创作模型与账户</b><p className="mt-1 text-xs text-[var(--muted)]">NewAPI 使用当前登录账号；也可为故事导入自己的 OpenAI 兼容 API 或 NovelAI 持久 Key。</p></div>
+          <div><b className="text-sm">钱包与创作额度</b><p className="mt-1 text-xs text-[var(--muted)]">查看上游余额、个人 AFF 和图包额度；模型来源仍可在设置中统一管理。</p></div>
           <Link href="/resources#story-providers" className="inline-flex items-center gap-2 rounded border border-[var(--rose)] px-3 py-2 text-xs font-semibold text-[var(--rose)]"><WalletCards size={15} />管理自定义 API</Link>
         </div>
         {message && (
-          <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
+          <div className="account-status-notice">
             {message}
           </div>
         )}
         {profileState === "error" && !expired && (
-          <div className="rounded-md border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">
+          <div className="account-status-notice">
             <p>{profileError || "读取账号信息失败"}</p>
             <button
               type="button"
@@ -335,10 +236,10 @@ export default function AccountPage() {
         )}
 
         {/* 概览：身份 + 双余额卡片 */}
-        <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
-          <article className="panel rounded-md p-5">
+        <div className="account-summary-grid">
+          <article className="account-identity-card panel rounded-md p-5">
             <div className="flex items-center gap-4">
-              <div className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-[#292d2c] text-white">
+              <div className="account-avatar">
                 <UserRound size={24} />
               </div>
               <div className="min-w-0">
@@ -370,7 +271,7 @@ export default function AccountPage() {
           </article>
 
           {/* 钱包：余额 / AFF / 图包 一张紧凑卡 */}
-          <article className="panel min-w-0 rounded-md p-5">
+          <article className="account-wallet-card panel min-w-0 rounded-md p-5">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
                 WALLET · 余额与图包
@@ -379,14 +280,14 @@ export default function AccountPage() {
                 <button
                   type="button"
                   onClick={() => void loadWallet()}
-                  className="h-7 rounded border border-[var(--line)] bg-white px-2.5 text-[11px] font-semibold"
+                  className="settings-secondary-button h-8 px-2.5 text-[11px]"
                 >
                   重试
                 </button>
               )}
             </div>
             {walletState === "error" && !newApi && !aff && (
-              <p className="mt-3 text-xs text-[#77531e]">{walletError || "读取钱包失败"}</p>
+              <p className="account-muted-error">{walletError || "读取钱包失败"}</p>
             )}
             <dl className="mt-4 divide-y divide-[var(--line)] text-sm">
               {capabilities?.wallet.upstreamBalance !== false && (
@@ -440,162 +341,60 @@ export default function AccountPage() {
                   ? `当前图像上游：${capabilities.image.label}。`
                   : ""}
             </p>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-start">
-              <button
-                type="button"
-                onClick={checkIn}
-                disabled={!profile || !aff || aff.checkedInToday || checkingIn}
-                className="h-10 w-full rounded bg-[#292d2c] px-3 text-xs font-semibold text-white disabled:opacity-50"
-              >
-                {checkingIn
-                  ? "签到中…"
-                  : aff?.checkedInToday
-                    ? "今日已签到"
-                    : `签到 +${aff?.checkInReward ?? 20} AFF`}
-              </button>
+            <div className="account-wallet-actions">
+              <div className="account-checkin-summary">
+                <CalendarCheck size={15} className="text-[var(--rose)]" />
+                <span>{aff?.checkedInToday ? "今日已签到" : "签到与奖励在个人资料页管理"}</span>
+              </div>
+              <Link href="/profile#profile-rewards" className="settings-secondary-button">查看签到与奖励</Link>
               {imagePackage && (
-                <div className="min-w-0">
-                  <div className="flex h-10 items-center gap-2 rounded border border-[var(--line)] bg-white px-3">
-                    <label htmlFor="package-count" className="shrink-0 text-xs font-semibold text-[var(--muted)]">购买</label>
+                <div className="account-package-purchase">
+                  <div className="account-package-count field">
+                    <label htmlFor="package-count">购买</label>
                     <input
-                    id="package-count"
-                    type="number"
-                    min={1}
-                    max={Math.max(1, maxAffordablePackages)}
-                    value={packageCount}
-                    onChange={(event) => {
-                      const next = Number(event.target.value);
-                      if (Number.isInteger(next))
-                        setPackageCount(
-                          Math.min(
-                            Math.max(1, maxAffordablePackages),
-                            Math.max(1, next),
-                          ),
-                        );
-                    }}
-                    className="h-10 min-w-12 flex-1 border-0 bg-transparent p-0 text-center text-sm tabular-nums outline-none"
-                    disabled={purchasing}
-                  />
-                    <span className="shrink-0 text-xs text-[var(--muted)]">包</span>
+                      id="package-count"
+                      type="number"
+                      min={1}
+                      max={Math.max(1, maxAffordablePackages)}
+                      value={packageCount}
+                      onChange={(event) => {
+                        const next = Number(event.target.value);
+                        if (Number.isInteger(next)) setPackageCount(Math.min(Math.max(1, maxAffordablePackages), Math.max(1, next)));
+                      }}
+                      disabled={purchasing}
+                    />
+                    <span>包</span>
                   </div>
-                  <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">
-                    当前余额最多可买 {maxAffordablePackages} 包
-                  </p>
+                  <p>当前余额最多可买 {maxAffordablePackages} 包</p>
                 </div>
               )}
               {imagePackage && (
                 <button
                   type="button"
                   onClick={purchasePackages}
-                  disabled={
-                    !imagePackage.purchaseEnabled ||
-                    purchasing ||
-                    maxAffordablePackages < 1 ||
-                    packageCount > maxAffordablePackages
-                  }
-                  className="h-10 w-full rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white disabled:opacity-50"
+                  disabled={!imagePackage.purchaseEnabled || purchasing || maxAffordablePackages < 1 || packageCount > maxAffordablePackages}
+                  className="settings-primary-button"
                   title={`每包 $${imagePackage.priceUsd}，获得 ${imagePackage.affPerPackage} AFF`}
                 >
-                  {purchasing
-                    ? "购买中…"
-                    : imagePackage.purchaseEnabled
-                      ? `$${(imagePackage.priceUsd * packageCount).toFixed(0)} 买 ${packageCount} 包`
-                      : "图包购买未启用"}
+                  {purchasing ? "购买中…" : imagePackage.purchaseEnabled ? `$${(imagePackage.priceUsd * packageCount).toFixed(0)} 买 ${packageCount} 包` : "图包购买未启用"}
                 </button>
               )}
             </div>
           </article>
         </div>
 
-        {/* 资料 + 邀请 */}
-        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
-          <form onSubmit={save} className="panel space-y-5 rounded-md p-5">
-            <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
-              PROFILE · 个人资料
-            </p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-2 block text-xs font-semibold" htmlFor="username">
-                  用户名
-                </label>
-                <input
-                  id="username"
-                  className="field w-full px-3"
-                  value={username}
-                  onChange={(event) => setUsername(event.target.value)}
-                  disabled={!profile}
-                />
-              </div>
-              <div>
-                <label className="mb-2 block text-xs font-semibold" htmlFor="display-name">
-                  显示名称
-                </label>
-                <input
-                  id="display-name"
-                  className="field w-full px-3"
-                  value={displayName}
-                  onChange={(event) => setDisplayName(event.target.value)}
-                  disabled={!profile}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mb-2 block text-xs font-semibold">邮箱</label>
-              <div className="field flex h-10 items-center px-3 text-sm text-[var(--muted)]">
-                {profile?.email || "未公开"}
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={!profile || saving}
-              className="flex h-10 items-center gap-2 rounded bg-[var(--rose)] px-5 text-sm font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-50"
-            >
-              <Save size={15} /> {saving ? "保存中…" : "保存资料"}
-            </button>
-          </form>
-
-          <div className="panel rounded-md p-5">
-            <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">
-              REFERRAL · 邀请好友
-            </p>
-            <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
-              好友通过链接注册，双方各得 {referral?.registrationReward ?? 100} AFF。
-              已邀请 {referral?.invitedCount ?? 0} 人。
-            </p>
-            <input
-              ref={referralInput}
-              aria-label="邀请注册链接"
-              className="field mt-3 h-9 w-full px-2 text-[10px] text-[var(--muted)]"
-              value={
-                referralState === "loading"
-                  ? "正在生成邀请链接…"
-                  : referral?.link || "邀请链接暂不可用"
-              }
-              readOnly
-              onFocus={(event) => event.currentTarget.select()}
-            />
-            {referralState === "error" && (
-              <div className="mt-2 rounded border border-[#e4c991] bg-[#fff8e8] p-2 text-xs text-[#77531e]">
-                <p>{referralError || "读取邀请链接失败"}</p>
-                <button
-                  type="button"
-                  onClick={() => void loadReferral()}
-                  className="mt-2 h-7 rounded bg-[var(--rose)] px-2.5 text-[11px] font-semibold text-white"
-                >
-                  重试
-                </button>
-              </div>
-            )}
-            <button
-              type="button"
-              onClick={copyReferral}
-              disabled={!referral || copyingReferral}
-              className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold disabled:opacity-50"
-            >
-              <Copy size={14} /> {copyingReferral ? "复制中…" : "复制邀请链接"}
-            </button>
+        <section className="account-next-steps panel" aria-labelledby="account-next-steps-heading">
+          <div>
+            <p className="account-kicker">PROFILE · 奖励与安全</p>
+            <h2 id="account-next-steps-heading">资料、签到、邀请和密码安全</h2>
+            <p>这些内容集中在个人资料中心，避免在账号仪表盘重复维护。</p>
           </div>
-        </div>
+          <div className="account-next-actions">
+            <Link href="/profile#profile-info" className="settings-primary-button">编辑个人资料</Link>
+            <Link href="/profile#profile-rewards" className="settings-secondary-button">查看奖励与邀请</Link>
+            <Link href="/profile#profile-security" className="settings-secondary-button">密码与安全</Link>
+          </div>
+        </section>
       </section>
     </main>
   );

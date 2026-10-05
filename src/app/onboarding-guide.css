@@ -107,7 +107,8 @@
 .guide-footer button { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; font-size: 12px; }
 .guide-footer button:disabled { opacity: .4; }
 .guide-footer .guide-next { margin-left: auto; border-color: var(--rose); background: var(--rose); color: #fff; font-weight: 700; }
-@media (max-width: 540px) {
+@media (max-width: 1023px) {
+  .guide-launcher-group { display: none; }
   .guide-backdrop { padding: 12px; align-items: end; }
   .guide-dialog { max-height: 86dvh; }
   .guide-backdrop.has-spotlight .guide-dialog { left: 12px !important; right: 12px; width: auto; max-height: 48dvh; }
