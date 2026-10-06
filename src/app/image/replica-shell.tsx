@@ -16,7 +16,7 @@ export function ReplicaNavigation({ onMenu, onAssistant }: { onMenu: () => void;
     <Link href="/settings#prompts" title="提示词收藏" aria-label="提示词收藏"><BookOpen size={22} /></Link>
     <Link href="/history" title="历史记录" aria-label="历史记录"><Dice5 size={23} /></Link>
     <span className="replica-navigation-spacer" />
-    <Link href="/account" title="账户" aria-label="账户"><Users size={22} /></Link>
+    <Link href="/profile" title="账户" aria-label="账户"><Users size={22} /></Link>
     <button type="button" title="聊天助手" aria-label="聊天助手" onClick={onAssistant}><Bot size={23} /></button>
     <Link href="/settings" title="设置" aria-label="设置"><Settings size={23} /></Link>
     <button type="button" title="站内菜单" aria-label="站内菜单" onClick={onMenu}><ChevronRight size={21} /></button>

@@ -14,7 +14,8 @@
     "start": "node .next/standalone/server.js",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "import:codex": "node scripts/import-quicktagcloud.mjs"
   },
   "dependencies": {
     "@fontsource/noto-sans-sc": "^5.3.0",

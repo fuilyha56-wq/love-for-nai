@@ -222,6 +222,7 @@ type SessionResult = ReplicaHistoryItem & {
   scale: number;
   sampler: string;
   historyId?: string;
+  requestId?: string;
   operation: Operation;
   createdAt: number;
 };
@@ -238,7 +239,7 @@ async function consumeImageStream(
     expected: number;
     onPreview: (images: string[]) => void;
     onProgress: (label: string) => void;
-    onComplete?: (historyIds: string[]) => void;
+    onComplete?: (historyIds: string[], requestId?: string) => void;
   },
 ): Promise<string[]> {
   if (!response.body) throw new Error("上游未返回流式响应");
@@ -300,7 +301,7 @@ async function consumeImageStream(
           const historyIds = Array.isArray(payload.historyIds)
             ? payload.historyIds.filter((item): item is string => typeof item === "string")
             : [];
-          options.onComplete?.(historyIds);
+          options.onComplete?.(historyIds, typeof payload.requestId === "string" ? payload.requestId : undefined);
           if (images.length) doneImages = images;
         }
       }
@@ -917,6 +918,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const draggedModule = useRef<{ id: CustomLayoutModule; element: HTMLElement; startY: number; top: number; pointerY: number } | null>(null);
   const previousCardPositions = useRef<Map<CustomLayoutModule, number> | null>(null);
   const [formCacheReady, setFormCacheReady] = useState(false);
+  const historyImportPending = useRef(false);
   const selectedProvider = customProviders.find((item) => item.id === providerId);
   const imageProtocol = providerId === "newapi" ? newApiImageProtocol : providerId === "novelai" ? "auto" : resolveProviderImageProtocol(selectedProvider?.protocol, selectedProvider?.baseUrl || "");
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
@@ -1104,16 +1106,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (parameters.noise_schedule) setSchedule(parameters.noise_schedule);
       if (typeof parameters.strength === "number") setStrength(parameters.strength);
     }
-    if (caps.seed) setSeed(parameters.seed == null ? "" : String(parameters.seed));
+    if (caps.seed) setSeed(parameters.seed == null || parameters.seed === 0 ? "" : String(parameters.seed));
   }
 
-  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> = {}) {
+  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> = {}, requestIds: string[] = []) {
     if (!nextImages.length || sourceOperation === "suggest-tags") return;
     const now = Date.now();
     const results: SessionResult[] = nextImages.map((image, index) => ({
         id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         image,
         historyId: historyIds[index],
+        requestId: requestIds[index],
         prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
         negative: composedPromptLayout ? effectivePrompts.negative : negative,
         seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
@@ -1129,11 +1132,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     for (const item of results) void loadImageElement(item.image).then(decoded => {
       setSessionHistory(current => current.map(saved => saved.id === item.id ? { ...saved, width: decoded.naturalWidth, height: decoded.naturalHeight } : saved));
     }).catch(() => undefined);
-    if (imageHistoryMode === "local") {
+    if (imageHistoryMode !== "none") {
       void Promise.all(results.map(async (item) => {
         try {
           await saveLocalImageHistory({
             id: item.id,
+            requestId: item.requestId,
             createdAt: item.createdAt,
             image: await dataUrlToBlob(item.image),
             prompt: item.prompt,
@@ -1465,6 +1469,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, []);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).has("historyId")) {
+      historyImportPending.current = true;
+      const ready = window.setTimeout(() => setFormCacheReady(true), 0);
+      return () => window.clearTimeout(ready);
+    }
     const timer = window.setTimeout(() => {
       const saved = loadImageStudioForm();
       setOperation(saved.operation as Operation);
@@ -1965,7 +1974,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     // Do not replace the restored model while the server policy is still loading.
     // The bootstrap list intentionally hides V5/V4.5 until that policy arrives;
     // falling back during this window used to silently select nai-v4.5-curated.
-    if (!formCacheReady || !modelPolicyReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
+    if (historyImportPending.current || !formCacheReady || !modelPolicyReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
     void Promise.resolve().then(() => setModel((current) =>
       modelOptions.some((item) => item.value === current) ? current : modelOptions[0].value,
     ));
@@ -2086,6 +2095,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const params = new URLSearchParams(window.location.search);
     const galleryId = params.get("galleryId");
     const historyId = params.get("historyId");
+    const importMode = params.get("importMode") === "generate" ? "generate" : "img2img";
     const id = galleryId || historyId;
     if (!id || !/^[a-zA-Z0-9-]{1,100}$/.test(id)) return;
     const endpoint = galleryId
@@ -2098,15 +2108,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         const blob = await response.blob();
         if (!active) return;
         const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
-        await importImageAndParameters(new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type }));
+        if (importMode === "img2img") {
+          const file = new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type });
+          await importImageAndParameters(file);
+          setOperation("img2img");
+        } else {
+          setSource(null);
+          setOperation("generate");
+        }
         if (historyId) {
           const metadataResponse = await fetch(`/api/history/${encodeURIComponent(historyId)}`, { cache: "no-store" });
           const metadata = await metadataResponse.json().catch(() => null) as { parameters?: GenerationParameters } | null;
           if (active && metadataResponse.ok && metadata?.parameters) {
             restoreGenerationParameters(metadata.parameters);
-            const caps = resolveImageModelCapabilities(metadata.parameters.model || model, metadata.parameters.imageProtocol || imageProtocol);
-            setOperation(caps.edit ? "img2img" : "generate");
-            setNotice("已载入历史图片、提示词和模型参数。");
+            setOperation(importMode === "img2img" ? "img2img" : "generate");
+            setNotice(importMode === "img2img" ? "已载入历史图片和全部参数；参数仍可调整。" : "已载入历史提示词和全部参数；当前为文生图，参数仍可调整。");
           }
         }
       })
@@ -2407,7 +2423,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (imported.cfgRescale != null) setCfgRescale(imported.cfgRescale);
       if (imported.sampler) setSampler(imported.sampler);
       if (imported.noiseSchedule) setSchedule(imported.noiseSchedule);
-      if (imported.seed != null) setSeed(imported.seed);
+      if (imported.seed != null && Number(imported.seed) !== 0) setSeed(imported.seed);
       if (imported.count != null) setCount(imported.count);
       if (imported.strength != null) setStrength(imported.strength);
       setNotice(`已从 ${file.name} 导入图片与生成参数。`);
@@ -3169,7 +3185,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </b>
               </div>
               <Link
-                href="/account"
+                href="/profile#profile-wallet"
                 title="钱包、签到与图包"
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-white text-[var(--rose)] hover:border-[var(--rose)]"
               >
@@ -3685,11 +3701,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       sampler,
       noise_schedule: schedule,
       response_format: "b64_json",
-      ...(imageHistoryMode !== "account" ? { _lfnSkipServerHistory: true } : {}),
+      ...(imageHistoryMode === "none" ? { _lfnSkipServerHistory: true } : {}),
     };
+    base._lfnRequestId = crypto.randomUUID();
     if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
     if (modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
-    if (modelCapabilities.seed && seed) base.seed = Number(seed);
+    if (modelCapabilities.seed && seed.trim() && Number(seed) !== 0) base.seed = Number(seed);
     // 质量词 / UC 预设注入：NAI 默认档交给服务端（qualityToggle + ucPreset），
     // 其余档位按 Aaalice 语义本地注入（质量词→正向末尾，UC→负向前缀），
     // 并关闭服务端同名注入避免重复。
@@ -3795,6 +3812,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       const collectedHistoryIds: string[] = [];
       const chunkImagesByIndex: string[][] = [];
       const chunkHistoryByIndex: string[][] = [];
+      const chunkRequestIdsByIndex: string[][] = [];
       let usedNewApi = false;
       let failures = 0;
       let lastError = "";
@@ -3811,7 +3829,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         });
         // 各分片携带“基础种子 + 片内起始偏移”，与 NAI 单请求多张的种子序列
         // 语义一致；不填种子时客户端随机一个基础种子，避免分片间重复出图。
-        const baseSeed = seed.trim()
+        const baseSeed = seed.trim() && Number(seed.trim()) !== 0
           ? Number(seed.trim())
           : Math.floor(Math.random() * 2 ** 32);
         const previewMap = new Map<string, string>();
@@ -3832,6 +3850,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           const contentType = response.headers.get("content-type") || "";
           let chunkImages: string[] = [];
           let chunkHistoryIds: string[] = [];
+          let chunkRequestId: string | undefined;
           if (contentType.includes("text/event-stream") && response.body) {
             if (response.headers.get("x-lfn-payment-source") === "newapi")
               usedNewApi = true;
@@ -3846,8 +3865,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               onProgress(label) {
                 setStreamProgress(label);
               },
-              onComplete(historyIds) {
+              onComplete(historyIds, requestId) {
                 chunkHistoryIds = historyIds;
+                chunkRequestId = requestId;
               },
             });
           } else {
@@ -3864,6 +3884,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           }
           chunkImagesByIndex[chunkIndex] = chunkImages;
           chunkHistoryByIndex[chunkIndex] = chunkHistoryIds;
+          chunkRequestIdsByIndex[chunkIndex] = chunkRequestId ? chunkImages.map(() => chunkRequestId as string) : [];
           collected.splice(0, collected.length, ...chunkImagesByIndex.flat());
           collectedHistoryIds.splice(0, collectedHistoryIds.length, ...chunkHistoryByIndex.flat());
           for (let index = 0; index < size; index += 1)
@@ -3905,7 +3926,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             `分批生成完成 ${collected.length}/${count} 张${lastError ? `：${lastError}` : ""}。`,
           );
         }
-        addSessionResults(collected, collectedHistoryIds, operation);
+        addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat());
       } else {
         const response = await fetch("/api/images/operate", {
           method: "POST",
@@ -3915,13 +3936,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         const contentType = response.headers.get("content-type") || "";
         if (contentType.includes("text/event-stream") && response.body) {
           let batchHistoryIds: string[] = [];
+          let batchRequestId: string | undefined;
           const batchImages = await consumeImageStream(response, {
             expected: outputCount,
             onPreview(next) {
               setPreviewDrafts(next);
             },
-            onComplete(historyIds) {
+            onComplete(historyIds, requestId) {
               batchHistoryIds = historyIds;
+              batchRequestId = requestId;
             },
             onProgress(label) {
               setStreamProgress(label);
@@ -3934,7 +3957,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setImages(batchImages);
           setSelectedImageIndex(0);
           setPreviewDrafts([]);
-          addSessionResults(batchImages, batchHistoryIds, operation);
+          addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : []);
         } else {
           const result = await readImageOperationResponse(response);
           if (!response.ok && !result.images)
@@ -4712,7 +4735,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (item.background) setImageBackground(item.background);
       const size = item.model ? normalizeImageModelSize(item.model, item.width, item.height, item.imageProtocol) : item;
       setPrompt(item.prompt); setNegative(item.negative); setWidth(size.width); setHeight(size.height);
-      setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null ? "" : String(item.seed)); setOperation("generate");
+      setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed)); setOperation("generate");
     } else applyImageAsSource(item.image, nextOperation as Operation);
   }
   const replicaHistoryPanel = <ReplicaHistory items={sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
@@ -4765,7 +4788,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               : mobileSheet === "assistant"
                 ? <div className="mobile-studio-assistant-content">{assistantPanel}</div>
                 : mobileSheet === "session"
-                  ? <div className="mobile-studio-session-content">{walletBlock}<Link href="/account" className="settings-secondary-button">打开账号页面</Link></div>
+                  ? <div className="mobile-studio-session-content">{walletBlock}<Link href="/profile#profile-wallet" className="settings-secondary-button">打开账号页面</Link></div>
                   : null;
 
   const displayedImages = images.length ? images : previewDrafts;
@@ -4821,7 +4844,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </span>
             {signedIn || !authenticated ? (
               <Link
-                href="/account"
+                href="/profile#profile-wallet"
                 title="我的账号：资料、钱包、签到与邀请"
                 className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
               >
@@ -4979,7 +5002,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 <button type="button" className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor("canvas")}><Scan size={18} />打开图像编辑器</button>
                 {source && <div className="mobile-reference-current"><Image src={source.data} alt={source.name} width={160} height={160} unoptimized /><span>{source.name}</span></div>}
               </div>}
-              moreContent={<>{creativeCenterLinks}<nav className="grid gap-2"><Link className="nai-menu-item" href="/image/editor"><Scan size={16} />图像编辑器</Link><Link className="nai-menu-item" href="/settings#models"><KeyRound size={16} />模型与 API 配置</Link><Link className="nai-menu-item" href="/settings"><Paintbrush size={16} />主题与外观</Link><Link className="nai-menu-item" href="/account"><UserRound size={16} />账户与额度</Link></nav></>}
+              moreContent={<>{creativeCenterLinks}<nav className="grid gap-2"><Link className="nai-menu-item" href="/image/editor"><Scan size={16} />图像编辑器</Link><Link className="nai-menu-item" href="/settings#models"><KeyRound size={16} />模型与 API 配置</Link><Link className="nai-menu-item" href="/settings"><Paintbrush size={16} />主题与外观</Link><Link className="nai-menu-item" href="/profile"><UserRound size={16} />账户与额度</Link></nav></>}
               onSelectOperation={(next) => selectOperation(next)}
               onOpenSheet={(next) => setMobileSheet(next)}
               sheet={mobileSheet}
@@ -5372,7 +5395,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </small>
               </span>
             </div>
-            <Link href="/account" onClick={() => setMenuOpen(false)} className="nai-menu-item">
+            <Link href="/profile" onClick={() => setMenuOpen(false)} className="nai-menu-item">
               <UserRound size={16} /> 我的账号
             </Link>
             {signedIn ? (

@@ -110,7 +110,7 @@ export default function SignInPage() {
         items = Array.isArray(result.items)
           ? result.items.filter(
               (item: GalleryBackground & { rating?: string }) =>
-                item.imageUrl && item.rating !== "r18",
+                item.imageUrl && item.rating !== "r17" && item.rating !== "r18",
             )
           : [];
         choose();

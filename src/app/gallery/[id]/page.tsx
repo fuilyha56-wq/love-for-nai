@@ -1,6 +1,6 @@
 "use client";
 
-import { Download, Eye, Heart, Link2, RotateCcw } from "lucide-react";
+import { Check, Copy, Download, Eye, Heart, Link2, RotateCcw } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { PublicHeader } from "@/app/public-header";
@@ -24,6 +24,7 @@ type GalleryItem = {
 const ratingLabels: Record<string, string> = {
   general: "全年龄",
   r13: "R13",
+  r17: "R17",
   r18: "R18",
   sensitive: "R13",
 };
@@ -126,7 +127,7 @@ export default function GalleryItemPage({
     }
   }
 
-  const isHidden = item?.rating === "r18" && !revealed;
+  const isHidden = (item?.rating === "r17" || item?.rating === "r18") && !revealed;
 
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
@@ -157,12 +158,12 @@ export default function GalleryItemPage({
                   type="button"
                   onClick={() => setRevealed(true)}
                   className="absolute inset-0 grid place-items-center bg-[#202328]/35 text-white"
-                  aria-label="查看 R18 内容"
+                  aria-label={`查看 ${item.rating.toUpperCase()} 内容`}
                 >
                   <span className="flex flex-col items-center gap-2">
                     <Eye size={26} />
                     <b className="rounded-full bg-[#202328]/70 px-3 py-1 text-xs">
-                      R18 · 点击查看
+                      {item.rating.toUpperCase()} · 点击查看
                     </b>
                   </span>
                 </button>
@@ -245,22 +246,8 @@ export default function GalleryItemPage({
               </div>
               {Object.keys(item.parameters).length > 0 && (
                 <>
-                  {item.prompt && (
-                    <div className="rounded-md border border-[var(--line)] bg-white p-3 text-xs">
-                      <b>正面提示词</b>
-                      <p className="mt-1 leading-5 text-[var(--muted)]">
-                        {item.prompt}
-                      </p>
-                    </div>
-                  )}
-                  {item.negativePrompt && (
-                    <div className="rounded-md border border-[var(--line)] bg-white p-3 text-xs">
-                      <b>负面提示词</b>
-                      <p className="mt-1 leading-5 text-[var(--muted)]">
-                        {item.negativePrompt}
-                      </p>
-                    </div>
-                  )}
+                  {item.prompt && <PromptPanel title="正面提示词" value={item.prompt} />}
+                  {item.negativePrompt && <PromptPanel title="负面提示词" value={item.negativePrompt} />}
                 </>
               )}
             </aside>
@@ -268,5 +255,30 @@ export default function GalleryItemPage({
         )}
       </section>
     </main>
+  );
+}
+
+function PromptPanel({ title, value }: { title: string; value: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyPrompt() {
+    setCopied(await writeClipboard(value));
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <section className="overflow-hidden rounded-md border border-[var(--line)] bg-white text-xs">
+      <header className="flex items-center justify-between gap-2 border-b border-[var(--line)] px-3 py-2">
+        <h2 className="font-semibold">{title}</h2>
+        <div className="flex items-center gap-3">
+          <button type="button" onClick={copyPrompt} className="inline-flex items-center gap-1 text-[var(--muted)] hover:text-[var(--rose)]" aria-label={`复制${title}`}>
+            {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? "已复制" : "复制"}
+          </button>
+          <button type="button" onClick={() => setExpanded((current) => !current)} aria-expanded={expanded} className="text-[var(--rose)]">{expanded ? "收起" : "展开"}</button>
+        </div>
+      </header>
+      <p className={`px-3 py-2 leading-5 text-[var(--muted)] [overflow-wrap:anywhere] ${expanded ? "max-h-[40vh] overflow-y-auto whitespace-pre-wrap" : "line-clamp-5"}`}>{value}</p>
+    </section>
   );
 }

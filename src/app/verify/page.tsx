@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Upload, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import Image from "next/image";
+import { WorkspaceNav } from "@/app/workspace-nav";
 
 type VerifyResult = {
   valid: boolean;
@@ -36,13 +38,14 @@ export default function ImageVerifyPage() {
 
   useEffect(() => {
     const listener = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
       const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith("image/"));
       const file = item?.getAsFile();
       if (file) void handleFile(file);
     };
     window.addEventListener("paste", listener);
     return () => window.removeEventListener("paste", listener);
-  });
+  }, []);
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) {
@@ -81,6 +84,7 @@ export default function ImageVerifyPage() {
   }
 
   function handlePaste(e: React.ClipboardEvent) {
+    e.preventDefault();
     const items = e.clipboardData.items;
     for (const item of items) {
       if (item.type.startsWith("image/")) {
@@ -92,7 +96,9 @@ export default function ImageVerifyPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl p-6">
+    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+      <WorkspaceNav />
+      <section className="mx-auto max-w-4xl p-4 sm:p-7">
       <div className="mb-6">
         <h1 className="font-[var(--font-display)] text-3xl text-[var(--rose)]">图片溯源检测</h1>
         <p className="mt-2 text-sm text-[var(--muted)]">验证图片是否来自 Love-for-NAI</p>
@@ -124,7 +130,7 @@ export default function ImageVerifyPage() {
 
       {image && (
         <div className="mt-6">
-          <img src={image} alt="上传的图片" className="mx-auto max-h-96 rounded-lg border border-[var(--line)]" />
+          <Image src={image} alt="上传的图片" width={384} height={384} unoptimized className="mx-auto max-h-96 w-auto rounded-lg border border-[var(--line)] object-contain" />
         </div>
       )}
 
@@ -210,6 +216,7 @@ export default function ImageVerifyPage() {
           )}
         </div>
       )}
-    </div>
+      </section>
+    </main>
   );
 }

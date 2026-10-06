@@ -16,18 +16,19 @@ import {
   UserRound,
   BriefcaseBusiness,
   X,
+  ShieldCheck,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export const workspaceDestinations = [
   { href: "/", label: "首页", detail: "返回 Love for NAI 首页。", icon: House, group: "导航" },
   { href: "/stories", label: "故事工作台", detail: "续写、分支并管理你的长篇故事。", icon: BookText, group: "创作" },
-  { href: "/account", label: "我的账号", detail: "查看钱包、图包和创作额度。资料与安全进入个人资料。", icon: UserRound, group: "账号" },
+  { href: "/profile", label: "我的账号", detail: "管理资料、钱包、图包、奖励和账户安全。", icon: UserRound, group: "账号" },
   { href: "/history", label: "图片历史", detail: "回看最近的创作，继续打磨灵感。", icon: History, group: "创作" },
+  { href: "/verify", label: "图片溯源检测", detail: "验证图片签名并查询生成记录。", icon: ShieldCheck, group: "工具" },
   { href: "/gallery", label: "图片广场", detail: "发现作品，分享你的创作。", icon: Images, group: "创作" },
   { href: "/studio", label: "创作者工作台", detail: "查看投稿审核状态，管理创作者资料。", icon: BriefcaseBusiness, group: "创作" },
   { href: "/usage", label: "使用记录", detail: "查看每一次调用与余额消耗。", icon: Coins, group: "账号" },
-  { href: "/profile", label: "个人资料", detail: "编辑显示名称、奖励和账户安全。", icon: UserRound, group: "账号" },
   { href: "/settings", label: "设置", detail: "管理外观、个人资料、模型密钥和提示词库。", icon: Palette, group: "设置" },
   { href: "/announcements", label: "站点公告", detail: "了解最近的更新与站点消息。", icon: Megaphone, group: "发现" },
 ] as const;
@@ -36,7 +37,7 @@ const mobilePrimary = [
   { href: "/", label: "首页", icon: House },
   { href: "/image", label: "创作", icon: Palette },
   { href: "/history", label: "历史", icon: History },
-  { href: "/account", label: "账号", icon: UserRound },
+  { href: "/profile", label: "账号", icon: UserRound },
 ] as const;
 
 function isActivePath(pathname: string, href: string) {
@@ -51,7 +52,7 @@ export function WorkspaceNav() {
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const current = workspaceDestinations.find((item) => item.href === pathname)
     ?? (pathname === "/keys" || pathname === "/resources" ? workspaceDestinations[8]
-      : pathname === "/profile" ? workspaceDestinations[7]
+      : pathname === "/profile" ? workspaceDestinations[2]
         : pathname === "/image" ? { ...workspaceDestinations[1], label: "创作工作台", detail: "生成图片、编辑参考图并管理创作参数。" }
           : workspaceDestinations[1]);
 

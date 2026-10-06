@@ -23,6 +23,9 @@ type RuntimeSettings = {
   newApiAdminUserId: string;
   registerGroup: string;
   quotaPerUnit: number;
+  imagePackageAffPerPackage: number;
+  imagePackageRateLimit: number;
+  imagePackagePriceUsd: number;
   affGatewayUrl: string;
   affGatewayToken: string;
   naiApiUrl: string;
@@ -86,6 +89,9 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   newApiAdminUserId: "1",
   registerGroup: "ikun",
   quotaPerUnit: 500000,
+  imagePackageAffPerPackage: 400,
+  imagePackageRateLimit: 10,
+  imagePackagePriceUsd: 200,
   affGatewayUrl: "",
   affGatewayToken: "",
   naiApiUrl: "",
@@ -302,6 +308,18 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="block text-sm font-semibold">余额单位（quota / $1）
             <input value={String(settings.quotaPerUnit)} onChange={(event) => setSettings({ ...settings, quotaPerUnit: Number(event.target.value) || 0 })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
+          <label className="block text-sm font-semibold">每包图包额度（AFF）
+            <input type="number" min={1} step="any" value={settings.imagePackageAffPerPackage} onChange={(event) => setSettings({ ...settings, imagePackageAffPerPackage: Number(event.target.value) || 0 })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+            <span className="mt-1 block text-[10px] font-normal text-[var(--muted)]">购买一包后增加的图包额度。</span>
+          </label>
+          <label className="block text-sm font-semibold">图包每分钟消耗限制（张）
+            <input type="number" min={1} step={1} value={settings.imagePackageRateLimit} onChange={(event) => setSettings({ ...settings, imagePackageRateLimit: Number(event.target.value) || 0 })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+            <span className="mt-1 block text-[10px] font-normal text-[var(--muted)]">每个用户每 60 秒最多使用的图包张数。</span>
+          </label>
+          <label className="block text-sm font-semibold">购买一包图包价格（美元）
+            <input type="number" min={0.01} step="0.01" value={settings.imagePackagePriceUsd} onChange={(event) => setSettings({ ...settings, imagePackagePriceUsd: Number(event.target.value) || 0 })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
+            <span className="mt-1 block text-[10px] font-normal text-[var(--muted)]">购买时从 NewAPI 余额扣除的美元金额。</span>
+          </label>
           <label className="block text-sm font-semibold">公开地址
             <input value={settings.publicUrl} onChange={(event) => setSettings({ ...settings, publicUrl: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
@@ -367,32 +385,32 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
         <h3 className="text-sm font-semibold text-[var(--rose)]">模型与福利</h3>
         <p className="mt-1 text-xs text-[var(--muted)]">关闭模型后会从模型列表下架并拒绝对应请求；签到/邀请奖励单位为 AFF。修改后点击上方「保存站点设置」生效。</p>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={settings.enableV5Models} onChange={(event) => setSettings({ ...settings, enableV5Models: event.target.checked })} />
-            启用 V5 模型（nai-v5-*）
-          </label>
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={settings.enableV45Models} onChange={(event) => setSettings({ ...settings, enableV45Models: event.target.checked })} />
-            启用 V4.5 模型（nai-v4.5-*）
-          </label>
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={settings.enableDailyCheckIn} onChange={(event) => setSettings({ ...settings, enableDailyCheckIn: event.target.checked })} />
-            开启每日签到
-          </label>
+          <button type="button" role="switch" aria-checked={settings.enableV5Models} aria-label="启用 V5 模型（nai-v5-*）" className={`token-quota-switch admin-setting-switch ${settings.enableV5Models ? "is-on" : ""}`} onClick={() => setSettings({ ...settings, enableV5Models: !settings.enableV5Models })}>
+            <span className="token-quota-switch-track" aria-hidden="true"><span className="token-quota-switch-thumb" /></span>
+            <span className="token-quota-switch-label">{settings.enableV5Models ? "启用 V5 模型（nai-v5-*）" : "V5 模型已关闭"}</span>
+          </button>
+          <button type="button" role="switch" aria-checked={settings.enableV45Models} aria-label="启用 V4.5 模型（nai-v4.5-*）" className={`token-quota-switch admin-setting-switch ${settings.enableV45Models ? "is-on" : ""}`} onClick={() => setSettings({ ...settings, enableV45Models: !settings.enableV45Models })}>
+            <span className="token-quota-switch-track" aria-hidden="true"><span className="token-quota-switch-thumb" /></span>
+            <span className="token-quota-switch-label">{settings.enableV45Models ? "启用 V4.5 模型（nai-v4.5-*）" : "V4.5 模型已关闭"}</span>
+          </button>
+          <button type="button" role="switch" aria-checked={settings.enableDailyCheckIn} aria-label="开启每日签到" className={`token-quota-switch admin-setting-switch ${settings.enableDailyCheckIn ? "is-on" : ""}`} onClick={() => setSettings({ ...settings, enableDailyCheckIn: !settings.enableDailyCheckIn })}>
+            <span className="token-quota-switch-track" aria-hidden="true"><span className="token-quota-switch-thumb" /></span>
+            <span className="token-quota-switch-label">{settings.enableDailyCheckIn ? "开启每日签到" : "每日签到已关闭"}</span>
+          </button>
           <label className="block text-sm font-semibold">每日签到奖励（AFF）
             <input type="number" min={0} step="any" value={settings.dailyCheckInReward} onChange={(event) => setSettings({ ...settings, dailyCheckInReward: Number(event.target.value) })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={settings.enableReferral} onChange={(event) => setSettings({ ...settings, enableReferral: event.target.checked })} />
-            开启邀请奖励
-          </label>
+          <button type="button" role="switch" aria-checked={settings.enableReferral} aria-label="开启邀请奖励" className={`token-quota-switch admin-setting-switch ${settings.enableReferral ? "is-on" : ""}`} onClick={() => setSettings({ ...settings, enableReferral: !settings.enableReferral })}>
+            <span className="token-quota-switch-track" aria-hidden="true"><span className="token-quota-switch-thumb" /></span>
+            <span className="token-quota-switch-label">{settings.enableReferral ? "开启邀请奖励" : "邀请奖励已关闭"}</span>
+          </button>
           <label className="block text-sm font-semibold">邀请奖励（AFF，邀请人与新用户各得）
             <input type="number" min={0} step="any" value={settings.referralReward} onChange={(event) => setSettings({ ...settings, referralReward: Number(event.target.value) })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
-          <label className="flex h-10 items-center gap-2 text-sm font-semibold">
-            <input type="checkbox" checked={settings.watermarkEnabled} onChange={(event) => setSettings({ ...settings, watermarkEnabled: event.target.checked })} />
-            启用 Love-for-NAI 图片签名
-          </label>
+          <button type="button" role="switch" aria-checked={settings.watermarkEnabled} aria-label="启用 Love-for-NAI 图片签名" className={`token-quota-switch admin-setting-switch ${settings.watermarkEnabled ? "is-on" : ""}`} onClick={() => setSettings({ ...settings, watermarkEnabled: !settings.watermarkEnabled })}>
+            <span className="token-quota-switch-track" aria-hidden="true"><span className="token-quota-switch-thumb" /></span>
+            <span className="token-quota-switch-label">{settings.watermarkEnabled ? "启用 Love-for-NAI 图片签名" : "图片签名已关闭"}</span>
+          </button>
           <label className="block text-sm font-semibold">签名发行方
             <input value={settings.watermarkIssuer} onChange={(event) => setSettings({ ...settings, watermarkIssuer: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>

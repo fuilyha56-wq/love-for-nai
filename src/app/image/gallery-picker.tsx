@@ -221,7 +221,8 @@ export function GalleryPicker({
           <div className={styles.grid} role="list">
             {filteredItems.map((item) => {
               const selected = selectedId === item.id || selectedUrl === item.imageUrl;
-              const restricted = item.rating === "r18";
+              const rating = item.rating || "general";
+              const restricted = rating === "r17" || rating === "r18";
               const selecting = selectingId === item.id;
               return (
                 <button
@@ -229,7 +230,7 @@ export function GalleryPicker({
                   key={item.id}
                   className={`${styles.card} ${selected ? styles.selected : ""}`.trim()}
                   onClick={() => void select(item)}
-                  aria-label={`选择作品：${item.title}${restricted ? "，R18 内容" : ""}`}
+                  aria-label={`选择作品：${item.title}${restricted ? `，${rating.toUpperCase()} 内容` : ""}`}
                   aria-pressed={selected}
                   disabled={Boolean(selectingId) && !selecting}
                 >
@@ -242,7 +243,7 @@ export function GalleryPicker({
                       sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 180px"
                       className={`${styles.image} ${restricted ? styles.restricted : ""}`.trim()}
                     />
-                    {restricted && <span className={styles.badge}>R18</span>}
+                    {restricted && <span className={styles.badge}>{rating.toUpperCase()}</span>}
                     {selecting && <span className={styles.selecting}><Loader2 size={20} aria-label="正在读取图片" className={styles.spin} /></span>}
                     {selected && !selecting && <span className={styles.check}><Check size={15} aria-hidden="true" /></span>}
                   </span>

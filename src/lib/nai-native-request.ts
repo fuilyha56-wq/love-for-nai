@@ -122,7 +122,8 @@ export function naiNativeGenerationBody(
     cfg_rescale: body.cfg_rescale ?? 0,
     noise_schedule: body.noise_schedule ?? "karras",
     noise: body.noise ?? 0,
-    seed: typeof body.seed === "number" && Number.isSafeInteger(body.seed) ? body.seed : randomNaiSeed(),
+    // NAI 官方语义：种子留空即随机；0 同样视为未指定。
+    seed: typeof body.seed === "number" && Number.isSafeInteger(body.seed) && body.seed !== 0 ? body.seed : randomNaiSeed(),
     negative_prompt: negative,
     legacy: false,
     add_original_image: true,

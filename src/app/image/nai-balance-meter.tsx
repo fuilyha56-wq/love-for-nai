@@ -20,13 +20,13 @@ export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
   }
   const preview = cost == null ? null : balancePreview(balance, cost);
   if (!preview) {
-    return <div className="nai-balance-meter"><span>余额或价格暂不可用</span><Link href="/account">钱包</Link></div>;
+    return <div className="nai-balance-meter"><span>余额或价格暂不可用</span><Link href="/profile#profile-wallet">钱包</Link></div>;
   }
   const format = (value: number) => unit === "AFF" ? `${value.toLocaleString("zh-CN")} AFF` : `$${value.toFixed(2)}`;
   return (
     <div className="nai-balance-meter">
       <span>{preview.insufficient ? "余额不足" : "可用余额"} · {format(preview.available)}</span>
-      <Link href="/account">钱包</Link>
+      <Link href="/profile#profile-wallet">钱包</Link>
       <div
         role="progressbar"
         aria-label="本次生成后预计剩余余额"
