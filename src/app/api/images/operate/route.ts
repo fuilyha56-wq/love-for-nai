@@ -449,7 +449,7 @@ export async function POST(request: Request) {
         { stream: true, samples },
       );
       const abort = new AbortController();
-      const timeout = setTimeout(() => abort.abort(), 180_000);
+      const timeout = setTimeout(() => abort.abort(), 300_000);
       const finishGatewayLog = gatewayLogStart({
         source: "lfn",
         user: session.username,
@@ -520,6 +520,7 @@ export async function POST(request: Request) {
                   currentStep: steps,
                   totalSteps: steps,
                 });
+                if (finals.size >= samples) break;
               } else {
                 send("preview", {
                   sampleIndex: event.sampleIndex,
@@ -529,19 +530,19 @@ export async function POST(request: Request) {
                 });
               }
             }
+            // NAI 已返回请求数量对应的最终图片时，不再等待上游迟迟不关闭连接。
+            await nativeResponse.body?.cancel().catch(() => undefined);
             if (!errorMessage && finals.size) {
               const images = Array.from(
                 { length: Math.max(samples, ...finals.keys()) + 1 },
                 (_, index) => finals.get(index),
               ).filter((item): item is string => Boolean(item));
               generatedSamples = images.length;
-              const history = deferPatchHistory
-                ? []
-                : await saveHistory(session.userId, body, images, null);
               send("done", {
                 images,
                 image: images[0],
-                historyIds: history.map((item) => item.id),
+                historyIds: [],
+                  requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : null,
                 payment,
                 paymentSource,
                 aff: creditCharge
@@ -555,6 +556,13 @@ export async function POST(request: Request) {
                     }
                   : null,
               });
+              if (!deferPatchHistory) {
+                void saveHistory(session.userId, body, images, null, {
+                  requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined,
+                }).catch((error) =>
+                  console.error("[lfn] 生成完成后保存历史失败", error),
+                );
+              }
             } else if (!errorMessage) {
               errorMessage = "上游未返回最终图片";
             }
@@ -613,14 +621,6 @@ export async function POST(request: Request) {
                   const images = imageFromResult(result);
                   if (!images.length) throw new Error("fallback no images");
                   generatedSamples = images.length;
-                  const history = deferPatchHistory
-                    ? []
-                    : await saveHistory(
-                        session.userId,
-                        body,
-                        images,
-                        result.usage ?? null,
-                      );
                   images.forEach((image, index) =>
                     send("final", {
                       sampleIndex: index,
@@ -632,7 +632,8 @@ export async function POST(request: Request) {
                   send("done", {
                     images,
                     image: images[0],
-                    historyIds: history.map((item) => item.id),
+                    historyIds: [],
+                    requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : null,
                     payment,
                     paymentSource,
                     aff: creditCharge
@@ -646,6 +647,13 @@ export async function POST(request: Request) {
                         }
                       : null,
                   });
+                  if (!deferPatchHistory) {
+                    void saveHistory(session.userId, body, images, result.usage ?? null, {
+                      requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined,
+                    }).catch((error) =>
+                      console.error("[lfn] 缓冲回退后保存历史失败", error),
+                    );
+                  }
                   errorMessage = "";
                 } catch {
                   // 兜底也失败：保留 errorMessage，finally 统一退款。
@@ -690,6 +698,7 @@ export async function POST(request: Request) {
     delete payload.providerId;
     delete payload.n;
     delete payload.n_samples;
+    if (payload.seed === 0) delete payload.seed;
     if (operation !== "suggest-tags") {
       payload.n = totalSamples;
       if (nativeNaiModel) {

@@ -27,10 +27,11 @@ export async function POST(request: Request) {
       if (file.size > MAX_GALLERY_IMAGE_BYTES) return NextResponse.json({ message: "图片不能超过 20 MB" }, { status: 413 });
       const source = String(form.get("source") || "local");
       const parameters = JSON.parse(String(form.get("parameters") || "{}")) as Record<string, unknown>;
+      const exposeParameters = form.get("exposeParameters") !== "false";
       const item = await publishLocalImage(session.userId, session.displayName || session.username, Buffer.from(await file.arrayBuffer()), file.name, {
         title: String(form.get("title") || ""), authorName: String(form.get("authorName") || ""), rating: assertGalleryRating(form.get("rating")),
         source: source === "other" ? "other" : "local", tags: String(form.get("tags") || "").split(","),
-        prompt: String(form.get("prompt") || ""), negativePrompt: String(form.get("negativePrompt") || ""), parameters,
+        prompt: String(form.get("prompt") || ""), negativePrompt: String(form.get("negativePrompt") || ""), parameters, exposeParameters,
       });
       return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });
     }

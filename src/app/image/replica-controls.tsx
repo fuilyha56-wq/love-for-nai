@@ -208,7 +208,7 @@ export function ReplicaControls(p: Props) {
   return <div className="replica-controls" data-variant={p.variant}>
     <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => { const file = event.target.files?.[0]; if (file) p.onUpload(file, uploadTarget.current); event.target.value = ""; }} />
     <div className="replica-controls-topbar">
-      {p.variant === "nai" ? <><Link href="/" aria-label="返回首页"><Image className="replica-nai-mark" src="/nai/novelai.png" width={24} height={24} alt="NovelAI" unoptimized /></Link><div className="replica-wallet"><span>AFF: <b>{p.balance}</b></span><Link href="/account" aria-label="打开钱包"><Plus size={22} /></Link></div><button type="button" onClick={p.onMenu} aria-label="打开站内菜单"><Menu size={22} /></button></> : <><Brush size={18} /><b>画布</b><button type="button" onClick={p.onCollapse} aria-label="收起参数栏"><ArrowLeftToLine size={18} /></button></>}
+      {p.variant === "nai" ? <><Link href="/" aria-label="返回首页"><Image className="replica-nai-mark" src="/nai/novelai.png" width={24} height={24} alt="NovelAI" unoptimized /></Link><div className="replica-wallet"><span>AFF: <b>{p.balance}</b></span><Link href="/profile#profile-wallet" aria-label="打开钱包"><Plus size={22} /></Link></div><button type="button" onClick={p.onMenu} aria-label="打开站内菜单"><Menu size={22} /></button></> : <><Brush size={18} /><b>画布</b><button type="button" onClick={p.onCollapse} aria-label="收起参数栏"><ArrowLeftToLine size={18} /></button></>}
     </div>
     <div className="replica-controls-scroll">
       {p.variant === "nai" && visible("prompt") && <div className="replica-model-controls">{p.modelControls}</div>}

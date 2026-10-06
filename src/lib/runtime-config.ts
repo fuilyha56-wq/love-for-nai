@@ -22,6 +22,9 @@ export type RuntimeSettings = {
   newApiAdminUserId: string;
   registerGroup: string;
   quotaPerUnit: number;
+  imagePackageAffPerPackage: number;
+  imagePackageRateLimit: number;
+  imagePackagePriceUsd: number;
   affGatewayUrl: string;
   affGatewayToken: string;
   naiApiUrl: string;
@@ -79,6 +82,9 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   newApiAdminUserId: "1",
   registerGroup: LFN_REGISTER_GROUP,
   quotaPerUnit: 500000,
+  imagePackageAffPerPackage: 400,
+  imagePackageRateLimit: 10,
+  imagePackagePriceUsd: 200,
   affGatewayUrl: "",
   affGatewayToken: "",
   naiApiUrl: "",
@@ -131,6 +137,9 @@ function envSettings(): RuntimeSettings {
     newApiAdminUserId: process.env.LFN_ADMIN_USER_ID?.trim() || "1",
     registerGroup: LFN_REGISTER_GROUP,
     quotaPerUnit: Number.isFinite(quota) && quota > 0 ? quota : 500000,
+    imagePackageAffPerPackage: Number(process.env.LFN_IMAGE_PACKAGE_AFF || 400),
+    imagePackageRateLimit: Number(process.env.LFN_IMAGE_PACKAGE_RATE_LIMIT || 10),
+    imagePackagePriceUsd: Number(process.env.LFN_IMAGE_PACKAGE_PRICE_USD || 200),
     affGatewayUrl: process.env.LFN_AFF_GATEWAY_URL?.trim() || "",
     affGatewayToken: process.env.LFN_AFF_GATEWAY_TOKEN?.trim() || "",
     naiApiUrl: process.env.LFN_NAI_API_URL?.trim() || "",
@@ -533,6 +542,15 @@ export async function runtimeNaiImageUpstream(): Promise<NaiNativeUpstream | nul
 
 export async function runtimeQuotaPerUnit(): Promise<number> {
   return (await getRuntimeSettings()).quotaPerUnit;
+}
+
+export async function runtimeImagePackageSettings(): Promise<{ affPerPackage: number; rateLimit: number; priceUsd: number }> {
+  const settings = await getRuntimeSettings();
+  return {
+    affPerPackage: settings.imagePackageAffPerPackage,
+    rateLimit: settings.imagePackageRateLimit,
+    priceUsd: settings.imagePackagePriceUsd,
+  };
 }
 
 export async function runtimeRegisterGroup(): Promise<string> {

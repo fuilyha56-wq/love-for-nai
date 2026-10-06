@@ -10,7 +10,7 @@ type Step = { title: string; body: string; path: string; target?: string; action
 
 const steps: Step[] = [
   { title: "选择创作来源", body: "图片工作台可选登录账号的 NewAPI 模型、自己导入的 OpenAI 兼容图像 API，或 NovelAI 官方 Key。自带来源的上游费用请在对应服务商核对；故事文本模型另在模型与密钥页管理。", path: "/settings#custom-providers", action: "管理图像来源" },
-  { title: "登录与余额", body: "登录 NewAPI 账号后可查看余额、分组与可用模型。我的账号还提供签到、AFF、图包及邀请入口；确认费用后再提交生成。", path: "/account", target: ".workspace-page section > .grid article", action: "查看我的账号" },
+  { title: "登录与余额", body: "登录 NewAPI 账号后可查看余额、分组与可用模型。我的账号还提供签到、AFF、图包及邀请入口；确认费用后再提交生成。", path: "/profile#profile-wallet", target: ".profile-wallet-card", action: "查看我的账号" },
   { title: "导入自己的图像来源", body: "在设置中填写 OpenAI 兼容图像 API 的地址、模型 ID 和 Key，或导入 NovelAI 官方 Key 并查看订阅信息。Key 保存在服务端，登录后可在图片工作台选择这些来源。", path: "/settings#custom-providers", target: "#custom-providers", action: "打开自定义 API" },
   { title: "图像模型与生成参数", body: "在图片工作台选择模型来源、图像模型、模式、分辨率、采样步数、相关性、种子和生成张数。NewAPI 来源显示预计费用；自带来源以对应服务商账单为准。", path: "/image", target: "[data-layout-module='model']", action: "打开图片工作台" },
   { title: "提示词与画布", body: "写下画面描述和排除内容，点击生成。结果在中央画布查看、下载，也可用作图生图、局部重绘或导演工具的输入。", path: "/image", target: "[data-layout-module='prompt']", action: "查看画布" },

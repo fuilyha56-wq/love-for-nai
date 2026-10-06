@@ -19,6 +19,12 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
   const quotaPerUnit = optionalNumber(raw.quotaPerUnit);
   if (quotaPerUnit !== undefined && (!Number.isInteger(quotaPerUnit) || quotaPerUnit <= 0))
     throw new Error("余额单位必须是正整数");
+  const imagePackageAffPerPackage = optionalNumber(raw.imagePackageAffPerPackage);
+  const imagePackageRateLimit = optionalNumber(raw.imagePackageRateLimit);
+  const imagePackagePriceUsd = optionalNumber(raw.imagePackagePriceUsd);
+  if (imagePackageAffPerPackage !== undefined && (!Number.isFinite(imagePackageAffPerPackage) || imagePackageAffPerPackage <= 0 || imagePackageAffPerPackage > 1_000_000)) throw new Error("每包图包额度需为 0–1000000 之间的正数");
+  if (imagePackageRateLimit !== undefined && (!Number.isInteger(imagePackageRateLimit) || imagePackageRateLimit <= 0 || imagePackageRateLimit > 1000)) throw new Error("图包每分钟限制需为 1–1000 张");
+  if (imagePackagePriceUsd !== undefined && (!Number.isFinite(imagePackagePriceUsd) || imagePackagePriceUsd <= 0 || imagePackagePriceUsd > 100_000)) throw new Error("图包价格需为 0–100000 之间的正数");
   const dailyCheckInReward = optionalNumber(raw.dailyCheckInReward);
   const referralReward = optionalNumber(raw.referralReward);
   for (const [label, value] of [["签到奖励", dailyCheckInReward], ["邀请奖励", referralReward]] as const)
@@ -31,6 +37,9 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
     newApiAdminUserId: optionalString(raw.newApiAdminUserId),
     registerGroup: "default",
     quotaPerUnit,
+    imagePackageAffPerPackage,
+    imagePackageRateLimit,
+    imagePackagePriceUsd,
     affGatewayUrl: optionalString(raw.affGatewayUrl),
     affGatewayToken: optionalString(raw.affGatewayToken),
     naiApiUrl: optionalString(raw.naiApiUrl),

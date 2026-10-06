@@ -19,7 +19,7 @@ function importHref(item: GalleryItem): string {
   return `/image?galleryId=${encodeURIComponent(item.id)}`;
 }
 
-const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r18: "R18", sensitive: "R13" };
+const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r17: "R17", r18: "R18", sensitive: "R13" };
 function ratingLabel(rating: string): string { return ratingLabels[rating] || rating; }
 
 // navigator.clipboard 仅在 HTTPS 或 localhost 下存在，需要逐级降级。
@@ -128,7 +128,7 @@ export default function GalleryPage() {
         ) : loadState === "loading" ? (
           <p className="py-24 text-center text-sm text-[var(--muted)]">正在加载图库…</p>
         ) : items.length ? <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{items.map((item) => {
-          const isHidden = item.rating === "r18" && !revealed.has(item.id);
+          const isHidden = (item.rating === "r17" || item.rating === "r18") && !revealed.has(item.id);
           return (
           <article key={item.id} className="flex flex-col overflow-hidden rounded-md border border-[var(--line)] bg-white">
             <div className="relative aspect-[4/5] bg-[#ebe9e2]">
@@ -136,14 +136,14 @@ export default function GalleryPage() {
                 <Image src={item.imageUrl} alt={item.title} fill unoptimized className={`object-contain transition-[filter] duration-200 ${isHidden ? "blur-xl brightness-75" : ""}`} />
               </Link>
               {isHidden && (
-                <button type="button" aria-label={`显示 R18 作品：${item.title}`} onClick={() => toggleReveal(item.id)} className="absolute inset-0 z-10 grid place-items-center bg-[#202328]/35 text-white">
+                <button type="button" aria-label={`显示 ${ratingLabel(item.rating)} 作品：${item.title}`} onClick={() => toggleReveal(item.id)} className="absolute inset-0 z-10 grid place-items-center bg-[#202328]/35 text-white">
                   <span className="flex flex-col items-center gap-2">
                     <Eye size={26} aria-hidden="true" />
-                    <b className="rounded-full bg-[#202328]/70 px-3 py-1 text-xs">R18 · 点击查看</b>
+                    <b className="rounded-full bg-[#202328]/70 px-3 py-1 text-xs">{ratingLabel(item.rating)} · 点击查看</b>
                   </span>
                 </button>
               )}
-              {!isHidden && item.rating === "r18" && (
+              {!isHidden && (item.rating === "r17" || item.rating === "r18") && (
                 <button type="button" onClick={() => toggleReveal(item.id)} className="absolute right-2 top-2 z-10 grid h-8 w-8 place-items-center rounded-full bg-[#202328]/70 text-white" aria-label="重新隐藏 R18 内容" title="重新打码">
                   <EyeOff size={15} aria-hidden="true" />
                 </button>
@@ -166,7 +166,7 @@ export default function GalleryPage() {
           onChange={setSubmitForm}
           onClose={() => setSubmitForm(null)}
           onPublished={() => {
-            setMessage("作品已发布到图片广场。");
+            setMessage("图片已提交审核，审核通过后会发布到图片广场。");
             void loadGallery();
           }}
           onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}

@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 
-export type GalleryRating = "general" | "r13" | "r18";
+export type GalleryRating = "general" | "r13" | "r17" | "r18";
 export type GallerySource = "other" | "lfn" | "local";
 export type GalleryStatus = "pending" | "approved" | "rejected" | "withdrawn";
 
@@ -14,18 +15,19 @@ export const MAX_GALLERY_IMAGE_BYTES = 20 * 1024 * 1024;
 export const ratingLabels: Record<GalleryRating, string> = {
   general: "全年龄",
   r13: "R13",
+  r17: "R17",
   r18: "R18",
 };
 
 // 旧数据里的 sensitive 评级等价于 R13。
 function normalizeRating(value: unknown): GalleryRating {
-  if (value === "r13" || value === "r18") return value;
+  if (value === "r13" || value === "r17" || value === "r18") return value;
   if (value === "sensitive") return "r13";
   return "general";
 }
 
 export function isRestrictedRating(rating: GalleryRating): boolean {
-  return rating === "r18";
+  return rating === "r17" || rating === "r18";
 }
 export type GalleryItem = {
   id: string;
@@ -40,6 +42,7 @@ export type GalleryItem = {
   negativePrompt: string;
   parameters: Record<string, unknown>;
   imageFile: string;
+  imageMetadataStripped?: boolean;
   createdAt: string;
   likes: number;
   likedBy: number[];
@@ -106,7 +109,7 @@ export function galleryWeekKey(date = new Date()): string {
  * 校验投稿评级是否为受支持的三级年龄评级。
  */
 export function assertGalleryRating(rating: unknown): GalleryRating {
-  if (rating === "general" || rating === "r13" || rating === "r18")
+  if (rating === "general" || rating === "r13" || rating === "r17" || rating === "r18")
     return rating;
   throw new Error("内容评级不合法");
 }
@@ -129,6 +132,20 @@ export function assertNaiImage(buffer: Buffer, fileName: string): { extension: s
   return { extension: isJpeg || extension === ".jpg" || extension === ".jpeg" ? "jpg" : "png", parameters: metadata.parameters };
 }
 
+async function stripImageMetadata(buffer: Buffer, fileName: string): Promise<{ data: Buffer; extension: string }> {
+  const originalExtension = path.extname(fileName).toLowerCase();
+  const format = originalExtension === ".jpg" || originalExtension === ".jpeg"
+    ? "jpeg"
+    : originalExtension === ".webp" ? "webp" : "png";
+  const image = sharp(buffer).rotate();
+  const data = format === "jpeg"
+    ? await image.jpeg({ quality: 95 }).toBuffer()
+    : format === "webp"
+      ? await image.webp({ quality: 95 }).toBuffer()
+      : await image.png({ compressionLevel: 9 }).toBuffer();
+  return { data, extension: format === "jpeg" ? "jpg" : format };
+}
+
 export async function publishFromHistory(
   ownerId: number,
   ownerName: string,
@@ -146,19 +163,22 @@ export async function publishFromHistory(
     const sourcePrompt = String(history.parameters.prompt || "");
     const sourceNegative = String(history.parameters.negative_prompt || "");
     const id = randomUUID();
-    const file = `${id}.${path.extname(history.imagePath).replace(/^\./, "") || "png"}`;
     await mkdir(root(), { recursive: true });
     const source = history.remote
       ? (await getRemoteHistoryImage(ownerId, history.imagePath))?.data
       : await readFile(historyImagePath(ownerId, history.imagePath));
     if (!source) throw new Error("历史图片读取失败");
-    await writeFile(imagePath(file), source);
+    const originalExtension = path.extname(history.imagePath).replace(/^\./, "") || "png";
+    const cleaned = input.exposeParameters ? null : await stripImageMetadata(source, history.imagePath);
+    const file = `${id}.${cleaned?.extension || originalExtension}`;
+    await writeFile(imagePath(file), cleaned?.data || source);
     const item: GalleryItem = {
       id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
       rating, source: input.source,
       tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
-      prompt: sourcePrompt, negativePrompt: sourceNegative,
+      prompt: input.exposeParameters ? sourcePrompt : "", negativePrompt: input.exposeParameters ? sourceNegative : "",
       parameters: input.exposeParameters ? history.parameters : {}, imageFile: file,
+      imageMetadataStripped: !input.exposeParameters,
       createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
     };
     const store = await readStore();
@@ -186,7 +206,26 @@ function ownerGalleryItem(item: GalleryItem): GalleryItem {
 }
 
 export async function listGallery(): Promise<GalleryItem[]> {
-  return (await readStore()).items.filter((item) => item.status === "approved").map(publicGalleryItem);
+  return (await readStore()).items.filter((item) => item.status === "approved").map((item) => ({
+    id: item.id,
+    ownerId: item.ownerId,
+    ownerName: item.ownerName,
+    authorName: item.authorName,
+    title: item.title,
+    rating: item.rating,
+    source: item.source,
+    tags: item.tags,
+    prompt: "",
+    negativePrompt: "",
+    parameters: {},
+    imageFile: item.imageFile,
+    imageMetadataStripped: item.imageMetadataStripped,
+    createdAt: item.createdAt,
+    likes: item.likes,
+    likedBy: [],
+    status: item.status,
+    submittedAt: item.submittedAt,
+  }));
 }
 
 export async function countGallery(): Promise<number> {
@@ -283,6 +322,30 @@ export async function withdrawGalleryItem(ownerId: number, id: string): Promise<
   });
 }
 export function galleryImagePath(file: string): string { return imagePath(file); }
+
+export async function readGalleryImage(item: GalleryItem): Promise<{ data: Buffer; extension: string }> {
+  const filePath = imagePath(item.imageFile);
+  const data = await readFile(filePath);
+  const extension = path.extname(item.imageFile).slice(1) || "png";
+  if (Object.keys(item.parameters).length > 0 || item.imageMetadataStripped === true) {
+    return { data, extension };
+  }
+
+  return withLock(async () => {
+    const store = await readStore();
+    const storedItem = store.items.find((entry) => entry.id === item.id);
+    if (!storedItem || Object.keys(storedItem.parameters).length > 0 || storedItem.imageMetadataStripped) {
+      return { data: await readFile(filePath), extension };
+    }
+    const cleaned = await stripImageMetadata(data, storedItem.imageFile);
+    const temporary = `${filePath}.${randomUUID()}.tmp`;
+    await writeFile(temporary, cleaned.data);
+    await rename(temporary, filePath);
+    storedItem.imageMetadataStripped = true;
+    await writeStore(store);
+    return { data: cleaned.data, extension: cleaned.extension };
+  });
+}
 export async function toggleGalleryLike(id: string, userId: number): Promise<{ liked: boolean; likes: number }> {
   return withLock(async () => {
     const store = await readStore();
@@ -315,7 +378,7 @@ export async function publishLocalImage(
   ownerName: string,
   buffer: Buffer,
   fileName: string,
-  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; prompt: string; negativePrompt: string; parameters: Record<string, unknown> },
+  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; prompt: string; negativePrompt: string; parameters: Record<string, unknown>; exposeParameters: boolean },
 ): Promise<GalleryItem> {
   return withLock(async () => {
     if (input.source !== "local" && input.source !== "other") throw new Error("本地上传来源不合法");
@@ -324,16 +387,18 @@ export async function publishLocalImage(
     const rating = assertGalleryRating(input.rating);
     const metadata = assertNaiImage(buffer, fileName);
     const id = randomUUID();
-    const imageFile = `${id}.${metadata.extension}`;
+    const cleaned = input.exposeParameters ? null : await stripImageMetadata(buffer, fileName);
+    const imageFile = `${id}.${cleaned?.extension || metadata.extension}`;
     await mkdir(root(), { recursive: true });
-    await writeFile(imagePath(imageFile), buffer);
+    await writeFile(imagePath(imageFile), cleaned?.data || buffer);
     const item: GalleryItem = {
       id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
       rating, source: input.source, tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
-      prompt: String(metadata.parameters.prompt || input.prompt),
-      negativePrompt: String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt),
-      parameters: metadata.parameters,
+      prompt: input.exposeParameters ? String(metadata.parameters.prompt || input.prompt) : "",
+      negativePrompt: input.exposeParameters ? String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt) : "",
+      parameters: input.exposeParameters ? metadata.parameters : {},
       imageFile, createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
+      imageMetadataStripped: !input.exposeParameters,
     };
     const store = await readStore();
     store.items.unshift(item);

@@ -1,5 +1,7 @@
 export type LocalImageHistoryItem = {
   id: string;
+  remoteId?: string;
+  requestId?: string;
   createdAt: number;
   image: Blob;
   prompt?: string;
@@ -69,4 +71,19 @@ export async function listLocalImageHistory(limit = 40): Promise<LocalImageHisto
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const response = await fetch(dataUrl);
   return response.blob();
+}
+
+export async function findLocalImageHistory(remoteId: string, requestId?: string): Promise<LocalImageHistoryItem | null> {
+  const db = await openDb();
+  const item = await new Promise<LocalImageHistoryItem | null>((resolve, reject) => {
+    const request = db.transaction(STORE, "readonly").objectStore(STORE).getAll();
+    request.onsuccess = () => resolve(
+      (request.result as LocalImageHistoryItem[]).find((entry) =>
+        entry.remoteId === remoteId || (requestId && entry.requestId === requestId),
+      ) || null,
+    );
+    request.onerror = () => reject(request.error || new Error("无法查找本地图片历史"));
+  });
+  db.close();
+  return item;
 }

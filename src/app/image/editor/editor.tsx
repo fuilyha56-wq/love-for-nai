@@ -481,7 +481,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         setScale(generation?.scale ?? 5);
         setStrength(generation?.strength ?? 0.7);
         setSampler(generation?.sampler || "k_euler_ancestral");
-        setSeed(nextDocument.seed == null ? "" : String(nextDocument.seed));
+        setSeed(nextDocument.seed == null || Number(nextDocument.seed) === 0 ? "" : String(nextDocument.seed));
         if (loaded.workspace) {
           setViewport({ ...loaded.workspace.viewport, height: loaded.workspace.viewport.width / (outputWidth / outputHeight) });
           setCamera({ ...loaded.workspace.camera });

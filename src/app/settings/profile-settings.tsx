@@ -30,7 +30,7 @@ export default function ProfileSettings() {
           <p>查看 NewAPI 余额、LFN AFF、签到、邀请、图包和钱包操作。</p>
         </div>
       </div>
-      <Link href="/account" className="settings-primary-button mt-5">
+      <Link href="/profile#profile-wallet" className="settings-primary-button mt-5">
         打开我的账号 <ArrowUpRight size={14} />
       </Link>
     </article>

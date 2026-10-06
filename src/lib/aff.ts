@@ -196,10 +196,10 @@ function prunePackageUsage(account: AffAccount, now = Date.now()): PackageUsage[
   return account.packageUsage;
 }
 
-function packageRateLimitRemaining(account: AffAccount, now = Date.now()): number {
+function packageRateLimitRemaining(account: AffAccount, now = Date.now(), limit = IMAGE_PACKAGE_RATE_LIMIT): number {
   return Math.max(
     0,
-    IMAGE_PACKAGE_RATE_LIMIT - prunePackageUsage(account, now).length,
+    limit - prunePackageUsage(account, now).length,
   );
 }
 
@@ -233,7 +233,8 @@ export async function affStatus(userId: number): Promise<{
   checkInEnabled: boolean;
 }> {
   const account = await readAccount(userId);
-  const remaining = packageRateLimitRemaining(account);
+  const { rateLimit } = await import("@/lib/runtime-config").then(({ runtimeImagePackageSettings }) => runtimeImagePackageSettings());
+  const remaining = packageRateLimitRemaining(account, Date.now(), rateLimit);
   const rewards = await runtimeRewards();
   return {
     balance: account.balance,
@@ -360,11 +361,12 @@ export async function trySpendImageCredits(
       throw new Error("图像费用计算结果无效");
     if (fixedCostPerSample == null && cost === 0)
       throw new Error("图像费用计算结果无效");
-    const packageRateLimited =
-      account.packageBalance > 0 && packageRateLimitRemaining(account) === 0;
+    const { rateLimit } = await import("@/lib/runtime-config").then(({ runtimeImagePackageSettings }) => runtimeImagePackageSettings());
+    const packageRemaining = packageRateLimitRemaining(account, Date.now(), rateLimit);
+    const packageRateLimited = account.packageBalance > 0 && packageRemaining === 0;
     const availablePackageImages = packageRateLimited
       ? 0
-      : Math.min(samples, packageRateLimitRemaining(account));
+      : Math.min(samples, packageRemaining);
     const packageCostLimit =
       availablePackageImages > 0
         ? Math.min(cost, Math.ceil((cost * availablePackageImages) / samples))

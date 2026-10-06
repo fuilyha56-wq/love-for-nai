@@ -68,7 +68,7 @@ export async function handlePersonalProviderGeneration(request: Request, session
   const key = await getNovelaiKey(session.userId);
   if (!key) return NextResponse.json({ message: "请先在设置中导入 NovelAI Key" }, { status: 400 });
   const runBatch = async (batch: number, offset: number) => {
-    const nativeBody = naiNativeGenerationBody({ ...body, width, height, steps, n: batch, n_samples: batch, seed: typeof body.seed === "number" ? (body.seed + offset) % 2 ** 32 : body.seed }, { samples: batch });
+    const nativeBody = naiNativeGenerationBody({ ...body, width, height, steps, n: batch, n_samples: batch, seed: typeof body.seed === "number" && body.seed !== 0 ? (body.seed + offset) % 2 ** 32 : undefined }, { samples: batch });
     return generateNovelaiImage(key, nativeBody);
   };
 

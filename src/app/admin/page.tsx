@@ -23,6 +23,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
+import { PopupSelect } from "@/app/ui/popup-select";
 import CommentsDialog from "./comments-dialog";
 import GatewaySection from "./gateway-panel";
 import PlatformConfigPanel from "./platform-config-panel";
@@ -100,7 +101,7 @@ type GalleryAdminItem = {
   authorName: string;
   ownerName: string;
   ownerId: number;
-  rating: "general" | "r13" | "r18";
+  rating: "general" | "r13" | "r17" | "r18";
   source: string;
   tags: string[];
   likes: number;
@@ -109,6 +110,7 @@ type GalleryAdminItem = {
   status: "pending" | "approved" | "rejected" | "withdrawn";
   reviewNote?: string;
   imageUrl: string;
+  parameters?: Record<string, unknown>;
 };
 type ReferralRow = {
   code: string;
@@ -131,7 +133,7 @@ type ReferralRow = {
 const DEFAULT_QUOTA_PER_UNIT = 500000;
 const ROLE_LABELS: Record<number, string> = { 1: "用户", 10: "管理员", 100: "Root" };
 const STATUS_LABELS: Record<number, string> = { 1: "正常", 0: "停用" };
-const RATING_LABELS: Record<string, string> = { general: "全年龄", r13: "R13", r18: "R18" };
+const RATING_LABELS: Record<string, string> = { general: "全年龄", r13: "R13", r17: "R17", r18: "R18" };
 
 function creditLabel(capabilities: PlatformCapabilities | null) {
   return capabilities?.labels?.credits || "创作额度";
@@ -178,11 +180,11 @@ export default function AdminPage() {
           { id: "sessions", label: "会话管理", description: "活跃会话数、超阈值告警和批量清理", enabled: true },
           { id: "credits", label: "创作额度账本", description: "发放、回收和流水", enabled: true },
           { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
-          { id: "gallery", label: "图库管理", description: "投稿与下架", enabled: true },
+          { id: "gallery", label: "图库管理", description: "已发布作品、编辑与下架", enabled: true },
           { id: "referrals", label: "邀请记录", description: "邀请码与注册人数", enabled: true },
           { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
           { id: "docs", label: "文档管理", description: "线上编辑 API 与帮助文档", enabled: true },
-          { id: "creator", label: "投稿审核", description: "审核创作者投稿与公开作品", enabled: true },
+          { id: "creator", label: "投稿审核", description: "审核创作者投稿并发放奖励", enabled: true },
           { id: "rewards", label: "奖励与活动", description: "结算投稿、周榜和人工发放", enabled: true },
           { id: "redeem", label: "兑换码", description: "批量生成和管理兑换码", enabled: true },
         ]
@@ -257,8 +259,10 @@ export default function AdminPage() {
           <SessionManagementPanel setMessage={setMessage} focusUserId={sessionFocusUserId} onClearFocus={() => setSessionFocusUserId(null)} />
         ) : tab === "credits" ? (
           <CreditsPanel capabilities={capabilities} setMessage={setMessage} />
-        ) : tab === "gallery" || tab === "creator" ? (
-          <GalleryPanel setMessage={setMessage} />
+        ) : tab === "gallery" ? (
+          <GalleryPanel setMessage={setMessage} mode="gallery" />
+        ) : tab === "creator" ? (
+          <GalleryPanel setMessage={setMessage} mode="creator" />
         ) : tab === "referrals" ? (
           <ReferralsPanel />
         ) : tab === "audits" ? (
@@ -1161,7 +1165,7 @@ function CreditsPanel({
   );
 }
 
-function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
+ function GalleryPanel({ setMessage, mode }: { setMessage: (text: string) => void; mode: "gallery" | "creator" }) {
   const [items, setItems] = useState<GalleryAdminItem[]>([]);
   const [editing, setEditing] = useState<GalleryAdminItem | null>(null);
   const [title, setTitle] = useState("");
@@ -1169,11 +1173,12 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
   const [rating, setRating] = useState("general");
   const [tags, setTags] = useState("");
   const [saving, setSaving] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<"all" | GalleryAdminItem["status"]>("pending");
+  const [preview, setPreview] = useState<GalleryAdminItem | null>(null);
+  const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "withdrawn">(mode === "gallery" ? "approved" : "all");
 
   const load = useCallback(async () => {
     try {
-      const query = statusFilter === "all" ? "" : `?status=${statusFilter}`;
+      const query = mode === "creator" ? "?status=pending" : statusFilter === "all" ? "" : `?status=${statusFilter}`;
       const response = await fetch(`/api/admin/gallery${query}`, { cache: "no-store" });
       const result = await response.json();
       if (!response.ok) {
@@ -1184,7 +1189,7 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
     } catch {
       setMessage("图库读取失败");
     }
-  }, [setMessage, statusFilter]);
+  }, [mode, setMessage, statusFilter]);
 
   useEffect(() => {
     void Promise.resolve().then(() => load());
@@ -1245,14 +1250,16 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="flex items-center gap-2 text-sm font-semibold"><ImageIcon size={16} className="text-[var(--rose)]" />图库投稿（共 {items.length} 件）</p>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as typeof statusFilter)} className="field ml-auto h-9 px-2 text-xs"><option value="pending">待审核</option><option value="approved">已通过</option><option value="rejected">已拒绝</option><option value="withdrawn">已撤回</option><option value="all">全部</option></select>
+        <p className="flex items-center gap-2 text-sm font-semibold"><ImageIcon size={16} className="text-[var(--rose)]" />{mode === "gallery" ? "图库作品" : "投稿审核"}（共 {items.length} 件）</p>
+        {mode === "gallery" && <div className="ml-auto w-44"><PopupSelect ariaLabel="图库作品筛选" value={statusFilter} onChange={(value) => setStatusFilter(value as typeof statusFilter)} options={[{ value: "approved", label: "已发布作品" }, { value: "withdrawn", label: "已撤回作品" }, { value: "all", label: "全部作品" }]} /></div>}
       </div>
       <div className="space-y-2.5">
         {items.map((item) => (
           <div key={item.id} className="flex items-center gap-3 rounded-lg border border-[var(--line)] bg-white px-4 py-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={item.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded object-cover" />
+            <button type="button" className="shrink-0 rounded focus-visible:outline-2 focus-visible:outline-[var(--rose)]" onClick={() => setPreview(item)} aria-label={`查看作品：${item.title}`}>
+              <img src={item.imageUrl} alt="" className="h-14 w-14 rounded object-cover" />
+            </button>
             <div className="min-w-0 flex-1">
               <p className="truncate font-semibold">{item.title}</p>
               <p className="mt-0.5 text-[10px] text-[var(--muted)]">
@@ -1261,14 +1268,14 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
               <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>
             </div>
             <div className="flex shrink-0 flex-wrap justify-end gap-3 text-xs font-semibold">
-              {item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
+              {mode === "creator" && item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
               {item.status === "approved" && <button type="button" onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
               <button type="button" onClick={() => open(item)} className="text-[var(--rose)] hover:underline">编辑</button>
               <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
             </div>
           </div>
         ))}
-        {!items.length && <p className="py-10 text-center text-sm text-[var(--muted)]">暂无投稿</p>}
+        {!items.length && <p className="py-10 text-center text-sm text-[var(--muted)]">{mode === "gallery" ? (statusFilter === "withdrawn" ? "暂无已撤回作品" : statusFilter === "all" ? "暂无图库作品" : "暂无已发布作品") : "暂无待审核投稿"}</p>}
       </div>
       {editing && (
         <div className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4" onClick={() => setEditing(null)}>
@@ -1285,15 +1292,12 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
                 <input value={authorName} onChange={(event) => setAuthorName(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
               </label>
               <label className="block font-semibold">评级
-                <select 
-                  value={rating} 
-                  onChange={(e) => setRating(e.target.value as "general" | "r13" | "r18")}
-                  className="field mt-1.5 h-10 w-full px-3 text-sm"
-                >
-                  <option value="general">全年龄</option>
-                  <option value="r13">R13</option>
-                  <option value="r18">R18</option>
-                </select>
+                <PopupSelect
+                  value={rating}
+                  onChange={setRating}
+                  options={[{ value: "general", label: "全年龄" }, { value: "r13", label: "R13" }, { value: "r17", label: "R17 · 默认遮罩" }, { value: "r18", label: "R18 · 默认遮罩" }]}
+                  ariaLabel="作品评级"
+                />
               </label>
               <label className="block font-semibold">标签（逗号分隔）
                 <input value={tags} onChange={(event) => setTags(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
@@ -1305,6 +1309,14 @@ function GalleryPanel({ setMessage }: { setMessage: (text: string) => void }) {
                 {saving ? "保存中…" : "保存"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {preview && (
+        <div className="fixed inset-0 z-[30001] grid place-items-center bg-[#202328]/70 p-4" onClick={() => setPreview(null)}>
+          <div className="grid max-h-[92vh] w-full max-w-5xl gap-4 overflow-auto rounded-lg border border-[var(--line)] bg-[var(--panel)] p-4 lg:grid-cols-[minmax(0,1fr)_300px]" onClick={(event) => event.stopPropagation()}>
+            <div className="flex min-h-[300px] items-center justify-center rounded bg-[#ebe9e2] p-2"><img src={preview.imageUrl} alt={preview.title} className="max-h-[76vh] max-w-full object-contain" /></div>
+            <div className="min-w-0 text-sm"><div className="flex items-center justify-between gap-3"><h2 className="font-semibold">{preview.title}</h2><button type="button" onClick={() => setPreview(null)} className="text-xs text-[var(--muted)]">关闭</button></div><p className="mt-2 text-xs text-[var(--muted)]">{preview.authorName} · {RATING_LABELS[preview.rating] || preview.rating} · {preview.likes} 赞</p><h3 className="mt-5 text-xs font-semibold">生成参数</h3><pre className="mt-2 max-h-[55vh] overflow-auto rounded bg-[var(--surface-muted)] p-3 text-[11px] leading-5 whitespace-pre-wrap">{preview.parameters && Object.keys(preview.parameters).length ? JSON.stringify(preview.parameters, null, 2) : "未提供生成参数"}</pre></div>
           </div>
         </div>
       )}

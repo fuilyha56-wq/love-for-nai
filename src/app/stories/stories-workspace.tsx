@@ -785,7 +785,7 @@ export default function StoriesWorkspace({
         <nav aria-label="Stories 页面导航">
           <Link href="/image"><ImagePlus size={17} /> 图片生成</Link>
           <Link href="/settings"><Settings size={17} /> 设置</Link>
-          <Link href="/account"><UserRound size={17} /> {userName}</Link>
+          <Link href="/profile"><UserRound size={17} /> {userName}</Link>
         </nav>
       </header>
       <section className="story-news-hero">

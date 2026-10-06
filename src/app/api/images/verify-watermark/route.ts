@@ -26,8 +26,11 @@ export async function POST(request: Request) {
         ? await findHistory(result.payload.userId, result.payload.imageId)
         : await findHistoryByRequestId(result.payload.userId, result.payload.requestId))
       : null;
+    const publicPayload = { ...result.payload };
+    delete publicPayload.parameters;
     return NextResponse.json({
       ...result,
+      payload: publicPayload,
       recordFound: Boolean(audit || history),
       audit: audit ? {
         requestId: audit.requestId,
@@ -36,7 +39,6 @@ export async function POST(request: Request) {
         endpoint: audit.endpoint,
         operation: audit.operation,
         model: audit.model,
-        parameters: audit.parameters,
         status: audit.status,
         durationMs: audit.durationMs,
         historyIds: audit.historyIds,
@@ -45,7 +47,6 @@ export async function POST(request: Request) {
       history: history ? {
         id: history.id,
         createdAt: history.createdAt,
-        parameters: history.parameters,
         usage: history.usage,
         fingerprint: history.fingerprint,
         requestId: history.requestId,

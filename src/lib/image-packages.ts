@@ -9,7 +9,7 @@ import {
   type ImagePackageOrder,
 } from "@/lib/aff";
 import { affGateway, resolvedAffGateway, resolvedNewApiBaseUrl } from "@/lib/newapi";
-import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
+import { runtimeImagePackageSettings, runtimeQuotaPerUnit } from "@/lib/runtime-config";
 import { SlidingWindowRateLimiter } from "@/lib/rate-limit";
 
 export const IMAGE_PACKAGE_MAX_COUNT = 10;
@@ -57,9 +57,10 @@ export type ImagePackageProduct = {
 };
 
 export function imagePackageProduct(): ImagePackageProduct {
+  const affPerPackage = IMAGE_PACKAGE_AFF;
   return {
     priceUsd: IMAGE_PACKAGE_PRICE_USD,
-    affPerPackage: IMAGE_PACKAGE_AFF,
+    affPerPackage,
     rateLimit: 10,
     purchaseEnabled: Boolean(adminToken() && affGateway()),
   };
@@ -70,10 +71,11 @@ export async function resolvedImagePackageProduct(): Promise<ImagePackageProduct
     resolvedAdminTokenValue(),
     resolvedAffGateway(),
   ]);
+  const product = await runtimeImagePackageSettings();
   return {
-    priceUsd: IMAGE_PACKAGE_PRICE_USD,
-    affPerPackage: IMAGE_PACKAGE_AFF,
-    rateLimit: 10,
+    priceUsd: product.priceUsd,
+    affPerPackage: product.affPerPackage,
+    rateLimit: product.rateLimit,
     purchaseEnabled: Boolean(token && gateway),
   };
 }
@@ -217,13 +219,15 @@ export async function purchaseImagePackages(
     if (!(await resolvedAdminTokenValue())) throw new Error("图包购买服务尚未配置管理员令牌");
     if (!(await resolvedAffGateway())) throw new Error("图包生图服务尚未启用，请联系管理员");
 
-    const quotaValue = quotaForPackages(packageCount, await runtimeQuotaPerUnit());
+    const product = await runtimeImagePackageSettings();
+    const quotaValue = product.priceUsd * packageCount * await runtimeQuotaPerUnit();
+    if (!Number.isSafeInteger(quotaValue) || quotaValue <= 0) throw new Error("图包额度计算超出安全范围");
     const order: ImagePackageOrder = {
       requestId,
       status: "pending",
       packageCount,
-      priceUsd: IMAGE_PACKAGE_PRICE_USD * packageCount,
-      affAmount: IMAGE_PACKAGE_AFF * packageCount,
+      priceUsd: product.priceUsd * packageCount,
+      affAmount: product.affPerPackage * packageCount,
       quotaValue,
       createdAt: new Date().toISOString(),
     };

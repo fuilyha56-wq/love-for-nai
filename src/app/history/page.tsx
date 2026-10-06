@@ -8,6 +8,7 @@ import {
   CheckSquare,
   Download,
   History,
+  Info,
   Loader2,
   RotateCcw,
   Send,
@@ -16,24 +17,27 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useRef, useState } from "react";
 import {
   readJson,
   SessionExpiredError,
   SessionExpiredNotice,
 } from "@/app/session-notice";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
-import { imageHistoryReuseHref } from "@/lib/editor-composite-history";
+import { findLocalImageHistory, saveLocalImageHistory } from "@/lib/local-image-history";
 
 type HistoryItem = {
   id: string;
   createdAt: string;
   imageUrl: string;
+  requestId?: string;
   parameters: Record<string, string | number>;
 };
 
-function reuseHref(item: HistoryItem) {
-  return imageHistoryReuseHref(item.id, item.parameters);
+function importHref(item: HistoryItem, mode: "img2img" | "generate") {
+  const params = new URLSearchParams({ historyId: item.id, importMode: mode });
+  return `/image?${params.toString()}`;
 }
 
 export default function HistoryPage() {
@@ -45,6 +49,17 @@ export default function HistoryPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [zipping, setZipping] = useState(false);
+  const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<HistoryItem | null>(null);
+  const [previewSrc, setPreviewSrc] = useState("");
+  const [previewLoaded, setPreviewLoaded] = useState(false);
+  const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
+  const objectUrls = useRef(new Set<string>());
+
+  useEffect(() => () => {
+    objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    objectUrls.current.clear();
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -61,6 +76,70 @@ export default function HistoryPage() {
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all(items.map(async (item) => {
+      const cached = await findLocalImageHistory(item.id, item.requestId).catch(() => null);
+      if (!active || !cached) return;
+      const url = URL.createObjectURL(cached.image);
+      objectUrls.current.add(url);
+      setLocalUrls((current) => ({ ...current, [item.id]: url }));
+    }));
+    return () => {
+      active = false;
+    };
+  }, [items]);
+
+  async function cacheImage(item: HistoryItem, blob: Blob) {
+    await saveLocalImageHistory({
+      id: `remote-${item.id}`,
+      remoteId: item.id,
+      createdAt: Date.parse(item.createdAt) || 0,
+      image: blob,
+      prompt: String(item.parameters.prompt || ""),
+      model: String(item.parameters.model || ""),
+      operation: String(item.parameters.operation || "generate"),
+    });
+  }
+
+  function imageSrc(item: HistoryItem) {
+    return localUrls[item.id] || item.imageUrl;
+  }
+
+  function openPreview(item: HistoryItem) {
+    setPreviewLoaded(false);
+    setPreviewSrc(imageSrc(item));
+    setPreview(item);
+  }
+
+  function closePreview() {
+    setPreview(null);
+    setPreviewSrc("");
+  }
+
+  function togglePrompt(id: string) {
+    setExpandedPrompts((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function quietlyCache(item: HistoryItem) {
+    if (localUrls[item.id]) return;
+    void fetch(item.imageUrl, { cache: "no-store" })
+      .then((response) => response.ok ? response.blob() : null)
+      .then(async (blob) => {
+        if (!blob) return;
+        await cacheImage(item, blob);
+        const url = URL.createObjectURL(blob);
+        objectUrls.current.add(url);
+        setLocalUrls((current) => ({ ...current, [item.id]: url }));
+      })
+      .catch(() => undefined);
+  }
 
   async function remove(id: string) {
     if (!window.confirm("确认删除这张历史图片？删除后无法恢复。")) return;
@@ -243,13 +322,21 @@ export default function HistoryPage() {
                       : undefined
                   }
                 >
-                  <Image
-                    src={item.imageUrl}
-                    alt="历史生成图片"
-                    fill
-                    unoptimized
-                    className={`object-contain ${selectMode && selected.has(item.id) ? "opacity-60" : ""}`}
-                  />
+                  <button
+                    type="button"
+                    className="history-image-button"
+                    aria-label="放大查看历史图片"
+                    onClick={selectMode ? () => toggleSelect(item.id) : () => openPreview(item)}
+                  >
+                    <Image
+                      src={imageSrc(item)}
+                      alt="历史生成图片"
+                      fill
+                      unoptimized
+                      className={`object-contain ${selectMode && selected.has(item.id) ? "opacity-60" : ""}`}
+                      onLoad={() => quietlyCache(item)}
+                    />
+                  </button>
                   {selectMode && (
                     <span
                       className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded border-2 ${
@@ -264,25 +351,34 @@ export default function HistoryPage() {
                   )}
                 </div>
                 <div className="p-3">
-                  <p className="line-clamp-2 min-h-10 text-xs leading-5">
+                  <button
+                    type="button"
+                    className={`history-prompt-preview min-h-10 text-left text-xs leading-5 ${expandedPrompts.has(item.id) ? "is-expanded" : "line-clamp-2"}`}
+                    title={expandedPrompts.has(item.id) ? "收起提示词" : "展开完整提示词"}
+                    aria-expanded={expandedPrompts.has(item.id)}
+                    onClick={() => togglePrompt(item.id)}
+                  >
                     {item.parameters.prompt || "未记录提示词"}
-                  </p>
+                  </button>
                   <div className="mt-2 flex justify-between text-[10px] text-[var(--muted)]">
                     <span>{item.parameters.model || "未知模型"}</span>
                     <time>
                       {new Date(item.createdAt).toLocaleString("zh-CN")}
                     </time>
                   </div>
-                  <div className="mt-3 grid grid-cols-4 gap-2">
-                    <Link
-                      href={reuseHref(item)}
-                      className="history-action"
-                      title="导入图片到工作台"
-                    >
-                      <RotateCcw size={15} />
-                    </Link>
+                  <div className="mt-3 grid grid-cols-5 gap-2">
+                    <div className="history-import-group" title="导入图片到工作台">
+                      <Link href={importHref(item, "img2img")} className="history-action" aria-label="导入为图生图">
+                        <RotateCcw size={15} />
+                      </Link>
+                      <div className="history-import-menu">
+                        <Link href={importHref(item, "img2img")}>图生图</Link>
+                        <Link href={importHref(item, "generate")}>文生图</Link>
+                      </div>
+                    </div>
+                    <Link href={`/history/${encodeURIComponent(item.id)}`} className="history-action" title="查看完整请求参数" aria-label="查看完整请求参数"><Info size={15} /></Link>
                     <a
-                      href={item.imageUrl}
+                      href={imageSrc(item)}
                       download={`lfn-${item.id}.png`}
                       className="history-action"
                       title="下载图片"
@@ -325,10 +421,27 @@ export default function HistoryPage() {
           form={galleryForm}
           onChange={setGalleryForm}
           onClose={() => setGalleryForm(null)}
-          onPublished={() => setMessage("作品已发布到图片广场。")}
+          onPublished={() => setMessage("图片已提交审核，审核通过后会发布到图片广场。")}
           onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}
         />
       )}
+      {preview && typeof document !== "undefined" && createPortal((
+        <div className="history-lightbox" role="dialog" aria-modal="true" aria-label="历史图片预览" onClick={closePreview}>
+          <div className={`history-lightbox-surface ${previewLoaded ? "" : "is-loading"}`} onClick={(event) => event.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element -- blob URL 预览需要原生尺寸 */}
+            <img
+              src={previewSrc || preview.imageUrl}
+              alt="放大后的历史生成图片"
+              onLoad={() => setPreviewLoaded(true)}
+              onError={() => {
+                if (previewSrc !== preview.imageUrl) setPreviewSrc(preview.imageUrl);
+              }}
+            />
+            {!previewLoaded && <span className="history-lightbox-loading">正在加载原图…</span>}
+            <button type="button" className="history-lightbox-close" aria-label="关闭图片预览" onClick={closePreview}><X size={18} /></button>
+          </div>
+        </div>
+      ), document.body)}
     </main>
   );
 }

@@ -15,7 +15,7 @@ import {
 
 type LogItem = Record<string, unknown>;
 type DateRange = { start: string; end: string };
-type Filters = DateRange & { model: string; status: string; requestId: string; startTime: string; endTime: string; sort: "asc" | "desc" };
+type Filters = DateRange & { model: string; status: string; source: string; requestId: string; startTime: string; endTime: string; sort: "asc" | "desc" };
 
 function toDateString(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -48,6 +48,7 @@ function initialFilters(): Filters {
     end: params.get("dateEnd") || fallback.end,
     model: params.get("model") || "",
     status: params.get("status") || "",
+    source: params.get("source") || "",
     requestId: params.get("requestId") || "",
     startTime: params.get("startTime") || "",
     endTime: params.get("endTime") || "",
@@ -71,6 +72,7 @@ export default function UsagePage() {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [advancedOpen, setAdvancedOpen] = useState(true);
   const [modelOptions, setModelOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [sourceOptions, setSourceOptions] = useState<Array<{ value: string; label: string }>>([]);
   const range: DateRange = { start: filters.start, end: filters.end };
 
   useEffect(() => {
@@ -94,6 +96,7 @@ export default function UsagePage() {
     params.set("dateEnd", filters.end);
     if (filters.model) params.set("model", filters.model);
     if (filters.status) params.set("status", filters.status);
+    if (filters.source) params.set("source", filters.source);
     if (filters.requestId) params.set("requestId", filters.requestId);
     if (filters.startTime) params.set("startTime", filters.startTime);
     if (filters.endTime) params.set("endTime", filters.endTime);
@@ -108,6 +111,7 @@ export default function UsagePage() {
     });
     if (filters.model) query.set("model", filters.model);
     if (filters.status) query.set("status", filters.status);
+    if (filters.source) query.set("source", filters.source);
     if (filters.requestId) query.set("requestId", filters.requestId);
     if (filters.startTime) query.set("startTime", filters.startTime);
     if (filters.endTime) query.set("endTime", filters.endTime);
@@ -123,6 +127,8 @@ export default function UsagePage() {
       )
       .then((result) => {
         setItems(result.items || []);
+        const sources = Array.from(new Set((result.items || []).map((item) => usageSource(item)).filter(Boolean)));
+        setSourceOptions(sources.map((value) => ({ value, label: sourceLabel(value) })));
         setTotal(result.total || 0);
         setMessage("");
       })
@@ -157,6 +163,7 @@ export default function UsagePage() {
             <DateRangePicker value={range} onChange={(value) => updateFilter(value)} quickRanges={[{ label: "今天", getValue: () => presetRange(1) }, { label: "最近 7 天", getValue: () => presetRange(7) }, { label: "最近 30 天", getValue: () => presetRange(30) }]} />
             <div className="usage-filter-field usage-filter-model"><span>模型</span><PopupSelect ariaLabel="模型筛选" value={filters.model} options={[{ value: "", label: "全部模型" }, ...modelOptions]} onChange={(value) => updateFilter({ model: value })} searchable searchPlaceholder="搜索模型" /></div>
             <div className="usage-filter-field usage-filter-status"><span>状态</span><PopupSelect ariaLabel="状态筛选" value={filters.status} options={[{ value: "", label: "全部状态" }, { value: "pending", label: "进行中" }, { value: "success", label: "成功" }, { value: "failed", label: "失败" }]} onChange={(value) => updateFilter({ status: value })} /></div>
+            {sourceOptions.length > 0 && <div className="usage-filter-field usage-filter-source"><span>来源</span><PopupSelect ariaLabel="来源筛选" value={filters.source} options={[{ value: "", label: "全部来源" }, ...sourceOptions]} onChange={(value) => updateFilter({ source: value })} /></div>}
             <PopupSelect ariaLabel="结果排序" value={filters.sort} options={[{ value: "desc", label: "最新优先" }, { value: "asc", label: "最早优先" }]} onChange={(value) => updateFilter({ sort: value as Filters["sort"] })} />
             <button type="button" className="usage-filter-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)}>{advancedOpen ? "收起" : "更多筛选"}<ChevronDown size={14} className={advancedOpen ? "rotate-180" : ""} /></button>
           </div>
@@ -174,8 +181,8 @@ export default function UsagePage() {
           <Empty text="登录状态已过期" />
         ) : loading ? (
           <Empty text="正在读取使用记录…" />
-        ) : items.length ? (
-          items.filter(isNaiItem).map((item, index) => {
+          ) : items.length ? (
+          items.filter((item) => isNaiItem(item) && (!filters.source || usageSource(item) === filters.source)).map((item, index) => {
             // new-api 返回的日志 id 是每页从 1 重排的假序号，会撞车；
             // request_id 才是全局唯一，没有时退到「页索引+序号」。
             const rowId =
@@ -285,6 +292,24 @@ function isNaiItem(item: LogItem): boolean {
   return model.toLowerCase().startsWith("nai-");
 }
 
+function usageSource(item: LogItem): string {
+  const other = parseOther(item.other);
+  const raw = String(
+    item.provider || item.provider_id || item.providerId || other?.providerId || other?.billing_source || other?.request_path || "newapi",
+  ).toLowerCase();
+  if (raw.includes("lfn")) return "lfn";
+  if (raw.includes("api") || raw.includes("newapi")) return "newapi";
+  if (raw.includes("novelai") || raw.includes("nai")) return "novelai";
+  return raw || "other";
+}
+
+function sourceLabel(value: string): string {
+  if (value === "lfn") return "LFN API";
+  if (value === "newapi") return "NewAPI";
+  if (value === "novelai") return "NovelAI";
+  return value;
+}
+
 // NewAPI 返回原始 quota，除以 QUOTA_PER_UNIT(500000) 才是美元消耗。
 function formatQuota(value: unknown): string {
   const numeric = Number(value);
@@ -385,8 +410,6 @@ function GenerationCard({
 }) {
   const text = (key: string) =>
     typeof generation[key] === "string" ? (generation[key] as string) : "";
-  const num = (key: string) =>
-    generation[key] == null ? "-" : String(generation[key]);
   const labels: Record<string, string> = {
     operation: "模式 / Operation", width: "宽度 / Width", height: "高度 / Height", steps: "步数 / Steps", scale: "引导强度 / Scale",
     sampler: "采样器 / Sampler", noise_schedule: "噪声调度 / Noise schedule", seed: "种子 / Seed", n: "生成数量 / Samples", n_samples: "NAI 生成数量 / NAI samples",

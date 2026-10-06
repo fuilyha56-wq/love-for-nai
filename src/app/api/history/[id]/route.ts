@@ -25,5 +25,10 @@ export async function GET(
   if (!session) return NextResponse.json({ message: "请先登录后读取历史参数" }, { status: 401, headers });
   const item = await findHistory(session.userId, (await params).id);
   if (!item) return NextResponse.json({ message: "历史记录不存在" }, { status: 404, headers });
-  return NextResponse.json({ parameters: storedParameters(item.parameters) }, { headers });
+  return NextResponse.json({
+    id: item.id,
+    createdAt: item.createdAt,
+    imageUrl: `/api/history/${item.id}/image`,
+    parameters: storedParameters(item.parameters),
+  }, { headers });
 }

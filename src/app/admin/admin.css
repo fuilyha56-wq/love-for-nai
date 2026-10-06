@@ -10,6 +10,17 @@
 .admin-nav-item:hover { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); color: var(--rose); transform: translateX(2px); }
 .admin-nav-item.is-active { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); box-shadow: inset 3px 0 var(--rose); }
 .admin-health-card { box-shadow: 0 8px 24px rgb(32 35 40 / 4%); }
+.token-quota-switch { display: inline-flex; min-width: 122px; min-height: 32px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 4px 9px 4px 5px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-muted); color: var(--muted); font-size: 12px; font-weight: 600; line-height: 1; text-align: left; transition: border-color .15s, background .15s, color .15s; }
+.token-quota-switch:hover { border-color: var(--rose); }
+.token-quota-switch.is-on { border-color: color-mix(in srgb, var(--rose) 55%, var(--line)); background: color-mix(in srgb, var(--rose) 10%, var(--surface)); color: var(--ink); }
+.token-quota-switch-track { display: inline-flex; width: 30px; height: 18px; flex: 0 0 auto; align-items: center; padding: 2px; border-radius: 999px; background: var(--line); transition: background .15s; }
+.token-quota-switch.is-on .token-quota-switch-track { background: var(--rose); }
+.token-quota-switch-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgb(0 0 0 / .18); transform: translateX(0); transition: transform .15s; }
+.token-quota-switch.is-on .token-quota-switch-thumb { transform: translateX(12px); }
+.token-quota-switch-label { white-space: nowrap; }
+.admin-setting-switch { width: 100%; min-width: 0; }
+.admin-setting-switch:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.admin-setting-switch .token-quota-switch-label { overflow: hidden; text-overflow: ellipsis; }
 
 .admin-card { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px rgb(32 35 40 / 4%); }
 .admin-card-header, .admin-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--line); }

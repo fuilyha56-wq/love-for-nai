@@ -40,6 +40,14 @@ describe("NAI native stream protocol", () => {
     expect(negative.parameters).toMatchObject({ seed: -42 });
   });
 
+  it("treats seed 0 as unspecified and randomizes it like NovelAI", () => {
+    const seeds = new Set(
+      Array.from({ length: 5 }, () => (naiNativeGenerationBody({ model: "nai-v4.5-full", prompt: "1girl", seed: 0 }).parameters as { seed: number }).seed),
+    );
+    expect(seeds.has(0)).toBe(false);
+    expect(seeds.size).toBeGreaterThan(1);
+  });
+
   it.each([
     { qualityToggle: "false", ucPreset: "3" },
     { qualityToggle: 0, ucPreset: -1 },
