@@ -90,6 +90,34 @@ afterEach(() => {
 });
 
 describe("外部 LFN 图像入口计费", () => {
+  it("Medium 参数违规返回稳定错误码且不扣费、不请求上游", async () => {
+    const { POST } = await import("@/app/v1/images/generations/route");
+    const response = await POST(new Request("http://localhost/v1/images/generations", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer sk-test-key",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "nai-v5-full-medium",
+        prompt: "1girl",
+        size: "832x1216",
+        n: 1,
+        steps: 28,
+        response_format: "b64_json",
+      }),
+    }));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toMatchObject({
+      type: "invalid_request_error",
+      code: "lfn_medium_unsupported_parameter",
+    });
+    expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
   it("key 无法识别时透明代理到 NewAPI，不扣图包", async () => {
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());

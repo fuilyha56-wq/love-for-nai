@@ -165,6 +165,7 @@ describe("内部生成 fallback", () => {
       body: JSON.stringify({ model: "nai-v5-full-medium", prompt: "sky", width: 512, height: 512, steps: 28 }),
     }));
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ code: "lfn_medium_unsupported_parameter" });
     expect(affMocks.trySpendImageCredits).not.toHaveBeenCalled();
     expect(currentFetch).not.toHaveBeenCalled();
   });

@@ -1,10 +1,12 @@
 import {
   externalGeneration,
   externalJsonBody,
+  imageRequestErrorBody,
   imageOperationFromBody,
   imageReferenceCountFromBody,
   isNaiExternalModel,
   proxyImageWithCredits,
+  validateExternalMediumRequest,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
 import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
@@ -31,6 +33,15 @@ export async function POST(request: Request): Promise<Response> {
     ));
   }
   const operation = imageOperationFromBody(body);
+  try {
+    validateExternalMediumRequest(body, operation);
+  } catch (error) {
+    const detail = imageRequestErrorBody(error, "Medium 参数无效");
+    return withExternalCors(Response.json(
+      { error: { message: detail.message, type: "invalid_request_error", code: detail.code } },
+      { status: 400 },
+    ));
+  }
   const generation = externalGeneration({
     ...body,
     operation,
@@ -38,7 +49,7 @@ export async function POST(request: Request): Promise<Response> {
   }, operation);
   if (!generation)
     return withExternalCors(Response.json(
-      { error: { message: "model、size 和 n 必须是有效的图像生成参数" } },
+      { error: { message: "model、size 和 n 必须是有效的图像生成参数", type: "invalid_request_error", code: "lfn_invalid_image_request" } },
       { status: 400 },
     ));
   const sanitized = isNaiExternalModel(generation.model)

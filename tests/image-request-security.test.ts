@@ -12,8 +12,14 @@ describe("图像请求安全边界", () => {
   it("rejects invalid Medium settings before billing", () => {
     const body = { width: 512, height: 512, steps: 14, n: 1 };
     expect(() => validateMediumRequest("nai-v5-full-medium", body)).not.toThrow();
-    for (const override of [{ steps: 28 }, { n: 2 }, { width: 1088, height: 1024 }, { sampler: "k_euler" }, { negative_prompt: "custom" }, { reference_image: "data" }, { extra_params: { steps: 28 } }])
+    for (const override of [{ steps: 28 }, { n: 2 }, { width: 1088, height: 1024 }, { sampler: "k_euler" }, { negative_prompt: "custom" }, { reference_image: "data" }, { extra_params: { steps: 28 } }, { cfg_rescale: 0 }, { ucPreset: 1 }]) {
       expect(() => validateMediumRequest("nai-v5-full-medium", { ...body, ...override })).toThrow();
+      try {
+        validateMediumRequest("nai-v5-full-medium", { ...body, ...override });
+      } catch (error) {
+        expect(error).toMatchObject({ code: "lfn_medium_unsupported_parameter" });
+      }
+    }
     expect(assertImageModel("nai-v5-full-medium")).toBe("nai-v5-full-medium");
     expect(() => assertImageModel("nai-v4.5-full-medium")).toThrow();
     expect(() => assertImageModel("nai-v5-curated-medium")).toThrow();

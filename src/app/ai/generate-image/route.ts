@@ -3,6 +3,7 @@ import {
   externalGeneration,
   imageOperationFromBody,
   imageReferenceCountFromBody,
+  imageRequestErrorBody,
   isRecord,
   naiGenerationPayload,
   naiZipResponse,
@@ -68,8 +69,9 @@ export async function POST(request: Request): Promise<Response> {
   try {
     payload = naiGenerationPayload(body);
   } catch (error) {
+    const detail = imageRequestErrorBody(error, "图像参数无效");
     return withExternalCors(Response.json(
-      { message: error instanceof Error ? error.message : "图像参数无效" },
+      detail,
       { status: 400 },
     ));
   }

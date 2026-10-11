@@ -54,6 +54,7 @@ import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { recordIpEvidence } from "@/lib/risk-ip";
 import { isSameGatewayUpstream, requestGatewayImageQuote, sameGatewayQuote } from "@/lib/gateway-billing";
+import { isNaiMediumModel } from "@/lib/nai-native-request";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -1243,6 +1244,18 @@ export function modelAlias(model: unknown): unknown {
   return typeof model === "string" ? novelAiModelAliases[model] || model : model;
 }
 
+export function validateExternalMediumRequest(body: JsonRecord, operation = "generate"): void {
+  const model = modelAlias(body.model);
+  if (typeof model === "string" && isNaiExternalModel(model))
+    validateMediumRequest(model, body, operation);
+}
+
+export function imageRequestErrorBody(error: unknown, fallback: string): { message: string; code?: string } {
+  if (error instanceof ImageRequestValidationError)
+    return { message: error.message, code: error.code };
+  return { message: error instanceof Error ? error.message : fallback };
+}
+
 function parseFiniteNumber(value: unknown): number | undefined {
   if (typeof value === "number")
     return Number.isFinite(value) ? value : undefined;
@@ -1314,13 +1327,13 @@ export function externalGeneration(
     height = normalizeDimension(rawHeight, "height");
     validateImageShape(width, height);
     samples = normalizeSamples(body);
-    steps = normalizeSteps(body.steps, String(body.model).includes("medium") ? 14 : 28);
     const requestedModel = modelAlias(body.model);
     if (typeof requestedModel !== "string" || !/^[^\u0000-\u001f\u007f]{1,160}$/.test(requestedModel.trim()))
       throw new ImageRequestValidationError("模型名称无效");
     model = isNaiExternalModel(requestedModel)
       ? assertImageModel(requestedModel)
       : requestedModel.trim();
+    steps = normalizeSteps(body.steps, isNaiMediumModel(model) ? 14 : 28);
     validateReferenceCount(externalReferenceCount(body));
     if (isNaiExternalModel(model)) validateMediumRequest(model, body, operation);
   } catch (error) {

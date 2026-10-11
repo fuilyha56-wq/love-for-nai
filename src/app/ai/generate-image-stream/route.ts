@@ -1,6 +1,7 @@
 import {
   bearerAuthorization,
   externalGeneration,
+  imageRequestErrorBody,
   isRecord,
   naiGenerationPayload,
   parseNaiGenerationBody,
@@ -58,8 +59,9 @@ export async function POST(request: Request): Promise<Response> {
   try {
     fallbackPayload = naiGenerationPayload(body);
   } catch (error) {
+    const detail = imageRequestErrorBody(error, "图像参数无效");
     return withExternalCors(Response.json(
-      { message: error instanceof Error ? error.message : "图像参数无效" },
+      detail,
       { status: 400 },
     ));
   }

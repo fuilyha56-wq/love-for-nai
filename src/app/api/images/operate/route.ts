@@ -36,7 +36,7 @@ import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { isSameGatewayUpstream, requestGatewayImageQuote } from "@/lib/gateway-billing";
-import { isRecord } from "@/lib/compat-api";
+import { imageRequestErrorBody, isRecord } from "@/lib/compat-api";
 import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
@@ -287,7 +287,7 @@ export async function POST(request: Request) {
   try {
     validateMediumRequest(String(body.model), body, operation);
   } catch (error) {
-    return NextResponse.json({ message: error instanceof Error ? error.message : "Medium 参数无效" }, { status: 400 });
+    return NextResponse.json(imageRequestErrorBody(error, "Medium 参数无效"), { status: 400 });
   }
   const deferPatchHistory = body.editor_composite === true;
   delete body.editor_composite;
@@ -402,8 +402,9 @@ export async function POST(request: Request) {
         validateReferenceCount(referenceImageCount(body, operation));
         validateMediumRequest(model, body, operation);
       } catch (error) {
+        const detail = imageRequestErrorBody(error, "图像参数无效");
         return NextResponse.json(
-          { message: error instanceof Error ? error.message : "图像参数无效" },
+          detail,
           { status: 400 },
         );
       }
