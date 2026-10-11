@@ -5,6 +5,46 @@ import { getRuntimeSettings } from "@/lib/runtime-config";
 
 type JsonRecord = Record<string, unknown>;
 
+export type RequestAuditRisk = {
+  score: number;
+  level: "normal" | "watch" | "risk" | "critical" | "banned";
+  signalIds: string[];
+  promptFingerprint?: string;
+  promptShapeFingerprint?: string;
+  promptLength?: number;
+  clusterId?: string;
+  decision: "allow" | "rate-limit" | "deny";
+};
+
+export type RequestAuditSettlement = {
+  settlementId: string;
+  status: string;
+  chargedAmount: number;
+  refundedAmount: number;
+  paymentSource: string;
+  refundReferenceId?: string;
+};
+
+export type RequestAuditBilling = {
+  lfnChargedAff?: number;
+  gatewayAnlasCost?: number;
+  gatewayUsage?: JsonRecord;
+  gatewayPromptTokens?: number;
+  quotedGatewayAnlas?: number;
+  quoteMatched?: boolean;
+  finalChargedAff?: number;
+  difference?: number;
+  differenceStatus?: string;
+};
+
+export type RequestUsageSummary = {
+  userId: number;
+  requests5h: number;
+  requests7d: number;
+  requests30d: number;
+  retainedRecords: number;
+};
+
 export type RequestAuditRecord = {
   requestId: string;
   requestFingerprint: string;
@@ -26,13 +66,21 @@ export type RequestAuditRecord = {
   paymentSource?: string;
   watermarkStatus?: "embedded" | "disabled" | "skipped" | "failed";
   error?: string;
+  ipEvidenceId?: string;
+  risk?: RequestAuditRisk;
+  settlement?: RequestAuditSettlement;
+  billing?: RequestAuditBilling;
 };
 
 type AuditStore = { records: RequestAuditRecord[] };
+type UsageEvent = { userId: number; at: number; requestId?: string };
+type UsageStore = { events: UsageEvent[] };
 
 const auditRoot = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "request-audit");
 const auditPath = () => path.join(auditRoot(), "index.json");
+const usagePath = () => path.join(auditRoot(), "usage.json");
 const MAX_RECORDS = 5000;
+const MAX_USAGE_EVENTS = 100_000;
 let lock: Promise<unknown> = Promise.resolve();
 
 function withLock<T>(task: () => Promise<T>): Promise<T> {
@@ -66,6 +114,23 @@ async function writeStore(store: AuditStore): Promise<void> {
     }
   }
   throw lastError;
+}
+
+async function readUsageStore(): Promise<UsageStore> {
+  try {
+    const value = JSON.parse(await readFile(usagePath(), "utf8")) as Partial<UsageStore>;
+    return { events: Array.isArray(value.events) ? value.events : [] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { events: [] };
+    throw new Error("调用量数据读取失败");
+  }
+}
+
+async function writeUsageStore(store: UsageStore): Promise<void> {
+  await mkdir(auditRoot(), { recursive: true });
+  const temporary = `${usagePath()}.${randomUUID()}.tmp`;
+  await writeFile(temporary, JSON.stringify({ events: store.events.slice(-MAX_USAGE_EVENTS) }), "utf8");
+  await rename(temporary, usagePath());
 }
 
 function sha256(value: string | Buffer): string {
@@ -188,4 +253,50 @@ export async function findRequestAudit(requestId: string): Promise<RequestAuditR
 
 export async function listRequestAudits(limit = 100): Promise<RequestAuditRecord[]> {
   return (await readStore()).records.slice(0, Math.max(1, Math.min(limit, MAX_RECORDS)));
+}
+
+export async function requestUsageByUser(now = Date.now()): Promise<Map<number, RequestUsageSummary>> {
+  const [records, usage] = await Promise.all([readStore(), readUsageStore()]);
+  const cutoffs = [now - 5 * 60 * 60_000, now - 7 * 24 * 60 * 60_000, now - 30 * 24 * 60 * 60_000];
+  const summaries = new Map<number, RequestUsageSummary>();
+  const events = [
+    ...records.records
+      .filter((record) => record.userId)
+      .map((record) => ({ userId: record.userId!, at: Date.parse(record.createdAt), requestId: record.requestId })),
+    ...usage.events,
+  ];
+  const seen = new Set<string>();
+  for (const event of events) {
+    if (!Number.isInteger(event.userId) || !event.userId || !Number.isFinite(event.at)) continue;
+    const key = event.requestId ? `${event.userId}:${event.requestId}` : `${event.userId}:${event.at}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const summary = summaries.get(event.userId) || {
+      userId: event.userId,
+      requests5h: 0,
+      requests7d: 0,
+      requests30d: 0,
+      retainedRecords: 0,
+    };
+    summary.retainedRecords += 1;
+    if (event.at >= cutoffs[0]) summary.requests5h += 1;
+    if (event.at >= cutoffs[1]) summary.requests7d += 1;
+    if (event.at >= cutoffs[2]) summary.requests30d += 1;
+    summaries.set(event.userId, summary);
+  }
+  return summaries;
+}
+
+export async function recordImageRequestUsage(userId: number, requestId?: string, now = Date.now()): Promise<RequestUsageSummary> {
+  if (!Number.isInteger(userId) || userId <= 0) throw new Error("用户 id 无效");
+  return withLock(async () => {
+    const store = await readUsageStore();
+    const deduped = store.events.filter((event) => now - event.at < 30 * 24 * 60 * 60_000);
+    if (!deduped.some((event) => event.userId === userId && requestId && event.requestId === requestId))
+      deduped.push({ userId, at: now, requestId });
+    store.events = deduped.slice(-MAX_USAGE_EVENTS);
+    await writeUsageStore(store);
+    const summaries = await requestUsageByUser(now);
+    return summaries.get(userId) || { userId, requests5h: 0, requests7d: 0, requests30d: 0, retainedRecords: 0 };
+  });
 }

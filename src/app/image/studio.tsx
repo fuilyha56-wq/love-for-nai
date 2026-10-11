@@ -2,6 +2,7 @@
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { readImageOperationResponse } from "@/lib/image-operation-response";
+import { consumeImageStream } from "@/lib/sse";
 import { inpaintModelFor } from "@/lib/inpaint-model";
 import { parseImageHistoryMetadata, saveEditorComposite } from "@/lib/editor-composite-history";
 import type { GenerationParameters } from "@/lib/history";
@@ -90,6 +91,7 @@ import { NaturalImageSettings } from "./natural-image-settings";
 import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageSize, normalizeImageModelSize, productModeProtocol, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProductMode, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, type ModelPolicy } from "@/lib/model-policy";
 import { NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
+import { isNaiMediumModel } from "@/lib/nai-native-request";
 import { ReplicaPromptEditor } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
@@ -143,6 +145,7 @@ import {
 } from "@/lib/image-editor-store";
 import {
   dataUrlToBlob,
+  findLocalImageHistory,
   listLocalImageHistory,
   readImageHistoryMode,
   saveLocalImageHistory,
@@ -151,13 +154,33 @@ import {
 
 type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
 
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
 function clampPanel(value: number, min: number, max: number): number {
   return Math.min(Math.max(Math.round(value), min), max);
+}
+
+function createBrowserRequestId(prefix = "request"): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID();
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    const values = new Uint32Array(4);
+    globalThis.crypto.getRandomValues(values);
+    return `${prefix}-${values[0].toString(36)}-${values[1].toString(36)}-${values[2].toString(36)}-${values[3].toString(36)}`;
+  }
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
 import {
   estimateNewApiCost,
   affCost as estimateAff,
+  roundBillingAmount,
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
@@ -233,87 +256,6 @@ type RemoteHistoryItem = {
   parameters: GenerationParameters;
 };
 
-async function consumeImageStream(
-  response: Response,
-  options: {
-    expected: number;
-    onPreview: (images: string[]) => void;
-    onProgress: (label: string) => void;
-    onComplete?: (historyIds: string[], requestId?: string) => void;
-  },
-): Promise<string[]> {
-  if (!response.body) throw new Error("上游未返回流式响应");
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let leftover = "";
-  const previews: string[] = Array.from({ length: options.expected }, () => "");
-  const finals: string[] = Array.from({ length: options.expected }, () => "");
-  let doneImages: string[] | null = null;
-  let errorMessage = "";
-  const applySlot = (target: string[], sampleIndex: number, image: string) => {
-    const index = Math.max(0, sampleIndex);
-    while (target.length <= index) target.push("");
-    target[index] = image;
-  };
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      leftover += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const blocks = leftover.split("\n\n");
-      leftover = done ? "" : blocks.pop() || "";
-      for (const block of blocks) {
-        const eventMatch = block.match(/^event:\s*(.+)$/m);
-        const dataMatch = block.match(/^data:\s*(.+)$/m);
-        if (!eventMatch || !dataMatch) continue;
-        const event = eventMatch[1].trim();
-        let payload: Record<string, unknown> = {};
-        try {
-          payload = JSON.parse(dataMatch[1]) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (event === "error") {
-          errorMessage = String(payload.message || "流式生成失败");
-          continue;
-        }
-        if (event === "preview" || event === "final") {
-          const image = typeof payload.image === "string" ? payload.image : "";
-          const sampleIndex =
-            typeof payload.sampleIndex === "number" ? payload.sampleIndex : 0;
-          if (!image) continue;
-          if (event === "final") applySlot(finals, sampleIndex, image);
-          else applySlot(previews, sampleIndex, image);
-          const visible = (event === "final" ? finals : previews).filter(Boolean);
-          options.onPreview(visible.length ? visible : [image]);
-          const currentStep =
-            typeof payload.currentStep === "number" ? payload.currentStep : 0;
-          const totalSteps =
-            typeof payload.totalSteps === "number" ? payload.totalSteps : 0;
-          if (totalSteps)
-            options.onProgress(
-              `${Math.min(currentStep, totalSteps)}/${totalSteps} 步`,
-            );
-        }
-        if (event === "done") {
-          const images = Array.isArray(payload.images)
-            ? payload.images.filter((item): item is string => typeof item === "string")
-            : [];
-          const historyIds = Array.isArray(payload.historyIds)
-            ? payload.historyIds.filter((item): item is string => typeof item === "string")
-            : [];
-          options.onComplete?.(historyIds, typeof payload.requestId === "string" ? payload.requestId : undefined);
-          if (images.length) doneImages = images;
-        }
-      }
-      if (done) break;
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  if (errorMessage) throw new Error(errorMessage);
-  const completed = finals.filter(Boolean);
-  return doneImages?.length ? doneImages : completed;
-}
 // 多角色：每角色独立 prompt + 负向提示词 + 画面中心坐标（对齐 NAI Character Prompts）。
 type CharacterPromptUi = {
   id: string;
@@ -500,6 +442,8 @@ const ASSISTANT_POLL_INTERVAL_MS = 2_000;
 const ASSISTANT_MAX_POLLS = 60;
 const ASSISTANT_TIMEOUT_MS = 2 * 60 * 1_000;
 const ASSISTANT_MESSAGE_MAX = 500;
+const SOURCE_REFRESH_TTL_MS = 5 * 60 * 1_000;
+const POLICY_REFRESH_TTL_MS = 5 * 60 * 1_000;
 const defaultPrompt =
   "masterpiece, best quality, 1girl, white hair, crimson eyes, intricate kimono, soft window light";
 const defaultNegative = "lowres, bad anatomy, blurry, text, watermark";
@@ -770,6 +714,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [tagSearching, setTagSearching] = useState(false);
   const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
   const [assistantModel, setAssistantModel] = useState("");
+  const assistantModelsLoading = useRef(false);
+  const assistantModelsLoaded = useRef(false);
   const [agentInput, setAgentInput] = useState("");
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   // 随需求发给视觉模型的参考图（data URL）。
@@ -778,6 +724,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
+  const sourcesRefreshedAt = useRef(0);
+  const policyRefreshedAt = useRef(0);
+  const policyRequestRef = useRef<Promise<void> | null>(null);
   const [conversation, setConversation] = useState<ConversationUi>({
     turns: [],
     tagPool: [],
@@ -922,6 +871,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const selectedProvider = customProviders.find((item) => item.id === providerId);
   const imageProtocol = providerId === "newapi" ? newApiImageProtocol : providerId === "novelai" ? "auto" : resolveProviderImageProtocol(selectedProvider?.protocol, selectedProvider?.baseUrl || "");
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
+  const mediumEffort = isNaiMediumModel(model);
+  const highEffortSettings = useRef<{ model: string; steps: number; sampler: string; cfgRescale: number; width: number; height: number; count: number } | null>(null);
+  useEffect(() => {
+    if (!mediumEffort) return;
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      const size = normalizeImageModelSize(model, width, height, imageProtocol);
+      setWidth(size.width);
+      setHeight(size.height);
+      setCount(1);
+      setSteps(14);
+      setSampler("k_euler_ancestral");
+      setCfgRescale(0);
+      if (!resolveImageModelCapabilities(model, imageProtocol).operations.includes(operation)) setOperation("generate");
+    });
+    return () => { active = false; };
+  }, [mediumEffort, model, imageProtocol, operation, width, height, count]);
   // 输出设置的门控能力：未选具体模型时（如刚切换接口）按接口的代表性模型
   // 展示与校验，否则用户的选择会因空模型能力列表被立即重置回默认值。
   const displayModel = model
@@ -953,6 +920,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         ? customProviderModels
         : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })), [providerId, newApiModelsLoaded, newApiModels, policyModelOptions, modelPolicy, customProviderModels, selectedProvider]);
   const modelOptions = useMemo(() => allModelOptions.filter((item) => modelMatchesProductMode(item.value, productMode)), [allModelOptions, productMode]);
+  const modelSelectionOptions = useMemo(
+    () => modelOptions.filter((item) => !isNaiMediumModel(item.value)),
+    [modelOptions],
+  );
+  const modelSelectionValue = isNaiMediumModel(model)
+    ? model.replace(/-medium$/i, "")
+    : model;
   // 模型被外部来源（历史复用、URL 参数、缓存）改变时，接口模式跟随模型。
   useEffect(() => {
     if (!model) return;
@@ -1286,8 +1260,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           background: imageBackground,
           model: inpaintModel,
           prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
-          negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
-          ...(composedPromptLayout ? { qualityToggle: false, ucPreset: 3 } : {}),
+          negative_prompt: mediumEffort ? "" : composedPromptLayout ? effectivePrompts.negative : negative,
+          ...(mediumEffort ? { ucPreset: 0, tag_hint_uc_preset: 2 } : composedPromptLayout ? { qualityToggle: false, ucPreset: 3 } : {}),
           width: patch.width,
           height: patch.height,
           steps,
@@ -1356,7 +1330,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       let historyError = "";
       try {
         if (imageHistoryMode === "local") {
-          const localId = crypto.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          const localId = createBrowserRequestId("local");
           await saveLocalImageHistory({ id: localId, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: inpaintModel, operation: "inpainting" });
         } else if (imageHistoryMode === "account") {
           historyId = await saveEditorComposite({
@@ -1392,6 +1366,24 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setMobileSheet("assistant");
     } else {
       setReplicaAssistantOpenRequest(value => value + 1);
+    }
+    if (signedIn && !assistantModelsLoaded.current && !assistantModelsLoading.current) {
+      assistantModelsLoading.current = true;
+      void fetch("/api/assistant/models", { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.message);
+          const options = (result.models || []).map((item: string) => ({ value: item, label: item }));
+          setAssistantModels(options);
+          setAssistantModel((current) => {
+            const saved = window.localStorage.getItem("lfn-agent-model");
+            const preferred = current || saved;
+            return options.some((option: SelectOption) => option.value === preferred) ? preferred : (options[0]?.value || "");
+          });
+          assistantModelsLoaded.current = true;
+        })
+        .catch((error) => setNotice(error instanceof Error ? error.message : "无法读取助手模型"))
+        .finally(() => { assistantModelsLoading.current = false; });
     }
   }
 
@@ -1825,7 +1817,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   useEffect(() => {
     const controller = new AbortController();
     const refresh = () => {
-      fetch("/api/public/image-policy", { cache: "no-store", signal: controller.signal })
+      if (controller.signal.aborted || policyRequestRef.current || Date.now() - policyRefreshedAt.current < POLICY_REFRESH_TTL_MS) return;
+      policyRefreshedAt.current = Date.now();
+      policyRequestRef.current = fetch("/api/public/image-policy", { cache: "no-store", signal: controller.signal })
         .then(async (response) => {
           if (response.ok) {
             const result = await response.json() as Partial<ModelPolicy>;
@@ -1838,11 +1832,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         .catch(() => {
           if (!controller.signal.aborted) setModelPolicyReady(true);
           // Keep the conservative client policy until the next refresh.
-        });
+        })
+        .finally(() => { policyRequestRef.current = null; });
     };
     refresh();
     window.addEventListener("focus", refresh);
-    const timer = window.setInterval(refresh, 60_000);
+    const timer = window.setInterval(refresh, POLICY_REFRESH_TTL_MS);
     return () => {
       controller.abort();
       window.removeEventListener("focus", refresh);
@@ -1935,10 +1930,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   useEffect(() => {
     if (!signedIn) return;
     const controller = new AbortController();
-    void Promise.resolve().then(() => refreshSources(controller.signal));
-    const onFocus = () => { if (!controller.signal.aborted) void refreshSources(controller.signal); };
+    const refreshIfStale = () => {
+      if (controller.signal.aborted || Date.now() - sourcesRefreshedAt.current < SOURCE_REFRESH_TTL_MS) return;
+      sourcesRefreshedAt.current = Date.now();
+      void refreshSources(controller.signal);
+    };
+    refreshIfStale();
+    const onFocus = () => refreshIfStale();
     window.addEventListener("focus", onFocus);
-    const timer = window.setInterval(onFocus, 60_000);
+    const timer = window.setInterval(onFocus, SOURCE_REFRESH_TTL_MS);
     return () => {
       controller.abort();
       window.removeEventListener("focus", onFocus);
@@ -1979,31 +1979,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       modelOptions.some((item) => item.value === current) ? current : modelOptions[0].value,
     ));
   }, [formCacheReady, modelPolicyReady, model, modelOptions]);
-
-  useEffect(() => {
-    if (!signedIn) return;
-    fetch("/api/assistant/models")
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message);
-        const options = (result.models || []).map((item: string) => ({
-          value: item,
-          label: item,
-        }));
-        setAssistantModels(options);
-        setAssistantModel((current) => {
-          // 助手模型跨会话记忆：上次选中的模型仍然可用时优先恢复。
-          const saved = window.localStorage.getItem("lfn-agent-model");
-          const preferred = current || saved;
-          return options.some((option: { value: string }) => option.value === preferred)
-            ? preferred
-            : (options[0]?.value || "");
-        });
-      })
-      .catch((error) =>
-        setNotice(error instanceof Error ? error.message : "无法读取助手模型"),
-      );
-  }, [signedIn]);
 
   useEffect(() => {
     if (!assistantModel) return;
@@ -2102,11 +2077,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       ? `/api/gallery/${encodeURIComponent(id)}/image`
       : `/api/history/${encodeURIComponent(id)}/image`;
     let active = true;
-    void fetch(endpoint, { cache: "no-store" })
-      .then(async (response) => {
+    void (async () => {
+      let blob: Blob | null = null;
+      const local = historyId ? await findLocalImageHistory(historyId).catch(() => null) : null;
+      if (historyId) {
+        if (local) blob = local.image;
+      }
+      if (!blob) {
+        const response = await fetch(endpoint, { cache: "no-store" });
         if (!response.ok) throw new Error("无法读取要导入的图片");
-        const blob = await response.blob();
-        if (!active) return;
+        blob = await response.blob();
+      }
+      if (active) {
+        const importedDataUrl = await blobToDataUrl(blob);
+        setImages([importedDataUrl]);
         const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
         if (importMode === "img2img") {
           const file = new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type });
@@ -2116,7 +2100,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setSource(null);
           setOperation("generate");
         }
-        if (historyId) {
+        if (historyId && !local?.parameters) {
           const metadataResponse = await fetch(`/api/history/${encodeURIComponent(historyId)}`, { cache: "no-store" });
           const metadata = await metadataResponse.json().catch(() => null) as { parameters?: GenerationParameters } | null;
           if (active && metadataResponse.ok && metadata?.parameters) {
@@ -2124,9 +2108,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             setOperation(importMode === "img2img" ? "img2img" : "generate");
             setNotice(importMode === "img2img" ? "已载入历史图片和全部参数；参数仍可调整。" : "已载入历史提示词和全部参数；当前为文生图，参数仍可调整。");
           }
+        } else if (historyId && local?.parameters) {
+          restoreGenerationParameters(local.parameters as GenerationParameters);
+          setOperation(importMode === "img2img" ? "img2img" : "generate");
+          setNotice(importMode === "img2img" ? "已从本地载入历史图片和全部参数；参数仍可调整。" : "已从本地载入历史提示词和全部参数；当前为文生图，参数仍可调整。");
         }
-      })
-      .catch((error) => {
+      }
+    })().catch((error) => {
         if (active) setNotice(error instanceof Error ? error.message : "导入图片失败");
       });
     return () => { active = false; };
@@ -2651,7 +2639,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         inlineChatTarget={{ kind: "prompt", label: naiLayout ? "提示词" : "描述画面" }}
         openInlineChatMenu={openInlineChatMenu}
       />
-      {operation !== "suggest-tags" && (
+      {operation !== "suggest-tags" && modelCapabilities.acceptsNegative && (
         <Prompt
           label={naiLayout ? "负面内容" : "排除内容"}
           value={negative}
@@ -2667,7 +2655,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       {!naturalImageModel && operation !== "suggest-tags" && (
         // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
         <div className="grid gap-3">
-          <div className="block text-xs font-semibold text-[#4c5052]">
+          <div hidden={mediumEffort} className="block text-xs font-semibold text-[#4c5052]">
             <span className="mb-2 block">质量词 <small className="font-normal text-[var(--muted)]">追加到提示词末尾</small></span>
             <PopupSelect
               value={qualityTier}
@@ -2682,7 +2670,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               emptyText="没有匹配项"
             />
           </div>
-          <div className="block text-xs font-semibold text-[#4c5052]">
+          <div hidden={mediumEffort} className="block text-xs font-semibold text-[#4c5052]">
             <span className="mb-2 block">负面预设 (UC) <small className="font-normal text-[var(--muted)]">添加到排除内容前缀</small></span>
             <PopupSelect
               value={ucType}
@@ -2898,8 +2886,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <small>步数</small>
             <WheelNumberInput
               ariaLabel="采样步数"
-              min={1}
-              max={50}
+              min={mediumEffort ? 14 : 1}
+              max={mediumEffort ? 14 : 50}
               step={1}
               value={steps}
               setValue={setSteps}
@@ -2941,8 +2929,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             label="采样步数"
             value={steps}
             setValue={setSteps}
-            min={1}
-            max={50}
+            min={mediumEffort ? 14 : 1}
+            max={mediumEffort ? 14 : 50}
             step={1}
           />
           <NumericSlider
@@ -2968,6 +2956,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 value={sampler}
                 options={samplers}
                 onChange={setSampler}
+                disabled={mediumEffort}
                 ariaLabel="采样器"
               />
             </Control>
@@ -2983,14 +2972,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </button>
           {advancedOpen && (
             <div className="space-y-4 pt-1">
-              <NumericSlider
+              {!mediumEffort && <NumericSlider
                 label="提示词相关性重缩放"
                 value={cfgRescale}
                 setValue={setCfgRescale}
                 min={0}
                 max={1}
                 step={0.02}
-              />
+              />}
               <Control label="噪声调度">
                 <PopupSelect
                   value={schedule}
@@ -3016,8 +3005,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             onChange={(next) => {
               setProviderId(next);
               setCustomProviderModels([]);
-              if (next === "newapi") setModel(newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
-              else if (next === "novelai") setModel(models[0].value);
+              if (next === "newapi") setModel(newApiModels.find((item) => /^nai-v5-full$/i.test(item.value))?.value || newApiModels[0]?.value || (newApiModelsLoaded ? "" : models[0].value));
+              else if (next === "novelai") setModel("nai-v5-full");
               else setModel(customProviders.find((item) => item.id === next)?.models[0] || "");
               if (next !== "newapi") setOperation("generate");
             }}
@@ -3031,8 +3020,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       <div className="nai-model-mode-row">
         <Control label="模型">
           <PopupSelect
-            value={modelOptions.some((item) => item.value === model) ? model : ""}
-            options={modelOptions}
+            value={modelSelectionOptions.some((item) => item.value === modelSelectionValue) ? modelSelectionValue : ""}
+            options={modelSelectionOptions}
             onChange={(next) => {
               setModel(next);
               const caps = resolveImageModelCapabilities(next, imageProtocol);
@@ -3064,6 +3053,45 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           </Control>
         )}
       </div>
+      {(mediumEffort || /^nai-v5-(?:full|inpaint)(?:-limit)?$/.test(model)) && <Control label="生成档位">
+        <div role="group" aria-label="生成档位" className="flex gap-1">
+          {(["high", "medium"] as const).map((effort) => {
+            const target = effort === "medium"
+              ? (model.includes("inpaint") ? "nai-v5-inpaint-medium" : "nai-v5-full-medium")
+              : highEffortSettings.current && model.includes("inpaint") === highEffortSettings.current.model.includes("inpaint")
+                ? highEffortSettings.current.model : model.replace(/-medium$/, "");
+            return <button
+              key={effort}
+              type="button"
+              aria-pressed={(effort === "medium") === mediumEffort}
+              disabled={generating || !modelOptions.some((item) => item.value === target)}
+              className={`h-9 flex-1 rounded border px-2 text-xs ${((effort === "medium") === mediumEffort) ? "border-[var(--rose)] text-[var(--rose)]" : "border-[var(--line)]"}`}
+              onClick={() => {
+                if (effort === "medium" && !mediumEffort) {
+                  highEffortSettings.current = { model, steps, sampler, cfgRescale, width, height, count };
+                  const size = normalizeImageModelSize(target, width, height);
+                  setWidth(size.width);
+                  setHeight(size.height);
+                  setSteps(14);
+                  setSampler("k_euler_ancestral");
+                  setCfgRescale(0);
+                  setCount(1);
+                } else if (effort === "high" && highEffortSettings.current) {
+                  setSteps(highEffortSettings.current.steps);
+                  setSampler(highEffortSettings.current.sampler);
+                  setCfgRescale(highEffortSettings.current.cfgRescale);
+                  setWidth(highEffortSettings.current.width);
+                  setHeight(highEffortSettings.current.height);
+                  setCount(highEffortSettings.current.count);
+                }
+                setModel(target);
+              }}
+            >
+              {effort === "medium" ? "低成本 · Medium" : "常规 · High"}
+            </button>;
+          })}
+        </div>
+      </Control>}
       {providerId === "newapi" && <Control label="图像接口">
         <PopupSelect
           value={productMode}
@@ -3703,7 +3731,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       response_format: "b64_json",
       ...(imageHistoryMode === "none" ? { _lfnSkipServerHistory: true } : {}),
     };
-    base._lfnRequestId = crypto.randomUUID();
+    base._lfnRequestId = createBrowserRequestId();
     if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
     if (modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (modelCapabilities.seed && seed.trim() && Number(seed) !== 0) base.seed = Number(seed);
@@ -3755,6 +3783,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           center: { x: character.centerX, y: character.centerY },
         }));
       base.use_coords = !aiAutoPosition;
+    }
+    if (mediumEffort) {
+      base.steps = 14;
+      base.sampler = "k_euler_ancestral";
+      base.cfg_rescale = 0;
+      base.negative_prompt = "";
+      base.ucPreset = 0;
+      base.tag_hint_uc_preset = 2;
+      if (Array.isArray(base.characterPrompts)) {
+        base.characterPrompts = (base.characterPrompts as Array<Record<string, unknown>>).map((character) => ({
+          ...character,
+          negativePrompt: "",
+        }));
+      }
     }
     if (["img2img", "inpainting", "edits"].includes(operation)) {
       base.image = source?.data;
@@ -4032,7 +4074,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       : null;
   const estimatedAffCost =
     affFixedCost != null
-      ? Math.ceil(affFixedCost) * outputCount
+      ? roundBillingAmount(affFixedCost) * outputCount
       : estimateAff({
           model,
           operation,
@@ -4040,6 +4082,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           height: upscaleDims ? upscaleDims.height : height,
           steps,
           samples: outputCount,
+          sequential: batchMode === "sequential" && outputCount > 1,
+          strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
+          referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
+          encodedVibeCount: 0,
           characterPromptCount: activeCharacterCount,
         });
   const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
@@ -4049,6 +4095,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     characterPromptCount: activeCharacterCount,
     strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
     referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
+    encodedVibeCount: 0,
   });
   const packageRateImages = Math.min(
     outputCount,
@@ -4059,7 +4106,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const estimatedPackageCost = wallet?.aff?.enabled
     ? Math.min(
         wallet.aff.packageBalance,
-        Math.ceil(
+        roundBillingAmount(
           (estimatedAffCost * packageRateImages) /
             Math.max(1, outputCount),
         ),
@@ -5049,7 +5096,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 {!naturalImageModel && operation !== "suggest-tags" && (
                   // 等级提示词预设（移植 Aaalice）：质量词→正向末尾，UC→负向前缀。
                   <div className="grid gap-3 sm:col-span-2 sm:grid-cols-2">
-                    <div className="block text-xs font-semibold text-[#4c5052]">
+                    <div hidden={mediumEffort} className="block text-xs font-semibold text-[#4c5052]">
                       <span className="mb-2 block">质量词 <small className="font-normal text-[var(--muted)]">追加到提示词末尾</small></span>
                       <PopupSelect
                         value={qualityTier}

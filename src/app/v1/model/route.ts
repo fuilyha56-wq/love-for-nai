@@ -1,2 +1,2 @@
-export { GET } from "../models/route";
+export { GET, OPTIONS } from "../models/route";
 

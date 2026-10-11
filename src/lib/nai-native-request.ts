@@ -1,6 +1,8 @@
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 const NAI_SEED_RANGE = 2 ** 32;
 
+export const NAI_MEDIUM_NEGATIVE_PROMPT = "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
+
 const modelAliases: Record<string, string> = {
   "nai-v4.5-full": "nai-diffusion-4-5-full",
   "nai-v4.5-curated": "nai-diffusion-4-5-curated",
@@ -8,6 +10,8 @@ const modelAliases: Record<string, string> = {
   "nai-v5-full": "nai-diffusion-5-full",
   "nai-v5-curated": "nai-diffusion-5-curated",
   "nai-v5-inpaint": "nai-diffusion-5-full-inpainting",
+  "nai-v5-full-medium": "nai-diffusion-5-full-medium",
+  "nai-v5-inpaint-medium": "nai-diffusion-5-full-medium-inpainting",
   "nai-v4-full": "nai-diffusion-4-full",
   "nai-v4-curated": "nai-diffusion-4-curated-preview",
   "nai-v3": "nai-diffusion-3",
@@ -36,6 +40,11 @@ export function naiUpstreamModel(model: string): string {
   return modelAliases[withoutLimit] || trimmed;
 }
 
+export function isNaiMediumModel(model: string): boolean {
+  return /nai-v5-(?:full|inpaint)-medium$/i.test(model) ||
+    /nai-diffusion-5-full-medium(?:-inpainting)?$/i.test(model);
+}
+
 export function randomNaiSeed(): number {
   const cryptoObject = globalThis.crypto;
   if (cryptoObject) {
@@ -55,6 +64,7 @@ function actionFor(operation: string): string {
 function modelForAction(model: string, action: string): string {
   const upstream = naiUpstreamModel(model);
   if (action !== "infill") return upstream;
+  if (isNaiMediumModel(model)) return "nai-diffusion-5-full-medium-inpainting";
   if (upstream.startsWith("nai-diffusion-5"))
     return "nai-diffusion-5-full-inpainting";
   if (upstream.startsWith("nai-diffusion-4-5"))
@@ -109,28 +119,33 @@ export function naiNativeGenerationBody(
   const useCoords = typeof body.use_coords === "boolean" ? body.use_coords : true;
   const action = actionFor(operation);
   const upstreamModel = modelForAction(String(body.model || ""), action);
+  const medium = isNaiMediumModel(String(body.model || ""));
   const parameters: Record<string, unknown> = {
     params_version: upstreamModel.startsWith("nai-diffusion-5") ? 4 : 3,
     width: body.width,
     height: body.height,
     scale: body.scale ?? 5,
-    sampler: body.sampler ?? "k_euler_ancestral",
-    steps: body.steps ?? 28,
+    sampler: medium ? "k_euler_ancestral" : body.sampler ?? "k_euler_ancestral",
+    steps: medium ? 14 : body.steps ?? 28,
     n_samples: samples,
     ucPreset: typeof body.ucPreset === "number" && Number.isInteger(body.ucPreset) && body.ucPreset >= 0 && body.ucPreset <= 3 ? body.ucPreset : 0,
     qualityToggle: typeof body.qualityToggle === "boolean" ? body.qualityToggle : true,
-    cfg_rescale: body.cfg_rescale ?? 0,
+    cfg_rescale: medium ? 0 : body.cfg_rescale ?? 0,
     noise_schedule: body.noise_schedule ?? "karras",
     noise: body.noise ?? 0,
     // NAI 官方语义：种子留空即随机；0 同样视为未指定。
     seed: typeof body.seed === "number" && Number.isSafeInteger(body.seed) && body.seed !== 0 ? body.seed : randomNaiSeed(),
-    negative_prompt: negative,
+    negative_prompt: medium ? NAI_MEDIUM_NEGATIVE_PROMPT : negative,
     legacy: false,
     add_original_image: true,
     autoSmea: false,
     deliberate_euler_ancestral_bug: false,
     prefer_brownian: true,
   };
+  if (medium) {
+    parameters.ucPreset = 0;
+    parameters.tag_hint_uc_preset = 2;
+  }
   if (options.stream) parameters.stream = "msgpack";
   if (typeof body.strength === "number") parameters.strength = body.strength;
   if (typeof body.image === "string" && body.image)
@@ -175,7 +190,9 @@ export function naiNativeGenerationBody(
     parameters.characterPrompts = body.characters;
   }
   if (Array.isArray(body.characterPrompts) && body.characterPrompts.length) {
-    parameters.characterPrompts = body.characterPrompts;
+    parameters.characterPrompts = medium
+      ? (body.characterPrompts as Array<Record<string, unknown>>).map((character) => ({ ...character, negative: "", negativePrompt: "" }))
+      : body.characterPrompts;
     const captions = characterCaptions(body.characterPrompts);
     parameters.v4_prompt = {
       caption: { base_caption: prompt, char_captions: captions },
@@ -185,8 +202,8 @@ export function naiNativeGenerationBody(
     // 每角色负向：优先 negativePrompt，并兼容旧 negative 字段。
     parameters.v4_negative_prompt = {
       caption: {
-        base_caption: negative,
-        char_captions: characterCaptions(body.characterPrompts, true),
+        base_caption: medium ? NAI_MEDIUM_NEGATIVE_PROMPT : negative,
+        char_captions: characterCaptions(parameters.characterPrompts, true),
       },
       legacy_uc: false,
     };

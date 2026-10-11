@@ -106,6 +106,7 @@ export async function POST(request: Request): Promise<Response> {
       body: JSON.stringify(payload),
       contentType: "application/json",
       generation,
+      prompt: typeof body.prompt === "string" ? body.prompt : undefined,
     },
   );
   return naiZipResponse(upstream);

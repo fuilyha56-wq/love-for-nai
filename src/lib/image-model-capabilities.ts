@@ -1,3 +1,5 @@
+import { isNaiMediumModel } from "./nai-native-request";
+
 /** Shared by the studio, assistant and server adapters. Endpoint selection is explicit for gateways. */
 export type ImageProviderProtocol = "auto" | "openai-images" | "gemini" | "openai-chat-images";
 /** Canonical product families used by prompts/history; transport protocol stays independent. */
@@ -60,6 +62,7 @@ export function modelMatchesProductMode(model: string, mode: ImageProductMode): 
 
 export function resolveImageModelCapabilities(model: string, protocol: ImageProviderProtocol = "auto"): ImageModelCapabilities {
   const nai = /^nai-(?!chat$)/i.test(model);
+  const medium = isNaiMediumModel(model);
   const gpt = /^(?:gpt-image|chatgpt-image)/i.test(model);
   const nanoBanana = isNanoBananaModel(model);
   const gemini = isGeminiImageModel(model) || /^gemini-.*imagen/i.test(model) || nanoBanana || protocol === "gemini";
@@ -74,21 +77,21 @@ export function resolveImageModelCapabilities(model: string, protocol: ImageProv
     family,
     promptStyle: nai ? "tags" : "natural",
     protocol: nai ? "nai" : transport,
-    operations: nai ? [...EDIT_OPERATIONS, "suggest-tags", "encode-vibe"] : edit ? EDIT_OPERATIONS : ["generate"],
+    operations: medium ? ["generate", "img2img", "inpainting", "edits", "outpainting"] : nai ? [...EDIT_OPERATIONS, "suggest-tags", "encode-vibe"] : edit ? EDIT_OPERATIONS : ["generate"],
     edit,
     nativeMask: nai || (transport === "openai-images" && (gpt || /^dall-e-2$/i.test(model))),
-    acceptsNegative: nai,
+    acceptsNegative: nai && !medium,
     seed: nai,
     sampling: nai,
     characters: nai,
-    vibe: nai,
-    preciseReference: nai,
+    vibe: nai && !medium,
+    preciseReference: nai && !medium,
     sizes: nai || flexibleGpt ? [] : gpt ? ["1024x1024", "1536x1024", "1024x1536"] : /^dall-e-3$/i.test(model) ? ["1024x1024", "1792x1024", "1024x1792"] : /^dall-e-2$/i.test(model) ? ["256x256", "512x512", "1024x1024"] : [],
     aspectRatios: gemini ? GEMINI_RATIOS : [],
     qualityOptions: gpt && transport === "openai-images" ? ["auto", "low", "medium", "high", ...(/^gpt-image-2\.5(?:[.-]|$)/i.test(model) ? ["xhigh", "max"] : [])] : [],
     imageSizes: gemini && transport === "gemini" ? geminiHighResolution ? ["1K", "2K", "4K", ...(/(?:3\.1.*flash|banana-2)/i.test(model) ? ["512"] : [])] : ["1K"] : [],
-    sizeConstraints: flexibleGpt ? { multipleOf: 16, minPixels: 655_360, maxPixels: 8_294_400, maxEdge: 3840, maxAspectRatio: 3 } : null,
-    maxBatch: nai ? 8 : gemini || /^dall-e-3$/i.test(model) || transport === "openai-chat-images" ? 1 : 8,
+    sizeConstraints: medium ? { multipleOf: 64, minPixels: 4096, maxPixels: 1_048_576, maxEdge: 1600, maxAspectRatio: 25 } : flexibleGpt ? { multipleOf: 16, minPixels: 655_360, maxPixels: 8_294_400, maxEdge: 3840, maxAspectRatio: 3 } : null,
+    maxBatch: medium ? 1 : nai ? 8 : gemini || /^dall-e-3$/i.test(model) || transport === "openai-chat-images" ? 1 : 8,
   };
 }
 

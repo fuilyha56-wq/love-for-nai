@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp, RotateCcw, RectangleHorizontal, RectangleVertical, Square, Sprout } from "lucide-react";
 import { quantizeStepValue, useWheelStep } from "@/app/ui/wheel-number";
 import { useAnimatedDisclosure } from "@/app/ui/use-animated-disclosure";
+import { isNaiMediumModel } from "@/lib/nai-native-request";
 import "./replica-generation-settings.css";
 
 type Variant = "nai" | "nlw";
@@ -145,7 +146,8 @@ function SliderField({ label, value, onChange, min, max, step }: {
     <div className="rgs-slider-row">
       <NumberEntry label={label} value={value} onChange={onChange} min={min} max={max} step={step} />
       <input className="rgs-range" type="range" aria-label={`${label}滑条`} min={min} max={max} step={step}
-        style={{ "--rgs-progress": `${Math.max(0, Math.min(100, (value - min) / (max - min) * 100))}%` } as CSSProperties}
+        disabled={min === max}
+        style={{ "--rgs-progress": `${max === min ? 0 : Math.max(0, Math.min(100, (value - min) / (max - min) * 100))}%` } as CSSProperties}
         value={value} onChange={(event) => onChange(Number(event.target.value))} />
     </div>
   </div>;
@@ -173,6 +175,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
   const panelId = useId();
   const samplerLabel = REPLICA_SAMPLERS.find((item) => item.value === sampler)?.label ?? sampler;
+  const medium = isNaiMediumModel(model);
   const modelLabel = model.replace("nai-diffusion-5-curated", "NAI Diffusion V5 (Curated)")
     .replace("nai-diffusion-5", "NAI Diffusion V5 (Full)")
     .replace("nai-diffusion-4-5-full", "NAI Diffusion V4.5 (Full)");
@@ -245,7 +248,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
   }, [open, variant, setOpen]);
 
   function resetSampling() {
-    setSteps(23); setScale(7); setSeed(""); setSampler("k_euler_ancestral"); setSchedule("native"); setCfgRescale(0);
+    setSteps(medium ? 14 : 23); setScale(7); setSeed(""); setSampler("k_euler_ancestral"); setSchedule("native"); setCfgRescale(0);
   }
 
   const settingsPanel = <section ref={panel} id={panelId} className={`rgs-panel${open || mobileInline ? "" : " is-closing"}`} role="dialog" aria-label="生成参数设置" aria-hidden={mobileInline ? false : !open} inert={mobileInline ? undefined : !open}>
@@ -255,28 +258,28 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
       </div>
       <div className="rgs-panel-content">
         {variant === "nlw" && <div className="rgs-model-controls">{providerControls}{modelControls}</div>}
-        {props.naturalSettings || <>{variant === "nlw" && <label className="rgs-field"><span className="rgs-label">采样器</span>
+        {props.naturalSettings || <>{variant === "nlw" && !medium && <label className="rgs-field"><span className="rgs-label">采样器</span>
           <ReplicaSelect variant={variant} label="采样器" value={sampler} choices={REPLICA_SAMPLERS} onChange={setSampler} /></label>}
-        <SliderField label="步数" value={steps} onChange={setSteps} min={1} max={50} step={1} />
+        <SliderField label="步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : 50} step={1} />
         <SliderField label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} />
         {variant === "nai" && <div className="rgs-paired-fields">
           <label className="rgs-field"><span className="rgs-label">种子</span><div className="rgs-seed-row">
             <input aria-label="种子" value={seed} onChange={(event) => setSeed(event.target.value)} inputMode="numeric" placeholder="输入种子" />
             <button type="button" aria-label="使用随机种子" title="使用随机种子" onClick={() => setSeed("")}><Sprout size={16} /></button>
           </div></label>
-          <label className="rgs-field"><span className="rgs-label">采样器</span>
+          <label hidden={medium} className="rgs-field"><span className="rgs-label">采样器</span>
             <ReplicaSelect variant={variant} label="采样器" value={sampler} choices={REPLICA_SAMPLERS} onChange={setSampler} /></label>
         </div>}
         <button type="button" className="rgs-advanced-toggle" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)}>
           高级设置<ChevronDown size={14} className={advanced ? "is-open" : ""} /></button>
         <div className={`rgs-advanced-motion${advanced ? " is-open" : ""}`} aria-hidden={!advanced} inert={!advanced}><div className="rgs-advanced-content">
-          <SliderField label="提示引导重标" value={cfgRescale} onChange={setCfgRescale} min={0} max={1} step={0.02} />
+          {!medium && <SliderField label="提示引导重标" value={cfgRescale} onChange={setCfgRescale} min={0} max={1} step={0.02} />}
           <label className="rgs-field"><span className="rgs-label">噪声调度</span>
             <ReplicaSelect variant={variant} label="噪声调度" value={schedule} choices={schedules} onChange={setSchedule} /></label>
         </div></div></>}
         {variant === "nlw" && <div className="rgs-output-settings">
           <label className="rgs-field"><span className="rgs-label">图像数量</span>
-            <NumberEntry label="生成张数" value={count} onChange={setCount} min={1} max={30} step={1} /></label>
+            <NumberEntry label="生成张数" value={medium ? 1 : count} onChange={setCount} min={1} max={medium ? 1 : 30} step={1} /></label>
           <label className="rgs-field"><span className="rgs-label">提交方式</span>
             <ReplicaSelect variant={variant} label="提交方式" value={batchMode} onChange={(value) => setBatchMode(value as "once" | "sequential")}
               choices={[{ value: "once", label: "一次性" }, { value: "sequential", label: "分批次" }]} /></label>
@@ -288,7 +291,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
 
   return <div ref={root} className={`rgs-shell${open ? " is-open" : ""}`} data-replica-variant={variant}>
     {variant === "nai" && !props.naturalSettings ? <div className="rgs-summary">
-      <label><small>步数</small><NumberEntry label="采样步数" value={steps} onChange={setSteps} min={1} max={50} step={1} /></label>
+      <label><small>步数</small><NumberEntry label="采样步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : 50} step={1} /></label>
       <label><small>指导</small><NumberEntry label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} /></label>
       <span><small>种子</small><b title={seed || "随机种子"}>{seed || <Sprout size={16} aria-label="随机种子" />}</b></span>
       <span className="rgs-summary-sampler"><small>采样器</small><b>{samplerLabel}</b></span>

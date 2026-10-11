@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { encode } from "@msgpack/msgpack";
 import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { parseNaiStreamMessage, readNaiMsgpackStream } from "@/lib/nai-stream";
+import { consumeImageStream, sseEvent } from "@/lib/sse";
 
 function framed(message: Record<string, unknown>): Uint8Array {
   const payload = encode(message);
@@ -15,6 +16,22 @@ function framed(message: Record<string, unknown>): Uint8Array {
 }
 
 describe("NAI native stream protocol", () => {
+  it("finishes client image consumption on done without waiting for EOF or cancellation", async () => {
+    const cancel = vi.fn(() => new Promise<void>(() => {}));
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sseEvent("preview", { image: "preview", currentStep: 2, totalSteps: 14 })));
+        controller.enqueue(new TextEncoder().encode(sseEvent("done", { images: ["final"], requestId: "request-1", historyIds: [] })));
+      },
+      cancel,
+    }));
+    const onPreview = vi.fn();
+    const onComplete = vi.fn();
+    await expect(consumeImageStream(response, { expected: 1, onPreview, onProgress: vi.fn(), onComplete })).resolves.toEqual(["final"]);
+    expect(onPreview).toHaveBeenLastCalledWith(["final"]);
+    expect(onComplete).toHaveBeenCalledWith([], "request-1");
+    expect(cancel).toHaveBeenCalledOnce();
+  });
   it.each([0, 1, 2, 3])("preserves explicit quality disabling and valid UC preset %i", (ucPreset) => {
     const body = naiNativeGenerationBody({
       model: "nai-v5-full", prompt: "1girl, custom quality", negative_prompt: "custom uc",

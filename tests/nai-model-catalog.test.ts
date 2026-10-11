@@ -14,6 +14,7 @@ describe("统一 NAI 模型目录", () => {
     const ids = NAI_MODEL_CATALOG.map(({ id }) => id);
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids).toContain("nai-v5-full");
+    expect(ids).toContain("nai-v5-full-medium");
     expect(ids).toContain("nai-chat");
     expect(NAI_IMAGE_MODEL_CATALOG.every(({ kind }) => kind === "image")).toBe(true);
   });
@@ -21,6 +22,7 @@ describe("统一 NAI 模型目录", () => {
   it("shares inpaint and upscale entries with the canonical directory", () => {
     expect(NAI_INPAINT_MODEL_OPTIONS.map(([id]) => id)).toEqual([
       "nai-v5-inpaint",
+      "nai-v5-inpaint-medium",
       "nai-v5-inpaint-limit",
       "nai-v4.5-inpaint",
       "nai-v4.5-inpaint-limit",

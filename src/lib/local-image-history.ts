@@ -8,6 +8,7 @@ export type LocalImageHistoryItem = {
   negative?: string;
   model?: string;
   operation?: string;
+  parameters?: Record<string, unknown>;
 };
 
 const DB_NAME = "lfn-local-image-history-v1";

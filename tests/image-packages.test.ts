@@ -54,6 +54,22 @@ afterEach(async () => {
 });
 
 describe("图包 AFF 账本", () => {
+  it.each(["package", "personal"])("Medium charges and refunds exactly once to its %s source", async (source) => {
+    const userId = source === "package" ? 201 : 202;
+    const original = { balance: 3, packageBalance: source === "package" ? 3 : 0, transactions: [] };
+    await seedAccount(userId, original);
+    const charge = await trySpendImageCredits(userId, { model: "nai-v5-full-medium", width: 512, height: 512, steps: 14, samples: 1 });
+    if (!charge) throw new Error("Medium charge should exist");
+    expect(charge.cost).toBe(1);
+    expect(charge.packageCost).toBe(source === "package" ? 1 : 0);
+    expect(charge.personalCost).toBe(source === "personal" ? 1 : 0);
+    await refundImageCredits(userId, charge, 0);
+    expect(await affStatus(userId)).toMatchObject({ balance: original.balance, packageBalance: original.packageBalance });
+    const account = await readAccountFile(userId);
+    expect(account.packageUsage).toEqual([]);
+    expect(account.transactions).toEqual(expect.arrayContaining([expect.objectContaining({ amount: -1 }), expect.objectContaining({ amount: 1, type: "refund" })]));
+  });
+
   it("兼容旧账户并把缺省图包额度按 0 读取", async () => {
     await seedAccount(101, { balance: 7, transactions: [] });
 
@@ -113,7 +129,7 @@ describe("图包 AFF 账本", () => {
       packageBalance: 0,
     });
     expect(charge?.packageChargesBySample).toEqual([2, 0, 0]);
-    expect(charge?.personalChargesBySample).toEqual([0, 2, 1]);
+    expect(charge?.personalChargesBySample).toEqual([0, 1.5, 1.5]);
   });
 
   it("两种 AFF 合计不足时不修改本地余额", async () => {

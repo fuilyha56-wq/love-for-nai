@@ -4,6 +4,7 @@ export type AdminModuleId =
   | "overview"
   | "users"
   | "sessions"
+  | "risk"
   | "credits"
   | "announcements"
   | "gallery"
@@ -46,6 +47,12 @@ export function listAdminModules(
       label: "会话管理",
       description: "查看活跃会话数，告警并批量撤销超过 25 个活跃会话的用户。",
       enabled: capabilities.auth.provider === "newapi",
+    },
+    {
+      id: "risk",
+      label: "自动风控",
+      description: "查看风险案件、重复提示词、IP 证据、退款和邀请链封禁。",
+      enabled: true,
     },
     {
       id: "credits",

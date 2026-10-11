@@ -54,6 +54,11 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
+      if (url === "http://gateway.test/v1/images/price-quote")
+        return Response.json(
+          { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
+          { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
+        );
       if (url.startsWith("http://gateway.test"))
         return Response.json({ data: [{ b64_json: "abc" }] });
       if (url.startsWith("http://newapi.test"))
@@ -112,6 +117,7 @@ describe("外部 LFN 图像入口计费", () => {
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(
       41,
       expect.objectContaining({ model: "nai-v5-full", samples: 1 }),
+      2,
     );
     const gatewayCall = vi.mocked(fetch).mock.calls.find(
       ([url]) => url === "http://gateway.test/v1/images/generations",
@@ -149,7 +155,7 @@ describe("外部 LFN 图像入口计费", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
-    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything());
+    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything(), 2);
   });
 
   it("无余额时直接用托管密钥走 NewAPI 计费（按用户分组自动换组）", async () => {
@@ -164,6 +170,11 @@ describe("外部 LFN 图像入口计费", () => {
           newapiCalls.push(new Headers(init?.headers).get("Authorization") ?? "");
           return Response.json({ data: [{ b64_json: "abc" }] });
         }
+        if (url === "http://gateway.test/v1/images/price-quote")
+          return Response.json(
+            { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
+            { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
+          );
         if (url.startsWith("http://gateway.test"))
           return Response.json({ data: [{ b64_json: "abc" }] });
         throw new Error(`unexpected fetch ${url}`);
@@ -186,6 +197,11 @@ describe("外部 LFN 图像入口计费", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
+        if (url === "http://gateway.test/v1/images/price-quote")
+          return Response.json(
+            { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
+            { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
+          );
         if (url.startsWith("http://newapi.test"))
           return Response.json(
             { error: { code: "model_not_found", message: "No available channel for model nai-v5-full under group default (distributor)", type: "new_api_error" } },

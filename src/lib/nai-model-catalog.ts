@@ -16,6 +16,8 @@ const IMAGE_MODELS: readonly NaiModelCatalogEntry[] = [
   { id: "nai-v5-full", label: "nai-v5-full", kind: "image", inpaint: false },
   { id: "nai-v5-curated", label: "nai-v5-curated", kind: "image", inpaint: false },
   { id: "nai-v5-inpaint", label: "nai-v5-inpaint", kind: "image", inpaint: true },
+  { id: "nai-v5-full-medium", label: "nai-v5-full-medium", kind: "image", inpaint: false },
+  { id: "nai-v5-inpaint-medium", label: "nai-v5-inpaint-medium", kind: "image", inpaint: true },
   { id: "nai-v5-full-limit", label: "nai-v5-full-limit", kind: "image", inpaint: false },
   { id: "nai-v5-curated-limit", label: "nai-v5-curated-limit", kind: "image", inpaint: false },
   { id: "nai-v5-inpaint-limit", label: "nai-v5-inpaint-limit", kind: "image", inpaint: true },

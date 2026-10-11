@@ -4,6 +4,7 @@ import {
   estimateNewApiCost,
   estimatePoints,
   estimateTokens,
+  roundBillingAmount,
   pointPriceUsd,
   snapshotFromRawPricing,
   tokensToPoints,
@@ -29,18 +30,25 @@ const liveV5 = snapshotFromRawPricing(
 );
 
 describe("NewAPI image cost previews", () => {
+  it("applies the AFF half-point rounding boundary", () => {
+    expect(roundBillingAmount(2.49)).toBe(2);
+    expect(roundBillingAmount(2.5)).toBe(2.5);
+    expect(roundBillingAmount(2.51)).toBe(3);
+    expect(roundBillingAmount(-2.5)).toBe(-2.5);
+  });
+
   it("keeps the Anlas conversion separate from NewAPI usage tokens", () => {
     expect(pointPriceUsd(base.model)).toBe(0.03);
     expect(tokensToPoints(1000)).toBe(20);
     expect(tokensToPoints(51)).toBe(1.02);
     expect(estimatePoints(base)).toBe(0);
     expect(estimateTokens(base)).toBe(0);
-    expect(envelopeUsageTokens(base.model)).toBe(8);
+    expect(envelopeUsageTokens(base.model)).toBe(25);
   });
 
-  it("uses the gateway's 8-token V5 envelope marker, including the group ratio", () => {
-    expect(liveV5.inEnvelopeUsd).toBe(2.08);
-    expect(estimateNewApiCost(liveV5, base)).toBe(2.08);
+  it("uses the gateway's 25-token V5 envelope marker, including the group ratio", () => {
+    expect(liveV5.inEnvelopeUsd).toBe(6.5);
+    expect(estimateNewApiCost(liveV5, base)).toBe(6.5);
     const halfPrice = snapshotFromRawPricing(
       base.model,
       {
@@ -49,7 +57,7 @@ describe("NewAPI image cost previews", () => {
       },
       0.5,
     );
-    expect(estimateNewApiCost(halfPrice, base)).toBe(1.04);
+    expect(estimateNewApiCost(halfPrice, base)).toBe(3.25);
     expect(estimateNewApiCost(halfPrice, { ...base, samples: 4 })).toBe(1040);
   });
 
@@ -62,17 +70,17 @@ describe("NewAPI image cost previews", () => {
   });
 
   it("prices independent n=1 requests separately from one multi-image request", () => {
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, sequential: true })).toBe(6.24);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, maxSamplesPerRequest: 1 })).toBe(6.24);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, sequential: true })).toBe(19.5);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3, maxSamplesPerRequest: 1 })).toBe(19.5);
     expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1560);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(2082.08);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(2086.5);
   });
 
   it("keeps text-only character prompts inside the fixed envelope", () => {
     const withCharacters = { ...base, characterPromptCount: 2 };
     expect(usesLimitPricing(withCharacters)).toBe(true);
     expect(estimatePoints(withCharacters)).toBe(0);
-    expect(estimateNewApiCost(liveV5, withCharacters)).toBe(2.08);
+    expect(estimateNewApiCost(liveV5, withCharacters)).toBe(6.5);
     expect(usesLimitPricing({ ...base, hasInputImage: true })).toBe(false);
     expect(usesLimitPricing({ ...base, hasInputImage: true, operation: "img2img" })).toBe(true);
   });
@@ -86,7 +94,7 @@ describe("NewAPI image cost previews", () => {
       },
       1,
     );
-    expect(estimateNewApiCost(target, base)).toBe(0.06);
+    expect(estimateNewApiCost(target, base)).toBe(0.1875);
     expect(estimateNewApiCost(target, { ...base, samples: 4 })).toBe(4.8);
   });
 
@@ -110,7 +118,7 @@ describe("NewAPI image cost previews", () => {
     const perRequest = snapshotFromRawPricing(base.model, { quota_type: 1, model_price: 2 }, 0.5);
     expect(estimateNewApiCost(perRequest, { ...base, samples: 3 })).toBe(3);
     const perToken = snapshotFromRawPricing(base.model, { model_ratio: 100000 }, 1);
-    expect(estimateNewApiCost(perToken, base)).toBeCloseTo(1.6);
+    expect(estimateNewApiCost(perToken, base)).toBeCloseTo(5);
     const chat = snapshotFromRawPricing("nai-chat", { quota_type: 1, model_price: 2 }, 0.5);
     expect(estimateNewApiCost(chat, { ...base, model: "nai-chat", samples: 3 })).toBe(3);
     const otherImage = { ...base, model: "custom-image" };

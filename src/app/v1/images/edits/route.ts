@@ -1,12 +1,18 @@
 import {
   externalGeneration,
   externalJsonBody,
+  isNaiExternalModel,
   proxyImageWithCredits,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
+import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
+
+export function OPTIONS(): Response {
+  return externalCorsPreflight();
+}
 
 function badRequest(message: string): Response {
-  return Response.json({ error: { message } }, { status: 400 });
+  return withExternalCors(Response.json({ error: { message } }, { status: 400 }));
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -14,10 +20,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     assertBodySize(request);
   } catch (error) {
-    return Response.json(
+    return withExternalCors(Response.json(
       { error: { message: error instanceof Error ? error.message : "请求体过大" } },
       { status: 413 },
-    );
+    ));
   }
 
   if (contentType.includes("multipart/form-data")) {
@@ -29,6 +35,15 @@ export async function POST(request: Request): Promise<Response> {
       }
       const generation = externalGeneration(body, "edits");
       if (!generation) return badRequest("model、size 和 n 必须是有效的图像编辑参数");
+
+      if (!isNaiExternalModel(generation.model)) {
+        return proxyImageWithCredits(request, "/v1/images/edits", {
+          body: form,
+          contentType: null,
+          generation,
+          prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+        });
+      }
 
       const sanitized = new FormData();
       for (const [key, value] of form.entries()) {
@@ -46,6 +61,7 @@ export async function POST(request: Request): Promise<Response> {
         body: sanitized,
         contentType: null,
         generation,
+        prompt: typeof body.prompt === "string" ? body.prompt : undefined,
       });
     } catch (error) {
       return badRequest(error instanceof Error ? error.message : "图像编辑参数无效");
@@ -53,10 +69,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   if (!contentType.includes("application/json"))
-    return Response.json(
+    return withExternalCors(Response.json(
       { error: { message: "LFN 图像编辑接口只接受 JSON 或 multipart/form-data" } },
       { status: 415 },
-    );
+    ));
 
   let body: Record<string, unknown>;
   try {
@@ -67,17 +83,20 @@ export async function POST(request: Request): Promise<Response> {
   }
   const generation = externalGeneration(body, "edits");
   if (!generation) return badRequest("model、size 和 n 必须是有效的图像编辑参数");
-  const sanitized = {
-    ...body,
-    model: generation.model,
-    size: `${generation.width}x${generation.height}`,
-    n: generation.samples,
-    n_samples: generation.samples,
-    novelai_operation: "edits",
-  };
+  const sanitized = isNaiExternalModel(generation.model)
+    ? {
+        ...body,
+        model: generation.model,
+        size: `${generation.width}x${generation.height}`,
+        n: generation.samples,
+        n_samples: generation.samples,
+        novelai_operation: "edits",
+      }
+    : body;
   return proxyImageWithCredits(request, "/v1/images/edits", {
     body: externalJsonBody(sanitized),
     contentType: "application/json",
     generation,
+    prompt: typeof body.prompt === "string" ? body.prompt : undefined,
   });
 }

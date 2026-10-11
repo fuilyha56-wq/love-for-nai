@@ -149,7 +149,7 @@ export async function redeemCode(rawCode: string, userId: number): Promise<{ ite
     if (item.expiresAt && Date.parse(item.expiresAt) <= Date.now()) throw new Error("兑换码已过期");
     if (item.usedCount >= item.maxUses) throw new Error("兑换码使用次数已达上限");
     const referenceId = `redeem-code:${item.id}:${userId}`;
-    const grant = await grantAffOnce(userId, item.amount, `兑换码奖励：${item.code}`, referenceId);
+    const grant = await grantAffOnce(userId, item.amount, `兑换码奖励：${item.code}`, referenceId, "lfn-redeem");
     const record: RedeemRecord = {
       id: randomUUID(), codeId: item.id, code: item.code, userId, amount: item.amount,
       rewardType: item.rewardType, redeemedAt: new Date().toISOString(), referenceId,
