@@ -1,8 +1,10 @@
 import {
   externalGeneration,
   externalJsonBody,
+  imageRequestErrorBody,
   isNaiExternalModel,
   proxyImageWithCredits,
+  validateExternalMediumRequest,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
 import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
@@ -11,8 +13,8 @@ export function OPTIONS(): Response {
   return externalCorsPreflight();
 }
 
-function badRequest(message: string): Response {
-  return withExternalCors(Response.json({ error: { message } }, { status: 400 }));
+function badRequest(message: string, code = "lfn_invalid_image_request"): Response {
+  return withExternalCors(Response.json({ error: { message, type: "invalid_request_error", code } }, { status: 400 }));
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -33,6 +35,7 @@ export async function POST(request: Request): Promise<Response> {
       for (const [key, value] of form.entries()) {
         body[key] = value instanceof File ? await value.arrayBuffer() : value;
       }
+      validateExternalMediumRequest(body, "edits");
       const generation = externalGeneration(body, "edits");
       if (!generation) return badRequest("model、size 和 n 必须是有效的图像编辑参数");
 
@@ -64,7 +67,8 @@ export async function POST(request: Request): Promise<Response> {
         prompt: typeof body.prompt === "string" ? body.prompt : undefined,
       });
     } catch (error) {
-      return badRequest(error instanceof Error ? error.message : "图像编辑参数无效");
+      const detail = imageRequestErrorBody(error, "图像编辑参数无效");
+      return badRequest(detail.message, detail.code);
     }
   }
 
@@ -80,6 +84,12 @@ export async function POST(request: Request): Promise<Response> {
     assertBodySize(request);
   } catch (error) {
     return badRequest(error instanceof Error ? error.message : "Request body must be valid JSON");
+  }
+  try {
+    validateExternalMediumRequest(body, "edits");
+  } catch (error) {
+    const detail = imageRequestErrorBody(error, "Medium 参数无效");
+    return badRequest(detail.message, detail.code);
   }
   const generation = externalGeneration(body, "edits");
   if (!generation) return badRequest("model、size 和 n 必须是有效的图像编辑参数");

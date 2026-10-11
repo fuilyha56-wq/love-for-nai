@@ -17,6 +17,7 @@ import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
+import { imageRequestErrorBody } from "@/lib/compat-api";
 import {
   assertBodySize,
   assertImageModel,
@@ -54,7 +55,7 @@ export async function POST(request: Request) {
   try {
     validateMediumRequest(String(body.model), body);
   } catch (error) {
-    return NextResponse.json({ message: error instanceof Error ? error.message : "Medium 参数无效" }, { status: 400 });
+    return NextResponse.json(imageRequestErrorBody(error, "Medium 参数无效"), { status: 400 });
   }
   if (providerId && providerId !== "newapi") return handlePersonalProviderGeneration(request, session, { ...body, operation: "generate" }, providerId);
   try { assertImageModel(body.model); }
@@ -74,8 +75,9 @@ export async function POST(request: Request) {
     samples = normalizeSamples(body);
     validateMediumRequest(String(body.model), body);
   } catch (error) {
+    const detail = imageRequestErrorBody(error, "生成参数无效");
     return NextResponse.json(
-      { message: error instanceof Error ? error.message : "生成参数无效" },
+      detail,
       { status: error instanceof ImageRequestValidationError ? 400 : 400 },
     );
   }
