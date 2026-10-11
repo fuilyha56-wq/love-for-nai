@@ -7,6 +7,11 @@ import {
   proxyNaiNativeWithCredits,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
+import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
+
+export function OPTIONS(): Response {
+  return externalCorsPreflight();
+}
 
 export async function POST(request: Request): Promise<Response> {
   const authorization = bearerAuthorization(request);
@@ -14,25 +19,25 @@ export async function POST(request: Request): Promise<Response> {
   try {
     assertBodySize(request);
   } catch (error) {
-    return Response.json(
+    return withExternalCors(Response.json(
       { message: error instanceof Error ? error.message : "请求体过大" },
       { status: 413 },
-    );
+    ));
   }
 
   let body: Record<string, unknown>;
   try {
     body = await parseNaiGenerationBody(request.clone());
   } catch {
-    return Response.json(
+    return withExternalCors(Response.json(
       { message: "Request body must be valid JSON" },
       { status: 400 },
-    );
+    ));
   }
   if (typeof body.input !== "string" || !body.input.trim())
-    return Response.json({ message: "input is required" }, { status: 400 });
+    return withExternalCors(Response.json({ message: "input is required" }, { status: 400 }));
   if (typeof body.model !== "string" || !body.model.trim())
-    return Response.json({ message: "model is required" }, { status: 400 });
+    return withExternalCors(Response.json({ message: "model is required" }, { status: 400 }));
 
   const parameters = isRecord(body.parameters) ? body.parameters : {};
   const billingBody = {
@@ -53,14 +58,14 @@ export async function POST(request: Request): Promise<Response> {
   try {
     fallbackPayload = naiGenerationPayload(body);
   } catch (error) {
-    return Response.json(
+    return withExternalCors(Response.json(
       { message: error instanceof Error ? error.message : "图像参数无效" },
       { status: 400 },
-    );
+    ));
   }
   const generation = nativeGeneration ?? externalGeneration(fallbackPayload);
   if (!generation)
-    return Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 });
+    return withExternalCors(Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 }));
 
   const contentType = request.headers.get("content-type") || "application/json";
   const rawBody = await request.arrayBuffer();
@@ -78,6 +83,7 @@ export async function POST(request: Request): Promise<Response> {
       body: rawBody,
       contentType,
       generation,
+      prompt: typeof body.input === "string" ? body.input : undefined,
     },
     {
       pathname: "/v1/images/generations",

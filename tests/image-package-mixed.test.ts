@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { affStatus, trySpendImageCredits } from "@/lib/aff";
+import { affStatus, reconcileImageCredits, trySpendImageCredits } from "@/lib/aff";
 
 let dataDir = "";
 
@@ -135,5 +135,69 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       packageBalance: 1,
       totalBalance: 6,
     });
+  });
+
+  it("Gateway 实际费用更高时从个人 AFF 原子补扣且重试幂等", async () => {
+    await seedAccount(904, {
+      balance: 40,
+      packageBalance: 5,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+    const charge = await trySpendImageCredits(904, {
+      model: "nai-v5-full",
+      width: 832,
+      height: 1216,
+      steps: 29,
+      samples: 1,
+    });
+    expect(charge).not.toBeNull();
+    const result = await reconcileImageCredits(904, charge!, 42, "settlement:904");
+    const retried = await reconcileImageCredits(904, charge!, 42, "settlement:904");
+    expect(result).toMatchObject({ applied: true, chargedAmount: 42, difference: 2 });
+    expect(retried).toEqual(result);
+    await expect(affStatus(904)).resolves.toMatchObject({ balance: 3, packageBalance: 0 });
+  });
+
+  it("Gateway 实际费用更低时按原扣费来源退还个人与图包额度", async () => {
+    await seedAccount(905, {
+      balance: 40,
+      packageBalance: 5,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+    const charge = await trySpendImageCredits(905, {
+      model: "nai-v5-full",
+      width: 832,
+      height: 1216,
+      steps: 29,
+      samples: 1,
+    });
+    expect(charge).not.toBeNull();
+    const result = await reconcileImageCredits(905, charge!, 8, "settlement:905");
+    expect(result).toMatchObject({ applied: true, chargedAmount: 8, difference: -32 });
+    await expect(affStatus(905)).resolves.toMatchObject({ balance: 33, packageBalance: 4 });
+  });
+
+  it("个人 AFF 不足以补 Gateway 实际差价时留待人工对账", async () => {
+    await seedAccount(906, {
+      balance: 0,
+      packageBalance: 5,
+      transactions: [],
+      packageUsage: [],
+      packageOrders: [],
+    });
+    const charge = await trySpendImageCredits(906, {
+      model: "nai-v5-full",
+      width: 512,
+      height: 512,
+      steps: 28,
+      samples: 1,
+    });
+    expect(charge).not.toBeNull();
+    const result = await reconcileImageCredits(906, charge!, 4, "settlement:906");
+    expect(result).toMatchObject({ applied: false, chargedAmount: 2, difference: 2 });
   });
 });

@@ -285,8 +285,10 @@ const settingItems = [
 
 export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange, onNegativeChange, onEffectiveChange, onAssistant, model, imageProtocol, operation, assistantModel, historyPrompts = [], collapsed, onCollapsedChange }: ReplicaPromptEditorProps) {
   const natural = resolveImageModelCapabilities(model, imageProtocol).promptStyle === "natural";
+  const acceptsNegative = resolveImageModelCapabilities(model, imageProtocol).acceptsNegative || natural;
   const [config, saveConfig] = usePromptConfig(variant);
-  const [target, setTarget] = useState<PromptTarget>("positive");
+  const [selectedTarget, setTarget] = useState<PromptTarget>("positive");
+  const target = acceptsNegative ? selectedTarget : "positive";
   const [editorHeight, setEditorHeight] = usePromptEditorHeight(variant, target);
   const [tagModes, setTagModes] = useState({ positive: false, negative: false });
   const [fixedOpen, setFixedOpen] = useState(false);
@@ -337,6 +339,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
     window.dispatchEvent(new CustomEvent(STORAGE_EVENT, { detail: key }));
   }
   function editor(editorTarget: PromptTarget) {
+    if (editorTarget === "negative" && !acceptsNegative) return null;
     const value = editorTarget === "positive" ? prompt : negative;
     const change = editorTarget === "positive" ? onPromptChange : onNegativeChange;
     const editorKey = JSON.stringify([editorTarget, model, imageProtocol || "auto", operation || "generate", assistantModel]);
@@ -348,6 +351,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
   }
   function presetButton(preset: "quality" | "uc", naiFooter = false) {
     if (natural) return null;
+    if (preset === "uc" && !acceptsNegative) return null;
     const enabled = preset === "quality" ? config.quality !== "none" : config.uc !== "none";
     return <button type="button" ref={preset === "quality" ? qualityButton : ucButton}
       className={"replica-preset-button " + preset + (enabled ? " is-enabled" : "") + (naiFooter ? " is-footer" : "")}
@@ -373,7 +377,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
       <div className="replica-prompt-toolbar">
         <div className="replica-prompt-tabs" role="tablist" aria-label="提示词类型">
           {(["positive", "negative"] as const).map((item) => <button type="button" key={item} ref={item === "positive" ? positiveButton : negativeButton} role="tab" aria-selected={target === item}
-            className={item + (target === item ? " is-selected" : "")} onClick={() => { setTarget(item); setHoverTarget(null); }} onMouseEnter={() => hover(item)} onMouseLeave={() => hover(null, 180)}
+             className={item + (target === item ? " is-selected" : "")} disabled={item === "negative" && !acceptsNegative} onClick={() => { setTarget(item); setHoverTarget(null); }} onMouseEnter={() => hover(item)} onMouseLeave={() => hover(null, 180)}
              onFocus={() => hover(item, 0)} onBlur={() => hover(null, 180)}>{item === "positive" ? <Sparkles size={16} /> : <Ban size={16} />} {natural ? item === "positive" ? "描述" : "排除内容" : item === "positive" ? "正面" : "负面"} <span>{natural ? promptCount(item === "positive" ? prompt : negative, true) : splitPromptTags(item === "positive" ? prompt : negative).length}</span></button>)}
         </div>
         <button type="button" className="replica-fixed-button" aria-label="管理固定词" title="管理固定词" onClick={() => setFixedOpen(true)}><Pin size={16} /></button>
@@ -394,7 +398,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
         <header>
           <div className="replica-nai-prompt-tabs" role="tablist" aria-label="提示词类型">
             {(["positive", "negative"] as const).map((item) => <button type="button" key={item} ref={item === "positive" ? positiveButton : negativeButton} role="tab" aria-selected={target === item}
-               className={item + (target === item ? " is-selected" : "")} onClick={() => { setTarget(item); setMenu(null); setPresetHover(null); setHoverTarget(null); }}>{natural ? item === "positive" ? "描述" : "排除内容" : item === "positive" ? "提示词" : "UC"}</button>)}
+               className={item + (target === item ? " is-selected" : "")} disabled={item === "negative" && !acceptsNegative} onClick={() => { setTarget(item); setMenu(null); setPresetHover(null); setHoverTarget(null); }}>{natural ? item === "positive" ? "描述" : "排除内容" : item === "positive" ? "提示词" : "UC"}</button>)}
           </div>
           <div className="replica-nai-prompt-actions"><button type="button" aria-label={"清空" + (target === "positive" ? "提示词" : "负面内容")} onClick={() => (target === "positive" ? onPromptChange : onNegativeChange)("")}><X size={16} /></button><button type="button" aria-label="随机提示词" disabled={randomizing} onClick={() => void randomize(target)}><Dice5 size={16} /></button>{canCollapse && <button type="button" className="replica-prompt-collapse" aria-label={isCollapsed ? "展开提示词" : "收起提示词"} aria-expanded={!isCollapsed} onClick={() => {
             if (hoverTimer.current) clearTimeout(hoverTimer.current);

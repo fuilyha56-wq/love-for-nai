@@ -4,10 +4,26 @@ import {
   normalizeDimension,
   normalizeSamples,
   normalizeSteps,
+  validateMediumRequest,
 } from "@/lib/image-request";
 import { externalGeneration, naiGenerationPayload } from "@/lib/compat-api";
 
 describe("图像请求安全边界", () => {
+  it("rejects invalid Medium settings before billing", () => {
+    const body = { width: 512, height: 512, steps: 14, n: 1 };
+    expect(() => validateMediumRequest("nai-v5-full-medium", body)).not.toThrow();
+    for (const override of [{ steps: 28 }, { n: 2 }, { width: 1088, height: 1024 }, { sampler: "k_euler" }, { negative_prompt: "custom" }, { reference_image: "data" }, { extra_params: { steps: 28 } }])
+      expect(() => validateMediumRequest("nai-v5-full-medium", { ...body, ...override })).toThrow();
+    expect(assertImageModel("nai-v5-full-medium")).toBe("nai-v5-full-medium");
+    expect(() => assertImageModel("nai-v4.5-full-medium")).toThrow();
+    expect(() => assertImageModel("nai-v5-curated-medium")).toThrow();
+  });
+  it("defaults native Medium requests to 14 steps and rejects nested negative prompts", () => {
+    const body = { model: "nai-diffusion-5-full-medium", input: "landscape", parameters: { width: 512, height: 512 } };
+    expect(naiGenerationPayload(body)).toMatchObject({ model: "nai-v5-full-medium", steps: 14 });
+    expect(() => naiGenerationPayload({ ...body, parameters: { ...body.parameters, v4_negative_prompt: { caption: { char_captions: [{ char_caption: "custom" }] } } } })).toThrow("负面词");
+    expect(() => validateMediumRequest("nai-v5-full-medium", { width: 512, height: 512 }, "upscale")).toThrow();
+  });
   it("拒绝零值、负数、小数和冲突的样本参数", () => {
     for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
       expect(() => normalizeSamples({ n: value })).toThrow();

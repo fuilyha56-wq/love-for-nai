@@ -50,6 +50,7 @@ describe("平台能力探测", () => {
       "overview",
       "users",
       "sessions",
+      "risk",
       "credits",
       "announcements",
       "gallery",

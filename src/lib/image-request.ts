@@ -1,4 +1,5 @@
 import { privateKey, SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
+import { isNaiMediumModel, NAI_MEDIUM_NEGATIVE_PROMPT } from "@/lib/nai-native-request";
 
 export const MAX_IMAGE_SAMPLES = 30;
 export const MAX_IMAGE_STEPS = 50;
@@ -86,11 +87,48 @@ export function validateReferenceCount(count: number): void {
 export function assertImageModel(model: unknown): string {
   if (
     typeof model !== "string" ||
-    !/^nai-v(?:3|4(?:\.5)?|5)(?:-(?:full|curated|inpaint|furry(?:-inpaint)?)(?:-limit)?)?$/i.test(model) ||
+    (!/^nai-v(?:3|4(?:\.5)?|5)(?:-(?:full|curated|inpaint|furry(?:-inpaint)?)(?:-limit)?)?$/i.test(model) &&
+      !/^nai-v5-(?:full|inpaint)-medium$/i.test(model)) ||
     model.toLowerCase() === "nai-chat"
   )
     invalid("当前模型不允许用于图像生成");
   return model;
+}
+
+export function validateMediumRequest(model: string, body: Record<string, unknown>, operation = "generate"): void {
+  if (!isNaiMediumModel(model)) return;
+  if (!["generate", "img2img", "inpainting", "edits", "outpainting"].includes(operation))
+    invalid("Medium 档仅支持生成、图生图和局部重绘");
+  const extra = body.extra_params;
+  if (extra != null && (typeof extra !== "object" || Array.isArray(extra))) invalid("extra_params 必须是对象");
+  const parameters = { ...body, ...(extra as Record<string, unknown> | undefined) };
+  const size = typeof parameters.size === "string" ? parameters.size.split("x").map(Number) : [];
+  const width = normalizeDimension(parameters.width ?? size[0], "width");
+  const height = normalizeDimension(parameters.height ?? size[1], "height");
+  if (width % 64 || height % 64 || width * height > 1_048_576)
+    invalid("Medium 档尺寸必须为 64 的倍数，面积不超过 1048576 像素");
+  if (normalizeSamples(parameters) !== 1 || normalizeSteps(parameters.steps, 14) !== 14)
+    invalid("Medium 档每请求仅限 1 张，步数固定为 14");
+  const fixed: Record<string, unknown> = { sampler: "k_euler_ancestral", cfg_rescale: 0, uncond_scale: 1, params_version: 4, ucPreset: 0, ucPresetId: "heavy", tag_hint_uc_preset: 2, sm: false, sm_dyn: false };
+  for (const [key, value] of Object.entries(fixed)) {
+    if (parameters[key] !== undefined && parameters[key] !== value) invalid(`Medium 档不支持修改 ${key}`);
+  }
+  if ([parameters.negative_prompt, parameters.negativePrompt].some((value) => Boolean(value) && value !== NAI_MEDIUM_NEGATIVE_PROMPT) || parameters.service_tier === "priority")
+    invalid("Medium 档不支持自定义负面词或 priority 服务");
+  if (Object.entries(parameters).some(([key, value]) => Boolean(value) && /^(?:reference_|director_reference_|controlnet_)/.test(key) && key !== "controlnet_strength") || parameters.references || parameters.characters || parameters.upscale || parameters.upscaled_enhance)
+    invalid("Medium 档不支持参考图、ControlNet 或付费图像工具");
+  if (operation === "generate" && parameters.image) invalid("Medium 文生图不能携带输入图片");
+  if (Array.isArray(parameters.characterPrompts) && parameters.characterPrompts.some((item) => item && typeof item === "object" && (item.negativePrompt || item.negative)))
+    invalid("Medium 档不支持角色负面词");
+  if (parameters.v4_negative_prompt && typeof parameters.v4_negative_prompt === "object") {
+    const caption = (parameters.v4_negative_prompt as Record<string, unknown>).caption;
+    if (caption && typeof caption === "object") {
+      const negative = caption as Record<string, unknown>;
+      if ((negative.base_caption && negative.base_caption !== NAI_MEDIUM_NEGATIVE_PROMPT) ||
+        (Array.isArray(negative.char_captions) && negative.char_captions.some((item) => item && typeof item === "object" && item.char_caption)))
+        invalid("Medium 档不支持嵌套自定义负面词");
+    }
+  }
 }
 
 export function assertBodySize(request: Pick<Request, "headers">): void {

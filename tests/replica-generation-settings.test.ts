@@ -12,6 +12,14 @@ const settings: Omit<ReplicaGenerationSettingsProps, "variant"> = {
 };
 
 describe("独立复刻尺寸与参数组件", () => {
+  it("locks Medium sampling to 14 steps", () => {
+    const html = renderToStaticMarkup(createElement(ReplicaGenerationSettings, { ...settings, variant: "nai", model: "nai-v5-full-medium" }));
+    expect(html).toContain('min="14" max="14"');
+    expect(html).toContain('value="14"');
+    const expanded = renderToStaticMarkup(createElement(ReplicaGenerationSettings, { ...settings, variant: "nai", model: "nai-v5-full-medium", mobileInline: true }));
+    expect(expanded).not.toContain("NaN");
+    expect(expanded).toContain("--rgs-progress:0%");
+  });
   it("匹配各方向预设，并为未匹配的实际尺寸保留自定义状态", () => {
     expect(replicaSizePreset(832, 1216)).toBe("normal-portrait");
     expect(replicaSizePreset(1216, 832)).toBe("normal-landscape");

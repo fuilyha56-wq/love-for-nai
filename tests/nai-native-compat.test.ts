@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import JSZip from "jszip";
 
 const mocks = vi.hoisted(() => ({
   resolveExternalApiIdentity: vi.fn(),
@@ -45,7 +46,8 @@ const charge = {
   totalBalance: 401,
 };
 
-beforeEach(() => {
+beforeEach(async () => {
+  const validZip = await new JSZip().file("image_0.png", "fake-image").generateAsync({ type: "arraybuffer" });
   mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
   mocks.trySpendImageCredits.mockResolvedValue(charge);
   mocks.refundImageCredits.mockResolvedValue(undefined);
@@ -74,7 +76,7 @@ beforeEach(() => {
     "fetch",
     vi.fn(async (url: string) => {
       if (url.startsWith("http://image-gateway.test"))
-        return new Response("ZIPDATA", { headers: { "Content-Type": "application/zip" } });
+        return new Response(validZip, { headers: { "Content-Type": "application/zip" } });
       if (url.startsWith("http://newapi.test"))
         return Response.json({ data: [{ b64_json: "abc" }] });
       throw new Error(`unexpected fetch ${url}`);
@@ -184,5 +186,78 @@ describe("NovelAI 原生兼容层", () => {
       parameters: { width: 832, height: 1216 },
     });
     expect(new Headers(call?.[1]?.headers).get("Authorization")).toBe("Bearer gateway-token");
+    expect(new Headers(call?.[1]?.headers).get("Accept")).toBe("application/zip");
+  });
+
+  it("原生上游返回 200 但不是 ZIP 时退款，避免 Launcher 解压失败仍扣 AFF", async () => {
+    mocks.naiImageUpstream.mockResolvedValue({
+      baseUrl: "http://image-gateway.test",
+      token: "gateway-token",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not-a-zip", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })),
+    );
+    const { POST } = await import("@/app/ai/generate-image/route");
+    const response = await POST(
+      new Request("http://localhost/ai/generate-image", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sk-user-key",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          input: "1girl",
+          model: "nai-diffusion-4-5-full",
+          action: "generate",
+          parameters: { width: 832, height: 1216, n_samples: 1, steps: 28 },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(mocks.refundImageCredits).toHaveBeenCalledWith(
+      41,
+      charge,
+      0,
+      expect.objectContaining({ requestId: expect.any(String), settlementId: expect.stringMatching(/^settlement:/) }),
+    );
+  });
+
+  it("原生上游标记为 ZIP 但字节损坏时退款", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("not-a-zip", {
+        status: 200,
+        headers: { "Content-Type": "application/zip" },
+      })),
+    );
+    const { POST } = await import("@/app/ai/generate-image/route");
+    const response = await POST(
+      new Request("http://localhost/ai/generate-image", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer sk-user-key",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          input: "1girl",
+          model: "nai-diffusion-4-5-full",
+          action: "generate",
+          parameters: { width: 832, height: 1216, n_samples: 1, steps: 28 },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(mocks.refundImageCredits).toHaveBeenCalledWith(
+      41,
+      charge,
+      0,
+      expect.objectContaining({ requestId: expect.any(String), settlementId: expect.stringMatching(/^settlement:/) }),
+    );
   });
 });

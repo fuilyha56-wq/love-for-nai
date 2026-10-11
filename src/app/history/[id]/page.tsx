@@ -5,6 +5,7 @@ import { ArrowLeft, Download, Image as ImageIcon } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { findLocalImageHistory } from "@/lib/local-image-history";
 
 type HistoryItem = {
   id: string;
@@ -21,9 +22,21 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
 
   useEffect(() => {
     const controller = new AbortController();
+    let objectUrl = "";
     void (async () => {
       try {
         const { id } = await params;
+        const local = await findLocalImageHistory(id).catch(() => null);
+        if (local) {
+          objectUrl = URL.createObjectURL(local.image);
+          setItem({
+            id: local.remoteId || id,
+            createdAt: new Date(local.createdAt).toISOString(),
+            imageUrl: objectUrl,
+            parameters: (local.parameters || { prompt: local.prompt || "", negative_prompt: local.negative || "", model: local.model || "", operation: local.operation || "generate" }) as HistoryItem["parameters"],
+          });
+          return;
+        }
         const response = await fetch(`/api/history/${encodeURIComponent(id)}`, { cache: "no-store", signal: controller.signal });
         const result = await response.json() as HistoryItem & { message?: string };
         if (!response.ok) throw new Error(result.message || "读取历史失败");
@@ -32,7 +45,10 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "读取历史失败");
       }
     })();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [params]);
 
   const parameters = item?.parameters || {};

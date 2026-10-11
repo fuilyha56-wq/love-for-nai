@@ -177,7 +177,7 @@ export async function grantCreatorReward(input: {
       ...(input.actorId ? { actorId: input.actorId } : {}),
     };
     try {
-      const result = await grantAffOnce(input.userId, input.amount, record.description, referenceId);
+      const result = await grantAffOnce(input.userId, input.amount, record.description, referenceId, "creator-reward");
       record.status = result.granted ? "granted" : "skipped";
       store.grants.unshift(record);
       await writeStore(store);

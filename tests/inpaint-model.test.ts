@@ -10,6 +10,8 @@ describe("重绘使用对应图像模型的正确模型名", () => {
     expect(inpaintModelFor("my-image-model", "openai-images")).toBeNull();
   });
   it.each([
+    ["nai-v5-full-medium", "nai-v5-inpaint-medium"],
+    ["nai-v5-inpaint-medium", "nai-v5-inpaint-medium"],
     ["nai-v5-full-limit", "nai-v5-inpaint-limit"],
     ["nai-v4.5-full", "nai-v4.5-inpaint"],
     ["nai-v4.5-curated-limit", "nai-v4.5-inpaint-limit"],

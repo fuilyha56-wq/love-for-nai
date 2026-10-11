@@ -25,7 +25,7 @@ import {
   SessionExpiredNotice,
 } from "@/app/session-notice";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
-import { findLocalImageHistory, saveLocalImageHistory } from "@/lib/local-image-history";
+import { findLocalImageHistory, listLocalImageHistory, saveLocalImageHistory } from "@/lib/local-image-history";
 
 type HistoryItem = {
   id: string;
@@ -54,6 +54,8 @@ export default function HistoryPage() {
   const [previewSrc, setPreviewSrc] = useState("");
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
+  const [importMenu, setImportMenu] = useState<{ item: HistoryItem; top: number; left: number } | null>(null);
+  const importMenuTimer = useRef<number | null>(null);
   const objectUrls = useRef(new Set<string>());
 
   useEffect(() => () => {
@@ -62,19 +64,51 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    let localHistory: HistoryItem[] = [];
     const controller = new AbortController();
-    fetch("/api/history", { cache: "no-store", signal: controller.signal })
-      .then((response) =>
-        readJson<{ items?: HistoryItem[] }>(response, "读取历史失败"),
-      )
-      .then((result) => setItems(result.items || []))
-      .catch((error) => {
+    const mergeItems = (remoteItems: HistoryItem[]) => {
+      const merged = new Map<string, HistoryItem>();
+      localHistory.forEach((item) => merged.set(item.id, item));
+      remoteItems.forEach((item) => {
+        const local = merged.get(item.id);
+        merged.set(item.id, local ? { ...item, imageUrl: local.imageUrl } : item);
+      });
+      return [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    };
+    const loadHistory = async () => {
+      const localItems = await listLocalImageHistory(40).catch(() => []);
+      const urls: Record<string, string> = {};
+      localHistory = localItems.map((local) => {
+        const remoteId = local.remoteId || local.id;
+        const url = URL.createObjectURL(local.image);
+        objectUrls.current.add(url);
+        urls[remoteId] = url;
+        return {
+          id: remoteId,
+          createdAt: new Date(local.createdAt).toISOString(),
+          imageUrl: url,
+          requestId: local.requestId,
+          parameters: (local.parameters || { prompt: local.prompt || "", model: local.model || "", operation: local.operation || "generate" }) as HistoryItem["parameters"],
+        };
+      });
+      if (!active) return;
+      setLocalUrls((current) => ({ ...current, ...urls }));
+      if (localHistory.length) setItems((current) => current.length ? mergeItems(current) : localHistory);
+      setLoading(false);
+      const result = await readJson<{ items?: HistoryItem[] }>(
+        await fetch("/api/history", { cache: "no-store", signal: controller.signal }),
+        "读取历史失败",
+      );
+      if (active) setItems(mergeItems(result.items || []));
+    };
+    void loadHistory().catch((error) => {
+        if (!active) return;
         if (error instanceof Error && error.name === "AbortError") return;
         if (error instanceof SessionExpiredError) setExpired(error.message);
         else setMessage(error instanceof Error ? error.message : "读取历史失败");
-      })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
+      }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; controller.abort(); };
   }, []);
 
   useEffect(() => {
@@ -100,6 +134,7 @@ export default function HistoryPage() {
       prompt: String(item.parameters.prompt || ""),
       model: String(item.parameters.model || ""),
       operation: String(item.parameters.operation || "generate"),
+      parameters: item.parameters,
     });
   }
 
@@ -125,6 +160,17 @@ export default function HistoryPage() {
       else next.add(id);
       return next;
     });
+  }
+
+  function showImportMenu(item: HistoryItem, element: HTMLDivElement) {
+    if (importMenuTimer.current) window.clearTimeout(importMenuTimer.current);
+    const rect = element.getBoundingClientRect();
+    setImportMenu({ item, top: rect.bottom + 6, left: rect.left + rect.width / 2 });
+  }
+
+  function hideImportMenuSoon() {
+    if (importMenuTimer.current) window.clearTimeout(importMenuTimer.current);
+    importMenuTimer.current = window.setTimeout(() => setImportMenu(null), 180);
   }
 
   function quietlyCache(item: HistoryItem) {
@@ -367,14 +413,10 @@ export default function HistoryPage() {
                     </time>
                   </div>
                   <div className="mt-3 grid grid-cols-5 gap-2">
-                    <div className="history-import-group" title="导入图片到工作台">
+                    <div className="history-import-group" title="导入图片到工作台" onMouseEnter={(event) => showImportMenu(item, event.currentTarget)} onMouseLeave={hideImportMenuSoon} onFocus={(event) => showImportMenu(item, event.currentTarget)}>
                       <Link href={importHref(item, "img2img")} className="history-action" aria-label="导入为图生图">
                         <RotateCcw size={15} />
                       </Link>
-                      <div className="history-import-menu">
-                        <Link href={importHref(item, "img2img")}>图生图</Link>
-                        <Link href={importHref(item, "generate")}>文生图</Link>
-                      </div>
                     </div>
                     <Link href={`/history/${encodeURIComponent(item.id)}`} className="history-action" title="查看完整请求参数" aria-label="查看完整请求参数"><Info size={15} /></Link>
                     <a
@@ -442,6 +484,13 @@ export default function HistoryPage() {
           </div>
         </div>
       ), document.body)}
+      {importMenu && typeof document !== "undefined" && createPortal(
+        <div className="history-import-menu" style={{ top: importMenu.top, left: importMenu.left }} onMouseEnter={() => { if (importMenuTimer.current) window.clearTimeout(importMenuTimer.current); }} onMouseLeave={hideImportMenuSoon}>
+          <Link href={importHref(importMenu.item, "img2img")} onClick={() => setImportMenu(null)}>图生图</Link>
+          <Link href={importHref(importMenu.item, "generate")} onClick={() => setImportMenu(null)}>文生图</Link>
+        </div>,
+        document.body,
+      )}
     </main>
   );
 }

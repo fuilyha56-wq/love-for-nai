@@ -156,6 +156,34 @@ describe("图包购买请求", () => {
 });
 
 describe("内部生成 fallback", () => {
+  it("rejects invalid Medium settings before any spend or upstream request", async () => {
+    affMocks.trySpendImageCredits.mockClear();
+    currentFetch.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    const response = await POST(new Request("http://localhost/api/images/generate", {
+      method: "POST",
+      body: JSON.stringify({ model: "nai-v5-full-medium", prompt: "sky", width: 512, height: 512, steps: 28 }),
+    }));
+    expect(response.status).toBe(400);
+    expect(affMocks.trySpendImageCredits).not.toHaveBeenCalled();
+    expect(currentFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses NewAPI only when Medium has no local credits and defaults to 14 steps", async () => {
+    affMocks.trySpendImageCredits.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    const response = await POST(new Request("http://localhost/api/images/generate", {
+      method: "POST",
+      body: JSON.stringify({ model: "nai-v5-full-medium", prompt: "sky", width: 512, height: 512 }),
+    }));
+    expect(response.status).toBe(200);
+    expect((await response.json()).paymentSource).toBe("newapi");
+    expect(affMocks.trySpendImageCredits).toHaveBeenCalledTimes(1);
+    expect(affMocks.trySpendImageCredits).toHaveBeenCalledWith(session.userId, expect.objectContaining({ steps: 14, samples: 1 }));
+    const sent = currentFetch.mock.calls.find(([url]) => url === "http://newapi.test/v1/images/generations");
+    expect(JSON.parse(String(sent?.[1]?.body))).toMatchObject({ model: "nai-v5-full-medium", steps: 14, n: 1 });
+    expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
+  });
   it("允许登录账号可用的 NewAPI 图片模型生成，且不扣 AFF 或发送到 Gateway", async () => {
     modelMocks.userCanGenerateWithNewApiModel.mockResolvedValue(true);
     affMocks.trySpendImageCredits.mockClear();

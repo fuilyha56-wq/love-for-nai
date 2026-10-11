@@ -41,6 +41,20 @@ export type ReferralProvenance = {
   requestId?: string;
 };
 
+export type ReferralRiskComponent = {
+  rootUserId: number;
+  userIds: number[];
+  ancestors: number[];
+  descendants: number[];
+  edges: Array<{
+    inviterUserId: number;
+    registeredUserId: number;
+    registeredAt?: string;
+  }>;
+  maxDepth: number;
+  cycleDetected: boolean;
+};
+
 type ReferralStore = { referrals: Referral[] };
 
 const referralPath = () =>
@@ -153,12 +167,14 @@ export async function redeemReferral(
       reward,
       "邀请注册奖励",
       `referral-registration:${registeredUserId}`,
+      "referral",
     );
     await grantAffOnce(
       referral.inviterUserId,
       reward,
       "邀请新用户注册奖励",
       `referral-invite:${registeredUserId}`,
+      "referral",
     );
     if (!referral.registeredUserIds.includes(registeredUserId))
       referral.registeredUserIds.push(registeredUserId);
@@ -201,4 +217,64 @@ export async function listReferrals(): Promise<Referral[]> {
 
 export async function countReferrals(): Promise<number> {
   return (await readStore()).referrals.length;
+}
+
+export async function referralRiskComponent(
+  rootUserId: number,
+  maxDepth = 20,
+): Promise<ReferralRiskComponent> {
+  const referrals = (await readStore()).referrals;
+  const edges = referrals.flatMap((referral) => [
+    ...referral.registeredUserIds.map((registeredUserId) => ({
+      inviterUserId: referral.inviterUserId,
+      registeredUserId,
+    })),
+    ...(referral.registrations || []).map((registration) => ({
+      inviterUserId: registration.inviterUserId,
+      registeredUserId: registration.registeredUserId,
+      registeredAt: registration.registeredAt,
+    })),
+  ]);
+  const ancestors: number[] = [];
+  const descendants: number[] = [];
+  const userIds = new Set<number>([rootUserId]);
+  const seen = new Set<number>([rootUserId]);
+  let cycleDetected = false;
+  let current = rootUserId;
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const edge = edges.find((item) => item.registeredUserId === current);
+    if (!edge) break;
+    if (seen.has(edge.inviterUserId)) {
+      cycleDetected = true;
+      break;
+    }
+    seen.add(edge.inviterUserId);
+    ancestors.push(edge.inviterUserId);
+    userIds.add(edge.inviterUserId);
+    current = edge.inviterUserId;
+  }
+  const queue: Array<{ userId: number; depth: number }> = [{ userId: rootUserId, depth: 0 }];
+  while (queue.length) {
+    const currentItem = queue.shift()!;
+    if (currentItem.depth >= maxDepth) continue;
+    for (const edge of edges.filter((item) => item.inviterUserId === currentItem.userId)) {
+      if (seen.has(edge.registeredUserId)) {
+        cycleDetected = true;
+        continue;
+      }
+      seen.add(edge.registeredUserId);
+      descendants.push(edge.registeredUserId);
+      userIds.add(edge.registeredUserId);
+      queue.push({ userId: edge.registeredUserId, depth: currentItem.depth + 1 });
+    }
+  }
+  return {
+    rootUserId,
+    userIds: [...userIds],
+    ancestors,
+    descendants,
+    edges: edges.filter((edge) => userIds.has(edge.inviterUserId) && userIds.has(edge.registeredUserId)),
+    maxDepth,
+    cycleDetected,
+  };
 }

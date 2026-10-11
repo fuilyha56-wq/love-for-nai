@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import {
   refundImageCredits,
   trySpendImageCredits,
@@ -12,6 +13,8 @@ import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/li
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { validateModelId } from "@/lib/provider/validation";
+import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
+import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
 import {
@@ -23,6 +26,7 @@ import {
   normalizeSamples,
   normalizeSteps,
   validateImageShape,
+  validateMediumRequest,
 } from "@/lib/image-request";
 
 export async function POST(request: Request) {
@@ -47,6 +51,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "生成参数不完整" }, { status: 400 });
 
   const providerId = typeof body.providerId === "string" ? body.providerId : "";
+  try {
+    validateMediumRequest(String(body.model), body);
+  } catch (error) {
+    return NextResponse.json({ message: error instanceof Error ? error.message : "Medium 参数无效" }, { status: 400 });
+  }
   if (providerId && providerId !== "newapi") return handlePersonalProviderGeneration(request, session, { ...body, operation: "generate" }, providerId);
   try { assertImageModel(body.model); }
   catch { return handleNewApiImageModelGeneration(request, session, { ...body, operation: "generate" }, false); }
@@ -61,8 +70,9 @@ export async function POST(request: Request) {
     width = normalizeDimension(body.width, "width");
     height = normalizeDimension(body.height, "height");
     validateImageShape(width, height);
-    steps = normalizeSteps(body.steps);
+    steps = normalizeSteps(body.steps, String(body.model).endsWith("-medium") ? 14 : 28);
     samples = normalizeSamples(body);
+    validateMediumRequest(String(body.model), body);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "生成参数无效" },
@@ -107,7 +117,17 @@ export async function POST(request: Request) {
     "seed",
   ];
   const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
+  const risk = await evaluateImageRisk({
+    userId: session.userId,
+    username: session.username,
+    model,
+    prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+  }).catch(() => null);
+  if (!risk)
+    return NextResponse.json({ message: "风控服务暂时不可用，请稍后重试" }, { status: 503 });
+  if (risk.decision === "deny") return riskBlockedResponse();
   let creditCharge: ImageCreditCharge | null = null;
+  let settlementId: string | undefined;
   let affRefunded = false;
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
@@ -130,6 +150,8 @@ export async function POST(request: Request) {
       upstreamBaseUrl = platformUpstream.baseUrl;
       payment = "aff";
       creditCharge = aff;
+      settlementId = `settlement:${randomUUID()}`;
+      await createImageSettlement({ settlementId, requestId: settlementId, userId: session.userId, charge: aff });
       paymentSource =
         aff.packageCost > 0 && aff.personalCost > 0
           ? "mixed"
@@ -181,7 +203,7 @@ export async function POST(request: Request) {
     if (!upstream.ok || result.error) {
       if (creditCharge) {
         affRefunded = true;
-        await refundImageCredits(session.userId, creditCharge, 0);
+        await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });
       }
       return NextResponse.json(
         { message: result.error?.message || result.message || "上游生成失败" },
@@ -192,10 +214,11 @@ export async function POST(request: Request) {
     if (!images.length) {
       if (creditCharge) {
         affRefunded = true;
-        await refundImageCredits(session.userId, creditCharge, 0);
+        await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });
       }
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
     }
+    if (settlementId) await updateImageSettlement(settlementId, { generatedSamples: samples, status: "succeeded" });
     return NextResponse.json({
       image: images[0],
       images,
@@ -227,7 +250,7 @@ export async function POST(request: Request) {
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
     if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
       affRefunded = true;
-      await refundImageCredits(session.userId, creditCharge, 0);
+      await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });
     }
     return NextResponse.json(
       { message: queueAborted ? "图像请求排队超时，尚未发送到上游。请稍后重试。" : error instanceof Error ? error.message : "生成请求失败" },

@@ -1,5 +1,6 @@
 import { bearerAuthorization, naiSubscriptionResponse } from "@/lib/compat-api";
 import { resolveExternalApiIdentity } from "@/lib/newapi-db";
+import { withExternalCors } from "@/lib/external-cors";
 
 /**
  * NovelAI 原生 /user/subscription 兼容端点。
@@ -17,7 +18,7 @@ export async function GET(request: Request): Promise<Response> {
   if (authorization instanceof Response) return authorization;
   const identity = await resolveExternalApiIdentity(authorization);
   if (identity.userId == null)
-    return Response.json(
+    return withExternalCors(Response.json(
       {
         message: "无效的 API Key",
         error: {
@@ -27,7 +28,7 @@ export async function GET(request: Request): Promise<Response> {
         },
       },
       { status: 401 },
-    );
+    ));
   return naiSubscriptionResponse(identity.userId);
 }
 

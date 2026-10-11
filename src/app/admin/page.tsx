@@ -45,7 +45,7 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "sessions" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform" | "docs" | "creator" | "rewards" | "redeem";
+type Tab = "overview" | "users" | "sessions" | "risk" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform" | "docs" | "creator" | "rewards" | "redeem";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
 type AdminNavGroup = { label: string; ids: Tab[] };
 type PlatformCapabilities = {
@@ -82,6 +82,8 @@ type CreditRow = {
   lastCheckInDay?: string;
   transactionCount: number;
   lastTransactionAt?: string;
+  sourceTotals?: Record<string, number>;
+  usage?: { requests5h: number; requests7d: number; requests30d: number; retainedRecords: number };
 };
 type CreditDetail = CreditRow & {
   username?: string;
@@ -93,6 +95,7 @@ type CreditDetail = CreditRow & {
     type: string;
     description: string;
     source?: string;
+    origin?: string;
   }>;
 };
 type GalleryAdminItem = {
@@ -178,6 +181,7 @@ export default function AdminPage() {
           { id: "overview", label: "平台概览", description: "站点健康和运营数字", enabled: true },
           { id: "users", label: "用户管理", description: "账号、角色和额度", enabled: true },
           { id: "sessions", label: "会话管理", description: "活跃会话数、超阈值告警和批量清理", enabled: true },
+          { id: "risk", label: "自动风控", description: "风险案件、提示词聚类、IP 证据和退款", enabled: true },
           { id: "credits", label: "创作额度账本", description: "发放、回收和流水", enabled: true },
           { id: "announcements", label: "公告管理", description: "公告与评论", enabled: true },
           { id: "gallery", label: "图库管理", description: "已发布作品、编辑与下架", enabled: true },
@@ -193,7 +197,7 @@ export default function AdminPage() {
   ];
   const navGroups: AdminNavGroup[] = [
     { label: "工作台", ids: ["overview"] },
-    { label: "账号与安全", ids: ["users", "sessions"] },
+    { label: "账号与安全", ids: ["users", "sessions", "risk"] },
     { label: "运营内容", ids: ["credits", "announcements", "gallery", "referrals", "creator", "rewards", "redeem"] },
     { label: "文档与系统", ids: ["docs", "audits", "platform"] },
   ];
@@ -241,7 +245,7 @@ export default function AdminPage() {
           {navGroups.map((group) => {
             const items = group.ids.map((id) => moduleById.get(id)).filter((item): item is AdminModule => Boolean(item));
             if (!items.length) return null;
-            return <div key={group.label} className="mb-4 last:mb-0"><p className="px-3 pb-1.5 pt-2 text-[10px] font-bold tracking-[0.14em] text-[var(--muted)]">{group.label}</p>{items.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`admin-nav-item flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${tab === item.id ? "is-active" : "text-[var(--muted)]"}`}>{item.id === "overview" ? <CircleGauge size={15} /> : item.id === "users" ? <Users size={15} /> : item.id === "sessions" ? <ShieldAlert size={15} /> : <FileText size={15} />}<span className="ml-2">{item.label}</span></button>)}</div>;
+            return <div key={group.label} className="mb-4 last:mb-0"><p className="px-3 pb-1.5 pt-2 text-[10px] font-bold tracking-[0.14em] text-[var(--muted)]">{group.label}</p>{items.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`admin-nav-item flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${tab === item.id ? "is-active" : "text-[var(--muted)]"}`}>{item.id === "overview" ? <CircleGauge size={15} /> : item.id === "users" ? <Users size={15} /> : item.id === "sessions" || item.id === "risk" ? <ShieldAlert size={15} /> : <FileText size={15} />}<span className="ml-2">{item.label}</span></button>)}</div>;
           })}
         </aside>
         <div className="min-w-0 flex-1">
@@ -257,6 +261,8 @@ export default function AdminPage() {
           <UsersPanel capabilities={capabilities} setMessage={setMessage} onFocusSession={(userId) => { setSessionFocusUserId(userId); setTab("sessions"); }} />
         ) : tab === "sessions" ? (
           <SessionManagementPanel setMessage={setMessage} focusUserId={sessionFocusUserId} onClearFocus={() => setSessionFocusUserId(null)} />
+        ) : tab === "risk" ? (
+          <RiskPanel setMessage={setMessage} />
         ) : tab === "credits" ? (
           <CreditsPanel capabilities={capabilities} setMessage={setMessage} />
         ) : tab === "gallery" ? (
@@ -292,6 +298,151 @@ export default function AdminPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+function RiskPanel({ setMessage }: { setMessage: (message: string) => void }) {
+  const [items, setItems] = useState<Array<{
+    caseId: string;
+    userId: number;
+    username?: string;
+    level: string;
+    score: number;
+    status: string;
+    lastSeenAt: string;
+    lastRequestId?: string;
+    signals: Array<{ id: string; description: string }>;
+    usage?: { requests5h?: number; requests7d?: number; requests30d?: number };
+    enforcement?: { blocked?: boolean; blockReason?: string };
+  }>>([]);
+    const [ipItems, setIpItems] = useState<Array<{
+      evidenceId: string;
+      userId?: number;
+      username?: string;
+      family: string;
+      requestCount: number;
+      lastSeenAt: string;
+      geo?: { countryName?: string; region?: string; city?: string; asn?: string; organization?: string };
+    }>>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+        const [casesResponse, overviewResponse, ipResponse] = await Promise.all([
+        fetch("/api/admin/risk/cases?limit=200", { cache: "no-store" }),
+        fetch("/api/admin/risk/overview", { cache: "no-store" }),
+          fetch("/api/admin/risk/ip?limit=50", { cache: "no-store" }),
+      ]);
+      const casesResult = await casesResponse.json();
+      const overviewResult = await overviewResponse.json();
+        const ipResult = await ipResponse.json();
+      if (!casesResponse.ok) throw new Error(casesResult.message || "读取风险案件失败");
+      setItems(Array.isArray(casesResult.items) ? casesResult.items : []);
+      setCounts(overviewResult.counts || {});
+        setIpItems(Array.isArray(ipResult.items) ? ipResult.items : []);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "读取风险数据失败");
+    } finally {
+      setLoading(false);
+    }
+  }, [setMessage]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void load(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  async function action(userId: number, actionName: "mark" | "ban" | "unban") {
+    const reason = window.prompt(actionName === "ban" ? "请输入封禁原因" : "请输入风控操作原因", "管理员风控处理");
+    if (!reason?.trim()) return;
+    const body = actionName === "mark"
+      ? { action: "mark", level: "risk", reason }
+      : { action: actionName, scope: "user", reason };
+    const response = await fetch(`/api/admin/risk/users/${userId}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setMessage(result.message || "风控操作失败");
+      return;
+    }
+    setMessage(`用户 ${userId} 风控状态已更新`);
+    await load();
+  }
+
+  async function previewChain(userId: number) {
+    const response = await fetch("/api/admin/risk/chain-preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      setMessage(result.message || "邀请链读取失败");
+      return;
+    }
+    const ids = result.component?.userIds || [];
+    setMessage(`用户 ${userId} 邀请链共 ${ids.length} 个账号：${ids.join(", ") || "无"}`);
+  }
+
+    async function queryGeo(evidenceId: string) {
+      const response = await fetch(`/api/admin/risk/ip/${evidenceId}/geo`, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) {
+        setMessage(result.message || "IP 归属地查询失败");
+        return;
+      }
+      setMessage(`IP 归属地已更新：${result.geo?.countryName || result.geo?.countryCode || "未知"} ${result.geo?.city || ""}`);
+      await load();
+    }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-4">
+        {[['案件', counts.cases], ['Risk', counts.risk], ['Critical', counts.critical], ['已封禁', counts.banned], ['重复聚类', counts.promptClusters], ['待退款', counts.pendingRefunds], ['IP 证据', counts.ipEvidence]].map(([label, value]) => (
+          <div key={String(label)} className="rounded-lg border border-[var(--line)] bg-white p-4">
+            <p className="text-xs text-[var(--muted)]">{label}</p>
+            <p className="mt-2 text-2xl font-semibold">{value ?? 0}</p>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        自动规则只标记风险，不自动封禁。IP 归属地和提示词均为辅助证据，管理员需要结合请求审计和邀请链确认。
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
+            <th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">等级 / 分数</th><th className="px-3 py-2.5">调用 5h / 7d / 30d</th><th className="px-3 py-2.5">最近信号</th><th className="px-3 py-2.5">最近时间</th><th className="px-3 py-2.5">操作</th>
+          </tr></thead>
+          <tbody>
+            {items.map((item) => <tr key={item.caseId} className="border-b border-[var(--line)] align-top last:border-0">
+              <td className="px-3 py-2.5"><b>{item.username || "-"}</b><p className="text-xs text-[var(--muted)]">#{item.userId}</p></td>
+              <td className="px-3 py-2.5"><span className="font-semibold">{item.level}</span><p className="text-xs text-[var(--muted)]">{item.score} 分 · {item.enforcement?.blocked ? "已封禁" : "未封禁"}</p></td>
+              <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? "-"} / {item.usage?.requests7d ?? "-"} / {item.usage?.requests30d ?? "-"}</td>
+              <td className="max-w-sm px-3 py-2.5 text-xs">{item.signals?.slice(0, 2).map((signal) => <p key={signal.id}>{signal.description}</p>) || "-"}</td>
+              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td>
+              <td className="px-3 py-2.5"><div className="flex flex-wrap gap-2 text-xs">
+                <button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void action(item.userId, "mark")}>标记</button>
+                {item.enforcement?.blocked ? <button type="button" className="rounded border border-emerald-300 px-2 py-1 text-emerald-700" onClick={() => void action(item.userId, "unban")}>解封</button> : <button type="button" className="rounded border border-rose-300 px-2 py-1 text-rose-700" onClick={() => void action(item.userId, "ban")}>封禁</button>}
+                <button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void previewChain(item.userId)}>邀请链</button>
+              </div></td>
+            </tr>)}
+            {!loading && !items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无风险案件</td></tr>}
+          </tbody>
+        </table>
+      </div>
+        <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
+          <div className="border-b border-[var(--line)] px-4 py-3"><h2 className="text-sm font-semibold">IP 溯源证据</h2><p className="mt-1 text-xs text-[var(--muted)]">仅显示脱敏摘要和归属地快照。完整 IP 默认不展示，归属地仅作辅助证据。</p></div>
+          <table className="w-full text-sm">
+            <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">地址族 / 次数</th><th className="px-3 py-2.5">归属地</th><th className="px-3 py-2.5">最近出现</th><th className="px-3 py-2.5">操作</th></tr></thead>
+            <tbody>{ipItems.map((item) => <tr key={item.evidenceId} className="border-b border-[var(--line)] last:border-0"><td className="px-3 py-2.5">{item.username || "-"}<span className="ml-1 text-xs text-[var(--muted)]">#{item.userId || "-"}</span></td><td className="px-3 py-2.5 text-xs">{item.family} · {item.requestCount} 次</td><td className="px-3 py-2.5 text-xs">{[item.geo?.countryName, item.geo?.region, item.geo?.city].filter(Boolean).join(" / ") || "未查询"}<p className="text-[var(--muted)]">{item.geo?.asn || item.geo?.organization || "-"}</p></td><td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><button type="button" className="rounded border border-[var(--line)] px-2 py-1 text-xs" onClick={() => void queryGeo(item.evidenceId)}>查询归属地</button></td></tr>)}{!ipItems.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-[var(--muted)]">暂无 IP 证据</td></tr>}</tbody>
+          </table>
+        </div>
+    </div>
   );
 }
 
@@ -1028,8 +1179,8 @@ function CreditsPanel({
     if (!detail) return;
     const personal = Number(personalDelta);
     const pack = Number(packageDelta);
-    if (!Number.isInteger(personal) || !Number.isInteger(pack)) {
-      setMessage("调整金额必须是整数");
+    if (!Number.isFinite(personal) || !Number.isFinite(pack) || !Number.isInteger(personal * 2) || !Number.isInteger(pack * 2)) {
+      setMessage("调整金额必须为 0.5 的倍数");
       return;
     }
     setSaving(true);
@@ -1088,7 +1239,7 @@ function CreditsPanel({
               <th className="px-3 py-2.5">{creditLabel(capabilities)}</th>
               <th className="px-3 py-2.5">{packageLabel(capabilities)}</th>
               <th className="px-3 py-2.5">合计</th>
-              <th className="px-3 py-2.5">最近签到</th>
+              <th className="px-3 py-2.5">调用 5h / 7d / 30d</th>
               <th className="px-3 py-2.5">操作</th>
             </tr>
           </thead>
@@ -1099,7 +1250,7 @@ function CreditsPanel({
                 <td className="px-3 py-2.5 tabular-nums">{item.balance}</td>
                 <td className="px-3 py-2.5 tabular-nums">{item.packageBalance}</td>
                 <td className="px-3 py-2.5 tabular-nums">{item.totalBalance}</td>
-                <td className="px-3 py-2.5 text-xs text-[var(--muted)]">{item.lastCheckInDay || "-"}</td>
+                <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? 0} / {item.usage?.requests7d ?? 0} / {item.usage?.requests30d ?? 0}</td>
                 <td className="px-3 py-2.5">
                   <button type="button" onClick={() => openLedger(item.userId)} className="text-xs font-semibold text-[var(--rose)] hover:underline">
                     流水
@@ -1129,6 +1280,15 @@ function CreditsPanel({
               <p className="text-xs text-[var(--muted)]">
                 个人 {detail.balance} · 图包 {detail.packageBalance} · 合计 {detail.totalBalance}
               </p>
+              <div className="rounded border border-[var(--line)] bg-white p-3 text-xs">
+                <p className="font-semibold">入账来源累计</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[var(--muted)]">
+                  {Object.entries(detail.sourceTotals || {}).filter(([, amount]) => amount > 0).map(([origin, amount]) => <span key={origin}>{origin}: {amount} AFF</span>)}
+                  {!Object.values(detail.sourceTotals || {}).some((amount) => amount > 0) && <span>旧流水来源未分类；新增流水开始累计</span>}
+                </div>
+                <p className="mt-2 text-[var(--muted)]">调用数：5 小时 {detail.usage?.requests5h ?? 0} · 7 天 {detail.usage?.requests7d ?? 0} · 30 天 {detail.usage?.requests30d ?? 0}；保留记录 {detail.usage?.retainedRecords ?? 0} 条</p>
+                <p className="mt-1 text-[var(--muted)]">此处仅统计 LFN 个人/图包 AFF。NewAPI quota 是独立上游余额，不计入 AFF 来源。</p>
+              </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block font-semibold">个人{creditLabel(capabilities)}调整
                   <input value={personalDelta} onChange={(event) => setPersonalDelta(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
@@ -1152,7 +1312,7 @@ function CreditsPanel({
                       </b>
                       <time className="text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</time>
                     </div>
-                    <p className="mt-1 text-xs text-[var(--muted)]">{item.description} · {item.type}{item.source ? ` · ${item.source}` : ""}</p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">{item.description} · {item.type}{item.source ? ` · ${item.source}` : ""}{item.origin ? ` · ${item.origin}` : ""}</p>
                   </div>
                 ))}
                 {!detail.transactions?.length && <p className="py-6 text-center text-xs text-[var(--muted)]">暂无流水</p>}
@@ -1339,6 +1499,7 @@ function AuditsPanel() {
     durationMs?: number;
     historyIds: string[];
     watermarkStatus?: string;
+    billing?: { lfnChargedAff?: number; gatewayAnlasCost?: number; gatewayPromptTokens?: number; difference?: number };
   }>>([]);
 
   useEffect(() => {
@@ -1357,7 +1518,7 @@ function AuditsPanel() {
       <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
-            <th className="px-3 py-2.5">请求 ID / 指纹</th><th className="px-3 py-2.5">账号</th><th className="px-3 py-2.5">路径 / 模型</th><th className="px-3 py-2.5">状态</th><th className="px-3 py-2.5">历史 / 签名</th><th className="px-3 py-2.5">时间</th>
+            <th className="px-3 py-2.5">请求 ID / 指纹</th><th className="px-3 py-2.5">账号</th><th className="px-3 py-2.5">路径 / 模型</th><th className="px-3 py-2.5">状态</th><th className="px-3 py-2.5">结算 AFF / Gateway Anlas / usage tokens</th><th className="px-3 py-2.5">时间</th>
           </tr></thead>
           <tbody>
             {items.map((item) => <tr key={item.requestId} className="border-b border-[var(--line)] align-top last:border-0">
@@ -1365,7 +1526,7 @@ function AuditsPanel() {
               <td className="px-3 py-2.5 text-xs">{item.username || item.userId || "-"}</td>
               <td className="px-3 py-2.5 text-xs"><p>{item.endpoint}</p><p className="text-[var(--muted)]">{item.model || "-"} · {item.operation || "-"}</p></td>
               <td className="px-3 py-2.5 text-xs">{item.status ?? "-"} · {item.durationMs ?? "-"}ms</td>
-              <td className="px-3 py-2.5 text-xs"><p>{item.historyIds?.join(", ") || "-"}</p><p className="text-[var(--muted)]">{item.watermarkStatus || "-"}</p></td>
+              <td className="px-3 py-2.5 text-xs"><p>{item.billing?.lfnChargedAff ?? "-"} / {item.billing?.gatewayAnlasCost ?? "-"} / {item.billing?.gatewayPromptTokens ?? "-"}</p><p className="text-[var(--muted)]">差额 {item.billing?.difference ?? "-"} · {item.watermarkStatus || "-"}</p></td>
               <td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</td>
             </tr>)}
             {!items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无请求审计记录</td></tr>}

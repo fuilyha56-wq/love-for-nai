@@ -155,7 +155,8 @@ describe("工作台布局按主题隔离", () => {
     expect(html).not.toContain('class="replica-generation-footer"');
     expect(html).not.toContain('class="replica-navigation"');
     expect(canvas).not.toContain('class="replica-media');
-    expect(left.indexOf("导入图片")).toBeLessThan(left.indexOf('aria-label="模型"'));
+    expect(left).toContain('aria-label="模型"');
+    expect(left).not.toContain("nai-v5-full-medium");
     expect(left.indexOf('aria-label="采样步数"')).toBeLessThan(left.indexOf("生成张数"));
     expect(left.indexOf("生成张数")).toBeLessThan(left.indexOf("多角色"));
   });
@@ -251,6 +252,8 @@ describe("工作台布局按主题隔离", () => {
     expect(controls).toContain('aria-label="打开站内菜单"');
     expect(scroll).toContain('class="replica-model-controls"');
     expect(scroll).toContain('aria-label="模型"');
+    expect(scroll).not.toContain("nai-v5-full-medium");
+    expect(scroll).toContain('aria-label="生成档位"');
     expect(scroll).toContain('aria-label="提示词编辑器"');
     expect(scroll).not.toContain("反推");
     expect(scroll).not.toContain('class="replica-local-tagger"');
