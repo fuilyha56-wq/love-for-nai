@@ -93,6 +93,7 @@ describe("图包 AFF 账本", () => {
       height: 1216,
       steps: 28,
       samples: 2,
+      sequential: true,
     });
 
     expect(charge).toMatchObject({
@@ -118,18 +119,19 @@ describe("图包 AFF 账本", () => {
       height: 1216,
       steps: 28,
       samples: 3,
+      sequential: true,
     });
 
     expect(charge).toMatchObject({
-      cost: 5,
+      cost: 4.5,
       packageCost: 2,
-      personalCost: 3,
-      packageImages: 1,
-      balance: 1,
+      personalCost: 2.5,
+      packageImages: 2,
+      balance: 1.5,
       packageBalance: 0,
     });
-    expect(charge?.packageChargesBySample).toEqual([2, 0, 0]);
-    expect(charge?.personalChargesBySample).toEqual([0, 1.5, 1.5]);
+    expect(charge?.packageChargesBySample).toEqual([1.5, 0.5, 0]);
+    expect(charge?.personalChargesBySample).toEqual([0, 1, 1.5]);
   });
 
   it("两种 AFF 合计不足时不修改本地余额", async () => {
@@ -146,6 +148,7 @@ describe("图包 AFF 账本", () => {
         height: 1216,
         steps: 28,
         samples: 3,
+        sequential: true,
       }),
     ).resolves.toBeNull();
     await expect(affStatus(104)).resolves.toMatchObject({
@@ -198,6 +201,7 @@ describe("图包 AFF 账本", () => {
       height: 1216,
       steps: 28,
       samples: 3,
+      sequential: true,
     });
     if (!charge) throw new Error("charge should exist");
 
@@ -206,8 +210,8 @@ describe("图包 AFF 账本", () => {
     // 第 1 张由图包支付，失败的第 2/3 张只退回个人 AFF。
     await expect(affStatus(106)).resolves.toMatchObject({
       balance: 4,
-      packageBalance: 0,
-      totalBalance: 4,
+      packageBalance: 0.5,
+      totalBalance: 4.5,
     });
     const account = await readAccountFile(106);
     expect(account.packageUsage).toHaveLength(1);

@@ -17,7 +17,7 @@ import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
-import { imageRequestErrorBody } from "@/lib/compat-api";
+import { externalGeneration, imageRequestErrorBody } from "@/lib/compat-api";
 import {
   assertBodySize,
   assertImageModel,
@@ -117,7 +117,25 @@ export async function POST(request: Request) {
     "noise_schedule",
     "cfg_rescale",
     "seed",
+    "uncond_scale",
+    "service_tier",
   ];
+  const generationPayload = {
+    ...Object.fromEntries(
+      forwarded.filter((key) => body[key] !== undefined).map((key) => [key, body[key]]),
+    ),
+    model,
+    prompt: body.prompt,
+    negative_prompt: body.negative_prompt || body.negativePrompt || "",
+    size: `${width}x${height}`,
+    n: samples,
+    n_samples: samples,
+    steps,
+    response_format: "b64_json",
+  };
+  const generation = externalGeneration(generationPayload, "generate");
+  if (!generation)
+    return NextResponse.json({ message: "图像计费参数无效" }, { status: 400 });
   const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
   const risk = await evaluateImageRisk({
     userId: session.userId,
@@ -136,13 +154,6 @@ export async function POST(request: Request) {
   let upstreamBaseUrl = await resolvedNewApiBaseUrl();
   let upstreamAttempted = false;
   try {
-    const generation = {
-      model,
-      width,
-      height,
-      steps,
-      samples,
-    };
     const aff = platformUpstream
       ? await trySpendImageCredits(session.userId, generation)
       : null;
@@ -177,21 +188,7 @@ export async function POST(request: Request) {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(nativeNaiModel ? {
-        ...Object.fromEntries(
-          forwarded
-            .filter((key) => body[key] !== undefined)
-            .map((key) => [key, body[key]]),
-        ),
-        model,
-        prompt: body.prompt,
-        negative_prompt: body.negative_prompt || body.negativePrompt || "",
-        size: `${width}x${height}`,
-        n: samples,
-        n_samples: samples,
-        steps,
-        response_format: "b64_json",
-      } : {
+      body: JSON.stringify(nativeNaiModel ? generationPayload : {
         model,
         prompt: body.prompt,
         size: `${width}x${height}`,

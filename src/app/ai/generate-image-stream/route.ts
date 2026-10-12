@@ -2,7 +2,6 @@ import {
   bearerAuthorization,
   externalGeneration,
   imageRequestErrorBody,
-  isRecord,
   naiGenerationPayload,
   parseNaiGenerationBody,
   proxyNaiNativeWithCredits,
@@ -40,21 +39,7 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof body.model !== "string" || !body.model.trim())
     return withExternalCors(Response.json({ message: "model is required" }, { status: 400 }));
 
-  const parameters = isRecord(body.parameters) ? body.parameters : {};
-  const billingBody = {
-    ...parameters,
-    model: body.model,
-    width: parameters.width ?? body.width,
-    height: parameters.height ?? body.height,
-    n: parameters.n ?? body.n,
-    n_samples: parameters.n_samples ?? body.n_samples,
-    steps: parameters.steps ?? body.steps,
-    strength: parameters.strength ?? body.strength,
-    reference_image_multiple: parameters.reference_image_multiple,
-    reference_image: parameters.reference_image,
-    vibe: parameters.vibe,
-  };
-  const nativeGeneration = externalGeneration(billingBody, "generate");
+  const nativeGeneration = externalGeneration(body);
   let fallbackPayload: Record<string, unknown>;
   try {
     fallbackPayload = naiGenerationPayload(body);

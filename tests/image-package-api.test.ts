@@ -156,6 +156,29 @@ describe("图包购买请求", () => {
 });
 
 describe("内部生成 fallback", () => {
+  it("仅按实际转发的文生图参数计费，保留 uncond_scale 和 service_tier", async () => {
+    affMocks.trySpendImageCredits.mockClear();
+    const { POST } = await import("@/app/api/images/generate/route");
+    const response = await POST(new Request("http://localhost/api/images/generate", {
+      method: "POST",
+      body: JSON.stringify({
+        model: "nai-v5-full", prompt: "sky", width: 832, height: 1216,
+        steps: 29, uncond_scale: 2, service_tier: "priority",
+        novelai_operation: "img2img", strength: 0.1, image: "source", references: [{ reference_image: "ref" }],
+      }),
+    }));
+    expect(response.status).toBe(200);
+    expect(affMocks.trySpendImageCredits).toHaveBeenCalledWith(session.userId, expect.objectContaining({
+      operation: "generate", uncondScale: 2, serviceTier: "priority",
+      referenceImageCount: 0, hasInputImage: false,
+    }));
+    const sent = currentFetch.mock.calls.find(([url]) => url === "http://newapi.test/v1/images/generations");
+    const payload = JSON.parse(String(sent?.[1]?.body));
+    expect(payload).toMatchObject({ uncond_scale: 2, service_tier: "priority" });
+    for (const field of ["novelai_operation", "strength", "image", "references"])
+      expect(payload).not.toHaveProperty(field);
+  });
+
   it("rejects invalid Medium settings before any spend or upstream request", async () => {
     affMocks.trySpendImageCredits.mockClear();
     currentFetch.mockClear();

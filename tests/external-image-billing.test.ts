@@ -54,11 +54,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url === "http://gateway.test/v1/images/price-quote")
-        return Response.json(
-          { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
-          { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
-        );
+      if (url.includes("price-quote")) throw new Error("LFN must price locally");
       if (url.startsWith("http://gateway.test"))
         return Response.json({ data: [{ b64_json: "abc" }] });
       if (url.startsWith("http://newapi.test"))
@@ -90,6 +86,24 @@ afterEach(() => {
 });
 
 describe("外部 LFN 图像入口计费", () => {
+  it.each(["0", "999"])("Gateway Anlas=%s 仅供审计，不修改本地扣款", async (anlas) => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "ikun" });
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url !== "http://gateway.test/v1/images/generations")
+        throw new Error(`unexpected fetch ${url}`);
+      return Response.json({ data: [{ b64_json: "abc" }], usage: { prompt_tokens: 50000 } }, {
+        headers: { "X-Anlas-Cost": anlas, "X-Prompt-Tokens": "50000" },
+      });
+    }));
+    const { POST } = await import("@/app/v1/images/generations/route");
+    const response = await POST(request());
+    await response.arrayBuffer();
+    expect(response.status).toBe(200);
+    expect(mocks.trySpendImageCredits).toHaveBeenCalledTimes(1);
+    expect(mocks.refundImageCredits).not.toHaveBeenCalled();
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+  });
+
   it("Medium 参数违规返回稳定错误码且不扣费、不请求上游", async () => {
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(new Request("http://localhost/v1/images/generations", {
@@ -145,8 +159,8 @@ describe("外部 LFN 图像入口计费", () => {
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(
       41,
       expect.objectContaining({ model: "nai-v5-full", samples: 1 }),
-      2,
     );
+    expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("price-quote"))).toBe(false);
     const gatewayCall = vi.mocked(fetch).mock.calls.find(
       ([url]) => url === "http://gateway.test/v1/images/generations",
     );
@@ -183,7 +197,7 @@ describe("外部 LFN 图像入口计费", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
-    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything(), 2);
+    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything());
   });
 
   it("无余额时直接用托管密钥走 NewAPI 计费（按用户分组自动换组）", async () => {
@@ -198,11 +212,6 @@ describe("外部 LFN 图像入口计费", () => {
           newapiCalls.push(new Headers(init?.headers).get("Authorization") ?? "");
           return Response.json({ data: [{ b64_json: "abc" }] });
         }
-        if (url === "http://gateway.test/v1/images/price-quote")
-          return Response.json(
-            { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
-            { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
-          );
         if (url.startsWith("http://gateway.test"))
           return Response.json({ data: [{ b64_json: "abc" }] });
         throw new Error(`unexpected fetch ${url}`);
@@ -225,11 +234,6 @@ describe("外部 LFN 图像入口计费", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
-        if (url === "http://gateway.test/v1/images/price-quote")
-          return Response.json(
-            { anlas_cost: 2, usage: { prompt_tokens: 25, completion_tokens: 0, total_tokens: 25 } },
-            { headers: { "X-Anlas-Cost": "2", "X-Prompt-Tokens": "25" } },
-          );
         if (url.startsWith("http://newapi.test"))
           return Response.json(
             { error: { code: "model_not_found", message: "No available channel for model nai-v5-full under group default (distributor)", type: "new_api_error" } },

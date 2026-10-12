@@ -148,6 +148,9 @@ export function naiNativeGenerationBody(
   }
   if (options.stream) parameters.stream = "msgpack";
   if (typeof body.strength === "number") parameters.strength = body.strength;
+  if (typeof body.inpaintImg2ImgStrength === "number") parameters.inpaintImg2ImgStrength = body.inpaintImg2ImgStrength;
+  if (typeof body.uncond_scale === "number") parameters.uncond_scale = body.uncond_scale;
+  if (typeof body.service_tier === "string") parameters.service_tier = body.service_tier;
   if (typeof body.image === "string" && body.image)
     parameters.image = stripDataUrl(body.image);
   if (typeof body.mask === "string" && body.mask)

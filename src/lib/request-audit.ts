@@ -30,11 +30,6 @@ export type RequestAuditBilling = {
   gatewayAnlasCost?: number;
   gatewayUsage?: JsonRecord;
   gatewayPromptTokens?: number;
-  quotedGatewayAnlas?: number;
-  quoteMatched?: boolean;
-  finalChargedAff?: number;
-  difference?: number;
-  differenceStatus?: string;
 };
 
 export type RequestUsageSummary = {

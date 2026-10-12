@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import {
-  reconcileImageCredits,
   refundImageCredits,
   trySpendImageCredits,
   type ImageCreditCharge,
@@ -15,7 +14,6 @@ import {
   getImageToken,
   imageFromResult,
   resolvedImageUpstream,
-  resolvedAffGateway,
   resolvedNaiImageUpstream,
   resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
@@ -35,8 +33,7 @@ import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
-import { isSameGatewayUpstream, requestGatewayImageQuote } from "@/lib/gateway-billing";
-import { imageRequestErrorBody, isRecord } from "@/lib/compat-api";
+import { externalGeneration, imageRequestErrorBody } from "@/lib/compat-api";
 import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
@@ -376,12 +373,6 @@ export async function POST(request: Request) {
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
   let baseUrlOverride = "";
-  let gatewayBilling = false;
-  let gatewayAnlasTotal = 0;
-  let gatewayPromptTokens: number | undefined;
-  let gatewayQuoteCount = 0;
-  let gatewayQuoteMissing = false;
-  let gatewayExpectedQuotes = 0;
   let settlementId: string | undefined;
   let upstreamAttempted = false;
 
@@ -409,33 +400,11 @@ export async function POST(request: Request) {
         );
       }
 
-      const generation = {
-        model,
-        width,
-        height,
-        steps,
-        samples: totalSamples,
-        strength: typeof body.strength === "number" ? body.strength : undefined,
-        uncondScale: typeof body.uncond_scale === "number" ? body.uncond_scale : undefined,
-        operation,
-        referenceImageCount: referenceImageCount(body, operation),
-        characterPromptCount: Array.isArray(body.characterPrompts)
-          ? body.characterPrompts.length
-          : 0,
-      };
+      const generation = externalGeneration({ ...body, model, width, height, steps, n: totalSamples, n_samples: totalSamples }, operation);
+      if (!generation) return NextResponse.json({ message: "图像计费参数无效" }, { status: 400 });
       const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
-      const affGateway = await resolvedAffGateway();
-      gatewayBilling = isSameGatewayUpstream(platformUpstream, affGateway);
-      let gatewayQuote: Awaited<ReturnType<typeof requestGatewayImageQuote>> | undefined;
-      if (gatewayBilling && platformUpstream) {
-        try {
-          gatewayQuote = await requestGatewayImageQuote(platformUpstream.baseUrl, platformUpstream.token, generation);
-        } catch (error) {
-          return NextResponse.json({ message: error instanceof Error ? error.message : "Gateway 报价暂时不可用" }, { status: 503 });
-        }
-      }
       const credits = platformUpstream
-        ? await trySpendImageCredits(session.userId, generation, gatewayQuote?.affCost)
+        ? await trySpendImageCredits(session.userId, generation)
         : null;
       if (credits && platformUpstream) {
         token = platformUpstream.token;
@@ -450,10 +419,6 @@ export async function POST(request: Request) {
               : "personal";
             settlementId = `settlement:${typeof body._lfnRequestId === "string" ? body._lfnRequestId : randomUUID()}`;
             await createImageSettlement({ settlementId, requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : settlementId, userId: session.userId, charge: credits });
-            if (gatewayQuote) {
-              gatewayAnlasTotal = gatewayQuote.anlasCost;
-              gatewayPromptTokens = gatewayQuote.promptTokens;
-            }
       } else if ((await resolvedAuthProviderId()) === "local") {
         if (!nativeNaiModel)
           return NextResponse.json({ message: "本地账号不能使用 NewAPI 模型" }, { status: 400 });
@@ -526,16 +491,6 @@ export async function POST(request: Request) {
         throw error;
       });
       finishGatewayLog(nativeResponse.status);
-      if (gatewayBilling) gatewayExpectedQuotes = 1;
-      if (gatewayBilling && nativeResponse.ok) {
-        const anlas = Number(nativeResponse.headers.get("x-anlas-cost"));
-        const tokens = Number(nativeResponse.headers.get("x-prompt-tokens"));
-        if (Number.isSafeInteger(anlas) && anlas >= 0) {
-          gatewayAnlasTotal += anlas;
-          gatewayQuoteCount += 1;
-          if (Number.isSafeInteger(tokens) && tokens >= 0) gatewayPromptTokens = tokens;
-        } else gatewayQuoteMissing = true;
-      }
       // 流式初始化失败不再直接报错：保留扣费，回退到下方缓冲端点生成。
       const streamReady = nativeResponse.ok && Boolean(nativeResponse.body);
       if (!streamReady) {
@@ -608,36 +563,9 @@ export async function POST(request: Request) {
                 (_, index) => finals.get(index),
               ).filter((item): item is string => Boolean(item));
               generatedSamples = images.length;
-              let settledCharge = creditCharge;
-              if (creditCharge && settlementId && gatewayBilling && gatewayQuoteCount === 1 && !gatewayQuoteMissing && generatedSamples === samples) {
-                const reconciliation = await reconcileImageCredits(session.userId, creditCharge, gatewayAnlasTotal, settlementId);
-                settledCharge = {
-                  ...creditCharge,
-                  cost: reconciliation.chargedAmount,
-                  packageCost: reconciliation.packageCost,
-                  personalCost: reconciliation.personalCost,
-                  balance: reconciliation.balance,
-                  packageBalance: reconciliation.packageBalance,
-                  totalBalance: reconciliation.totalBalance,
-                };
-                await updateImageSettlement(settlementId, {
-                  generatedSamples,
-                  chargedAmount: reconciliation.chargedAmount,
-                  gatewayAnlasCost: gatewayAnlasTotal,
-                  gatewayPromptTokens,
-                  billingDifference: reconciliation.difference,
-                  billingStatus: reconciliation.applied ? reconciliation.difference === 0 ? "matched" : "adjusted" : "pending-reconciliation",
-                  status: reconciliation.applied ? "succeeded" : "pending-reconciliation",
-                  failureMessage: reconciliation.applied ? undefined : "个人 AFF 余额不足，Gateway 差额需人工核对",
-                });
-              } else if (creditCharge && settlementId && gatewayBilling) {
-                await updateImageSettlement(settlementId, {
-                  generatedSamples,
-                  ...(gatewayQuoteCount ? { gatewayAnlasCost: gatewayAnlasTotal, gatewayPromptTokens } : {}),
-                  status: "pending-reconciliation",
-                  billingStatus: "pending-reconciliation",
-                  failureMessage: "Gateway 实际计价头缺失或流式响应不能按整单核对",
-                });
+              if (creditCharge && generatedSamples < samples) {
+                affRefunded = true;
+                await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
               } else if (creditCharge && settlementId) {
                 await updateImageSettlement(settlementId, { generatedSamples, status: "succeeded" });
               }
@@ -648,14 +576,14 @@ export async function POST(request: Request) {
                   requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : null,
                 payment,
                 paymentSource,
-                    aff: settledCharge
+                    aff: creditCharge
                   ? {
-                      cost: settledCharge.cost,
-                      balance: settledCharge.balance,
-                      packageCost: settledCharge.packageCost,
-                      personalCost: settledCharge.personalCost,
-                      packageBalance: settledCharge.packageBalance,
-                      totalBalance: settledCharge.totalBalance,
+                      cost: creditCharge.cost,
+                      balance: creditCharge.balance,
+                      packageCost: creditCharge.packageCost,
+                      personalCost: creditCharge.personalCost,
+                      packageBalance: creditCharge.packageBalance,
+                      totalBalance: creditCharge.totalBalance,
                     }
                   : null,
               });
@@ -713,15 +641,6 @@ export async function POST(request: Request) {
                     throw error;
                   });
                   finishFallbackLog(resp.status);
-                  if (gatewayBilling && resp.ok) {
-                    const anlas = Number(resp.headers.get("x-anlas-cost"));
-                    const tokens = Number(resp.headers.get("x-prompt-tokens"));
-                    if (Number.isSafeInteger(anlas) && anlas >= 0) {
-                      gatewayAnlasTotal = anlas;
-                      gatewayQuoteCount = 1;
-                      if (Number.isSafeInteger(tokens) && tokens >= 0) gatewayPromptTokens = tokens;
-                    } else gatewayQuoteMissing = true;
-                  }
                   if (!resp.ok) {
                     await resp.body?.cancel().catch(() => undefined);
                     throw new Error(`fallback ${resp.status}`);
@@ -733,6 +652,11 @@ export async function POST(request: Request) {
                   const images = imageFromResult(result);
                   if (!images.length) throw new Error("fallback no images");
                   generatedSamples = images.length;
+                  if (creditCharge && generatedSamples < samples) {
+                    affRefunded = true;
+                    await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
+                  } else if (creditCharge && settlementId)
+                    await updateImageSettlement(settlementId, { generatedSamples, status: "succeeded" });
                   images.forEach((image, index) =>
                     send("final", {
                       sampleIndex: index,
@@ -868,16 +792,6 @@ export async function POST(request: Request) {
         throw error;
       });
       finishGatewayLog(upstream.status);
-      if (gatewayBilling && upstream.ok) gatewayExpectedQuotes += 1;
-      if (gatewayBilling && upstream.ok) {
-        const anlas = Number(upstream.headers.get("x-anlas-cost"));
-        const tokens = Number(upstream.headers.get("x-prompt-tokens"));
-        if (Number.isSafeInteger(anlas) && anlas >= 0) {
-          gatewayAnlasTotal += anlas;
-          gatewayQuoteCount += 1;
-          if (Number.isSafeInteger(tokens) && tokens >= 0) gatewayPromptTokens = tokens;
-        } else gatewayQuoteMissing = true;
-      }
       const contentType = upstream.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         await upstream.body?.cancel().catch(() => undefined);
@@ -928,15 +842,13 @@ export async function POST(request: Request) {
       generatedSamples += batchImages.length;
       lastResult = result;
       if (result.usage) usage = result.usage;
-      if (gatewayBilling && isRecord(result.usage)) gatewayPromptTokens = Number.isSafeInteger(result.usage.prompt_tokens) ? Number(result.usage.prompt_tokens) : gatewayPromptTokens;
       if (result.data?.[0]?.vibe) vibe = result.data[0].vibe;
     }
 
     if (lastRaw) {
       if (creditCharge) {
         affRefunded = true;
-        await refundImageCredits(session.userId, creditCharge, generatedSamples);
-        if (settlementId) await updateImageSettlement(settlementId, { generatedSamples, gatewayAnlasCost: gatewayAnlasTotal || undefined, gatewayPromptTokens, status: generatedSamples ? "pending-reconciliation" : "refunded", billingStatus: gatewayQuoteCount && generatedSamples ? "pending-reconciliation" : undefined, failureMessage: generatedSamples ? "部分生成成功，Gateway 整单价格不可直接拆分" : undefined });
+        await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
       }
       return NextResponse.json(
         {
@@ -952,22 +864,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ tags: lastResult.tags || lastResult, raw: lastResult });
 
     if (creditCharge && settlementId) {
-      if (gatewayBilling && !gatewayQuoteMissing && gatewayQuoteCount === gatewayExpectedQuotes && gatewayQuoteCount > 0) {
-        const reconciliation = await reconcileImageCredits(session.userId, creditCharge, gatewayAnlasTotal, settlementId);
-        await updateImageSettlement(settlementId, {
-          generatedSamples,
-          chargedAmount: reconciliation.chargedAmount,
-          gatewayAnlasCost: gatewayAnlasTotal,
-          gatewayPromptTokens,
-          gatewayUsage: isRecord(usage) ? usage : undefined,
-          billingDifference: reconciliation.difference,
-          billingStatus: reconciliation.applied ? reconciliation.difference === 0 ? "matched" : "adjusted" : "pending-reconciliation",
-          status: reconciliation.applied ? "succeeded" : "pending-reconciliation",
-          failureMessage: reconciliation.applied ? undefined : "个人 AFF 余额不足，Gateway 差额需人工核对",
-        });
-        creditCharge = { ...creditCharge, cost: reconciliation.chargedAmount, packageCost: reconciliation.packageCost, personalCost: reconciliation.personalCost, balance: reconciliation.balance, packageBalance: reconciliation.packageBalance, totalBalance: reconciliation.totalBalance };
-      } else if (gatewayBilling) {
-        await updateImageSettlement(settlementId, { generatedSamples, status: "pending-reconciliation", billingStatus: "pending-reconciliation", gatewayAnlasCost: gatewayAnlasTotal || undefined, gatewayPromptTokens, failureMessage: "Gateway 实际计价头缺失，保留 LFN 本地预扣价并待人工核对" });
+      if (generatedSamples < creditCharge.samples) {
+        affRefunded = true;
+        await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
       } else {
         await updateImageSettlement(settlementId, { generatedSamples, status: "succeeded" });
       }

@@ -2,7 +2,6 @@ import {
   bearerAuthorization,
   externalGeneration,
   imageOperationFromBody,
-  imageReferenceCountFromBody,
   imageRequestErrorBody,
   isRecord,
   naiGenerationPayload,
@@ -43,28 +42,8 @@ export async function POST(request: Request): Promise<Response> {
     body.parameters && typeof body.parameters === "object" && !Array.isArray(body.parameters)
       ? (body.parameters as Record<string, unknown>)
       : {};
-  const action = typeof body.action === "string" ? body.action.toLowerCase() : "generate";
-  const operation =
-    action === "img2img" ? "img2img" : action === "infill" ? "inpainting" : "generate";
-  const billingBody = {
-    ...parameters,
-    model: body.model,
-    width: parameters.width ?? body.width,
-    height: parameters.height ?? body.height,
-    n: parameters.n ?? body.n,
-    n_samples: parameters.n_samples ?? body.n_samples,
-    steps: parameters.steps ?? body.steps,
-    strength: parameters.strength ?? body.strength,
-    reference_image_multiple: parameters.reference_image_multiple,
-    reference_image: parameters.reference_image,
-    vibe: parameters.vibe,
-  };
-  const billingOperation = imageOperationFromBody(body, operation);
-  const nativeGeneration = externalGeneration({
-    ...billingBody,
-    operation: billingOperation,
-    referenceImageCount: imageReferenceCountFromBody(body, billingOperation),
-  }, billingOperation);
+  const billingOperation = imageOperationFromBody(body);
+  const nativeGeneration = externalGeneration(body, billingOperation);
   let payload: Record<string, unknown>;
   try {
     payload = naiGenerationPayload(body);

@@ -23,10 +23,6 @@ export type ImageSettlement = {
   gatewayAnlasCost?: number;
   gatewayPromptTokens?: number;
   gatewayUsage?: Record<string, unknown>;
-  quotedGatewayAnlas?: number;
-  quoteMatched?: boolean;
-  billingDifference?: number;
-  billingStatus?: "matched" | "adjusted" | "pending-reconciliation";
   paymentSource: "personal" | "package" | "mixed" | "newapi";
   status: ImageSettlementStatus;
   upstreamStatus?: number;

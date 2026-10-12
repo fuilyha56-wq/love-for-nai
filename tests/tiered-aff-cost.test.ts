@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { affCost, isInFreeEnvelope } from "@/lib/aff";
-import { gatewayAnlasCost } from "@/lib/image-pricing";
+import { gatewayAnlasCost, imageCreditCost } from "@/lib/image-pricing";
 
 let dataDir = "";
 
@@ -75,10 +75,10 @@ describe("两档 AFF 计费", () => {
     expect(affCost({ model: "nai-v5-full-medium", width: 1024, height: 1024, steps: 14, samples: 1 })).toBe(1);
     expect(affCost({ model: "nai-v5-inpaint-medium", width: 512, height: 512, steps: 14, samples: 1, operation: "inpainting" })).toBe(1);
   });
-  it("档内完整版与 -limit 同价：V5 2 AFF、V4.5 1 AFF", () => {
+  it("档内完整版与 -limit 同价：V5 1.5 AFF、V4.5 1 AFF", () => {
     expect(
       affCost({ model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 }),
-    ).toBe(2);
+    ).toBe(1.5);
     expect(
       affCost({ model: "nai-v4.5-full", width: 832, height: 1216, steps: 28, samples: 1 }),
     ).toBe(1);
@@ -122,6 +122,14 @@ describe("两档 AFF 计费", () => {
     expect(affCost(generation)).toBe(80);
   });
 
+  it("图生图缺省强度按 0.7 本地计算，文生图带源图退出档内", () => {
+    const base = { model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1 };
+    expect(affCost({ ...base, operation: "img2img" })).toBe(28);
+    expect(gatewayAnlasCost({ ...base, operation: "img2img" })).toBe(28);
+    expect(affCost({ ...base, operation: "img2img", strength: 1 })).toBe(40);
+    expect(affCost({ ...base, steps: 28, hasInputImage: true })).toBe(40);
+  });
+
   it("未编码 Vibe 按首次编码价计费，编码复用不重复收取", () => {
     const generation = {
       model: "nai-v4.5-full",
@@ -150,13 +158,19 @@ describe("两档 AFF 计费", () => {
     expect(affCost(generation)).toBe(62);
   });
 
-  it("limit 模型不受档位影响，超界仍按张数计费", () => {
-    expect(
-      affCost({ model: "nai-v5-full-limit", width: 1024, height: 1024, steps: 50, samples: 1 }),
-    ).toBe(2);
-    expect(
-      affCost({ model: "nai-v4.5-full-limit", width: 832, height: 1216, steps: 28, samples: 3 }),
-    ).toBe(3);
+  it("limit 超界不产生低价账单，独立单张按合法档内价收费", () => {
+    expect(isInFreeEnvelope({ model: "nai-v5-full-limit", width: 1024, height: 1024, steps: 50, samples: 1 })).toBe(false);
+    expect(isInFreeEnvelope({ model: "nai-v4.5-full-limit", width: 832, height: 1216, steps: 28, samples: 3 })).toBe(false);
+    expect(affCost({ model: "nai-v5-full-limit", width: 832, height: 1216, steps: 28, samples: 3, sequential: true })).toBe(4.5);
+  });
+
+  it("Director 使用固定价，固定模型单价与预估共享半点取整", () => {
+    const base = { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 };
+    expect(affCost({ ...base, operation: "director-lineart" })).toBe(5);
+    expect(affCost({ ...base, operation: "director-bg-remover" })).toBe(65);
+    expect(imageCreditCost(base, 2.49)).toBe(2);
+    expect(imageCreditCost({ ...base, samples: 3 }, 2.5)).toBe(7.5);
+    expect(imageCreditCost(base, 2.51)).toBe(3);
   });
 
   it("encode-vibe / upscale / annotate 按固定操作计费", () => {

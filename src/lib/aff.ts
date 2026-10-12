@@ -3,12 +3,14 @@ import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   affCost as calculateAffCost,
+  imageCreditCost,
   isHalfStepAmount,
   isInFreeEnvelope as calculateIsInFreeEnvelope,
-  roundBillingAmount,
+  splitImageCreditCost,
 } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
 import { runtimeModelFixedCost, runtimeRewards } from "@/lib/runtime-config";
+import { MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
 
 export type AffTransaction = {
   id: string;
@@ -77,17 +79,6 @@ export type ImageRefundOptions = {
   settlementId?: string;
   requestId?: string;
   reason?: string;
-};
-
-export type ImageBillingReconciliation = {
-  applied: boolean;
-  chargedAmount: number;
-  difference: number;
-  packageCost: number;
-  personalCost: number;
-  balance: number;
-  packageBalance: number;
-  totalBalance: number;
 };
 
 export const CHECK_IN_REWARD = 20;
@@ -380,25 +371,23 @@ export async function trySpendAff(
 export async function trySpendImageCredits(
   userId: number,
   generation: AffGeneration,
-  authoritativeCost?: number,
 ): Promise<ImageCreditCharge | null> {
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
     const samples = generation.samples;
-    if (!Number.isSafeInteger(samples) || samples < 1 || samples > 6)
-      throw new Error("生成张数必须是 1-6 的正整数");
+    if (!Number.isSafeInteger(samples) || samples < 1 || samples > MAX_IMAGE_REQUEST_SAMPLES)
+      throw new Error(`生成张数必须是 1-${MAX_IMAGE_REQUEST_SAMPLES} 的正整数`);
+    const limitRequest = generation.sequential
+      ? { ...generation, samples: 1, sequential: false }
+      : generation;
+    if (generation.model.endsWith("-limit") && !calculateIsInFreeEnvelope(limitRequest))
+      throw new Error("limit 模型仅允许单张、28 步以内、1024² 以内且无付费参考图的请求");
     // 管理员为模型配置了固定单价时覆盖内置公式；0 = 免费该模型。
-    const fixedCostPerSample = authoritativeCost == null
-      ? await runtimeModelFixedCost(generation.model)
-      : null;
-    const cost = authoritativeCost != null
-      ? authoritativeCost
-      : fixedCostPerSample != null
-        ? roundBillingAmount(fixedCostPerSample) * samples
-        : affCost(generation);
+    const fixedCostPerSample = await runtimeModelFixedCost(generation.model);
+    const cost = imageCreditCost(generation, fixedCostPerSample);
     if (!isHalfStepAmount(cost) || cost < 0)
       throw new Error("图像费用计算结果无效");
-    if (fixedCostPerSample == null && authoritativeCost == null && cost === 0)
+    if (fixedCostPerSample == null && cost === 0)
       throw new Error("图像费用计算结果无效");
     const { rateLimit } = await import("@/lib/runtime-config").then(({ runtimeImagePackageSettings }) => runtimeImagePackageSettings());
     const packageRemaining = packageRateLimitRemaining(account, Date.now(), rateLimit);
@@ -406,37 +395,9 @@ export async function trySpendImageCredits(
     const availablePackageImages = packageRateLimited
       ? 0
       : Math.min(samples, packageRemaining);
-    const packageCostLimit =
-      availablePackageImages > 0
-        ? Math.min(cost, roundBillingAmount((cost * availablePackageImages) / samples))
-        : 0;
-    const packageCost = Math.min(account.packageBalance, packageCostLimit);
-    const personalCost = cost - packageCost;
+    const { packageCost, personalCost, packageChargesBySample, personalChargesBySample } =
+      splitImageCreditCost(cost, samples, account.packageBalance, availablePackageImages);
     if (account.balance < personalCost) return null;
-
-    // 把整单整数费用分摊到每张图，保证部分批次退款时来源和金额都精确。
-    // 分摊时图包额度可能不够一张图的完整费用，此时该图仍算占用一个图包名额，
-    // 否则用户可以反复用残余额度绕过 10 张/分钟限制。
-    const costUnits = Math.round(cost * 2);
-    const baseCostUnits = Math.floor(costUnits / samples);
-    let remainderUnits = costUnits - baseCostUnits * samples;
-    const packageChargesBySample: number[] = [];
-    const personalChargesBySample: number[] = [];
-    let remainingPackage = packageCost;
-    let packageQuotaLeft = availablePackageImages;
-    for (let index = 0; index < samples; index += 1) {
-      const sampleCostUnits = baseCostUnits + (remainderUnits > 0 ? 1 : 0);
-      if (remainderUnits > 0) remainderUnits -= 1;
-      const sampleCost = sampleCostUnits / 2;
-      const packageCharge =
-        packageQuotaLeft > 0
-          ? Math.min(remainingPackage, sampleCost)
-          : 0;
-      if (packageCharge > 0) packageQuotaLeft -= 1;
-      remainingPackage -= packageCharge;
-      packageChargesBySample.push(packageCharge);
-      personalChargesBySample.push(sampleCost - packageCharge);
-    }
     const packageImageIndexes = packageChargesBySample.reduce<number[]>(
       (indexes, charge, index) => {
         if (charge > 0) indexes.push(index);
@@ -503,12 +464,11 @@ export async function refundImageCredits(
   );
   if (generated >= charge.samples) return;
   const { getImageSettlement, updateImageSettlement } = await import("@/lib/risk-settlement");
-  if (options.settlementId) {
-    const settlement = await getImageSettlement(options.settlementId);
-    if (settlement?.status === "refunded" || settlement?.status === "succeeded") return;
-    if (settlement && settlement.generatedSamples >= generated) return;
-  }
   await withUserLock(userId, async () => {
+    if (options.settlementId) {
+      const settlement = await getImageSettlement(options.settlementId);
+      if (settlement && ["refunded", "succeeded", "partially-refunded"].includes(settlement.status)) return;
+    }
     const account = await readAccount(userId);
     const packageRefund = charge.packageChargesBySample
       .slice(generated)
@@ -564,117 +524,13 @@ export async function refundImageCredits(
       const previous = await getImageSettlement(options.settlementId);
       await updateImageSettlement(options.settlementId, {
         generatedSamples: generated,
+        chargedAmount: charge.cost - refundedAmount,
         refundedAmount: (previous?.refundedAmount || 0) + refundedAmount,
         status: generated ? "partially-refunded" : "refunded",
         refundReferenceId: options.settlementId,
         failureMessage: options.reason,
       });
     }
-  });
-}
-
-export async function reconcileImageCredits(
-  userId: number,
-  charge: ImageCreditCharge,
-  targetCost: number,
-  settlementId: string,
-): Promise<ImageBillingReconciliation> {
-  if (!Number.isSafeInteger(targetCost) || targetCost < 0)
-    throw new Error("Gateway 实际费用无效");
-  return withUserLock(userId, async () => {
-    const account = await readAccount(userId);
-    const referenceId = `${settlementId}:gateway-reconcile`;
-    const previous = account.transactions.filter((item) => item.referenceId === referenceId);
-    if (previous.length) {
-      const difference = -previous.reduce((sum, item) => sum + item.amount, 0);
-      return {
-        applied: true,
-        chargedAmount: charge.cost + difference,
-        difference,
-        packageCost: charge.packageCost,
-        personalCost: charge.personalCost + Math.max(0, difference),
-        balance: account.balance,
-        packageBalance: account.packageBalance,
-        totalBalance: account.balance + account.packageBalance,
-      };
-    }
-
-    const difference = targetCost - charge.cost;
-    let packageCost = charge.packageCost;
-    let personalCost = charge.personalCost;
-    if (difference > 0) {
-      if (account.balance < difference)
-        return {
-          applied: false,
-          chargedAmount: charge.cost,
-          difference,
-          packageCost,
-          personalCost,
-          balance: account.balance,
-          packageBalance: account.packageBalance,
-          totalBalance: account.balance + account.packageBalance,
-        };
-      account.balance -= difference;
-      addTransaction(
-        account,
-        -difference,
-        "generation",
-        `Gateway 实际计价补扣 ${difference} AFF`,
-        referenceId,
-        "personal",
-      );
-      personalCost += difference;
-    } else if (difference < 0) {
-      let packageRefund = Math.min(
-        charge.packageCost,
-        Math.floor((-difference * charge.packageCost) / Math.max(1, charge.cost)),
-      );
-      let personalRefund = Math.min(charge.personalCost, -difference - packageRefund);
-      let remaining = -difference - packageRefund - personalRefund;
-      const extraPackage = Math.min(charge.packageCost - packageRefund, remaining);
-      packageRefund += extraPackage;
-      remaining -= extraPackage;
-      const extraPersonal = Math.min(charge.personalCost - personalRefund, remaining);
-      personalRefund += extraPersonal;
-      remaining -= extraPersonal;
-      if (remaining > 0)
-        throw new Error("Gateway 差额退款超过本次 AFF 预扣金额");
-      if (packageRefund > 0) {
-        account.packageBalance += packageRefund;
-        addTransaction(
-          account,
-          packageRefund,
-          "refund",
-          `Gateway 实际计价退款 ${packageRefund} 图包 AFF`,
-          referenceId,
-          "package",
-        );
-        packageCost -= packageRefund;
-      }
-      if (personalRefund > 0) {
-        account.balance += personalRefund;
-        addTransaction(
-          account,
-          personalRefund,
-          "refund",
-          `Gateway 实际计价退款 ${personalRefund} 个人 AFF`,
-          referenceId,
-          "personal",
-        );
-        personalCost -= personalRefund;
-      }
-    }
-    await writeAccount(userId, account);
-    return {
-      applied: true,
-      chargedAmount: targetCost,
-      difference,
-      packageCost,
-      personalCost,
-      balance: account.balance,
-      packageBalance: account.packageBalance,
-      totalBalance: account.balance + account.packageBalance,
-    };
   });
 }
 
