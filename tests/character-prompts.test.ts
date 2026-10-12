@@ -57,8 +57,8 @@ describe("多角色与档内判定", () => {
       samples: 1,
     });
 
-    expect(withoutCharacters).toBe(2);
-    expect(withCharacters).toBe(2);
+    expect(withoutCharacters).toBe(1.5);
+    expect(withCharacters).toBe(1.5);
   });
 
   it("-limit 模型带角色仍按张数计费（位置坐标不影响 limit 价格）", () => {
@@ -71,7 +71,7 @@ describe("多角色与档内判定", () => {
         samples: 1,
         characterPromptCount: 3,
       }),
-    ).toBe(2);
+    ).toBe(1.5);
   });
 });
 

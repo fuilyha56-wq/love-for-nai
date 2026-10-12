@@ -13,6 +13,7 @@ export type ImagePricingGeneration = {
   maxSamplesPerRequest?: number;
   operation?: string;
   referenceImageCount?: number;
+  referenceMode?: "precise" | "vibe";
   encodedVibeCount?: number;
   characterPromptCount?: number;
   hasInputImage?: boolean;
@@ -87,6 +88,51 @@ export function officialNaiAnlasCost(generation: ImagePricingGeneration, opusEli
 
 export const MEDIUM_ANLAS_RATIO = 18 / 26;
 export const MEDIUM_AFF_PER_IMAGE = Math.max(1, Math.round(2 * MEDIUM_ANLAS_RATIO));
+const DIRECTOR_COSTS: Record<string, number> = {
+  declutter: 5,
+  "bg-removal": 65,
+  "bg-remover": 65,
+  lineart: 5,
+  sketch: 5,
+  colorize: 5,
+  emotion: 5,
+};
+
+export function imageCreditCost(generation: ImagePricingGeneration, fixedCostPerSample: number | null = null): number {
+  return fixedCostPerSample != null
+    ? roundBillingAmount(fixedCostPerSample) * generation.samples
+    : affCost(generation);
+}
+
+export function splitImageCreditCost(cost: number, samples: number, packageBalance: number, availablePackageImages: number) {
+  const costUnits = Math.round(cost * 2);
+  const baseUnits = Math.floor(costUnits / samples);
+  const remainderUnits = costUnits % samples;
+  let remainingPackage = packageBalance;
+  const packageChargesBySample: number[] = [];
+  const personalChargesBySample: number[] = [];
+  for (let index = 0; index < samples; index += 1) {
+    const sampleCost = (baseUnits + (index < remainderUnits ? 1 : 0)) / 2;
+    const packageCharge = index < availablePackageImages ? Math.min(remainingPackage, sampleCost) : 0;
+    remainingPackage -= packageCharge;
+    packageChargesBySample.push(packageCharge);
+    personalChargesBySample.push(sampleCost - packageCharge);
+  }
+  return {
+    packageChargesBySample,
+    personalChargesBySample,
+    packageCost: packageChargesBySample.reduce((total, value) => total + value, 0),
+    personalCost: personalChargesBySample.reduce((total, value) => total + value, 0),
+  };
+}
+
+export function imagePricingStrength(body: Record<string, unknown>, operation: string): number | undefined {
+  if (["inpainting", "edits", "outpainting", "infill"].includes(operation))
+    return typeof body.inpaintImg2ImgStrength === "number" ? body.inpaintImg2ImgStrength : 1;
+  if (operation === "img2img")
+    return typeof body.strength === "number" ? body.strength : 0.7;
+  return undefined;
+}
 
 export function tokensToPoints(tokens: number): number {
   return Number.isFinite(tokens) && tokens > 0 ? tokens / TOKENS_PER_POINT : 0;
@@ -124,44 +170,7 @@ export function estimatePoints(generation: ImagePricingGeneration): number {
       generation.samples
     );
   if (usesLimitPricing(generation)) return 0;
-  const operation = generation.operation ?? "generate";
-  if (operation === "upscale")
-    return (
-      upscaleAnlasCost(generation.width, generation.height) * generation.samples
-    );
-  if (operation === "encode-vibe")
-    return 2 * Math.max(1, generation.referenceImageCount ?? 1);
-  const director: Record<string, number> = {
-    declutter: 5,
-    "bg-removal": 65,
-    "bg-remover": 65,
-    lineart: 5,
-    sketch: 5,
-    colorize: 5,
-    emotion: 5,
-  };
-  const tool = operation.replace(/^director-/, "");
-  if (tool in director) return director[tool] * generation.samples;
-  const pixels = Math.max(generation.width * generation.height, 65_536);
-  let perSample = Math.ceil(
-    2.951823174884865e-6 * pixels +
-      5.753298233447344e-7 * pixels * generation.steps,
-  );
-  if (generation.strength != null && generation.strength < 1)
-    perSample = Math.max(Math.ceil(perSample * generation.strength), 2);
-  perSample = Math.ceil(perSample * (generation.uncondScale ?? 1));
-  let total = perSample * generation.samples;
-  const references = generation.referenceImageCount ?? 0;
-  if (operation === "precise-reference")
-    total += 5 * references * generation.samples;
-  else {
-    const raw = Math.max(0, references - (generation.encodedVibeCount ?? 0));
-    total += 2 * raw + 2 * Math.max(0, raw - 4);
-  }
-  return Math.max(
-    0,
-    total * (modelPointVersion(generation.model) === "V5" ? 2 : 1),
-  );
+  return gatewayAnlasCost(generation);
 }
 
 export function gatewayAnlasCost(generation: ImagePricingGeneration): number {
@@ -171,19 +180,11 @@ export function gatewayAnlasCost(generation: ImagePricingGeneration): number {
   if (operation === "upscale")
     return upscaleAnlasCost(generation.width, generation.height) * samples;
   if (operation === "encode-vibe") return 2 * Math.max(1, references);
-  const directorCosts: Record<string, number> = {
-    declutter: 5,
-    "bg-removal": 65,
-    "bg-remover": 65,
-    lineart: 5,
-    sketch: 5,
-    colorize: 5,
-    emotion: 5,
-  };
   const tool = operation.replace(/^director-/, "");
-  if (tool in directorCosts) return directorCosts[tool];
+  if (tool in DIRECTOR_COSTS) return DIRECTOR_COSTS[tool] * samples;
 
   const pixels = Math.max(generation.width * generation.height, 65_536);
+  const strength = generation.strength ?? (operation === "img2img" ? 0.7 : 1);
   const medium = isNaiMediumModel(generation.model);
   const steps = medium ? 14 : generation.steps;
   const stepFactor = medium ? 1 / 1.06521739 : 1;
@@ -197,14 +198,14 @@ export function gatewayAnlasCost(generation: ImagePricingGeneration): number {
       pixels <= 1_048_576 && steps === 14 ? 1 : 0;
     return perSample * Math.max(0, samples - freeSamples);
   }
-  if (generation.strength != null && generation.strength < 1)
-    perSample = Math.max(Math.ceil(perSample * generation.strength), 2);
+  if (strength < 1)
+    perSample = Math.max(Math.ceil(perSample * strength), 2);
   perSample = Math.ceil(perSample * (generation.uncondScale ?? 1));
   const isOpus = generation.model.toLowerCase().includes("-limit");
   const freeSamples = isOpus && steps <= 28 && pixels <= 1_048_576 ? 1 : 0;
   let total = perSample * Math.max(0, samples - freeSamples);
   if (references > 0) {
-    if (operation === "precise-reference") {
+    if (operation === "precise-reference" || generation.referenceMode === "precise") {
       total += 5 * references * samples;
     } else {
       const billable = Math.max(0, references - (generation.encodedVibeCount ?? 0));
@@ -328,8 +329,9 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
   const operation = generation.operation ?? "generate";
   const referenceCount = generation.referenceImageCount ?? 0;
   return (
-    ["generate", "img2img", "inpainting", "edits", "outpainting"].includes(operation) &&
+    ["generate", "img2img", "inpainting", "edits", "outpainting", "vibe-transfer", "character-reference"].includes(operation) &&
     operation !== "precise-reference" &&
+    generation.referenceMode !== "precise" &&
     generation.samples === 1 &&
     generation.steps >= 1 &&
     generation.steps <= 28 &&
@@ -383,24 +385,27 @@ export function affCost(generation: ImagePricingGeneration): number {
   )
     throw new Error("图像计费参数无效");
   const model = generation.model.toLowerCase();
+  const directorCost = DIRECTOR_COSTS[operation.replace(/^director-/, "")];
+  if (directorCost != null) return directorCost * generation.samples;
   if (isNaiMediumModel(model)) return MEDIUM_AFF_PER_IMAGE * generation.samples;
-  if (model.includes("-limit") || isInFreeEnvelope(generation)) {
-    if (model.includes("nai-v5")) return Math.ceil(1.5 * generation.samples);
+  if (isInFreeEnvelope(generation)) {
+    if (modelPointVersion(model) === "V5") return roundBillingAmount(1.5 * generation.samples);
     return generation.samples;
   }
 
   const pixels = Math.max(generation.width * generation.height, 65_536);
+  const strength = generation.strength ?? (operation === "img2img" ? 0.7 : 1);
   let perSample = Math.ceil(
     2.951823174884865e-6 * pixels +
       5.753298233447344e-7 * pixels * generation.steps,
   );
-  if (generation.strength != null && generation.strength < 1)
-    perSample = Math.max(Math.ceil(perSample * generation.strength), 2);
+  if (strength < 1)
+    perSample = Math.max(Math.ceil(perSample * strength), 2);
   perSample = Math.ceil(perSample * (generation.uncondScale ?? 1));
   let total = perSample * generation.samples;
   const referenceCount = generation.referenceImageCount ?? 0;
   if (referenceCount > 0) {
-    if (generation.operation === "precise-reference")
+    if (generation.operation === "precise-reference" || generation.referenceMode === "precise")
       total += 5 * referenceCount * generation.samples;
     else {
       const billableCount = Math.max(
@@ -410,8 +415,8 @@ export function affCost(generation: ImagePricingGeneration): number {
       total += 2 * billableCount + 2 * Math.max(0, billableCount - 4);
     }
   }
-  if (model.includes("nai-v5")) total *= 2;
-  return Math.max(1, Math.ceil(total));
+  if (modelPointVersion(model) === "V5") total *= 2;
+  return Math.max(1, roundBillingAmount(total));
 }
 
 // Estimate the NewAPI balance charge from the effective model/group pricing.

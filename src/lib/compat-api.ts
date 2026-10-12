@@ -7,7 +7,6 @@ import JSZip from "jszip";
 import { Buffer } from "node:buffer";
 import {
   affStatus,
-  reconcileImageCredits,
   refundImageCredits,
   trySpendImageCredits,
   type AffGeneration,
@@ -26,7 +25,6 @@ import { startRequestAudit } from "@/lib/request-audit";
 import { watermarkImages } from "@/lib/image-watermark";
 import {
   resolvedImageUpstream,
-  resolvedAffGateway,
   resolvedNaiAccountUpstream,
   resolvedNaiImageUpstream,
   resolvedNewApiBaseUrl,
@@ -53,8 +51,8 @@ import { withExternalCors } from "@/lib/external-cors";
 import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { recordIpEvidence } from "@/lib/risk-ip";
-import { isSameGatewayUpstream, requestGatewayImageQuote, sameGatewayQuote } from "@/lib/gateway-billing";
 import { isNaiMediumModel } from "@/lib/nai-native-request";
+import { imagePricingStrength } from "@/lib/image-pricing";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -291,10 +289,11 @@ async function settleExternalCharge(
   settlementId: string,
   requestId: string,
   audit?: Awaited<ReturnType<typeof startRequestAudit>>,
-  gatewayQuote?: Awaited<ReturnType<typeof requestGatewayImageQuote>>,
 ): Promise<Response> {
-  const anlasCost = Number(response.headers.get("x-anlas-cost"));
-  const promptTokens = Number(response.headers.get("x-prompt-tokens"));
+  const anlasHeader = response.headers.get("x-anlas-cost");
+  const tokensHeader = response.headers.get("x-prompt-tokens");
+  const anlasCost = anlasHeader?.trim() ? Number(anlasHeader) : NaN;
+  const promptTokens = tokensHeader?.trim() ? Number(tokensHeader) : NaN;
   let gatewayUsage: JsonRecord | undefined;
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try {
@@ -306,62 +305,29 @@ async function settleExternalCharge(
   }
   const validAnlas = Number.isSafeInteger(anlasCost) && anlasCost >= 0;
   const validPromptTokens = Number.isSafeInteger(promptTokens) && promptTokens >= 0;
-  const recordBilling = (chargedAff: number, difference?: number): void => {
+  const recordBilling = (chargedAff: number): void => {
     if (!audit) return;
     audit.record.billing = {
       lfnChargedAff: chargedAff,
       ...(validAnlas ? { gatewayAnlasCost: anlasCost } : {}),
       ...(validPromptTokens ? { gatewayPromptTokens: promptTokens } : {}),
       ...(gatewayUsage ? { gatewayUsage } : {}),
-      finalChargedAff: chargedAff,
-      ...(gatewayQuote ? { quotedGatewayAnlas: gatewayQuote.anlasCost } : {}),
-      ...(gatewayQuote && validAnlas ? { quoteMatched: sameGatewayQuote(gatewayQuote, anlasCost) } : {}),
-      ...(difference != null ? { difference } : {}),
     };
   };
-  const reconcile = async (generatedSamples: number): Promise<boolean> => {
-    if (!validAnlas) {
-      recordBilling(charge.cost);
-      if (gatewayQuote)
-        await updateImageSettlement(settlementId, {
-          status: "pending-reconciliation",
-          billingStatus: "pending-reconciliation",
-          failureMessage: "Gateway 响应缺少实际 Anlas 头，保留预报价账单并待人工核对",
-        });
-      return false;
-    }
-    if (generatedSamples < charge.samples) {
-      recordBilling(charge.cost, anlasCost - charge.cost);
-      await updateImageSettlement(settlementId, {
-        generatedSamples,
-        gatewayAnlasCost: anlasCost,
-        gatewayPromptTokens: validPromptTokens ? promptTokens : undefined,
-        gatewayUsage,
-        billingDifference: anlasCost - charge.cost,
-        billingStatus: "pending-reconciliation",
-        status: "pending-reconciliation",
-        failureMessage: "部分生成成功，无法安全按整单 Gateway 费用自动对账",
-      });
-      return true;
-    }
-    const result = await reconcileImageCredits(userId, charge, anlasCost, settlementId);
-    recordBilling(result.chargedAmount, result.difference);
+  const settleLocal = async (generatedSamples: number): Promise<void> => {
+    const completed = Math.min(charge.samples, Math.max(0, generatedSamples));
+    if (completed < charge.samples)
+      await refundImageCredits(userId, charge, completed, { settlementId, requestId });
+    const chargedAmount = charge.packageChargesBySample.slice(0, completed).reduce((sum, value) => sum + value, 0) +
+      charge.personalChargesBySample.slice(0, completed).reduce((sum, value) => sum + value, 0);
+    recordBilling(chargedAmount);
     await updateImageSettlement(settlementId, {
-      generatedSamples,
-      chargedAmount: result.chargedAmount,
-      gatewayAnlasCost: anlasCost,
+      generatedSamples: completed,
+      gatewayAnlasCost: validAnlas ? anlasCost : undefined,
       gatewayPromptTokens: validPromptTokens ? promptTokens : undefined,
       gatewayUsage,
-      quotedGatewayAnlas: gatewayQuote?.anlasCost,
-      quoteMatched: gatewayQuote ? sameGatewayQuote(gatewayQuote, anlasCost) : undefined,
-      billingDifference: result.difference,
-      billingStatus: result.applied
-        ? result.difference === 0 ? "matched" : "adjusted"
-        : "pending-reconciliation",
-      status: result.applied ? "succeeded" : "pending-reconciliation",
-      failureMessage: result.applied ? undefined : "个人 AFF 余额不足，Gateway 差额需人工核对",
+      status: completed === charge.samples ? "succeeded" : completed ? "partially-refunded" : "refunded",
     });
-    return !result.applied;
   };
   const paymentSource = paymentSourceForCharge(charge);
   if (!response.ok) {
@@ -370,18 +336,13 @@ async function settleExternalCharge(
   }
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    await reconcile(charge.samples);
+    await settleLocal(charge.samples);
     return paymentResponse(response, paymentSource);
   }
   try {
     const payload = (await response.clone().json()) as unknown;
     const generated = imageCountFromJson(payload);
-    if (generated < charge.samples) {
-      await refundImageCredits(userId, charge, generated, { settlementId, requestId });
-      await reconcile(generated);
-    } else {
-      await reconcile(generated);
-    }
+    await settleLocal(generated);
   } catch {
     await refundImageCredits(userId, charge, 0, { settlementId, requestId });
   }
@@ -502,24 +463,7 @@ export async function proxyImageWithCredits(
   let settled = false;
   let settlementId: string | undefined;
   try {
-    const affGateway = await resolvedAffGateway();
-    const gatewayUpstream = isSameGatewayUpstream(platformUpstream, affGateway);
-    let gatewayQuote: Awaited<ReturnType<typeof requestGatewayImageQuote>> | undefined;
-    if (gatewayUpstream && platformUpstream) {
-      try {
-        gatewayQuote = await requestGatewayImageQuote(platformUpstream.baseUrl, platformUpstream.token, imageRequest.generation);
-      } catch (error) {
-        return auditedResponse(
-          withExternalCors(Response.json(
-            { error: { message: error instanceof Error ? error.message : "Gateway 报价暂时不可用", code: "gateway_quote_unavailable" } },
-            { status: 503 },
-          )),
-          audit,
-          { error: error instanceof Error ? error.message : "Gateway 报价暂时不可用" },
-        );
-      }
-    }
-    charge = await trySpendImageCredits(userId, imageRequest.generation, gatewayQuote?.affCost);
+    charge = await trySpendImageCredits(userId, imageRequest.generation);
     if (!charge) {
       gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
       // 用户分组可能没有该模型的渠道：先尝试托管密钥换组重试。
@@ -569,13 +513,6 @@ export async function proxyImageWithCredits(
       refundedAmount: 0,
       paymentSource: paymentSourceForCharge(charge),
     };
-    if (gatewayQuote) audit.record.billing = {
-      lfnChargedAff: charge.cost,
-      gatewayAnlasCost: gatewayQuote.anlasCost,
-      gatewayPromptTokens: gatewayQuote.promptTokens,
-      finalChargedAff: charge.cost,
-      difference: 0,
-    };
 
     // 使用适配器生成图像
     if (imageAdapter) {
@@ -618,7 +555,7 @@ export async function proxyImageWithCredits(
           data: result.images,
           usage: result.usage,
         });
-        return watermarkJsonResponse(await settleExternalCharge(response, userId, charge, settlementId, audit.requestId, audit, gatewayQuote), userId, imageRequest.generation.model, audit);
+        return watermarkJsonResponse(await settleExternalCharge(response, userId, charge, settlementId, audit.requestId, audit), userId, imageRequest.generation.model, audit);
       } catch (error) {
         console.error("Adapter image generation failed, falling back:", error);
         finishAdapterLog(0);
@@ -647,7 +584,7 @@ export async function proxyImageWithCredits(
       });
       finishUpstreamLog(upstream.status);
       settled = true;
-      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge, settlementId, audit.requestId, audit, gatewayQuote), userId, imageRequest.generation.model, audit);
+      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge, settlementId, audit.requestId, audit), userId, imageRequest.generation.model, audit);
     }
 
     throw new Error("No image service available");
@@ -1142,42 +1079,33 @@ export function isRecord(value: unknown): value is JsonRecord {
 export function imageOperationFromBody(body: JsonRecord, fallback = "generate"): string {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
   const raw = body.novelai_operation ?? body.operation ?? body.action;
-  if (typeof raw !== "string" || !raw.trim()) {
-    if ((Array.isArray(body.references) && body.references.length) ||
-      (Array.isArray(parameters.references) && parameters.references.length)) return "precise-reference";
-    if ((Array.isArray(body.characters) && body.characters.length) ||
-      (Array.isArray(parameters.characters) && parameters.characters.length)) return "character-reference";
-    if (
-      (Array.isArray(body.reference_images) && body.reference_images.length) ||
-      (Array.isArray(body.reference_image_multiple) && body.reference_image_multiple.length) ||
-      (typeof body.reference_image === "string" && body.reference_image) ||
-      (Array.isArray(parameters.reference_images) && parameters.reference_images.length) ||
-      (Array.isArray(parameters.reference_image_multiple) && parameters.reference_image_multiple.length) ||
-      (typeof parameters.reference_image === "string" && parameters.reference_image)
-    )
-      return "vibe-transfer";
-    return fallback;
+  const operation = typeof raw === "string" && raw.trim() ? raw.trim().toLowerCase() : fallback;
+  if (operation === "generate") {
+    const effective = { ...body, ...parameters };
+    if (referenceValues(effective, "precise-reference").length) return "precise-reference";
+    if (Array.isArray(effective.characters) && effective.characters.length) return "character-reference";
+    if (referenceValues(effective, "vibe-transfer").length) return "vibe-transfer";
   }
-  const operation = raw.trim().toLowerCase();
   return operation === "infill" ? "inpainting" : operation;
+}
+
+function referenceValues(body: JsonRecord, operation: string): unknown[] {
+  if (operation === "precise-reference") {
+    const references = body.references ?? body.director_reference_images ?? body.director_reference_images_cached;
+    return Array.isArray(references) ? references : [];
+  }
+  if (operation === "character-reference") {
+    if (Array.isArray(body.characters))
+      return body.characters.map((character) => isRecord(character) ? character.reference_image : undefined);
+  }
+  const references = body.reference_image_multiple ?? body.reference_images ?? body.reference_image_multiple_cached ?? body.vibe;
+  if (Array.isArray(references)) return references;
+  return typeof body.reference_image === "string" && body.reference_image ? [body.reference_image] : [];
 }
 
 export function imageReferenceCountFromBody(body: JsonRecord, operation: string): number {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
-  if (operation === "precise-reference") {
-    const references = body.references ?? parameters.references ?? parameters.director_reference_images;
-    return Array.isArray(references) ? references.length : 0;
-  }
-  if (operation === "character-reference") {
-    const characters = body.characters ?? parameters.characters;
-    return Array.isArray(characters) ? characters.length : 0;
-  }
-  const references = body.reference_image_multiple ?? body.reference_images ?? parameters.reference_image_multiple ?? parameters.reference_images;
-  if (Array.isArray(references)) return references.length;
-  return typeof (body.reference_image ?? parameters.reference_image) === "string" &&
-    (body.reference_image ?? parameters.reference_image)
-    ? 1
-    : 0;
+  return referenceValues({ ...body, ...parameters }, operation).length;
 }
 
 function isEncodedVibe(value: unknown): boolean {
@@ -1192,6 +1120,7 @@ function isEncodedVibe(value: unknown): boolean {
     Buffer.from("GIF89a"),
     Buffer.from("RIFF"),
     Buffer.from("BM"),
+    Buffer.from([0x00, 0x00, 0x01, 0x00]),
   ];
   return !imageSignatures.some((signature) => prefix.subarray(0, signature.length).equals(signature));
 }
@@ -1284,36 +1213,14 @@ function parseSize(value: unknown): { width: number; height: number } | null {
     : null;
 }
 
-function externalReferenceCount(body: JsonRecord): number {
-  const parameters = isRecord(body.parameters) ? body.parameters : {};
-  const candidates = [
-    body.reference_images,
-    body.reference_image_multiple,
-    parameters.reference_images,
-    parameters.reference_image_multiple,
-  ];
-  for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) continue;
-    const count = candidate.filter(
-      (item) => typeof item === "string" && item.trim(),
-    ).length;
-    if (count) return count;
-  }
-  if (typeof (body.reference_image ?? parameters.reference_image) === "string" &&
-    (body.reference_image ?? parameters.reference_image)) return 1;
-  if (Array.isArray(body.vibe)) return body.vibe.length;
-  if (Array.isArray(body.references)) return body.references.length;
-  if (Array.isArray(parameters.references)) return parameters.references.length;
-  if (Array.isArray(body.characters)) return body.characters.length;
-  if (Array.isArray(parameters.characters)) return parameters.characters.length;
-  return 0;
-}
-
 export function externalGeneration(
   body: JsonRecord,
-  operation = "generate",
+  operation = imageOperationFromBody(body),
 ): AffGeneration | null {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
+  body = { ...body, ...parameters, ...(isRecord(body.extra_params) ? body.extra_params : {}) };
+  const preciseReferences = referenceValues(body, "precise-reference");
+  const references = preciseReferences.length ? preciseReferences : referenceValues(body, operation);
   const size = parseSize(body.size);
   let width: number;
   let height: number;
@@ -1334,7 +1241,7 @@ export function externalGeneration(
       ? assertImageModel(requestedModel)
       : requestedModel.trim();
     steps = normalizeSteps(body.steps, isNaiMediumModel(model) ? 14 : 28);
-    validateReferenceCount(externalReferenceCount(body));
+    validateReferenceCount(references.length);
     if (isNaiExternalModel(model)) validateMediumRequest(model, body, operation);
   } catch (error) {
     if (error instanceof ImageRequestValidationError) return null;
@@ -1346,16 +1253,16 @@ export function externalGeneration(
     height,
     steps,
     samples,
-    strength: typeof body.strength === "number" ? body.strength : undefined,
+    strength: imagePricingStrength(body, operation),
     uncondScale: typeof body.uncond_scale === "number" ? body.uncond_scale : undefined,
     operation,
-    referenceImageCount: externalReferenceCount(body),
-    encodedVibeCount: ["vibe-transfer", "character-reference"].includes(operation)
-      ? [body.reference_images, body.reference_image_multiple, parameters.reference_image_multiple, parameters.reference_images]
-          .flatMap((value) => Array.isArray(value) ? value : [])
-          .filter(isEncodedVibe).length +
-        (isEncodedVibe(body.reference_image ?? parameters.reference_image) ? 1 : 0)
-      : 0,
+    referenceImageCount: references.length,
+    referenceMode: preciseReferences.length ? "precise" : "vibe",
+    encodedVibeCount: preciseReferences.length ? 0 : references.filter((reference) =>
+      isEncodedVibe(isRecord(reference) ? reference.data ?? reference.reference_image : reference),
+    ).length,
+    hasInputImage: Boolean(body.image),
+    serviceTier: typeof body.service_tier === "string" ? body.service_tier : undefined,
     characterPromptCount: Array.isArray(body.characterPrompts)
       ? body.characterPrompts.length
       : 0,

@@ -179,8 +179,9 @@ function createBrowserRequestId(prefix = "request"): string {
 
 import {
   estimateNewApiCost,
-  affCost as estimateAff,
-  roundBillingAmount,
+  imageCreditCost,
+  imagePricingStrength,
+  splitImageCreditCost,
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
@@ -4073,9 +4074,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       ? ((modelPricing as unknown as { affFixedCost: number }).affFixedCost)
       : null;
   const estimatedAffCost =
-    affFixedCost != null
-      ? roundBillingAmount(affFixedCost) * outputCount
-      : estimateAff({
+    imageCreditCost({
           model,
           operation,
           width: upscaleDims ? upscaleDims.width : width,
@@ -4083,17 +4082,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           steps,
           samples: outputCount,
           sequential: batchMode === "sequential" && outputCount > 1,
-          strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
+          strength: imagePricingStrength({ strength }, operation),
           referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
           encodedVibeCount: 0,
           characterPromptCount: activeCharacterCount,
-        });
+        }, affFixedCost);
   const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
     model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: outputCount,
     characterPromptCount: activeCharacterCount,
-    strength: ["img2img", "inpainting", "edits"].includes(operation) ? strength : undefined,
+    strength: imagePricingStrength({ strength }, operation),
     referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
     encodedVibeCount: 0,
   });
@@ -4104,13 +4103,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       : 0,
   );
   const estimatedPackageCost = wallet?.aff?.enabled
-    ? Math.min(
-        wallet.aff.packageBalance,
-        roundBillingAmount(
-          (estimatedAffCost * packageRateImages) /
-            Math.max(1, outputCount),
-        ),
-      )
+    ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages).packageCost
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
   const canUseAffEstimate = Boolean(

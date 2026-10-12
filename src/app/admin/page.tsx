@@ -1499,7 +1499,7 @@ function AuditsPanel() {
     durationMs?: number;
     historyIds: string[];
     watermarkStatus?: string;
-    billing?: { lfnChargedAff?: number; gatewayAnlasCost?: number; gatewayPromptTokens?: number; difference?: number };
+    billing?: { lfnChargedAff?: number; gatewayAnlasCost?: number; gatewayPromptTokens?: number };
   }>>([]);
 
   useEffect(() => {
@@ -1526,7 +1526,7 @@ function AuditsPanel() {
               <td className="px-3 py-2.5 text-xs">{item.username || item.userId || "-"}</td>
               <td className="px-3 py-2.5 text-xs"><p>{item.endpoint}</p><p className="text-[var(--muted)]">{item.model || "-"} · {item.operation || "-"}</p></td>
               <td className="px-3 py-2.5 text-xs">{item.status ?? "-"} · {item.durationMs ?? "-"}ms</td>
-              <td className="px-3 py-2.5 text-xs"><p>{item.billing?.lfnChargedAff ?? "-"} / {item.billing?.gatewayAnlasCost ?? "-"} / {item.billing?.gatewayPromptTokens ?? "-"}</p><p className="text-[var(--muted)]">差额 {item.billing?.difference ?? "-"} · {item.watermarkStatus || "-"}</p></td>
+              <td className="px-3 py-2.5 text-xs"><p>{item.billing?.lfnChargedAff ?? "-"} / {item.billing?.gatewayAnlasCost ?? "-"} / {item.billing?.gatewayPromptTokens ?? "-"}</p><p className="text-[var(--muted)]">{item.watermarkStatus || "-"}</p></td>
               <td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</td>
             </tr>)}
             {!items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无请求审计记录</td></tr>}
