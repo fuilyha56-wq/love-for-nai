@@ -186,7 +186,7 @@ export async function evaluateLightRisk(input: { userId: number; requestId?: str
     const minutes = num(settings, "content.retryMinutes");
     if (Array.from({ length: minutes }, (_, i) => a.retries.get(minute - i) || 0).every(n => n >= num(settings, "content.retryPerMinute"))) hit("E01", active.id, { restrictionId: active.id });
   }
-  if (decision === "allow" && firstAttempt && flag(settings, "rate.enabled")) {
+  if (decision === "allow" && firstAttempt && flag(settings, "rate.enabled") && flag(settings, "trust.enabled")) {
     a.tokens = Math.min(num(settings, "rate.burst"), a.tokens + Math.max(0, now - a.tokenAt) * num(settings, "rate.perMinute") / 60000); a.tokenAt = now;
     if (a.tokens < 1 || a.inFlight.size >= num(settings, "rate.maxInFlight")) { decision = "rate-limit"; reason = "账号调用速率或在途数达到上限"; retry = num(settings, "rate.retrySeconds"); }
     else { a.tokens -= 1; a.inFlight.set(requestId, now); }

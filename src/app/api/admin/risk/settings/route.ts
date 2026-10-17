@@ -29,8 +29,9 @@ export async function POST(request: Request) {
     if (body.action === "defaults") candidate = defaultRiskSettings();
     const validated = validateRiskSettings(candidate as RiskSettings);
     if (body.action === "draft") {
-      await writeRiskJson(path.join(directory(), "settings-draft.json"), { settings: validated, reason: String(body.reason || "").slice(0, 500), savedAt: new Date().toISOString(), operator: gate.session.userId });
-      return Response.json({ message: "草稿已保存，尚未生效" });
+      const draft = { settings: validated, reason: String(body.reason || "").slice(0, 500), savedAt: new Date().toISOString(), operator: gate.session.userId };
+      await writeRiskJson(path.join(directory(), "settings-draft.json"), draft);
+      return Response.json({ message: "草稿已保存，尚未生效", draft });
     }
     if (body.action === "validate") return Response.json({ valid: true });
     if (!["publish", "rollback", "defaults"].includes(String(body.action))) throw new Error("未知操作");

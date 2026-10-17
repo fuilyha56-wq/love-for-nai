@@ -2,8 +2,10 @@
 import { useEffect, useState } from "react";
 import type { RiskAccessRequest } from "@/lib/risk-access";
 export default function RiskAccessForm() {
+  const [enabled, setEnabled] = useState(false);
   const [entries, setEntries] = useState<RiskAccessRequest[]>([]), [reason, setReason] = useState(""), [perMinute, setRate] = useState(30), [concurrency, setConcurrency] = useState(2), [hours, setHours] = useState(24), [message, setMessage] = useState(""), [busy, setBusy] = useState(false);
-  useEffect(() => { const c = new AbortController(); void fetch("/api/security/access", { cache: "no-store", signal: c.signal }).then(r => r.ok ? r.json() : null).then(r => setEntries(r?.requests || [])).catch(() => undefined); return () => c.abort(); }, []);
+  useEffect(() => { const c = new AbortController(); void fetch("/api/security/access", { cache: "no-store", signal: c.signal }).then(r => r.ok ? r.json() : null).then(r => {setEnabled(r != null && r.enabled !== false);setEntries(r?.requests || []);}).catch(() => undefined); return () => c.abort(); }, []);
+  if (!enabled) return null;
   async function submit(e: React.FormEvent) {
     e.preventDefault(); setBusy(true);
     try { const response = await fetch("/api/security/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason, perMinute, concurrency, hours }) }); const result = await response.json(); if (!response.ok) throw new Error(result.message); setEntries(v => [result.request, ...v]); setMessage(result.request.status === "approved" ? "正常观测历史已满足自动批准条件，高频权限限时生效" : "已提交审核，免费总额度保持不变"); }

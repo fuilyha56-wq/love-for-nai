@@ -1,8 +1,8 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findRequestAudit, recordImageRequestUsage, requestRankings, startRequestAudit } from "@/lib/request-audit";
+import { findRequestAudit, listUserImageUsage, recordImageRequestUsage, requestRankings, startRequestAudit } from "@/lib/request-audit";
 import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
 import { dailyImageBillingState } from "@/lib/daily-image-billing";
 
@@ -16,6 +16,23 @@ afterEach(() => {
 });
 
 describe("request audit", () => {
+  it("projects only account-owned payments and backfills historical studio rows by exact settlement ID", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-owned-usage-"));
+    resetRuntimeConfigCache();
+    const make = async (userId:number,paymentSource?:string) => {
+      const audit = await startRequestAudit({request:new Request("https://lfn.test"),source:"lfn",endpoint:"/api/images/operate",userId,model:"nai-v5-full",parameters:{prompt:"private prompt",token:"private credential"}});
+      await audit.finish({status:200,paymentSource,...(paymentSource?{billing:{lfnChargedAff:4}}:{})});return audit.requestId;
+    };
+    const owned = await make(71), foreign = await make(72,"personal");
+    await mkdir(path.join(process.env.LFN_DATA_DIR,"risk"),{recursive:true});
+    await writeFile(path.join(process.env.LFN_DATA_DIR,"risk/settlements.json"),JSON.stringify([
+      {requestId:owned,userId:71,paymentSource:"mixed",chargedAmount:6,refundedAmount:2,status:"partially-refunded"},
+      {requestId:foreign,userId:72,paymentSource:"personal",chargedAmount:99,refundedAmount:0},
+    ]));
+    const result=await listUserImageUsage(71);expect(result).toHaveLength(1);expect(result[0]).toMatchObject({request_id:owned,payment_source:"mixed",charged_aff:4});
+    expect(JSON.stringify(result)).not.toMatch(/private prompt|credential|clientIp|risk|authorization/);
+    expect((await listUserImageUsage(72))[0].charged_aff).toBe(4);
+  });
   it("does not add independently billed NewAPI images to local daily tiers", async () => {
     process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-paid-audit-"));
     resetRuntimeConfigCache();

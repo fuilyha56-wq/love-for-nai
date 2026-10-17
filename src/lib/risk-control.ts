@@ -162,7 +162,7 @@ const actionPath = () => path.join(riskRoot(), "actions.json");
 const policyPath = () => path.join(riskRoot(), "policy.json");
 
 
-const riskRuntime = globalThis as typeof globalThis & { __lfnLegacyRisk?: { lock: Promise<unknown>; policyCache: RiskPolicy | null; policyRoot: string; storeCache?: { root: string; pending: Promise<RiskStore> }; storeTimer?: ReturnType<typeof setTimeout> } };
+const riskRuntime = globalThis as typeof globalThis & { __lfnLegacyRisk?: { lock: Promise<unknown>; policyCache: RiskPolicy | null; policyRoot: string; storeCache?: { root: string; pending: Promise<RiskStore> }; storeTimer?: ReturnType<typeof setTimeout>; resetCutoff?: { root: string; pending: Promise<number> } } };
 const shared = (riskRuntime.__lfnLegacyRisk ??= { lock: Promise.resolve(), policyCache: null, policyRoot: "" });
 const defaultPolicy: RiskPolicy = {
   enabled: true,
@@ -433,7 +433,16 @@ export async function evaluateImageRisk(input: RiskEvaluationInput): Promise<Ris
   const light = await evaluateLightRisk(input);
   if (!policy.enabled) return { ...light, signalIds: [], prompt: undefined };
   const usage = await recordImageRequestUsage(input.userId, input.requestId, now, { username: input.username, model: input.model });
-  const requests = await requestCountInWindow(input.userId, policy.sameUserWindowMs, now);
+  // Marks can be reset without deleting billing/audit history. An offline reset
+  // restarts this process, so old usage must not immediately recreate old marks.
+  if (shared.resetCutoff?.root !== riskRoot()) shared.resetCutoff = { root: riskRoot(), pending: readJson<{at?:string}>(path.join(riskRoot(), "marks-reset.json"), {}).then(v => { const at = Date.parse(v.at || ""); return Number.isFinite(at) ? at : 0; }) };
+  const cutoff = Math.min(now, await shared.resetCutoff.pending);
+  const observedWindow = (window: number) => cutoff ? Math.min(window, Math.max(0, now-cutoff)) : window;
+  const [requests, requests5h, requests7d] = await Promise.all([
+    requestCountInWindow(input.userId, observedWindow(policy.sameUserWindowMs), now),
+    cutoff ? requestCountInWindow(input.userId, observedWindow(5*3600000), now) : Promise.resolve(usage.requests5h),
+    cutoff ? requestCountInWindow(input.userId, observedWindow(7*86400000), now) : Promise.resolve(usage.requests7d),
+  ]);
   const settings = await getRiskSettings(input.userId);
   const prompt = hashSecret() && input.prompt ? fingerprintPrompt(input.prompt) : null;
   return withLock(async () => {
@@ -444,8 +453,8 @@ export async function evaluateImageRisk(input: RiskEvaluationInput): Promise<Ris
       if (!item?.signals.some(e => e.id === id && Date.parse(e.createdAt) >= now - windowMs)) signals.push(signal(id, "high-frequency", points, description, { userId: input.userId, requests }, now));
     };
     legacy(`frequency:${input.userId}`, policy.sameUserEnabled && requests >= policy.sameUserMaxRequests, policy.sameUserAction, policy.sameUserScore, policy.sameUserWindowMs, "同账号窗口请求数达到旧版资源条例阈值");
-    const volume = usage.requests5h >= policy.highVolume5hRequests || usage.requests7d >= policy.highVolume7dRequests;
-    legacy(`volume:${input.userId}:${policy.highVolume5hRequests}`, policy.highVolumeEnabled && volume, policy.highVolumeAction, policy.highVolumeScore, usage.requests5h >= policy.highVolume5hRequests ? 5 * 3600000 : 7 * 86400000, "同账号累计调用量达到旧版资源条例阈值");
+    const volume = requests5h >= policy.highVolume5hRequests || requests7d >= policy.highVolume7dRequests;
+    legacy(`volume:${input.userId}:${policy.highVolume5hRequests}`, policy.highVolumeEnabled && volume, policy.highVolumeAction, policy.highVolumeScore, requests5h >= policy.highVolume5hRequests ? 5 * 3600000 : 7 * 86400000, "同账号累计调用量达到旧版资源条例阈值");
 
     if (signals.length) {
       item = updateCase(store, input, signals, 0, input.requestId, now, policy);

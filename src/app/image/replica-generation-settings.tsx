@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp, RotateCcw, RectangleHorizontal, RectangleVertical, Square, Sprout } from "lucide-react";
-import { quantizeStepValue, useWheelStep } from "@/app/ui/wheel-number";
+import { commitNumberDraft, quantizeStepValue, useWheelStep } from "@/app/ui/wheel-number";
 import { useAnimatedDisclosure } from "@/app/ui/use-animated-disclosure";
 import { isNaiMediumModel } from "@/lib/nai-native-request";
 import "./replica-generation-settings.css";
@@ -28,10 +28,6 @@ const schedules: Choice[] = [
   { value: "polyexponential", label: "多项式指数" },
 ];
 
-function boundedNumber(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
-}
-
 function NumberEntry({ label, value, onChange, min, max, step, className = "" }: {
   label: string; value: number; onChange: (value: number) => void;
   min: number; max: number; step: number; className?: string;
@@ -39,7 +35,7 @@ function NumberEntry({ label, value, onChange, min, max, step, className = "" }:
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<string | null>(null);
   function commit() {
-    if (draft !== null) onChange(boundedNumber(Number(draft), min, max));
+    if (draft !== null) onChange(commitNumberDraft(draft, value, min, max, step));
     setDraft(null);
   }
   useWheelStep(inputRef, (direction) => {

@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import stat
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -112,6 +113,49 @@ console.log(JSON.stringify({changed:true,backupCreated:true,v45AnlasCny:0.02,v5A
     return json.loads(run_remote(client, 'docker exec love-for-nai node -e ' + shlex.quote(script), quiet=True))
 
 
+def sync_edge_request_host(client, tag):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', tag):
+        raise ValueError('Invalid release tag')
+    info = json.loads(run_remote(client, 'docker inspect lfn-edge', quiet=True))[0]
+    targets = [m['Source'] for m in info.get('Mounts', [])
+               if m.get('Type') == 'bind' and m.get('Destination') == '/etc/nginx/conf.d/default.conf']
+    if len(targets) != 1 or not targets[0].startswith('/'):
+        raise RuntimeError('Cannot identify the edge configuration file')
+    target = targets[0]
+    sftp = client.open_sftp()
+    try:
+        if not stat.S_ISREG(sftp.lstat(target).st_mode):
+            raise RuntimeError('Edge configuration is not a regular file')
+        with sftp.open(target, 'r') as source:
+            original = source.read().decode('utf-8')
+        if 'proxy_set_header Host $http_host;' in original:
+            return {'changed': False}
+        if original.count('proxy_set_header Host $host;') != 1:
+            raise RuntimeError('Unexpected edge Host configuration')
+        updated = original.replace('proxy_set_header Host $host;',
+            'proxy_set_header Host $http_host;\n        proxy_set_header X-Forwarded-Host $http_host;')
+        backup = target + '.bak-' + tag
+        with sftp.open(backup, 'wx') as destination:
+            destination.write(original)
+        sftp.chmod(backup, 0o600)
+        try:
+            # A bind-mounted file retains its inode; replacing by rename would
+            # leave nginx looking at the old file until container recreation.
+            with sftp.open(target, 'w') as destination:
+                destination.write(updated)
+            run_remote(client, 'docker exec lfn-edge nginx -t', quiet=True)
+            run_remote(client, 'docker exec lfn-edge nginx -s reload', quiet=True)
+        except Exception:
+            with sftp.open(target, 'w') as destination:
+                destination.write(original)
+            run_remote(client, 'docker exec lfn-edge nginx -t', quiet=True)
+            run_remote(client, 'docker exec lfn-edge nginx -s reload', quiet=True)
+            raise
+        return {'changed': True, 'backupCreated': True}
+    finally:
+        sftp.close()
+
+
 def main():
     if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing'} for arg in sys.argv[2:]):
         raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing]')
@@ -181,6 +225,9 @@ def main():
             if count != 1:
                 raise RuntimeError('Expected exactly one LFN image in the existing compose')
             if trusted_edge:
+                migration = sync_edge_request_host(client, tag)
+                if migration.get('changed'):
+                    print('Edge preserves public Host and port; validated and reloaded', flush=True)
                 edge_config = run_remote(client, 'docker exec lfn-edge nginx -T 2>/dev/null', quiet=True)
                 if 'proxy_set_header X-Real-IP $remote_addr;' not in edge_config:
                     raise RuntimeError('Trusted edge must overwrite X-Real-IP before enabling IP recording')

@@ -18,6 +18,7 @@ import { AdminButton, AdminEmptyState } from "./ui/admin-primitives";
 import { RiskBadge, RiskSearch, familyLabels, riskDate } from "./risk-ui";
 import { LfnSwitch } from "@/app/ui/lfn-switch";
 import { LfnSelect } from "@/app/ui/lfn-select";
+import RiskGradeUsers from "./risk-grade-users";
 import type {
   RiskField,
   RiskSettings,
@@ -31,7 +32,7 @@ type Payload = {
   defaults: RiskSettings;
   fields: RiskField[];
   history: string[];
-  draft: { settings: RiskSettings } | null;
+  draft: { settings: RiskSettings; savedAt?: string; reason?: string } | null;
   readiness: Record<string, unknown>;
 };
 type Snapshot = {
@@ -67,7 +68,7 @@ const names: Record<string, string> = {
   extensions: "扩展依赖",
 };
 
-export default function LightRiskPanel() {
+export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (enabled: boolean) => void }) {
   const [data, setData] = useState<Payload | null>(null),
     [settings, setSettings] = useState<RiskSettings | null>(null);
   const [busy, setBusy] = useState(false),
@@ -98,6 +99,7 @@ export default function LightRiskPanel() {
     if (!response.ok) throw new Error(result.message || "策略读取失败");
     setData(result);
     setSettings(structuredClone(result.settings));
+    onAccessChange?.(result.settings.values["trust.enabled"] !== false);
   }
   useEffect(() => {
     const controller = new AbortController();
@@ -113,12 +115,13 @@ export default function LightRiskPanel() {
       .then((result) => {
         setData(result);
         setSettings(structuredClone(result.settings));
+        onAccessChange?.(result.settings.values["trust.enabled"] !== false);
       })
       .catch((e) => {
         if (!controller.signal.aborted) setMessage(e.message);
       });
     return () => controller.abort();
-  }, []);
+  }, [onAccessChange]);
   function value(key: string, next: RiskValue) {
     setSettings((s) =>
       s ? { ...s, values: { ...s.values, [key]: next } } : s,
@@ -146,6 +149,10 @@ export default function LightRiskPanel() {
   }
   async function save(action: string) {
     if (!data || !settings) return;
+    if (action === "publish" && (!dirty || !reason.trim())) {
+      setMessage(!dirty ? "尚无待发布修改，请先修改配置或加载草稿。" : "请在底部填写发布原因，然后发布策略。");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
@@ -166,7 +173,7 @@ export default function LightRiskPanel() {
       if (action === "draft")
         setData((current) =>
           current
-            ? { ...current, draft: { settings: structuredClone(settings) } }
+            ? { ...current, draft: result.draft || { settings: structuredClone(settings), savedAt: new Date().toISOString(), reason } }
             : current,
         );
       setMessage(
@@ -251,7 +258,7 @@ export default function LightRiskPanel() {
     }
   }
   function restore(next: RiskSettings) {
-    setSettings(structuredClone(next));
+    setSettings({ ...structuredClone(next), version: data?.settings.version || next.version });
     setMessage("");
   }
   async function importFile(file?: File) {
@@ -361,6 +368,10 @@ export default function LightRiskPanel() {
           </RiskBadge>
         </div>
       </header>
+      {data.draft && <aside className="risk-notice risk-inline m-4" aria-label="已保存的风控草稿">
+        <div className="min-w-0 flex-1"><strong>服务器已存草稿</strong><p className="risk-muted">{data.draft.savedAt ? riskDate(data.draft.savedAt) : "已保存"}{data.draft.reason ? ` · ${data.draft.reason}` : ""}</p></div>
+        <AdminButton disabled={busy} onClick={() => { restore(data.draft!.settings); setReason(data.draft!.reason || ""); setMessage("已加载已存草稿，请查看修改后填写原因发布。"); }}>加载已存草稿</AdminButton>
+      </aside>}
       <div className="risk-tabs" role="tablist" aria-label="策略编辑分类">
         {[
           { id: "fields", label: "检测参数", Icon: SlidersHorizontal },
@@ -594,9 +605,8 @@ export default function LightRiskPanel() {
                 ))}
                 <label className="risk-input-label">
                   命中后动作
-                  <LfnSelect
+                  {selectedRule.strong ? <LfnSelect
                     aria-label="规则命中后动作"
-                    disabled={!selectedRule.strong}
                     className="field"
                     value={selectedRule.action}
                     onChange={(e) =>
@@ -610,7 +620,8 @@ export default function LightRiskPanel() {
                         {optionLabels[m]}
                       </option>
                     ))}
-                  </LfnSelect>
+                  </LfnSelect> : <div className="field p-3">仅观察 · 辅助证据</div>}
+                  <small className="risk-muted">{selectedRule.strong ? selectedRule.mode === "enforce" ? "按所选动作执行；保存修改后发布生效。" : "切换运行模式为“执行配置动作”并发布后，所选动作才会执行。" : "重复提示词、设备/IP 关联等辅助信号只能观察。需要综合处置时，请配置风险等级及独立强证据条件。"}</small>
                 </label>
               </div>
               <details className="risk-toolbox mt-5">
@@ -706,6 +717,7 @@ export default function LightRiskPanel() {
             <div className="risk-notice mt-5">
               等级自动动作仍需满足独立强证据条件；修改分数不会自动认定违规。
             </div>
+            <RiskGradeUsers key={`${selectedGrade.id}:${data.settings.version}`} gradeId={selectedGrade.id} name={selectedGrade.name} />
           </div>
         )}
         {tab === "overrides" && (
@@ -1036,7 +1048,7 @@ export default function LightRiskPanel() {
             disabled={busy || !data.draft}
             onClick={() => data.draft && restore(data.draft.settings)}
           >
-            加载已存草稿
+            从服务器恢复草稿
           </AdminButton>
           <AdminButton disabled={busy} onClick={() => restore(data.defaults)}>
             预览默认配置
@@ -1106,13 +1118,14 @@ export default function LightRiskPanel() {
           <AdminButton
             variant="primary"
             loading={busy}
-            disabled={!dirty || !reason.trim()}
+            disabled={busy}
             onClick={() => void save("publish")}
           >
             发布策略
           </AdminButton>
         </div>
       </footer>
+      <p className="risk-muted px-5 pb-4">{dirty ? reason.trim() ? "修改尚未生效，点击发布策略后应用。" : "发布前请在底部填写操作原因。" : "当前与已发布配置一致；修改配置或加载草稿后再发布。"}</p>
     </section>
   );
 }

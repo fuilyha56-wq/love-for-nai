@@ -3396,6 +3396,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <div>
             <Control label={naiLayout ? "提交方式" : `生成张数 · 1–${MAX_NAI_IMAGE_COUNT}`}>
               {!naiLayout && <NumberField
+                ariaLabel="生成张数"
                 value={count}
                 setValue={setCount}
                 min={1}
@@ -6575,12 +6576,14 @@ function Lightbox({
   );
 }
 function NumberField({
+  ariaLabel,
   value,
   setValue,
   min,
   max,
   step,
 }: {
+  ariaLabel?: string;
   value: number;
   setValue: (value: number) => void;
   min: number;
@@ -6589,6 +6592,7 @@ function NumberField({
 }) {
   return (
     <WheelNumberInput
+      ariaLabel={ariaLabel}
       className="field h-10 px-2 text-center"
       value={value}
       setValue={setValue}

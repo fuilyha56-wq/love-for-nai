@@ -1,9 +1,11 @@
 import { getSession } from "@/lib/session";
 import { listRiskAccessRequests, submitRiskAccessRequest } from "@/lib/risk-access";
 import { readRiskJson, validRiskMutation } from "@/lib/risk-http";
+import { getRiskSettings, riskFlag } from "@/lib/risk-settings";
 export async function GET() {
   const session = await getSession(); if (!session) return Response.json({ message: "请先登录" }, { status: 401 });
-  return Response.json({ requests: await listRiskAccessRequests(session.userId) }, { headers: { "Cache-Control": "private, no-store" } });
+  const enabled = riskFlag(await getRiskSettings(), "trust.enabled");
+  return Response.json({ enabled, requests: enabled ? await listRiskAccessRequests(session.userId) : [] }, { headers: { "Cache-Control": "private, no-store" } });
 }
 export async function POST(request: Request) {
   const session = await getSession(); if (!session) return Response.json({ message: "请先登录" }, { status: 401 });

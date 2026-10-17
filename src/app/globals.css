@@ -1923,7 +1923,7 @@ button, a, input, textarea, select {
 /* Usage filter controls: one LFN rhythm across desktop and mobile. */
 .usage-filter-card { display: grid; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
 .usage-filter-primary, .usage-filter-advanced { display: grid; min-width: 0; align-items: center; gap: 8px; }
-.usage-filter-primary { grid-template-columns: minmax(210px, 1.2fr) repeat(4, minmax(110px, .7fr)) auto; }
+.usage-filter-primary { grid-template-columns: minmax(210px, 1.2fr) repeat(3, minmax(110px, .7fr)); }
 .usage-filter-advanced { grid-template-columns: minmax(180px, 1.4fr) 118px auto 118px minmax(0, 1fr) 36px; padding-top: 8px; border-top: 1px solid var(--line); }
 .usage-filter-field { display: flex; min-width: 0; align-items: center; gap: 6px; font-size: 11px; }
 .usage-filter-field > span { flex: 0 0 auto; color: var(--muted); }

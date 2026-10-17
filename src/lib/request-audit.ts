@@ -11,6 +11,7 @@ import { naiUsageModel } from "@/lib/nai-native-request";
 import { estimatePoints, type ImagePricingGeneration } from "@/lib/image-pricing";
 import { userDisplayNames } from "@/lib/user-display";
 import { settleDailyImageUsage } from "@/lib/daily-image-billing";
+import { listUserImageSettlements } from "@/lib/risk-settlement";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -125,7 +126,7 @@ export type RequestAuditRecord = {
 };
 
 type AuditStore = { records: RequestAuditRecord[] };
-type UsageEvent = { userId: number; at: number; requestId?: string; username?: string; model?: string; source?: "lfn" | "api"; anlas?: number; estimatedAnlas?: number };
+type UsageEvent = { userId: number; at: number; requestId?: string; username?: string; model?: string; source?: "lfn" | "api"; anlas?: number; estimatedAnlas?: number; paymentSource?: string; status?: number; chargedAff?: number };
 type UsageStore = { events: UsageEvent[] };
 
 const auditRoot = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "request-audit");
@@ -315,6 +316,8 @@ export async function startRequestAudit(input: {
         await enqueueAudit({ type: "audit", record: completed });
         if (completed.userId) {
           const details = { userId: completed.userId, at: Date.parse(completed.createdAt), requestId, username: completed.username, model: completed.model, source: completed.source,
+            paymentSource: completed.paymentSource || completed.settlement?.paymentSource, status: completed.status,
+            chargedAff: completed.billing?.lfnChargedAff ?? (completed.settlement ? Math.max(0, completed.settlement.chargedAmount - completed.settlement.refundedAmount) : undefined),
             ...(completed.billing?.gatewayAnlasCost != null ? { anlas: completed.billing.gatewayAnlasCost } : {}), ...(estimateAuditAnlas(completed) != null ? { estimatedAnlas: estimateAuditAnlas(completed) } : {}) };
           await saveUsageEvent(details);
         }
@@ -344,6 +347,33 @@ export async function findRequestAudit(requestId: string): Promise<RequestAuditR
 
 export async function listRequestAudits(limit = 100): Promise<RequestAuditRecord[]> {
   return (await readStore()).records.slice(0, Math.max(1, Math.min(limit, MAX_RECORDS)));
+}
+
+/** Account-scoped projection only: never expose risk evidence, headers or other users. */
+export async function listUserImageUsage(userId: number) {
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new Error("用户 id 无效");
+  const rt = await auditState();
+  const entries = new Map<string, UsageEvent>();
+  for (const event of rt.usage.events) if (event.userId === userId && event.requestId) entries.set(event.requestId, event);
+  for (const record of rt.store.records) {
+    if (record.userId !== userId) continue;
+    entries.set(record.requestId, { userId, requestId: record.requestId, at: Date.parse(record.createdAt), model: record.model, source: record.source, status: record.status,
+      paymentSource: record.paymentSource || record.settlement?.paymentSource,
+      chargedAff: record.billing?.lfnChargedAff ?? (record.settlement ? Math.max(0, record.settlement.chargedAmount - record.settlement.refundedAmount) : undefined) });
+  }
+  // Older studio audits did not retain the wallet name. Join only by the exact
+  // request ID and account-owned settlement; never infer payment from time/model.
+  for (const settlement of await listUserImageSettlements(userId)) {
+    const entry = entries.get(settlement.requestId);
+    if (!entry || !["personal", "package", "mixed"].includes(settlement.paymentSource)) continue;
+    entries.set(settlement.requestId, { ...entry, paymentSource: settlement.paymentSource,
+      chargedAff: entry.chargedAff ?? Math.max(0, settlement.chargedAmount - settlement.refundedAmount),
+      status: entry.status ?? (settlement.status === "succeeded" ? 200 : settlement.status === "partially-refunded" ? 207 : settlement.status === "refunded" ? 502 : undefined) });
+  }
+  return [...entries.values()].filter(e => e.model?.toLowerCase().startsWith("nai-") && ["personal", "package", "mixed"].includes(e.paymentSource || "")).map(e => ({
+    request_id: e.requestId, created_at: Math.floor(e.at / 1000), model_name: e.model,
+    payment_source: e.paymentSource, charged_aff: e.chargedAff, provider_id: "lfn", status: e.status == null ? "pending" : e.status >= 200 && e.status < 300 ? "success" : "failed", http_status: e.status,
+  }));
 }
 
 function auditGeneration(record: RequestAuditRecord): ImagePricingGeneration | null {

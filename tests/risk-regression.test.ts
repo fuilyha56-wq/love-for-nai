@@ -7,13 +7,27 @@ import { readRiskJson, validRiskMutation } from "@/lib/risk-http";
 import { getRiskSettings, publishRiskSettings, resetRiskSettingsCache } from "@/lib/risk-settings";
 import { submitRiskAccessRequest, decideRiskAccessRequest } from "@/lib/risk-access";
 import { resetLightRisk, evaluateLightRisk, finishLightRisk, riskUserSnapshot, confirmRiskEvidence, releaseRiskRestriction } from "@/lib/light-risk";
-import { setRiskBlocked } from "@/lib/risk-control";
+import { evaluateImageRisk, setRiskBlocked } from "@/lib/risk-control";
+import { recordImageRequestUsage } from "@/lib/request-audit";
 import { maintainRiskStorage } from "@/lib/risk-maintenance";
 let directory: string;
 const original = process.env.LFN_DATA_DIR;
 beforeEach(async () => { directory = await mkdtemp(path.join(os.tmpdir(), "lfn-risk-regression-")); process.env.LFN_DATA_DIR = directory; resetRiskSettingsCache(); resetLightRisk(); });
 afterEach(async () => { process.env.LFN_DATA_DIR = original; if (!original) delete process.env.LFN_DATA_DIR; resetRiskSettingsCache(); resetLightRisk(); await rm(directory, { recursive: true, force: true }); });
 describe("risk release regressions", () => {
+  it("can disable high-frequency admission and applications without clearing manual bans",async()=>{
+    const s=structuredClone(await getRiskSettings());s.values["trust.enabled"]=false;s.values["rate.burst"]=1;
+    await publishRiskSettings(s,s.version,"admin","disable optional high frequency gate");
+    for(let i=0;i<4;i++)expect((await evaluateLightRisk({userId:716,requestId:`no-gate-${i}`,now:1000000+i})).decision).toBe("allow");
+    await expect(submitRiskAccessRequest(716,{reason:"test",perMinute:30,concurrency:2,hours:1})).rejects.toThrow("已关闭");
+    await setRiskBlocked(716,true,"manual decision");expect((await evaluateImageRisk({userId:716})).decision).toBe("deny");
+  });
+  it("starts fresh observation after a reset without deleting old billing usage",async()=>{
+    const now=Date.now();for(let i=0;i<85;i++)await recordImageRequestUsage(717,`before-reset-${i}`,now-3600000);
+    await mkdir(path.join(directory,"risk"),{recursive:true});await writeFile(path.join(directory,"risk/marks-reset.json"),JSON.stringify({at:new Date(now-60000).toISOString()}));
+    const result=await evaluateImageRisk({userId:717,requestId:"after-reset",now});
+    expect(result.signalIds).toEqual([]);expect(result.usage?.requests5h).toBe(86);
+  });
   it("rejects cookie-only cross-site, absent-origin and malformed-origin writes and oversized JSON", async () => {
     const req = (origin?: string, type = "application/json") => new Request("https://lfn.test/api/admin/risk/settings", { method: "POST", headers: { "content-type": type, ...(origin ? { origin } : {}) }, body: "{}" });
     expect(validRiskMutation(req("https://lfn.test"))).toBe(true);

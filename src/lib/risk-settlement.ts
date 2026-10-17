@@ -122,3 +122,8 @@ export async function getImageSettlement(settlementId: string): Promise<ImageSet
 export async function listImageSettlements(limit = 100): Promise<ImageSettlement[]> {
   return (await readSettlements()).slice(0, Math.max(1, Math.min(5000, limit)));
 }
+
+export async function listUserImageSettlements(userId: number): Promise<ImageSettlement[]> {
+  if (!Number.isSafeInteger(userId) || userId < 1) throw new Error("用户 id 无效");
+  return (await readSettlements()).filter(item => item.userId === userId);
+}
