@@ -88,7 +88,7 @@ export function officialNaiAnlasCost(generation: ImagePricingGeneration, opusEli
 
 export const MEDIUM_ANLAS_RATIO = 18 / 26;
 export const MEDIUM_AFF_PER_IMAGE = Math.max(1, Math.round(2 * MEDIUM_ANLAS_RATIO));
-export const V5_BASE_AFF_PER_IMAGE = 4;
+export const V5_BASE_AFF_PER_IMAGE = 5;
 const DIRECTOR_COSTS: Record<string, number> = {
   declutter: 5,
   "bg-removal": 65,

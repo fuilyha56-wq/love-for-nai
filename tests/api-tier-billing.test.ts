@@ -154,7 +154,7 @@ describe("API tiers with real local wallet and daily reservations", () => {
   it("retains the real studio payment and final charge for the usage filter",async()=>{
     const response=await operatePOST(new Request("https://lfn.test/api/images/operate",{method:"POST",headers:{"content-type":"application/json","x-real-ip":"203.0.113.71"},body:JSON.stringify({model:"nai-v5-full",operation:"generate",prompt:"billing fixture",width:832,height:1216,steps:28,n:1})}));
     expect(response.status).toBe(200);expect(await response.json()).toMatchObject({paymentSource:"personal"});
-    expect((await listUserImageUsage(801))[0]).toMatchObject({payment_source:"personal",charged_aff:4,status:"success"});
+    expect((await listUserImageUsage(801))[0]).toMatchObject({payment_source:"personal",charged_aff:5,status:"success"});
     expect((await dailyImageBillingState(801)).counts.v5).toBe(1);
   });
   it("keeps a studio NewAPI fallback out of local daily counts and local payment rows",async()=>{
@@ -332,7 +332,7 @@ describe("API tiers with real local wallet and daily reservations", () => {
     expect(restored.status).toBe(200);
     await restored.arrayBuffer();
     expect(upstream.send).toHaveBeenCalledTimes(1);
-    expect((await affStatus(801)).balance).toBe(996);
+    expect((await affStatus(801)).balance).toBe(995);
     expect((await dailyImageBillingState(801)).counts.v5).toBe(1);
     expect((await riskUserSnapshot(801)).grant?.exits).toBe(1);
   });
@@ -351,11 +351,11 @@ describe("API tiers with real local wallet and daily reservations", () => {
     expect(first.status).toBe(200);
     expect(first.headers.get("X-LFN-Payment-Source")).toBe("personal");
     await first.json();
-    expect((await affStatus(801)).balance).toBe(996);
+    expect((await affStatus(801)).balance).toBe(995);
     const second = await invoke("second-key");
     expect(second.status).toBe(200);
     await second.json();
-    expect((await affStatus(801)).balance).toBe(991.6);
+    expect((await affStatus(801)).balance).toBe(989.5);
     expect((await dailyImageBillingState(801)).counts.v5).toBe(51);
     const account = JSON.parse(
       await readFile(path.join(directory, "aff", "801.json"), "utf8"),
@@ -364,7 +364,7 @@ describe("API tiers with real local wallet and daily reservations", () => {
       account.transactions
         .filter((t: { type: string }) => t.type === "generation")
         .map((t: { amount: number }) => t.amount),
-    ).toEqual([-4.4, -4]);
+    ).toEqual([-5.5, -5]);
   });
   it("does not silently charge NewAPI when local credits are insufficient", async () => {
     await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: true });

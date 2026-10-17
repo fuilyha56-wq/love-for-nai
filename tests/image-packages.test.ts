@@ -123,15 +123,15 @@ describe("图包 AFF 账本", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 12,
+      cost: 15,
       packageCost: 2,
-      personalCost: 10,
+      personalCost: 13,
       packageImages: 1,
-      balance: 4,
+      balance: 1,
       packageBalance: 0,
     });
     expect(charge?.packageChargesBySample).toEqual([2, 0, 0]);
-    expect(charge?.personalChargesBySample).toEqual([2, 4, 4]);
+    expect(charge?.personalChargesBySample).toEqual([3, 5, 5]);
   });
 
   it("两种 AFF 合计不足时不修改本地余额", async () => {
@@ -209,9 +209,9 @@ describe("图包 AFF 账本", () => {
 
     // 第 1 张由两个钱包混合支付，失败的第 2/3 张只退回个人 AFF。
     await expect(affStatus(106)).resolves.toMatchObject({
-      balance: 12,
+      balance: 11,
       packageBalance: 0,
-      totalBalance: 12,
+      totalBalance: 11,
     });
     const account = await readAccountFile(106);
     expect(account.packageUsage).toHaveLength(1);

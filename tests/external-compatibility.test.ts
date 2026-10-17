@@ -53,7 +53,7 @@ describe("外部图片 API 兼容边界", () => {
       },
     });
     expect(generation).toMatchObject({ operation: "precise-reference", referenceMode: "precise", referenceImageCount: 1 });
-    expect(affCost(generation!)).toBe(35.25);
+    expect(affCost(generation!)).toBe(36.25);
   });
 
   it("缓存 Vibe 不重复编码，已编码引用仍可使用本地档内价", () => {
@@ -66,7 +66,7 @@ describe("外部图片 API 兼容边界", () => {
       },
     });
     expect(generation).toMatchObject({ referenceImageCount: 1, encodedVibeCount: 1 });
-    expect(affCost(generation!)).toBe(4);
+    expect(affCost(generation!)).toBe(5);
   });
 
   it("重绘按 inpaintImg2ImgStrength 而非图生图 strength 计算", () => {
@@ -74,20 +74,20 @@ describe("外部图片 API 兼容边界", () => {
     const inpaint = externalGeneration(body, "inpainting");
     const img2img = externalGeneration(body, "img2img");
     expect(inpaint?.strength).toBe(1);
-    expect(affCost(inpaint!)).toBe(29);
-    expect(affCost(img2img!)).toBe(6.5);
+    expect(affCost(inpaint!)).toBe(30);
+    expect(affCost(img2img!)).toBe(7.5);
     const preciseInpaint = externalGeneration({ ...body, director_reference_images: ["reference"] }, "inpainting");
-    expect(affCost(preciseInpaint!)).toBe(35.25);
+    expect(affCost(preciseInpaint!)).toBe(36.25);
   });
 
   it("嵌套图生图缺省强度为 0.7，原生 infill 使用自己的强度", () => {
     const body = { model: "nai-diffusion-5-full", parameters: { width: 832, height: 1216, steps: 29, n_samples: 1 } };
     const img2img = externalGeneration({ ...body, action: "img2img" });
     expect(img2img).toMatchObject({ operation: "img2img", strength: 0.7 });
-    expect(affCost(img2img!)).toBe(21.5);
+    expect(affCost(img2img!)).toBe(22.5);
     const infill = externalGeneration({ ...body, action: "infill", parameters: { ...body.parameters, strength: 0.1, inpaintImg2ImgStrength: 0.5 } });
     expect(infill).toMatchObject({ operation: "inpainting", strength: 0.5 });
-    expect(affCost(infill!)).toBe(16.5);
+    expect(affCost(infill!)).toBe(17.5);
   });
 
   it("为浏览器图片客户端提供预检响应", () => {
