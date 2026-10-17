@@ -69,6 +69,26 @@ def health(client, image):
     return True
 
 
+def sync_trusted_proxy_runtime(client, tag):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', tag):
+        raise ValueError('Invalid release tag')
+    script = r'''
+const fs=require("fs"),path=require("path");
+const file=path.resolve(process.env.LFN_DATA_DIR||"data","platform/config.json");
+if(!fs.existsSync(file)){console.log(JSON.stringify({changed:false,source:"environment"}));process.exit(0)}
+const current=JSON.parse(fs.readFileSync(file,"utf8"));
+if(current.settings?.trustProxy===true){console.log(JSON.stringify({changed:false}));process.exit(0)}
+const backup=file+".bak-"+RELEASE_TAG;
+fs.copyFileSync(file,backup,fs.constants.COPYFILE_EXCL);
+current.settings={...current.settings,trustProxy:true};
+const temporary=file+".trusted-proxy.tmp";
+fs.writeFileSync(temporary,JSON.stringify(current,null,2),{mode:0o600});
+fs.renameSync(temporary,file);
+console.log(JSON.stringify({changed:true,backupCreated:true}));
+'''.replace('RELEASE_TAG', json.dumps(tag))
+    return json.loads(run_remote(client, 'docker exec love-for-nai node -e ' + shlex.quote(script), quiet=True))
+
+
 def main():
     if len(sys.argv) not in (2, 3) or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or (len(sys.argv) == 3 and sys.argv[2] != '--trusted-edge'):
         raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge]')
@@ -144,6 +164,9 @@ def main():
                 updated, proxy_count = re.subn(r'(?m)^(\s*LFN_TRUST_PROXY:)\s*[^\r\n]+', r'\1 "true"', updated)
                 if proxy_count != 1:
                     raise RuntimeError('Expected exactly one LFN_TRUST_PROXY setting')
+                migration = sync_trusted_proxy_runtime(client, tag)
+                if migration.get('changed'):
+                    print('Trusted proxy runtime setting synchronized; private backup preserved', flush=True)
             last_progress = [0.0]
             def progress(sent, total):
                 if time.monotonic() - last_progress[0] >= 20 or sent == total:
