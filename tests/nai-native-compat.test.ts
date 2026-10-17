@@ -89,6 +89,34 @@ afterEach(() => {
 });
 
 describe("NovelAI 原生兼容层", () => {
+  it("Langbai /user/data returns only the current relay account summary", async () => {
+    const { GET, OPTIONS } = await import("@/app/user/data/route");
+    const response = await GET(new Request("https://lfn.test/user/data", { headers: { Authorization: "Bearer sk-user-key" } }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ subscription: { tier: 0, active: true, trainingStepsLeft: { fixedTrainingStepsLeft: 401 } } });
+    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+    expect(OPTIONS().headers.get("access-control-allow-methods")).toContain("GET");
+  });
+
+  it("Langbai read-only validation rejects invalid credentials instead of falling back to paid generation", async () => {
+    mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: null });
+    const { GET } = await import("@/app/user/data/route");
+    expect((await GET(new Request("https://lfn.test/user/data", { headers: { Authorization: "Bearer sk-bad-key" } }))).status).toBe(401);
+    expect(mocks.affStatus).not.toHaveBeenCalled(); expect(vi.mocked(fetch)).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a native WebP ZIP before finalizing the local charge", async () => {
+    const sharp = (await import("sharp")).default;
+    const bytes = await sharp({ create: { width: 8, height: 8, channels: 4, background: "blue" } }).webp().toBuffer();
+    const zip = await new JSZip().file("0.webp", bytes).generateAsync({ type: "arraybuffer" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(zip, { headers: { "content-type": "application/zip" } })));
+    const { POST } = await import("@/app/ai/generate-image/route");
+    const result = await POST(new Request("https://lfn.test/ai/generate-image", { method: "POST", headers: { Authorization: "Bearer sk-user-key", "Content-Type": "application/json" }, body: JSON.stringify({ input: "blue sky", model: "nai-diffusion-5-full", parameters: { width: 512, height: 512, n_samples: 1, steps: 25 } }) }));
+    expect(result.status).toBe(200);
+    const output = await JSZip.loadAsync(await result.arrayBuffer()); expect(output.file("0.png")).not.toBeNull(); expect(output.file("0.webp")).toBeNull();
+    expect(mocks.refundImageCredits).not.toHaveBeenCalled();
+    const sent = JSON.parse(String(vi.mocked(fetch).mock.calls[0][1]?.body)); expect(sent.parameters.image_format).toBe("png");
+  });
   it("有效 Key 读取 /user/subscription 返回合成订阅（第三方客户端登录依赖）", async () => {
     const { GET } = await import("@/app/user/subscription/route");
     const response = await GET(

@@ -158,9 +158,9 @@ function score(a: Account, settings: RiskSettings, now: number) {
   return { points, grade };
 }
 async function restrict(a: Account, settings: RiskSettings, rule: RiskRuleConfig, reason: string, now: number) {
-  if (rule.mode !== "enforce" || rule.action === "observe" || !rule.strong) return;
+  if (rule.mode !== "enforce" || rule.action === "observe") return;
   if (a.restrictions.some(r => r.rule === rule.id && r.expiresAt > now)) return;
-  const proof = `${rule.id}:${createHash("sha256").update(a.evidence.filter(e => e.strong && e.expires > now).map(e => e.id).sort().join("|")).digest("hex")}`;
+  const proof = `${rule.id}:${createHash("sha256").update(a.evidence.filter(e => e.expires > now && (e.strong || e.rule === rule.id)).map(e => `${e.id}:${e.at}`).sort().join("|")).digest("hex")}`;
   if (a.applied[proof]) return;
   a.applied[proof] = now;
   a.restrictions.push({ id: randomBytes(12).toString("hex"), rule: rule.id, action: rule.action, startsAt: now, expiresAt: now + Math.min(rule.durationSeconds, num(settings, "global.maxCooldownSeconds")) * 1000, reason });
@@ -242,7 +242,7 @@ export async function evaluateLightRisk(input: { userId: number; requestId?: str
   const total = score(a, settings, now);
   for (const e of hits) {
     const r = settings.rules.find(r => r.id === e.rule)!;
-    if (e.strong && r.action !== "observe") await restrict(a, settings, r, r.label, now);
+    if (r.action !== "observe") await restrict(a, settings, r, r.label, now);
   }
   if (flag(settings, "global.autoLevels") && total.grade.action !== "observe") {
     const live = a.evidence.filter(e => e.expires > now && settings.rules.find(r => r.id === e.rule)?.mode === "enforce");
@@ -297,7 +297,8 @@ export async function finishLightRisk(input: { userId: number; requestId: string
     const average = history.reduce((sum, [, b]) => sum + (b.costs?.[currentHour] || 0), 0) / Math.max(1, history.length) * num(settings, "quota.windowSeconds") / 3600;
     const recentCost = a.outcomes.filter(o => now - o.at < num(settings, "quota.windowSeconds") * 1000).reduce((sum, o) => sum + o.cost, 0);
     if (average > 0 && history.length >= num(settings, "quota.baselineDays") && settled >= num(settings, "quota.minimumSettlements") && recentCost >= num(settings, "quota.minimumAff") && recentCost >= average * num(settings, "quota.acceleration")) {
-      add(a, settings, "Q01", String(Math.floor(now / (num(settings, "quota.windowSeconds") * 1000))), { recentCost, average }, now);
+      const evidence = add(a, settings, "Q01", String(Math.floor(now / (num(settings, "quota.windowSeconds") * 1000))), { recentCost, average }, now);
+      if (evidence) await restrict(a, settings, settings.rules.find(r => r.id === "Q01")!, "消费突增触发配置动作", now);
       if (context?.newDevice) { add(a, settings, "Q02", input.requestId, { recentCost, average, newDevice: true }, now); await restrict(a, settings, settings.rules.find(r => r.id === "Q02")!, "新设备伴随消费显著突增，保护性暂停", now); }
     }
   }
@@ -311,7 +312,10 @@ export async function finishLightRisk(input: { userId: number; requestId: string
         for (const [, b] of history) b.calls.forEach((n, h) => { before[Math.min(slots - 1, Math.floor(h * slots / 24))] += n; });
         bucket.calls.forEach((n, h) => { current[Math.min(slots - 1, Math.floor(h * slots / 24))] += n; });
         const deviation = current.reduce((sum, n, i) => sum + Math.abs(n / recent - before[i] / historical), 0) * 50;
-        if (deviation >= num(settings, "behavior.deviationPercent")) add(a, settings, "B03", day, { deviation, recent, historical }, now);
+        if (deviation >= num(settings, "behavior.deviationPercent")) {
+          const evidence = add(a, settings, "B03", day, { deviation, recent, historical }, now);
+          if (evidence) await restrict(a, settings, settings.rules.find(r => r.id === "B03")!, "调用时段偏差触发配置动作", now);
+        }
       }
     }
     // A baseline is diagnostic state: a disk fault here must not discard a paid image.

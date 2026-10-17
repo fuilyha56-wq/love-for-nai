@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { defaultRiskSettings, getRiskSettings, publishRiskSettings, resetRiskSettingsCache, validateRiskSettings } from "@/lib/risk-settings";
@@ -71,6 +71,37 @@ describe("daily authorization and privacy", () => {
 });
 
 describe("evidence, recovery and reliable outcomes", () => {
+  it("applies a configured B03 action when the post-generation time-distribution detector fires", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-18T01:00:00Z"));
+    const settings = structuredClone(await getRiskSettings()); settings.values["quota.baselineDays"] = 2; settings.values["quota.updateSeconds"] = 60; settings.values["behavior.minimumRecent"] = 10; settings.values["behavior.minimumHistory"] = 20;
+    Object.assign(settings.rules.find(r => r.id === "B03")!, { mode: "enforce", action: "rate-limit", durationSeconds: 10 });
+    await publishRiskSettings(settings, settings.version, "admin", "Configure time-distribution feedback");
+    const calls = (hour: number, count: number) => Array.from({ length: 24 }, (_, i) => i === hour ? count : 0);
+    await mkdir(path.join(directory, "risk/light"), { recursive: true });
+    await writeFile(path.join(directory, "risk/light/user-82.json"), JSON.stringify({ baseline: { "2026-10-16": { calls: calls(0, 10), cost: 0, settlements: 10 }, "2026-10-17": { calls: calls(0, 10), cost: 0, settlements: 10 }, "2026-10-18": { calls: calls(9, 9), cost: 0, settlements: 9 } } }));
+    await finishLightRisk({ userId: 82, requestId: "first", acceptedAt: Date.now(), status: 200 });
+    vi.setSystemTime(Date.now() + 60001); await finishLightRisk({ userId: 82, requestId: "next", acceptedAt: Date.now(), status: 200 });
+    const snapshot = await riskUserSnapshot(82); expect(snapshot.restrictions).toMatchObject([{ rule: "B03", action: "rate-limit" }]); expect(snapshot.evidence.find(e => e.rule === "B03")?.strong).toBe(false);
+  });
+  for (const action of ["rate-limit", "deny"] as const) it(`executes an administrator-configured ${action} for a repeated-prompt rule without upgrading evidence strength`, async () => {
+    vi.useFakeTimers(); const start = Date.now();
+    const settings = structuredClone(await getRiskSettings()); settings.values["rate.enabled"] = false; settings.values["prompt.minSamples"] = 2; settings.values["prompt.repeatPercent"] = 50;
+    const rule = settings.rules.find(r => r.id === "B01")!; Object.assign(rule, { mode: "enforce", action, durationSeconds: 10, cooldownSeconds: 0 });
+    await publishRiskSettings(settings, settings.version, "admin", "Configure a short repeated-prompt action");
+    expect((await evaluateLightRisk({ userId: 80, requestId: "one", prompt: "blue sky" })).decision).toBe("allow");
+    vi.setSystemTime(start + 1000); expect((await evaluateLightRisk({ userId: 80, requestId: "two", prompt: "blue sky" })).decision).toBe(action);
+    const snapshot = await riskUserSnapshot(80); expect(snapshot.evidence[0].strong).toBe(false); const expires = snapshot.restrictions[0].expiresAt;
+    vi.setSystemTime(start + 2000); await evaluateLightRisk({ userId: 80, requestId: "retry", prompt: "blue sky" }); expect((await riskUserSnapshot(80)).restrictions[0].expiresAt).toBe(expires);
+    resetLightRisk(); expect((await evaluateLightRisk({ userId: 80, requestId: "restart" })).decision).toBe(action);
+    vi.setSystemTime(expires + 1); expect((await evaluateLightRisk({ userId: 80, requestId: "expired" })).decision).toBe("allow");
+  });
+  it("keeps a configured action inactive while the rule is in observation mode", async () => {
+    const settings = structuredClone(await getRiskSettings()); settings.values["rate.enabled"] = false; settings.values["prompt.minSamples"] = 2; settings.values["prompt.repeatPercent"] = 50;
+    Object.assign(settings.rules.find(r => r.id === "B01")!, { mode: "observe", action: "deny" });
+    await publishRiskSettings(settings, settings.version, "admin", "Observe the rule before enforcing it");
+    await evaluateLightRisk({ userId: 81, requestId: "one", prompt: "blue sky" });
+    expect((await evaluateLightRisk({ userId: 81, requestId: "two", prompt: "blue sky" })).decision).toBe("allow"); expect((await riskUserSnapshot(81)).restrictions).toHaveLength(0);
+  });
   it("compares exact hashes across independent operations, never stores raw prompts or punishes duplication alone", async () => {
     const prompt = "private text 928374 keep out of persisted diagnostics";
     const settings = structuredClone(await getRiskSettings()); settings.values["rate.enabled"] = false;

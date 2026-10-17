@@ -67,12 +67,10 @@ export async function POST(request: Request): Promise<Response> {
     request.url.includes("generate-image-stream");
   if (nativeUpstream) {
     const nativePath = wantsStream ? "/ai/generate-image-stream" : "/ai/generate-image";
-    const nativeBody = wantsStream
-      ? {
-          ...body,
-          parameters: { ...parameters, stream: "msgpack" },
-        }
-      : body;
+    const nativeBody = {
+      ...body,
+      parameters: { ...parameters, image_format: parameters.image_format ?? "png", ...(wantsStream ? { stream: "msgpack" } : {}) },
+    };
     const proxyRequest = new Request(request.url, {
       method: "POST",
       headers: nativeRequestHeaders(request, authorization, wantsStream ? "application/x-msgpack" : request.headers.get("accept") || "application/zip"),
@@ -92,9 +90,9 @@ export async function POST(request: Request): Promise<Response> {
         contentType: "application/json",
       },
     );
-    // 原生 Gateway 的响应保持协议、字节和响应头透传；只有没有原生上游时，
-    // 下方的 OpenAI 回退结果才需要转换成 Launcher 能识别的 ZIP。
-    return wantsStream ? naiMsgpackResponse(native) : naiZipResponse(native);
+    // The proxy already normalizes native and NewAPI fallback envelopes before
+    // settlement. Avoid loading the ZIP a second time at the public route.
+    return native;
   }
   const proxyRequest = new Request(request.url, {
     method: "POST",
