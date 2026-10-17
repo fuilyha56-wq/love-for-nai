@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deploy a locally built LFN image through credentials in the project's .rsh.py.
 Keeps the previous compose/image and automatically rolls back failed health checks.
-Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge]
+Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge] [--sync-anlas-pricing]
 """
 import gzip
 import ast
@@ -94,9 +94,27 @@ console.log(JSON.stringify({changed:true,backupCreated:true}));
     return json.loads(run_remote(client, 'docker exec love-for-nai node -e ' + shlex.quote(script), quiet=True))
 
 
+def sync_daily_anlas_pricing(client, tag):
+    if not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', tag):
+        raise ValueError('Invalid release tag')
+    script = r'''
+const fs=require("fs"),path=require("path");
+const file=path.resolve(process.env.LFN_DATA_DIR||"data","daily-billing/policy.json");
+if(!fs.existsSync(file)){console.log(JSON.stringify({changed:false,source:"new-defaults"}));process.exit(0)}
+const current=JSON.parse(fs.readFileSync(file,"utf8"));
+if(current.v45AnlasCny===0.02&&current.v5AnlasCny===0.025&&current.strictApiBilling===false){console.log(JSON.stringify({changed:false}));process.exit(0)}
+fs.copyFileSync(file,file+".bak-"+RELEASE_TAG,fs.constants.COPYFILE_EXCL);
+const updated={...current,v45AnlasCny:0.02,v5AnlasCny:0.025,strictApiBilling:false};
+const temporary=file+".pricing-sync.tmp";
+fs.writeFileSync(temporary,JSON.stringify(updated,null,2),{mode:0o600});fs.renameSync(temporary,file);
+console.log(JSON.stringify({changed:true,backupCreated:true,v45AnlasCny:0.02,v5AnlasCny:0.025,newApiFallback:true}));
+'''.replace('RELEASE_TAG', json.dumps(tag))
+    return json.loads(run_remote(client, 'docker exec love-for-nai node -e ' + shlex.quote(script), quiet=True))
+
+
 def main():
-    if len(sys.argv) not in (2, 3) or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or (len(sys.argv) == 3 and sys.argv[2] != '--trusted-edge'):
-        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge]')
+    if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing'} for arg in sys.argv[2:]):
+        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing]')
     trusted_edge = '--trusted-edge' in sys.argv
     tag = sys.argv[1]
     image = f'love-for-nai:{tag}'
@@ -172,6 +190,10 @@ def main():
                 migration = sync_trusted_proxy_runtime(client, tag)
                 if migration.get('changed'):
                     print('Trusted proxy runtime setting synchronized; private backup preserved', flush=True)
+            if '--sync-anlas-pricing' in sys.argv:
+                migration = sync_daily_anlas_pricing(client, tag)
+                if migration.get('changed'):
+                    print('LFN Anlas rates synchronized: V4.5 CNY 0.02 / V5 CNY 0.025; private backup preserved', flush=True)
             last_progress = [0.0]
             def progress(sent, total):
                 if time.monotonic() - last_progress[0] >= 20 or sent == total:

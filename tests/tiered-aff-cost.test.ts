@@ -98,10 +98,10 @@ describe("两档 AFF 计费", () => {
 
   it("超范围 Anlas 按人民币换算，V5 单价为 V4.5 的 1.25 倍", () => {
     const generation = { model: "nai-v4.5-full", width: 832, height: 1216, steps: 29, samples: 1 };
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 161, costCny: 0.805 });
-    expect(quoteDailyImage({ ...generation, model: "nai-v5-full" }, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 204, costCny: 1.02 });
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 100)?.costAff).toBe(179);
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 200)?.costAff).toBe(182.4);
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 81, costCny: 0.405 });
+    expect(quoteDailyImage({ ...generation, model: "nai-v5-full" }, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 104, costCny: 0.52 });
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 100)?.costAff).toBe(91);
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 200)?.costAff).toBe(92.8);
   });
 
   it("V4.5 LFN 阶梯在第 101/201 张添加人民币等值附加费", () => {
@@ -113,7 +113,7 @@ describe("两档 AFF 计费", () => {
 
   it("V5 LFN 阶梯同时提高基础 AFF 和人民币换算的 Anlas 部分", () => {
     const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1 };
-    for (const [startCount, expected] of [[49, 204], [50, 224.4], [100, 229.5], [200, 244.8]]) {
+    for (const [startCount, expected] of [[49, 104], [50, 114.4], [100, 117], [200, 124.8]]) {
       expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, startCount)?.costAff).toBe(expected);
     }
   });
