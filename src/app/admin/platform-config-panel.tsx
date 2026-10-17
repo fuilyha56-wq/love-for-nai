@@ -416,6 +416,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
           <label className="block text-sm font-semibold">签名发行方
             <input value={settings.watermarkIssuer} onChange={(event) => setSettings({ ...settings, watermarkIssuer: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>
+          <p className="text-xs leading-5 text-[var(--muted)] sm:col-span-2">图片签名写入 PNG 元数据，肉眼不会看到文字角标。API 的 Base64、原生 ZIP 和最终流式 PNG 均可携带签名；请使用原始文件校验，重新编码可能移除元数据。</p>
           <label className="block text-sm font-semibold">签名标签
             <input value={settings.watermarkLabel} onChange={(event) => setSettings({ ...settings, watermarkLabel: event.target.value })} className="field mt-1.5 h-10 w-full px-3 text-sm" />
           </label>

@@ -81,6 +81,8 @@ export type RequestRankings = {
     label: string;
     calls: number;
     anlas: number;
+    users?: Array<{ userId?: number; username: string; calls: number; anlas: number }>;
+    userCount?: number;
     breakdown: Record<string, { calls: number; anlas: number }>;
   }>;
   models: Array<{
@@ -392,6 +394,7 @@ export async function requestRankings(
   const records = candidates.filter((record) => !keyword || `${record.userId || ""} ${record.username || identities.get(record.userId || 0)?.name || ""} ${naiUsageModel(record.model || "")}`.toLowerCase().includes(keyword));
   const userMap = new Map<string, RequestRankings["users"][number]>();
   const timeMap = new Map<string, RequestRankings["times"][number]>();
+  const timeUsers = new Map<string, Map<string, { userId?: number; username: string; calls: number; anlas: number }>>();
   const modelMap = new Map<string, RequestRankings["models"][number]>();
   const bucketSize = (filter.bucket || (normalizedDays > 7 ? "day" : "hour")) === "day" ? 86_400_000 : 3_600_000;
   const bucketAt = (at: number) => Math.floor((at + 28_800_000) / bucketSize) * bucketSize - 28_800_000;
@@ -441,6 +444,10 @@ export async function requestRankings(
     time.calls += 1;
     time.anlas += safeAnlas;
     timeMap.set(bucket, time);
+    const bucketUsers = timeUsers.get(bucket) || new Map();
+    const bucketUser = bucketUsers.get(userKey) || { userId: record.userId, username: user.username, calls: 0, anlas: 0 };
+    bucketUser.calls += 1; bucketUser.anlas += safeAnlas;
+    bucketUsers.set(userKey, bucketUser); timeUsers.set(bucket, bucketUsers);
 
     const detail = time.breakdown[modelName] || { calls: 0, anlas: 0 };
     detail.calls += 1;
@@ -456,6 +463,11 @@ export async function requestRankings(
   }
   const order = (left: { calls: number; anlas: number }, right: { calls: number; anlas: number }) =>
     (normalizedMetric === "anlas" ? right.anlas - left.anlas : right.calls - left.calls) || right.calls - left.calls;
+  for (const [bucket, time] of timeMap) {
+    const users = timeUsers.get(bucket);
+    time.userCount = users?.size || 0;
+    time.users = users ? [...users.values()].sort(order).slice(0, 3) : [];
+  }
   return {
     days: normalizedDays,
     metric: normalizedMetric,

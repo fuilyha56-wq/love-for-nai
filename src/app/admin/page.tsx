@@ -24,7 +24,7 @@ import {
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import "./admin.css";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
 import { PopupSelect } from "@/app/ui/popup-select";
@@ -35,10 +35,7 @@ const DocsPanel = dynamic(() => import("./docs-panel"));
 const RewardsPanel = dynamic(() => import("./rewards-panel"));
 const ActivitiesPanel = dynamic(() => import("./activities/activities-panel"));
 const RedeemCodesPanel = dynamic(() => import("./redeem-codes-panel"));
-const LightRiskPanel = dynamic(() => import("./light-risk-panel"));
-const RiskPolicyPanel = dynamic(() => import("./risk-policy-panel"));
-const RiskRankingsPanel = dynamic(() => import("./risk-rankings-panel"));
-const RiskUserActions = dynamic(() => import("./risk-user-actions"));
+const RiskPanel = dynamic(() => import("./risk-dashboard"));
 const ReferralsPanel = dynamic(() => import("./referrals-panel"));
 const SessionCleanupPanel = dynamic(() => import("./session-cleanup-panel"));
 const DailyBillingPanel = dynamic(() => import("./daily-billing-panel"));
@@ -298,63 +295,6 @@ export default function AdminPage() {
   );
 }
 
-function RiskPanel() {
-  const [message, setMessage] = useState("");
-  const [expanded, setExpanded] = useState<{ userId: number; kind: "mark" | "ban" | "chain" } | null>(null);
-  type CaseRow = { caseId: string; userId: number; username?: string; level: string; score: number; lastSeenAt: string; signals: Array<{ id: string; description: string }>; usage?: { requests5h?: number; requests7d?: number; requests30d?: number }; enforcement?: { blocked?: boolean } };
-  type IpRow = { evidenceId: string; userId?: number; username?: string; family: string; requestCount: number; lastSeenAt: string; geo?: { countryName?: string; region?: string; city?: string; asn?: string; organization?: string } };
-  const [items, setItems] = useState<CaseRow[]>([]);
-  const [ipItems, setIpItems] = useState<IpRow[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
-
-  const load = useCallback(async () => {
-    try {
-      const [casesResponse, overviewResponse, ipResponse] = await Promise.all([
-        fetch("/api/admin/risk/cases?limit=200", { cache: "no-store" }),
-        fetch("/api/admin/risk/overview", { cache: "no-store" }),
-        fetch("/api/admin/risk/ip?limit=50", { cache: "no-store" }),
-      ]);
-      const casesResult = await casesResponse.json();
-      const overviewResult = await overviewResponse.json();
-      const ipResult = await ipResponse.json();
-      if (!casesResponse.ok) throw new Error(casesResult.message || "读取风险案件失败");
-      setItems(Array.isArray(casesResult.items) ? casesResult.items : []);
-      setCounts(overviewResult.counts || {});
-      setIpItems(Array.isArray(ipResult.items) ? ipResult.items : []);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "读取风险数据失败");
-    }
-  }, [setMessage]);
-
-  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
-
-  function action(userId: number, actionName: "mark" | "ban" | "unban") { setExpanded({ userId, kind: actionName === "mark" ? "mark" : "ban" }); }
-  function previewChain(userId: number) { setExpanded({ userId, kind: "chain" }); }
-
-  async function queryGeo(evidenceId: string) {
-    const response = await fetch(`/api/admin/risk/ip/${evidenceId}/geo`, { method: "POST" });
-    const result = await response.json();
-    if (!response.ok) { setMessage(result.message || "IP 归属地查询失败"); return; }
-    setMessage(`IP 归属地已更新：${result.geo?.countryName || result.geo?.countryCode || "未知"} ${result.geo?.city || ""}`);
-    await load();
-  }
-
-
-  return (
-    <div className="space-y-4">
-      {message && <p role="status" className="rounded-lg border border-[var(--line)] p-3 text-sm">{message}</p>}
-      <div className="grid gap-3 sm:grid-cols-4">
-        {[['案件', counts.cases], ['Risk', counts.risk], ['Critical', counts.critical], ['已封禁', counts.banned], ['重复聚类', counts.promptClusters], ['待退款', counts.pendingRefunds], ['IP 证据', counts.ipEvidence]].map(([label, value]) => <div key={String(label)} className="rounded-lg border border-[var(--line)] bg-white p-4"><p className="text-xs text-[var(--muted)]">{label}</p><p className="mt-2 text-2xl font-semibold">{value ?? 0}</p></div>)}
-      </div>
-      <LightRiskPanel />
-      <RiskPolicyPanel />
-      <RiskRankingsPanel />
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">自动规则只标记风险或执行本页配置的限流/拒绝动作，不会自动永久封禁。IP 归属地、提示词聚类和调用排行均为辅助证据，管理员仍需结合审计记录确认。</div>
-      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white"><table className="w-full text-sm"><thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">等级 / 分数</th><th className="px-3 py-2.5">调用 5h / 7d / 30d</th><th className="px-3 py-2.5">最近信号</th><th className="px-3 py-2.5">最近时间</th><th className="px-3 py-2.5">操作</th></tr></thead><tbody>{items.map((item) => <Fragment key={item.caseId}><tr key={item.caseId} className="border-b border-[var(--line)] align-top last:border-0"><td className="px-3 py-2.5"><b>{item.username || "-"}</b><p className="text-xs text-[var(--muted)]">#{item.userId}</p></td><td className="px-3 py-2.5"><span className="font-semibold">{item.level}</span><p className="text-xs text-[var(--muted)]">{item.score} 分 · {item.enforcement?.blocked ? "已封禁" : "未封禁"}</p></td><td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? "-"} / {item.usage?.requests7d ?? "-"} / {item.usage?.requests30d ?? "-"}</td><td className="max-w-sm px-3 py-2.5 text-xs">{item.signals?.slice(0, 2).map((signal) => <p key={signal.id}>{signal.description}</p>) || "-"}</td><td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-2 text-xs"><button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void action(item.userId, "mark")}>标记</button>{item.enforcement?.blocked ? <button type="button" className="rounded border border-emerald-300 px-2 py-1 text-emerald-700" onClick={() => void action(item.userId, "unban")}>解封</button> : <button type="button" className="rounded border border-rose-300 px-2 py-1 text-rose-700" onClick={() => void action(item.userId, "ban")}>封禁</button>}<button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void previewChain(item.userId)}>邀请链</button></div></td></tr>{expanded?.userId === item.userId && <tr><td colSpan={6} className="bg-[var(--surface-muted)] p-3"><RiskUserActions key={`${item.userId}:${expanded.kind}`} user={item} initial={expanded.kind} onClose={() => setExpanded(null)} onChanged={load} /></td></tr>}</Fragment>)}{!items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无风险案件</td></tr>}</tbody></table></div>
-      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white"><div className="border-b border-[var(--line)] px-4 py-3"><h2 className="text-sm font-semibold">IP 溯源证据</h2><p className="mt-1 text-xs text-[var(--muted)]">仅显示脱敏摘要和归属地快照。完整 IP 默认不展示，归属地仅作辅助证据。</p></div><table className="w-full text-sm"><thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">地址族 / 次数</th><th className="px-3 py-2.5">归属地</th><th className="px-3 py-2.5">最近出现</th><th className="px-3 py-2.5">操作</th></tr></thead><tbody>{ipItems.map((item) => <tr key={item.evidenceId} className="border-b border-[var(--line)] last:border-0"><td className="px-3 py-2.5">{item.username || "-"}<span className="ml-1 text-xs text-[var(--muted)]">#{item.userId || "-"}</span></td><td className="px-3 py-2.5 text-xs">{item.family} · {item.requestCount} 次</td><td className="px-3 py-2.5 text-xs">{[item.geo?.countryName, item.geo?.region, item.geo?.city].filter(Boolean).join(" / ") || "未查询"}<p className="text-[var(--muted)]">{item.geo?.asn || item.geo?.organization || "-"}</p></td><td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><button type="button" className="rounded border border-[var(--line)] px-2 py-1 text-xs" onClick={() => void queryGeo(item.evidenceId)}>查询归属地</button></td></tr>)}{!ipItems.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-[var(--muted)]">暂无 IP 证据</td></tr>}</tbody></table></div>
-    </div>
-  );
-}
 
 function OverviewPanel({
   capabilities,

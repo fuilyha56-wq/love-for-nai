@@ -3,7 +3,7 @@ export const EXTERNAL_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Origin, X-Requested-With, X-API-Key, X-NovelAI-Operation, X-NovelAI-Extra-Params",
-  "Access-Control-Expose-Headers": "Content-Type, X-Anlas-Cost, X-Prompt-Tokens, X-LFN-Payment-Source, X-LFN-Request-ID, X-LFN-Request-Fingerprint",
+  "Access-Control-Expose-Headers": "Content-Type, X-Anlas-Cost, X-Prompt-Tokens, X-LFN-Payment-Source, X-LFN-Request-ID, X-LFN-Request-Fingerprint, X-LFN-Watermark",
 } as const;
 
 export function withExternalCors(response: Response): Response {
