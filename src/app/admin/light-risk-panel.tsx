@@ -1,92 +1,1118 @@
 "use client";
-import { useEffect, useState } from "react";
-import RiskAccessPanel from "./risk-access-panel";
+import { useEffect, useState, useRef, type CSSProperties } from "react";
+import {
+  CheckCheck,
+  Download,
+  RotateCcw,
+  Save,
+  Upload,
+  ShieldCheck,
+  SlidersHorizontal,
+  ListChecks,
+  Layers,
+  Users,
+  History,
+  Search,
+} from "lucide-react";
+import { AdminButton, AdminEmptyState } from "./ui/admin-primitives";
+import { RiskBadge, RiskSearch, familyLabels, riskDate } from "./risk-ui";
 import { LfnSwitch } from "@/app/ui/lfn-switch";
 import { LfnSelect } from "@/app/ui/lfn-select";
-import type { RiskField, RiskSettings, RiskValue, RiskRuleConfig, RiskGrade } from "@/lib/risk-settings";
+import type {
+  RiskField,
+  RiskSettings,
+  RiskValue,
+  RiskRuleConfig,
+  RiskGrade,
+} from "@/lib/risk-settings";
 
-type Payload = { settings: RiskSettings; defaults: RiskSettings; fields: RiskField[]; history: string[]; draft: { settings: RiskSettings } | null; readiness: Record<string, unknown> };
-type Snapshot = { userId: number; score: number; grade: string; evidence: Array<{ id: string; rule: string; points: number; at: number; details: Record<string, unknown> }>; restrictions: Array<{ id: string; reason: string; expiresAt: number }>; grant: unknown; counts: unknown; readiness: unknown };
-const names: Record<string, string> = { global: "全局与分值", identity: "外部凭据核验与缓存", grant: "每日免费网络授权", rate: "调用速率与资源", prompt: "提示词摘要", device: "设备关联", quota: "额度与基线", behavior: "调用时间分布", content: "内容拒绝与退避", network: "网络情报", capacity: "内存容量", audit: "诊断写入", trust: "高频授权", extensions: "扩展依赖" };
+type Payload = {
+  settings: RiskSettings;
+  defaults: RiskSettings;
+  fields: RiskField[];
+  history: string[];
+  draft: { settings: RiskSettings } | null;
+  readiness: Record<string, unknown>;
+};
+type Snapshot = {
+  userId: number;
+  score: number;
+  grade: string;
+  evidence: Array<{
+    id: string;
+    rule: string;
+    points: number;
+    at: number;
+    details: Record<string, unknown>;
+  }>;
+  restrictions: Array<{ id: string; reason: string; expiresAt: number }>;
+  grant: unknown;
+  counts: unknown;
+  readiness: unknown;
+};
+const names: Record<string, string> = {
+  global: "全局与分值",
+  identity: "外部凭据核验与缓存",
+  grant: "每日免费网络授权",
+  rate: "调用速率与资源",
+  prompt: "提示词摘要",
+  device: "设备关联",
+  quota: "额度与基线",
+  behavior: "调用时间分布",
+  content: "内容拒绝与退避",
+  network: "网络情报",
+  capacity: "内存容量",
+  audit: "诊断写入",
+  trust: "高频授权",
+  extensions: "扩展依赖",
+};
 
 export default function LightRiskPanel() {
-  const [data, setData] = useState<Payload | null>(null), [settings, setSettings] = useState<RiskSettings | null>(null);
-  const [busy, setBusy] = useState(false), [message, setMessage] = useState(""), [reason, setReason] = useState(""), [query, setQuery] = useState("");
-  const [history, setHistory] = useState(""), [overrides, setOverrides] = useState("[]"), [userId, setUserId] = useState(""), [snapshot, setSnapshot] = useState<Snapshot | null>(null);
-  const [proofRule, setProofRule] = useState("R01"), [proofRef, setProofRef] = useState(""), [confirmed, setConfirmed] = useState(false);
-  const dirty = Boolean(data && settings && JSON.stringify(data.settings) !== JSON.stringify(settings));
+  const [data, setData] = useState<Payload | null>(null),
+    [settings, setSettings] = useState<RiskSettings | null>(null);
+  const [busy, setBusy] = useState(false),
+    [message, setMessage] = useState(""),
+    [reason, setReason] = useState(""),
+    [query, setQuery] = useState("");
+  const [history, setHistory] = useState(""),
+    [userId, setUserId] = useState(""),
+    [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [proofRule, setProofRule] = useState("R01"),
+    [proofRef, setProofRef] = useState(""),
+    [confirmed, setConfirmed] = useState(false);
+  const [tab, setTab] = useState("fields"),
+    [group, setGroup] = useState("global"),
+    [ruleId, setRuleId] = useState("B01"),
+    [gradeId, setGradeId] = useState("normal");
+  const importRef = useRef<HTMLInputElement>(null);
+  const dirty = Boolean(
+    data &&
+    settings &&
+    JSON.stringify(data.settings) !== JSON.stringify(settings),
+  );
   async function load() {
-    const response = await fetch("/api/admin/risk/settings", { cache: "no-store" }); const result = await response.json(); if (!response.ok) throw new Error(result.message || "策略读取失败");
-    setData(result); setSettings(structuredClone(result.settings)); setOverrides(JSON.stringify(result.settings.overrides, null, 2));
+    const response = await fetch("/api/admin/risk/settings", {
+      cache: "no-store",
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.message || "策略读取失败");
+    setData(result);
+    setSettings(structuredClone(result.settings));
   }
   useEffect(() => {
     const controller = new AbortController();
-    void fetch("/api/admin/risk/settings", { cache: "no-store", signal: controller.signal }).then(async response => {
-      const result = await response.json(); if (!response.ok) throw new Error(result.message || "策略读取失败"); return result as Payload;
-    }).then(result => { setData(result); setSettings(structuredClone(result.settings)); setOverrides(JSON.stringify(result.settings.overrides, null, 2)); }).catch(e => { if (!controller.signal.aborted) setMessage(e.message); });
+    void fetch("/api/admin/risk/settings", {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.message || "策略读取失败");
+        return result as Payload;
+      })
+      .then((result) => {
+        setData(result);
+        setSettings(structuredClone(result.settings));
+      })
+      .catch((e) => {
+        if (!controller.signal.aborted) setMessage(e.message);
+      });
     return () => controller.abort();
   }, []);
-  function value(key: string, next: RiskValue) { setSettings(s => s ? { ...s, values: { ...s.values, [key]: next } } : s); }
-  function rule(id: string, patch: Partial<RiskRuleConfig>) { setSettings(s => s ? { ...s, rules: s.rules.map(r => r.id === id ? { ...r, ...patch } : r) } : s); }
-  function level(id: string, patch: Partial<RiskGrade>) { setSettings(s => s ? { ...s, levels: s.levels.map(l => l.id === id ? { ...l, ...patch } : l) } : s); }
+  function value(key: string, next: RiskValue) {
+    setSettings((s) =>
+      s ? { ...s, values: { ...s.values, [key]: next } } : s,
+    );
+  }
+  function rule(id: string, patch: Partial<RiskRuleConfig>) {
+    setSettings((s) =>
+      s
+        ? {
+            ...s,
+            rules: s.rules.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+          }
+        : s,
+    );
+  }
+  function level(id: string, patch: Partial<RiskGrade>) {
+    setSettings((s) =>
+      s
+        ? {
+            ...s,
+            levels: s.levels.map((l) => (l.id === id ? { ...l, ...patch } : l)),
+          }
+        : s,
+    );
+  }
   async function save(action: string) {
-    if (!data || !settings) return; setBusy(true); setMessage("");
+    if (!data || !settings) return;
+    setBusy(true);
+    setMessage("");
     try {
-      const response = await fetch("/api/admin/risk/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, settings, expectedVersion: data.settings.version, reason, history }) });
-      const result = await response.json(); if (!response.ok) throw new Error(result.message || "操作失败");
+      const response = await fetch("/api/admin/risk/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          settings,
+          expectedVersion: data.settings.version,
+          reason,
+          history,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "操作失败");
       if (result.settings) await load();
-      setMessage(action === "validate" ? "配置校验通过，尚未发布" : action === "draft" ? "草稿已保存，尚未生效" : "新策略已发布；既有处置不会被隐式解除");
-    } catch (e) { setMessage(e instanceof Error ? e.message : "保存失败"); } finally { setBusy(false); }
+      if (action === "draft")
+        setData((current) =>
+          current
+            ? { ...current, draft: { settings: structuredClone(settings) } }
+            : current,
+        );
+      setMessage(
+        action === "validate"
+          ? "配置校验通过，尚未发布"
+          : action === "draft"
+            ? "草稿已保存，尚未生效"
+            : "新策略已发布；既有处置不会被隐式解除",
+      );
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setBusy(false);
+    }
   }
   async function inspectUser() {
-    try { const response = await fetch(`/api/admin/risk/users/${Number(userId)}/controls`, { cache: "no-store" }); const result = await response.json(); if (!response.ok) throw new Error(result.message); setSnapshot(result); }
-    catch (e) { setMessage(e instanceof Error ? e.message : "读取失败"); }
+    try {
+      const response = await fetch(
+        `/api/admin/risk/users/${Number(userId)}/controls`,
+        { cache: "no-store" },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      setSnapshot(result);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "读取失败");
+    }
   }
   async function release(id: string) {
-    if (!reason.trim() || !snapshot) { setMessage("请在上方填写解除原因"); return; }
+    if (!reason.trim() || !snapshot) {
+      setMessage("请在底部填写解除原因");
+      return;
+    }
     setBusy(true);
-    try { const response = await fetch(`/api/admin/risk/users/${snapshot.userId}/controls`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ restrictionId: id, reason }) }); const result = await response.json(); if (!response.ok) throw new Error(result.message); setSnapshot(result); setMessage("仅已选处置已解除，其余限制保持有效"); }
-    catch (e) { setMessage(e instanceof Error ? e.message : "解除失败"); } finally { setBusy(false); }
+    try {
+      const response = await fetch(
+        `/api/admin/risk/users/${snapshot.userId}/controls`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ restrictionId: id, reason }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      setSnapshot(result);
+      setMessage("仅已选处置已解除，其余限制保持有效");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "解除失败");
+    } finally {
+      setBusy(false);
+    }
   }
   async function confirmEvidence() {
     if (!snapshot || !confirmed || !proofRef.trim() || !reason.trim()) return;
     setBusy(true);
     try {
-      const response = await fetch(`/api/admin/risk/users/${snapshot.userId}/controls`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "confirm-evidence", confirmed, rule: proofRule, reference: proofRef, reason }) });
-      const result = await response.json(); if (!response.ok) throw new Error(result.message); setSnapshot(result); setConfirmed(false); setProofRef(""); setMessage("人工核验已审计；按该规则当前配置记分或执行固定期限动作");
-    } catch (e) { setMessage(e instanceof Error ? e.message : "操作失败"); } finally { setBusy(false); }
+      const response = await fetch(
+        `/api/admin/risk/users/${snapshot.userId}/controls`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "confirm-evidence",
+            confirmed,
+            rule: proofRule,
+            reference: proofRef,
+            reason,
+          }),
+        },
+      );
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message);
+      setSnapshot(result);
+      setConfirmed(false);
+      setProofRef("");
+      setMessage("人工核验已审计；按该规则当前配置记分或执行固定期限动作");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
   }
-  if (!data || !settings) return <section className="border-t border-[var(--line)] py-5"><p role="status">{message || "正在读取轻量风控策略…"}</p></section>;
-  const groups = [...new Set(data.fields.map(f => f.group))];
-  const changedFields = data.fields.filter(f => data.settings.values[f.key] !== settings.values[f.key]);
-  return <section className="min-w-0 border-t border-[var(--line)] py-5" aria-busy={busy}>
-    <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">轻量风控 · 七级风险与可配置规则</h2><span className="break-all text-xs text-[var(--muted)]">{data.settings.version}{dirty ? " · 有未发布修改" : " · 当前生效"}</span></div>
-    <p className="mt-2 text-xs leading-5 text-[var(--muted)]">观察不执行自动处罚。弱信号不能通过改分变成强证据；关闭检测不会解除已生效处置。当前准入为单进程模式，外部信誉、语义模型及人机验证尚未接入。</p>
-    <details className="mt-3 text-xs"><summary>查看实际依赖状态</summary><pre className="overflow-auto p-2">{JSON.stringify(data.readiness, null, 2)}</pre></details>
-    <label className="mt-3 block text-xs">操作原因<input className="field mt-1 w-full px-3" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} placeholder="发布、回滚或解除处置的具体原因" /></label>
-    <div className="my-3 flex flex-wrap gap-2 text-xs">
-      <button type="button" disabled={busy} onClick={() => void save("validate")} className="rounded border px-3 py-2">校验</button>
-      <button type="button" disabled={busy} onClick={() => void save("draft")} className="rounded border px-3 py-2">保存草稿</button>
-      <button type="button" disabled={busy || !dirty || !reason.trim()} onClick={() => void save("publish")} className="rounded bg-[var(--rose)] px-3 py-2 text-white disabled:opacity-40">发布策略</button>
-      <button type="button" disabled={busy} onClick={() => { setSettings(structuredClone(data.settings)); setOverrides(JSON.stringify(data.settings.overrides, null, 2)); }} className="rounded border px-3 py-2">撤销未发布修改</button>
-      <button type="button" disabled={busy || !data.draft} onClick={() => { if (data.draft) setSettings(structuredClone(data.draft.settings)); }} className="rounded border px-3 py-2">加载草稿</button>
-      <button type="button" disabled={busy} onClick={() => setSettings(structuredClone(data.defaults))} className="rounded border px-3 py-2">预览默认值</button>
-      <button type="button" onClick={() => { const url = URL.createObjectURL(new Blob([JSON.stringify(settings, null, 2)], { type: "application/json" })); const a = document.createElement("a"); a.href = url; a.download = "lfn-risk-policy.json"; a.click(); URL.revokeObjectURL(url); }} className="rounded border px-3 py-2">导出配置</button>
-      <label className="cursor-pointer rounded border px-3 py-2">导入待校验配置<input className="hidden" type="file" accept="application/json,.json" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; if (file.size > 200000) { setMessage("配置文件过大"); return; } try { const parsed = JSON.parse(await file.text()); const response = await fetch("/api/admin/risk/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "validate", settings: parsed }) }); const result = await response.json(); if (!response.ok) throw new Error(result.message); setSettings(parsed); setOverrides(JSON.stringify(parsed.overrides, null, 2)); setMessage("导入校验通过，尚未发布"); } catch (error) { setMessage(error instanceof Error ? error.message : "导入失败"); } }} /></label>
-    </div>
-    {message && <p role="status" className="my-3 text-sm">{message}</p>}
-    <details className="my-3 text-xs"><summary>预览差异（{changedFields.length} 项参数，另比较规则/等级/例外）</summary>{changedFields.map(f => <p key={f.key}>{f.label}：{String(data.settings.values[f.key])} → {String(settings.values[f.key])}</p>)}{JSON.stringify(data.settings.rules) !== JSON.stringify(settings.rules) && <pre className="overflow-auto">{JSON.stringify({ before: data.settings.rules, after: settings.rules }, null, 2)}</pre>}{JSON.stringify(data.settings.levels) !== JSON.stringify(settings.levels) && <pre className="overflow-auto">{JSON.stringify({ before: data.settings.levels, after: settings.levels }, null, 2)}</pre>}</details>
-    <input className="field my-3 w-full px-3" aria-label="搜索配置项" placeholder="搜索配置名、字段或说明" value={query} onChange={e => setQuery(e.target.value)} />
-    <fieldset disabled={busy}>
-      {groups.map(group => { const matches = data.fields.filter(f => f.group === group && `${f.key} ${f.label} ${f.description}`.toLowerCase().includes(query.toLowerCase())); if (!matches.length) return null; return <details key={group} open={Boolean(query)} className="border-b border-[var(--line)] py-3"><summary className="cursor-pointer text-sm font-semibold">{names[group] || group} · {matches.length} 项</summary><div className="mt-3 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{matches.map(f => <div key={f.key} className="min-w-0 text-xs">{typeof f.value === "boolean" ? <LfnSwitch checked={settings.values[f.key] === true} label={f.label} disabled={Boolean(f.description.includes("未接入"))} onChange={v => value(f.key, v)} /> : <label className="block">{f.label}{f.options ? <LfnSelect className="field mt-1 w-full px-2" value={String(settings.values[f.key])} onChange={e => value(f.key, e.target.value)}>{f.options.map(v => <option key={v}>{v}</option>)}</LfnSelect> : <input className="field mt-1 w-full px-2" type={typeof f.value === "number" ? "number" : "text"} min={f.min} max={f.max} step={1} value={String(settings.values[f.key])} onChange={e => value(f.key, typeof f.value === "number" ? Number(e.target.value) : e.target.value)} />}</label>}<p className="mt-1 break-all text-[10px] text-[var(--muted)]">{f.key} · 默认 {String(f.value)}{f.min != null ? ` · 范围 ${f.min}–${f.max}` : ""}</p>{f.description && <p className="mt-1 leading-5 text-[var(--muted)]">{f.description}</p>}</div>)}</div></details>; })}
-      <details className="border-b border-[var(--line)] py-3"><summary className="cursor-pointer text-sm font-semibold">逐条规则：条件命中后的分值与动作</summary><div className="mt-3 space-y-4">{settings.rules.map(r => <div key={r.id} className="rounded border border-[var(--line)] p-3 text-xs"><p className="mb-2 font-semibold">{r.id} · {r.label} · {r.strong ? "服务端明确证据" : "辅助观察证据"}</p><div className="grid grid-cols-2 gap-3 lg:grid-cols-4"><label>模式<LfnSelect className="field mt-1 w-full" value={r.mode} onChange={e => rule(r.id, { mode: e.target.value as RiskRuleConfig["mode"] })}><option value="disabled">关闭</option><option value="observe">仅观察</option><option value="enforce">执行配置动作</option></LfnSelect></label>{([['points','单次加分'],['maxPoints','窗口最高分'],['cooldownSeconds','加分冷却秒数'],['expiresSeconds','证据有效秒数'],['durationSeconds','处置持续秒数']] as const).map(([key,label]) => <label key={key}>{label}<input type="number" min={0} className="field mt-1 w-full px-2" value={r[key]} onChange={e => rule(r.id, { [key]: Number(e.target.value) })} /></label>)}<label>命中动作<LfnSelect disabled={!r.strong} className="field mt-1 w-full" value={r.action} onChange={e => rule(r.id, { action: e.target.value as RiskRuleConfig["action"] })}><option value="observe">观察</option><option value="rate-limit">限流429</option><option value="deny">能力暂停403</option></LfnSelect></label></div></div>)}</div></details>
-      <details className="border-b border-[var(--line)] py-3"><summary className="cursor-pointer text-sm font-semibold">七级风险与等级动作</summary><div className="mt-3 space-y-3">{settings.levels.map(l => <div key={l.id} className="grid grid-cols-2 gap-3 text-xs md:grid-cols-5"><label>名称<input className="field mt-1 w-full px-2" value={l.name} onChange={e => level(l.id, { name: e.target.value })} /></label><label>最低分<input className="field mt-1 w-full px-2" type="number" value={l.minimum} onChange={e => level(l.id, { minimum: Number(e.target.value) })} /></label><label>显示颜色<input className="mt-1 block h-9 w-full" type="color" value={l.color} onChange={e => level(l.id, { color: e.target.value })} /></label><label>动作<LfnSelect className="field mt-1 w-full" value={l.action} onChange={e => level(l.id, { action: e.target.value as RiskGrade["action"] })}><option value="observe">观察</option><option value="rate-limit">限流</option><option value="deny">暂停相关能力</option></LfnSelect></label><label>持续秒数<input type="number" className="field mt-1 w-full px-2" value={l.durationSeconds} onChange={e => level(l.id, { durationSeconds: Number(e.target.value) })} /></label></div>)}</div><p className="mt-2 text-xs text-[var(--muted)]">等级自动动作总开关默认关闭；启用仍需独立强证据条件，不能因修改分数把弱证据自动升级为事实。</p></details>
-      <details className="border-b border-[var(--line)] py-3"><summary className="cursor-pointer text-sm font-semibold">证据族贡献上限</summary><div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">{Object.entries(settings.familyCaps).map(([family, cap]) => <label key={family} className="text-xs">{family}<input type="number" className="field mt-1 w-full px-2" value={cap} onChange={e => setSettings({ ...settings, familyCaps: { ...settings.familyCaps, [family]: Number(e.target.value) } })} /></label>)}</div></details>
-      <details className="border-b border-[var(--line)] py-3"><summary className="cursor-pointer text-sm font-semibold">限时账号例外/高频批准</summary><p className="my-2 text-xs">仅允许账号速率、并发和换绑覆盖。格式：userId、expiresAt、reason、values；不能绕过余额、撤销凭据和内容规则。</p><textarea className="field min-h-40 w-full p-2 font-mono text-xs" value={overrides} onChange={e => setOverrides(e.target.value)} /><button type="button" className="mt-2 rounded border px-3 py-2 text-xs" onClick={() => { try { const parsed = JSON.parse(overrides); if (!Array.isArray(parsed)) throw new Error("例外须为数组"); setSettings({ ...settings, overrides: parsed }); setMessage("例外已载入待发布配置，请校验并发布"); } catch (e) { setMessage(e instanceof Error ? e.message : "格式错误"); } }}>载入待发布例外</button></details>
-    </fieldset>
-    <div className="my-4 flex flex-wrap gap-2 text-xs"><LfnSelect className="field max-w-full px-2" value={history} onChange={e => setHistory(e.target.value)}><option value="">选择历史变更记录</option>{data.history.map(h => <option key={h}>{h}</option>)}</LfnSelect><button type="button" disabled={!history || !reason.trim() || busy} className="rounded border px-3 py-2 disabled:opacity-40" onClick={() => void save("rollback")}>回滚到此记录变更前的版本</button></div>
-    <div className="border-t border-[var(--line)] pt-4"><h3 className="text-sm font-semibold">账号证据、免费授权与处置复核</h3><div className="my-3 flex gap-2"><input type="number" min={1} className="field w-40 px-2" placeholder="账号ID" value={userId} onChange={e => setUserId(e.target.value)} /><button type="button" onClick={() => void inspectUser()} className="rounded border px-3 py-2 text-xs">读取</button></div>{snapshot && <div className="text-xs"><p>{snapshot.grade} · {snapshot.score} 分 · 账号 #{snapshot.userId}</p>{snapshot.restrictions.map(r => <div key={r.id} className="my-2 flex flex-wrap items-center gap-2"><span>{r.reason} · {new Date(r.expiresAt).toLocaleString()}</span><button type="button" disabled={busy} onClick={() => void release(r.id)} className="rounded border px-2 py-1">解除此项</button></div>)}<details className="mt-2"><summary>特征覆盖、计数与授权</summary><pre className="max-h-80 overflow-auto">{JSON.stringify({ counts: snapshot.counts, grant: snapshot.grant, readiness: snapshot.readiness }, null, 2)}</pre></details><details className="mt-2"><summary>当前活动证据</summary><pre className="max-h-96 overflow-auto">{JSON.stringify(snapshot.evidence, null, 2)}</pre></details></div>}</div>
-    {snapshot && <details className="my-4 rounded border border-[var(--line)] p-3 text-xs"><summary>人工核验强证据（不能仅凭 IP、VPN、提示词或邀请关系认定）</summary><p className="my-2">证据编号仅保存带密钥摘要。请在独立案件记录保存核验依据；规则默认为观察，可按审核后的配置执行有期限动作。</p><LfnSelect className="field w-full" value={proofRule} onChange={e => setProofRule(e.target.value)}><option value="N05">N05 已确认恶意网络活动</option><option value="R01">R01 已确认规避平台限制</option><option value="G01">G01 已确认协同奖励套利</option></LfnSelect><input className="field my-2 w-full px-2" value={proofRef} maxLength={200} onChange={e => setProofRef(e.target.value)} placeholder="内部证据编号；不粘贴提示词、密钥或私人信息" /><LfnSwitch checked={confirmed} onChange={setConfirmed} label={`已独立核验账号 #${snapshot.userId} 的事实及上方操作原因`} /><button type="button" className="mt-2 rounded border px-3 py-2 disabled:opacity-40" disabled={busy || !confirmed || !proofRef.trim() || !reason.trim()} onClick={() => void confirmEvidence()}>记录此项人工核验证据</button></details>}
-    <RiskAccessPanel />
-  </section>;
+  function restore(next: RiskSettings) {
+    setSettings(structuredClone(next));
+    setMessage("");
+  }
+  async function importFile(file?: File) {
+    if (!file) return;
+    if (file.size > 200000) {
+      setMessage("配置文件过大，最多200KB");
+      return;
+    }
+    setBusy(true);
+    try {
+      const parsed = JSON.parse(await file.text());
+      const response = await fetch("/api/admin/risk/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "validate", settings: parsed }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "配置校验失败");
+      restore({
+        ...parsed,
+        values: { ...data?.defaults.values, ...parsed.values },
+        familyCaps: { ...data?.defaults.familyCaps, ...parsed.familyCaps },
+      });
+      setMessage("导入校验通过。请查看变更，再填写原因发布。");
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "导入失败");
+    } finally {
+      setBusy(false);
+      if (importRef.current) importRef.current.value = "";
+    }
+  }
+  if (!data || !settings)
+    return (
+      <div className="risk-panel risk-panel-body" role="status">
+        {message || "正在读取风控配置…"}
+      </div>
+    );
+  const groups = [...new Set(data.fields.map((f) => f.group))];
+  const changedFields = data.fields.filter(
+    (f) => data.settings.values[f.key] !== settings.values[f.key],
+  );
+  const extraChanges = (
+    ["rules", "levels", "overrides", "familyCaps"] as const
+  ).filter(
+    (k) => JSON.stringify(data.settings[k]) !== JSON.stringify(settings[k]),
+  );
+  const changeCount = changedFields.length + extraChanges.length;
+  const matches = data.fields.filter(
+    (f) =>
+      (query.trim() || f.group === group) &&
+      `${f.key} ${f.label} ${f.description} ${names[f.group]}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
+  const selectedRule =
+    settings.rules.find((r) => r.id === ruleId) || settings.rules[0];
+  const selectedGrade =
+    settings.levels.find((l) => l.id === gradeId) || settings.levels[0];
+  const optionLabels: Record<string, string> = {
+    unavailable: "暂停免费额度并返回503",
+    observe: "仅观察",
+    "hmac-sha256": "HMAC-SHA256（带密钥）",
+    sha256: "SHA256（普通摘要）",
+    disabled: "关闭",
+    enforce: "执行配置动作",
+    "rate-limit": "限流 · 429",
+    deny: "暂停相关能力 · 403",
+  };
+  const numeric = (
+    label: string,
+    current: number,
+    onChange: (v: number) => void,
+    min = 0,
+    max?: number,
+  ) => (
+    <label className="risk-input-label">
+      {label}
+      <input
+        className="field"
+        type="number"
+        min={min}
+        max={max}
+        step={1}
+        value={current}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </label>
+  );
+  return (
+    <section
+      className="risk-panel risk-config"
+      aria-busy={busy}
+      aria-label="可配置风控策略"
+    >
+      <header className="risk-panel-head">
+        <div>
+          <div className="risk-kicker">
+            <SlidersHorizontal size={14} />
+            POLICY CENTER
+          </div>
+          <h3>风控策略配置</h3>
+          <p>检测参数、计分规则与处置等级，统一在此管理。</p>
+        </div>
+        <div className="risk-inline">
+          <RiskBadge tone={dirty ? "warning" : "success"}>
+            {dirty ? `${changeCount} 组待发布修改` : "已与生效版本同步"}
+          </RiskBadge>
+        </div>
+      </header>
+      <div className="risk-tabs" role="tablist" aria-label="策略编辑分类">
+        {[
+          { id: "fields", label: "检测参数", Icon: SlidersHorizontal },
+          { id: "rules", label: "规则与计分", Icon: ListChecks },
+          { id: "levels", label: "风险等级", Icon: Layers },
+          { id: "overrides", label: "账号例外", Icon: Users },
+          { id: "review", label: "账号复核", Icon: ShieldCheck },
+          { id: "history", label: "发布与版本", Icon: History },
+        ].map(({ id, label, Icon }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
+      </div>
+      {message && (
+        <div className="risk-panel-body">
+          <p role="status" className="risk-message">
+            {message}
+          </p>
+        </div>
+      )}
+      <fieldset disabled={busy}>
+        {tab === "fields" && (
+          <>
+            <div className="risk-toolbar">
+              <RiskSearch
+                placeholder="搜索全部配置名称、字段或说明"
+                value={query}
+                onChange={setQuery}
+              />
+              <RiskBadge>{data.fields.length} 项参数</RiskBadge>
+            </div>
+            <div className="risk-editor">
+              <nav className="risk-category" aria-label="检测参数分组">
+                {groups.map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    aria-pressed={!query && group === g}
+                    onClick={() => {
+                      setGroup(g);
+                      setQuery("");
+                    }}
+                  >
+                    <span>{names[g] || g}</span>
+                    <small>
+                      {data.fields.filter((f) => f.group === g).length}
+                    </small>
+                  </button>
+                ))}
+              </nav>
+              <div className="risk-panel-body">
+                <h4 className="risk-section-title">
+                  {query ? "全部配置搜索结果" : names[group]}
+                </h4>
+                <p className="risk-section-copy">
+                  {query
+                    ? `找到 ${matches.length} 项匹配配置`
+                    : "修改后先校验，再填写原因发布；保存草稿不会影响当前请求。"}
+                </p>
+                <div className="risk-field-grid">
+                  {matches.map((f) => (
+                    <div
+                      key={f.key}
+                      className={`risk-field ${data.settings.values[f.key] !== settings.values[f.key] ? "is-changed" : ""}`}
+                    >
+                      {typeof f.value === "boolean" ? (
+                        <LfnSwitch
+                          checked={settings.values[f.key] === true}
+                          label={f.label}
+                          disabled={f.description.includes("未接入")}
+                          onChange={(v) => value(f.key, v)}
+                        />
+                      ) : (
+                        <label>
+                          {f.label}
+                          {f.options ? (
+                            <LfnSelect
+                              aria-label={f.label}
+                              className="field"
+                              value={String(settings.values[f.key])}
+                              onChange={(e) => value(f.key, e.target.value)}
+                            >
+                              {f.options.map((v) => (
+                                <option key={v} value={v}>
+                                  {optionLabels[v] || v}
+                                </option>
+                              ))}
+                            </LfnSelect>
+                          ) : (
+                            <input
+                              className="field"
+                              type={
+                                typeof f.value === "number" ? "number" : "text"
+                              }
+                              min={f.min}
+                              max={f.max}
+                              step={1}
+                              value={String(settings.values[f.key])}
+                              onChange={(e) =>
+                                value(
+                                  f.key,
+                                  typeof f.value === "number"
+                                    ? Number(e.target.value)
+                                    : e.target.value,
+                                )
+                              }
+                            />
+                          )}
+                        </label>
+                      )}
+                      {f.description && <p>{f.description}</p>}
+                      <details>
+                        <summary>默认值与字段说明</summary>
+                        <p>
+                          {f.key}
+                          <br />
+                          默认：{String(f.value)}
+                          {f.min != null ? ` · 可设范围 ${f.min}–${f.max}` : ""}
+                        </p>
+                        <button
+                          type="button"
+                          className="text-[var(--rose)]"
+                          onClick={() => value(f.key, f.value)}
+                        >
+                          恢复此项默认值
+                        </button>
+                      </details>
+                    </div>
+                  ))}
+                </div>
+                {!matches.length && (
+                  <AdminEmptyState>
+                    未找到配置，试试“额度”“设备”或“限流”。
+                  </AdminEmptyState>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+        {tab === "rules" && (
+          <div className="risk-editor">
+            <nav className="risk-category risk-rule-list" aria-label="风控规则">
+              {settings.rules.map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  aria-pressed={selectedRule.id === r.id}
+                  onClick={() => setRuleId(r.id)}
+                >
+                  <span>
+                    {r.id} · {r.label}
+                  </span>
+                  <small>
+                    {r.mode === "disabled"
+                      ? "已关闭"
+                      : r.mode === "observe"
+                        ? "观察"
+                        : "执行"}{" "}
+                    · +{r.points} 分
+                  </small>
+                </button>
+              ))}
+            </nav>
+            <div className="risk-panel-body">
+              <div className="risk-inline">
+                <h4 className="risk-section-title">
+                  {selectedRule.id} · {selectedRule.label}
+                </h4>
+                <RiskBadge tone={selectedRule.strong ? "warning" : "neutral"}>
+                  {selectedRule.strong ? "明确证据" : "辅助观察"}
+                </RiskBadge>
+              </div>
+              <p className="risk-section-copy">
+                {selectedRule.strong
+                  ? "依照本规则的模式、动作与期限执行。"
+                  : "此类证据用于辅助观察，增加分数不会将它变成强证据。"}
+              </p>
+              <div className="risk-field-grid">
+                <label className="risk-input-label">
+                  规则名称
+                  <input
+                    className="field"
+                    maxLength={80}
+                    value={selectedRule.label}
+                    onChange={(e) =>
+                      rule(selectedRule.id, { label: e.target.value })
+                    }
+                  />
+                </label>
+                <label className="risk-input-label">
+                  运行模式
+                  <LfnSelect
+                    aria-label="规则运行模式"
+                    className="field"
+                    value={selectedRule.mode}
+                    onChange={(e) =>
+                      rule(selectedRule.id, {
+                        mode: e.target.value as RiskRuleConfig["mode"],
+                      })
+                    }
+                  >
+                    {["disabled", "observe", "enforce"].map((m) => (
+                      <option key={m} value={m}>
+                        {optionLabels[m]}
+                      </option>
+                    ))}
+                  </LfnSelect>
+                </label>
+                {(
+                  [
+                    ["points", "单次增加分值"],
+                    ["maxPoints", "窗口贡献上限"],
+                    ["cooldownSeconds", "加分冷却（秒）"],
+                    ["expiresSeconds", "证据有效期（秒）"],
+                    ["durationSeconds", "处置持续时间（秒）"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <div key={key}>
+                    {numeric(label, selectedRule[key], (v) =>
+                      rule(selectedRule.id, { [key]: v }),
+                    )}
+                  </div>
+                ))}
+                <label className="risk-input-label">
+                  命中后动作
+                  <LfnSelect
+                    aria-label="规则命中后动作"
+                    disabled={!selectedRule.strong}
+                    className="field"
+                    value={selectedRule.action}
+                    onChange={(e) =>
+                      rule(selectedRule.id, {
+                        action: e.target.value as RiskRuleConfig["action"],
+                      })
+                    }
+                  >
+                    {["observe", "rate-limit", "deny"].map((m) => (
+                      <option key={m} value={m}>
+                        {optionLabels[m]}
+                      </option>
+                    ))}
+                  </LfnSelect>
+                </label>
+              </div>
+              <details className="risk-toolbox mt-5">
+                <summary>证据类别的总贡献上限</summary>
+                <div className="risk-field-grid mt-4">
+                  {Object.entries(settings.familyCaps).map(([family, cap]) => (
+                    <div key={family}>
+                      {numeric(familyLabels[family] || family, cap, (v) =>
+                        setSettings({
+                          ...settings,
+                          familyCaps: { ...settings.familyCaps, [family]: v },
+                        }),
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
+          </div>
+        )}
+        {tab === "levels" && (
+          <div className="risk-panel-body">
+            <h4 className="risk-section-title">七级风险分层</h4>
+            <p className="risk-section-copy">
+              点击等级编辑。分数线需从低到高递增；等级自动动作由“全局与分值”中的开关控制。
+            </p>
+            <div className="risk-grade-list">
+              {settings.levels.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className="risk-grade"
+                  style={{ "--grade-color": l.color } as CSSProperties}
+                  aria-pressed={selectedGrade.id === l.id}
+                  onClick={() => setGradeId(l.id)}
+                >
+                  {l.name}
+                  <small>≥ {l.minimum} 分</small>
+                </button>
+              ))}
+            </div>
+            <div className="risk-field-grid">
+              <label className="risk-input-label">
+                等级名称
+                <input
+                  className="field"
+                  maxLength={30}
+                  value={selectedGrade.name}
+                  onChange={(e) =>
+                    level(selectedGrade.id, { name: e.target.value })
+                  }
+                />
+              </label>
+              {numeric("最低风险分数", selectedGrade.minimum, (v) =>
+                level(selectedGrade.id, { minimum: v }),
+              )}
+              <label className="risk-input-label">
+                显示颜色
+                <input
+                  type="color"
+                  className="field"
+                  value={selectedGrade.color}
+                  onChange={(e) =>
+                    level(selectedGrade.id, { color: e.target.value })
+                  }
+                />
+              </label>
+              <label className="risk-input-label">
+                等级动作
+                <LfnSelect
+                  aria-label="等级动作"
+                  className="field"
+                  value={selectedGrade.action}
+                  onChange={(e) =>
+                    level(selectedGrade.id, {
+                      action: e.target.value as RiskGrade["action"],
+                    })
+                  }
+                >
+                  {["observe", "rate-limit", "deny"].map((m) => (
+                    <option key={m} value={m}>
+                      {optionLabels[m]}
+                    </option>
+                  ))}
+                </LfnSelect>
+              </label>
+              {numeric(
+                "处置持续时间（秒）",
+                selectedGrade.durationSeconds,
+                (v) => level(selectedGrade.id, { durationSeconds: v }),
+              )}
+            </div>
+            <div className="risk-notice mt-5">
+              等级自动动作仍需满足独立强证据条件；修改分数不会自动认定违规。
+            </div>
+          </div>
+        )}
+        {tab === "overrides" && (
+          <div className="risk-panel-body">
+            <div className="risk-heading">
+              <div>
+                <h4 className="risk-section-title">限时账号例外</h4>
+                <p className="risk-section-copy">
+                  仅覆盖调用速率、并发和网络换绑参数。每个账号保留一项例外。
+                </p>
+              </div>
+              <AdminButton
+                onClick={() =>
+                  setSettings({
+                    ...settings,
+                    overrides: [
+                      ...settings.overrides,
+                      { userId: 0, expiresAt: "", reason: "", values: {} },
+                    ],
+                  })
+                }
+              >
+                添加账号
+              </AdminButton>
+            </div>
+            {!settings.overrides.length && (
+              <AdminEmptyState>
+                当前没有账号例外。用户提交的高频申请在“高频申请”中审批。
+              </AdminEmptyState>
+            )}
+            <div className="risk-overrides">
+              {settings.overrides.map((o, i) => {
+                const patch = (v: Partial<typeof o>) =>
+                  setSettings({
+                    ...settings,
+                    overrides: settings.overrides.map((current, j) =>
+                      j === i ? { ...current, ...v } : current,
+                    ),
+                  });
+                return (
+                  <div key={i} className="risk-override">
+                    <div className="risk-override-head">
+                      <RiskBadge>账号例外 {i + 1}</RiskBadge>
+                      <AdminButton
+                        variant="quiet"
+                        onClick={() =>
+                          setSettings({
+                            ...settings,
+                            overrides: settings.overrides.filter(
+                              (_, j) => j !== i,
+                            ),
+                          })
+                        }
+                      >
+                        移除此项
+                      </AdminButton>
+                    </div>
+                    <div className="risk-field-grid">
+                      {numeric(
+                        "账号ID",
+                        o.userId,
+                        (v) => patch({ userId: v }),
+                        1,
+                      )}
+                      <label className="risk-input-label">
+                        到期时间（本地时区）
+                        <input
+                          className="field"
+                          type="datetime-local"
+                          value={
+                            o.expiresAt &&
+                            Number.isFinite(Date.parse(o.expiresAt))
+                              ? new Date(
+                                  Date.parse(o.expiresAt) -
+                                    new Date(o.expiresAt).getTimezoneOffset() *
+                                      60000,
+                                )
+                                  .toISOString()
+                                  .slice(0, 16)
+                              : ""
+                          }
+                          onChange={(e) =>
+                            patch({
+                              expiresAt: e.target.value
+                                ? new Date(e.target.value).toISOString()
+                                : "",
+                            })
+                          }
+                        />
+                      </label>
+                      <label className="risk-input-label">
+                        例外原因
+                        <input
+                          className="field"
+                          value={o.reason}
+                          onChange={(e) => patch({ reason: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                    <div className="risk-field-grid mt-4">
+                      {[
+                        "rate.perMinute",
+                        "rate.burst",
+                        "rate.maxInFlight",
+                        "grant.maxRebinds",
+                        "grant.minRebindSeconds",
+                      ].map((k) => (
+                        <label key={k} className="risk-input-label">
+                          {data.fields.find((f) => f.key === k)?.label}
+                          <input
+                            className="field"
+                            type="number"
+                            placeholder="沿用全局配置"
+                            value={
+                              o.values[k] === undefined
+                                ? ""
+                                : String(o.values[k])
+                            }
+                            onChange={(e) => {
+                              const values = { ...o.values };
+                              if (e.target.value === "") delete values[k];
+                              else values[k] = Number(e.target.value);
+                              patch({ values });
+                            }}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {tab === "review" && (
+          <div className="risk-panel-body">
+            <h4 className="risk-section-title">账号证据与处置复核</h4>
+            <p className="risk-section-copy">
+              查看免费网络授权与当前限制，按具体证据复核。解除操作使用底部填写的原因。
+            </p>
+            <div className="risk-inline">
+              <input
+                aria-label="复核账号ID"
+                className="field max-w-52"
+                type="number"
+                min={1}
+                placeholder="输入账号 ID"
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+              />
+              <AdminButton
+                disabled={!Number(userId)}
+                onClick={() => void inspectUser()}
+              >
+                <Search size={14} />
+                读取账号
+              </AdminButton>
+            </div>
+            {snapshot && (
+              <>
+                <div className="risk-inline my-5">
+                  <RiskBadge>账号 {snapshot.userId}</RiskBadge>
+                  <RiskBadge>{snapshot.grade}</RiskBadge>
+                  <strong>{snapshot.score.toFixed(1)} 分</strong>
+                </div>
+                {snapshot.restrictions.map((r) => (
+                  <div key={r.id} className="risk-change risk-heading">
+                    <div>
+                      {r.reason}
+                      <small>到期 {riskDate(r.expiresAt)}</small>
+                    </div>
+                    <AdminButton
+                      disabled={busy}
+                      onClick={() => void release(r.id)}
+                    >
+                      解除此项
+                    </AdminButton>
+                  </div>
+                ))}
+                {!snapshot.restrictions.length && (
+                  <p className="risk-muted">当前没有有效限制。</p>
+                )}
+                <details className="risk-toolbox my-4">
+                  <summary>授权、计数和当前证据详情</summary>
+                  <pre className="max-h-80 overflow-auto text-xs mt-3">
+                    {JSON.stringify(
+                      {
+                        counts: snapshot.counts,
+                        grant: snapshot.grant,
+                        evidence: snapshot.evidence,
+                        readiness: snapshot.readiness,
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </details>
+                <details className="risk-toolbox">
+                  <summary>人工核验明确事实</summary>
+                  <p className="risk-section-copy mt-3">
+                    请在独立案件记录中保留依据，仅填内部证据编号。不能仅凭IP、VPN或提示词相同认定违规。
+                  </p>
+                  <LfnSelect
+                    aria-label="人工核验证据类型"
+                    className="field"
+                    value={proofRule}
+                    onChange={(e) => setProofRule(e.target.value)}
+                  >
+                    <option value="N05">N05 · 已确认恶意网络活动</option>
+                    <option value="R01">R01 · 已确认规避平台限制</option>
+                    <option value="G01">G01 · 已确认协同奖励套利</option>
+                  </LfnSelect>
+                  <input
+                    className="field my-3"
+                    value={proofRef}
+                    onChange={(e) => setProofRef(e.target.value)}
+                    maxLength={200}
+                    placeholder="内部证据编号"
+                  />
+                  <LfnSwitch
+                    checked={confirmed}
+                    onChange={setConfirmed}
+                    label={`已独立核验账号 ${snapshot.userId} 的事实与操作原因`}
+                  />
+                  <AdminButton
+                    className="mt-3"
+                    disabled={!confirmed || !proofRef.trim() || !reason.trim()}
+                    onClick={() => void confirmEvidence()}
+                  >
+                    记录核验结果
+                  </AdminButton>
+                </details>
+              </>
+            )}
+          </div>
+        )}
+        {tab === "history" && (
+          <div className="risk-panel-body">
+            <h4 className="risk-section-title">发布与版本管理</h4>
+            <p className="risk-section-copy">
+              生效版本：{data.settings.version}
+              。操作均保留审核记录，回滚不会解除已有处置。
+            </p>
+            <div className="risk-checks">
+              {[
+                ["设备摘要", data.readiness.deviceSecret],
+                ["可信代理", data.readiness.trustedIp],
+                ["语义模型", data.readiness.semantic],
+                ["外部信誉", data.readiness.externalReputation],
+                ["人机验证", data.readiness.captcha],
+              ].map(([label, enabled]) => (
+                <RiskBadge
+                  key={String(label)}
+                  tone={enabled ? "success" : "neutral"}
+                >
+                  {String(label)} · {enabled ? "已就绪" : "未接入/未启用"}
+                </RiskBadge>
+              ))}
+            </div>
+            <h4 className="risk-section-title mt-6">
+              待发布差异 · {changeCount} 组
+            </h4>
+            {!dirty && (
+              <p className="risk-muted">当前编辑内容与线上生效版本一致。</p>
+            )}
+            {changedFields.map((f) => (
+              <div key={f.key} className="risk-change">
+                {f.label}
+                <small>
+                  {String(data.settings.values[f.key])} →{" "}
+                  {String(settings.values[f.key])}
+                </small>
+              </div>
+            ))}
+            {extraChanges.map((k) => (
+              <details className="risk-change" key={k}>
+                <summary className="cursor-pointer">
+                  {
+                    {
+                      rules: "规则与计分",
+                      levels: "风险等级",
+                      overrides: "账号例外",
+                      familyCaps: "证据类别上限",
+                    }[k]
+                  }
+                  有修改
+                </summary>
+                <pre className="max-h-64 overflow-auto text-xs mt-3">
+                  {JSON.stringify(
+                    { before: data.settings[k], after: settings[k] },
+                    null,
+                    2,
+                  )}
+                </pre>
+              </details>
+            ))}
+            <h4 className="risk-section-title mt-6">历史回滚</h4>
+            <div className="risk-inline">
+              <LfnSelect
+                aria-label="历史变更记录"
+                className="field flex-1"
+                value={history}
+                onChange={(e) => setHistory(e.target.value)}
+              >
+                <option value="">选择历史变更记录</option>
+                {data.history.map((h) => (
+                  <option key={h}>{h}</option>
+                ))}
+              </LfnSelect>
+              <AdminButton
+                disabled={!history || !reason.trim()}
+                onClick={() => void save("rollback")}
+              >
+                <RotateCcw size={14} />
+                回滚至变更前
+              </AdminButton>
+            </div>
+            <p className="risk-muted mt-3">
+              回滚需要填写底部操作原因；未发布内容请先保存为草稿。
+            </p>
+          </div>
+        )}
+      </fieldset>
+      <details className="risk-toolbox">
+        <summary>草稿、导入导出与默认值</summary>
+        <div className="risk-inline">
+          <AdminButton
+            disabled={busy || !data.draft}
+            onClick={() => data.draft && restore(data.draft.settings)}
+          >
+            加载已存草稿
+          </AdminButton>
+          <AdminButton disabled={busy} onClick={() => restore(data.defaults)}>
+            预览默认配置
+          </AdminButton>
+          <AdminButton
+            disabled={busy}
+            onClick={() => {
+              const url = URL.createObjectURL(
+                new Blob([JSON.stringify(settings, null, 2)], {
+                  type: "application/json",
+                }),
+              );
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "lfn-risk-policy.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            <Download size={14} />
+            导出配置
+          </AdminButton>
+          <AdminButton
+            disabled={busy}
+            onClick={() => importRef.current?.click()}
+          >
+            <Upload size={14} />
+            导入并校验
+          </AdminButton>
+          <input
+            ref={importRef}
+            className="hidden"
+            type="file"
+            accept="application/json,.json"
+            onChange={(e) => void importFile(e.target.files?.[0])}
+          />
+        </div>
+      </details>
+      <footer className="risk-savebar">
+        <label>
+          <input
+            className="field"
+            aria-label="操作原因"
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="填写发布、回滚或复核的具体原因"
+          />
+        </label>
+        <div className="risk-inline">
+          <AdminButton
+            variant="quiet"
+            disabled={busy || !dirty}
+            aria-label="撤销未发布修改"
+            onClick={() => restore(data.settings)}
+          >
+            <RotateCcw size={14} />
+          </AdminButton>
+          <AdminButton disabled={busy} onClick={() => void save("validate")}>
+            <CheckCheck size={14} />
+            校验
+          </AdminButton>
+          <AdminButton disabled={busy} onClick={() => void save("draft")}>
+            <Save size={14} />
+            存草稿
+          </AdminButton>
+          <AdminButton
+            variant="primary"
+            loading={busy}
+            disabled={!dirty || !reason.trim()}
+            onClick={() => void save("publish")}
+          >
+            发布策略
+          </AdminButton>
+        </div>
+      </footer>
+    </section>
+  );
 }

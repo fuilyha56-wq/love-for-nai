@@ -45,6 +45,9 @@ describe("request audit", () => {
     await make(2, "gemini-image", new Date(now - 3_600_000).toISOString(), 20);
     await expect(requestRankings(1, "calls", now)).resolves.toMatchObject({ totalCalls: 3, users: [{ userId: 1, calls: 2 }, { userId: 2, calls: 1 }] });
     await expect(requestRankings(1, "anlas", now)).resolves.toMatchObject({ totalAnlas: 25, users: [{ userId: 2, anlas: 20 }, { userId: 1, anlas: 5 }] });
+    const timeline = await requestRankings(1, "calls", now);
+    expect(timeline.times.flatMap(t => t.users || []).map(u => u.username)).toContain("user-1");
+    expect(timeline.times.flatMap(t => t.users || []).reduce((sum,u) => sum+u.calls,0)).toBe(3);
   });
 
   it("merges usage-only calls, deduplicates request IDs, and leaves unknown Anlas uncovered", async () => {

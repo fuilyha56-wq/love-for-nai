@@ -4,6 +4,7 @@ import { readRiskJson, validRiskMutation } from "@/lib/risk-http";
 import type { RiskSettings } from "@/lib/risk-settings";
 import { requireAdmin } from "@/lib/admin-auth";
 import { RISK_FIELDS, defaultRiskSettings, getRiskSettings, publishRiskSettings, validateRiskSettings, writeRiskJson } from "@/lib/risk-settings";
+import { getRuntimeSettings } from "@/lib/runtime-config";
 
 const directory = () => path.resolve(process.env.LFN_DATA_DIR || "data", "risk");
 export async function GET() {
@@ -12,7 +13,7 @@ export async function GET() {
   let history: string[] = [], draft: unknown = null;
   try { history = (await readdir(path.join(directory(), "policy-history"))).filter(f => /^risk-[\da-f-]+\.json$/.test(f)).sort().reverse().slice(0, 30); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
   try { draft = JSON.parse(await readFile(path.join(directory(), "settings-draft.json"), "utf8")); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
-  return Response.json({ settings: await getRiskSettings(), defaults: defaultRiskSettings(), fields: RISK_FIELDS, history, draft, readiness: { processMode: "single-process", sharedAtomic: false, content: "明确受信上游结果；未知不算通过", deviceSecret: Boolean(process.env.LFN_RISK_HASH_SECRET || process.env.LFN_SESSION_SECRET), trustedIp: process.env.LFN_TRUST_PROXY === "true", semantic: false, externalReputation: false, captcha: false } }, { headers: { "Cache-Control": "private, no-store" } });
+  return Response.json({ settings: await getRiskSettings(), defaults: defaultRiskSettings(), fields: RISK_FIELDS, history, draft, readiness: { processMode: "single-process", sharedAtomic: false, content: "明确受信上游结果；未知不算通过", deviceSecret: Boolean(process.env.LFN_RISK_HASH_SECRET?.trim() || process.env.LFN_SESSION_SECRET?.trim()), trustedIp: (await getRuntimeSettings()).trustProxy, semantic: false, externalReputation: false, captcha: false } }, { headers: { "Cache-Control": "private, no-store" } });
 }
 export async function POST(request: Request) {
   const gate = await requireAdmin();

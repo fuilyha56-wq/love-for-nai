@@ -1,5 +1,5 @@
 import { createHash, createSign, createVerify, generateKeyPairSync } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeSettings } from "@/lib/runtime-config";
 
@@ -20,7 +20,7 @@ export type WatermarkPayload = {
   parameters?: Record<string, unknown>;
 };
 
-type WatermarkOptions = {
+export type WatermarkOptions = {
   imageId?: string;
   requestId?: string;
   requestFingerprint?: string;
@@ -29,36 +29,46 @@ type WatermarkOptions = {
 
 type StoredKeyPair = { publicKey: string; privateKey: string; keyId?: string };
 type KeyPair = { publicKey: string; privateKey: string; keyId: string };
-let cachedKeyPair: KeyPair | null = null;
+const keyRuntime = globalThis as typeof globalThis & { __lfnWatermarkKeys?: { file: string; pending: Promise<KeyPair> } };
 
 async function getKeyPair(): Promise<KeyPair> {
-  if (cachedKeyPair) return cachedKeyPair;
-  const keyPath = path.join(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "watermark-keys.json");
+  const keyPath = path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "watermark-keys.json");
+  if (keyRuntime.__lfnWatermarkKeys?.file !== keyPath) {
+    const pending = loadKeyPair(keyPath);
+    keyRuntime.__lfnWatermarkKeys = { file: keyPath, pending };
+    void pending.catch(() => { if (keyRuntime.__lfnWatermarkKeys?.pending === pending) keyRuntime.__lfnWatermarkKeys = undefined; });
+  }
+  return keyRuntime.__lfnWatermarkKeys!.pending;
+}
+async function loadKeyPair(keyPath: string): Promise<KeyPair> {
   try {
     const stored = JSON.parse(await readFile(keyPath, "utf8")) as StoredKeyPair | null;
     if (stored && stored.publicKey && stored.privateKey) {
-      cachedKeyPair = {
+      return {
         publicKey: stored.publicKey,
         privateKey: stored.privateKey,
         keyId: stored.keyId || createHash("sha256").update(stored.publicKey).digest("hex").slice(0, 16),
       };
-      return cachedKeyPair;
     }
-  } catch {
-    // Generate and persist a key pair on first use.
+    throw new Error("Invalid watermark signing key file");
+  } catch (error) {
+    // Never silently rotate a damaged or unreadable key: old signatures must remain verifiable.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   const { publicKey, privateKey } = generateKeyPairSync("rsa", {
     modulusLength: 2048,
     publicKeyEncoding: { type: "spki", format: "pem" },
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
   });
-  cachedKeyPair = {
+  const keys = {
     publicKey,
     privateKey,
     keyId: createHash("sha256").update(publicKey).digest("hex").slice(0, 16),
   };
-  await writeFile(keyPath, JSON.stringify(cachedKeyPair, null, 2), "utf8").catch(() => undefined);
-  return cachedKeyPair;
+  await mkdir(path.dirname(keyPath), { recursive: true });
+  try { await writeFile(keyPath, JSON.stringify(keys, null, 2), { encoding: "utf8", mode: 0o600, flag: "wx" }); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; return loadKeyPair(keyPath); }
+  return keys;
 }
 
 function dataUrlParts(imageDataUrl: string): { mime: string; encoded: string; buffer: Buffer } {
@@ -78,9 +88,9 @@ function calculateImageHash(buffer: Buffer): string {
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+    return `{${Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
   }
-  return JSON.stringify(value);
+  return JSON.stringify(value) ?? "null";
 }
 
 export async function watermarkImages(
@@ -93,7 +103,7 @@ export async function watermarkImages(
   if (!settings.watermarkEnabled) return { images, status: "disabled" };
   let changed = false;
   try {
-    const next = await Promise.all(images.map((image, index) => embedWatermark(image, `${options.requestId || "lfn"}-${index + 1}`, userId, model, options)));
+    const next = await Promise.all(images.map((image, index) => embedWatermark(image, images.length === 1 && options.imageId ? options.imageId : `${options.requestId || "lfn"}-${index + 1}`, userId, model, options)));
     changed = next.some((image, index) => image !== images[index]);
     return { images: next, status: changed ? "embedded" : "skipped" };
   } catch {

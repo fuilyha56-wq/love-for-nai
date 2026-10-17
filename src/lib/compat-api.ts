@@ -7,6 +7,8 @@ import { moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from
 import JSZip from "jszip";
 import { encode } from "@msgpack/msgpack";
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import { watermarkImageResponse } from "@/lib/image-response-watermark";
 import {
   affStatus,
   refundImageCredits,
@@ -174,9 +176,11 @@ export async function proxyNewApi(
   if (authorization instanceof Response) return authorization;
 
   try {
+    let imageUserId: number | null = null;
     if (pathname.startsWith("/v1/images/")) {
       const identity = await requireIkunExternalIdentity(authorization);
       if (identity instanceof Response) return withExternalCors(identity);
+      imageUserId = identity.userId;
     }
     assertBodySize(request);
     const headers = new Headers();
@@ -202,6 +206,12 @@ export async function proxyNewApi(
       cache: "no-store",
       signal: AbortSignal.timeout(120_000),
     });
+    if (imageUserId != null && upstream.ok) {
+      let model = "external-image";
+      try { model = String(body instanceof FormData ? body.get("model") || model : typeof body === "string" ? JSON.parse(body).model || model : model); } catch { /* Optional attribution only. */ }
+      const marked = await watermarkImageResponse(upstream, imageUserId, model, { requestId: randomUUID() });
+      return withExternalCors(forwardResponse(marked.response));
+    }
     return withExternalCors(forwardResponse(upstream));
   } catch (error) {
     return withExternalCors(Response.json(
@@ -262,15 +272,16 @@ async function watermarkJsonResponse(
     const payload = (await response.clone().json()) as JsonRecord;
     const data = Array.isArray(payload.data) ? payload.data : [];
     let watermarkStatus: "embedded" | "disabled" | "skipped" | "failed" = "skipped";
-    const marked = await Promise.all(data.map(async (item) => {
+    const marked = await Promise.all(data.map(async (item, index) => {
       if (!isRecord(item) || typeof item.b64_json !== "string") return item;
       const input = `data:image/png;base64,${item.b64_json.replace(/^data:image\/[^;]+;base64,/, "")}`;
       const result = await watermarkImages([input], userId, model, {
         requestId: audit.requestId,
         requestFingerprint: audit.requestFingerprint,
         parameters: audit.record.parameters,
+        imageId: `${audit.requestId}-${index + 1}`,
       });
-      watermarkStatus = result.status;
+      watermarkStatus = watermarkStatus === "failed" || result.status === "failed" ? "failed" : watermarkStatus === "embedded" || result.status === "embedded" ? "embedded" : result.status;
       return { ...item, b64_json: result.images[0].replace(/^data:image\/[^;]+;base64,/, "") };
     }));
     const body = JSON.stringify(data.length ? { ...payload, data: marked } : payload);
@@ -280,6 +291,7 @@ async function watermarkJsonResponse(
     for (const name of droppedResponseHeaders) headers.delete(name);
     for (const name of ["content-range", "content-md5", "digest", "etag"]) headers.delete(name);
     headers.set("content-type", "application/json");
+    headers.set("X-LFN-Watermark", watermarkStatus);
     const generatedSamples = imageCountFromJson(payload);
     headers.set("X-LFN-Generated-Samples", String(generatedSamples));
     const rawAnlas = response.headers.get("x-anlas-cost");
@@ -1136,6 +1148,7 @@ export async function proxyNaiNativeWithCredits(
         error: "原生上游 ZIP 响应无效",
       });
     }
+    const markedNative = await watermarkImageResponse(nativeResponse, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint, parameters: audit.record.parameters });
     const nativeProduced = pathname.endsWith("-stream") ? charge.samples : Math.min(charge.samples, Number(nativeResponse.headers.get("X-LFN-Generated-Samples")) || charge.samples);
     if (!pathname.endsWith("-stream") && nativeProduced < charge.samples) await refundImageCredits(userId, charge, nativeProduced, { settlementId, requestId: audit.requestId });
     settled = true;
@@ -1162,18 +1175,18 @@ export async function proxyNaiNativeWithCredits(
     if (pathname.endsWith("-stream")) {
       const source = paymentSourceForCharge(charge);
       const reservedCharge = charge;
-      const observed = observeNativeImageCompletion(nativeResponse, charge.samples, async ({ samples: produced, error }) => {
+      const observed = observeNativeImageCompletion(markedNative.response, charge.samples, async ({ samples: produced, error }) => {
         if (produced < reservedCharge.samples) await refundImageCredits(userId, reservedCharge, produced, { settlementId, requestId: audit.requestId, reason: error });
         else if (settlementId) await updateImageSettlement(settlementId, { generatedSamples: produced, status: "succeeded" });
         const actualCost = roundAffAmount(reservedCharge.packageChargesBySample.slice(0, produced).reduce((sum, cost) => sum + cost, 0) + reservedCharge.personalChargesBySample.slice(0, produced).reduce((sum, cost) => sum + cost, 0));
         audit.record.billing = { ...audit.record.billing, lfnChargedAff: actualCost };
         if (audit.record.settlement) Object.assign(audit.record.settlement, { chargedAmount: actualCost, refundedAmount: roundAffAmount(reservedCharge.cost - actualCost), status: produced === reservedCharge.samples ? "succeeded" : produced ? "partially-refunded" : "refunded" });
-        await audit.finish({ status: error ? produced ? 206 : 502 : 200, paymentSource: source, generatedSamples: produced, ...(error ? { error } : {}) });
+        await audit.finish({ status: error ? produced ? 206 : 502 : 200, paymentSource: source, generatedSamples: produced, watermarkStatus: markedNative.status(), ...(error ? { error } : {}) });
       });
       const response = paymentResponse(observed, source);
       return withExternalCors(new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) }));
     }
-    return auditedResponse(paymentResponse(forwardResponse(nativeResponse), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
+    return auditedResponse(paymentResponse(forwardResponse(markedNative.response), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge), watermarkStatus: markedNative.status() });
   } catch (error) {
     const admission = riskAdmissionResponse(error);
     if (admission) return auditedResponse(admission, audit);

@@ -3711,6 +3711,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice(`当前模型一次性提交最多 ${modelCapabilities.maxBatch} 张；更多张数请改用分批次。`);
       return;
     }
+    if (localCreditNotice) { setNotice(localCreditNotice); return; }
     const multiImage = generationModes.has(operation) && count > 1;
     const newApiPricedImage = providerId === "newapi" &&
       !["annotate", "suggest-tags"].includes(operation) && (operation !== "upscale" || naturalImageModel);
@@ -4155,12 +4156,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages, dailyQuote?.affCosts).packageCost
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
-  const canUseAffEstimate = Boolean(
-    providerId === "newapi" && !naturalImageModel &&
-    wallet?.aff?.enabled &&
-      wallet.aff.balance >= estimatedPersonalCost &&
-      wallet.aff.packageBalance >= estimatedPackageCost,
-  );
+  const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling !== false;
+  const hasSufficientAff = Boolean(wallet?.aff?.enabled && wallet.aff.balance >= estimatedPersonalCost && wallet.aff.packageBalance >= estimatedPackageCost);
+  // The price display follows the required wallet even when its balance is insufficient.
+  const canUseAffEstimate = providerId === "newapi" && !naturalImageModel && (requiresLocalBilling || hasSufficientAff);
+  const localAffShortfall = Math.max(0, Math.round((estimatedPersonalCost - (wallet?.aff?.balance ?? 0)) * 10000) / 10000);
+  const localCreditNotice = requiresLocalBilling && wallet?.aff
+    ? !wallet.aff.enabled ? "当前模型的本站额度服务尚未就绪，请刷新后重试。"
+      : localAffShortfall > 0 ? `本次预计消耗 ${estimatedAffCost} AFF，当前可用个人 AFF ${wallet.aff.balance}、图包 ${wallet.aff.packageBalance}，个人 AFF 尚缺 ${localAffShortfall}。此模型使用本站额度，NewAPI 余额不参与本次扣费。` : ""
+    : "";
 
   // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
@@ -4706,7 +4710,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             providerId !== "newapi"
               ? "使用个人 API Key；费用以提供方账单为准"
               : canUseAffEstimate
-              ? `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
+              ? localCreditNotice || `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
               : modelPricing
                 ? `$上游 {modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率；实际以账单为准 · 按 NewAPI 余额计费`
                 : undefined
@@ -5314,6 +5318,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                           </b>
                         </div>
                       )}
+                      {requiresLocalBilling && localAffShortfall > 0 && <div className="text-[var(--rose)]">个人 AFF 尚缺 {localAffShortfall} · NewAPI 余额不适用于此模型</div>}
                       <div>
                         图包 / 个人余量{" "}
                         <b className="text-[var(--ink)]">
@@ -5337,7 +5342,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                         </div>
                       )}
                       <div>
-                        图包/个人 AFF 不足或服务未启用，将使用 NewAPI 余额
+                        当前请求按 NewAPI 自身价格与余额计费
                       </div>
                       <div>
                         NewAPI 余额{" "}
