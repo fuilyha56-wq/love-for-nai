@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { findRequestAudit, recordImageRequestUsage, requestRankings, startRequestAudit } from "@/lib/request-audit";
 import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
+import { dailyImageBillingState } from "@/lib/daily-image-billing";
 
 const originalDataDir = process.env.LFN_DATA_DIR;
 const originalSecret = process.env.LFN_RISK_HASH_SECRET;
@@ -15,6 +16,13 @@ afterEach(() => {
 });
 
 describe("request audit", () => {
+  it("does not add independently billed NewAPI images to local daily tiers", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-paid-audit-"));
+    resetRuntimeConfigCache();
+    const audit = await startRequestAudit({ request: new Request("https://love-for-nai.test"), source: "api", endpoint: "/v1/images/generations", userId: 19, model: "nai-v5-full", operation: "generate", parameters: { width: 832, height: 1216, steps: 28, n: 1 } });
+    await audit.finish({ status: 200, paymentSource: "newapi", generatedSamples: 1 });
+    expect((await dailyImageBillingState(19)).counts.v5).toBe(0);
+  });
   it("stores a stable safe fingerprint and redacts sensitive/image bodies", async () => {
     process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-audit-"));
     resetRuntimeConfigCache();

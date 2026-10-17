@@ -4156,7 +4156,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages, dailyQuote?.affCosts).packageCost
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
-  const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling !== false;
+  const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling === true;
   const hasSufficientAff = Boolean(wallet?.aff?.enabled && wallet.aff.balance >= estimatedPersonalCost && wallet.aff.packageBalance >= estimatedPackageCost);
   // The price display follows the required wallet even when its balance is insufficient.
   const canUseAffEstimate = providerId === "newapi" && !naturalImageModel && (requiresLocalBilling || hasSufficientAff);

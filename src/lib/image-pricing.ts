@@ -46,7 +46,7 @@ export type RawModelPricing = {
 };
 
 export type ParsedTieredExpr =
-  | { kind: "two_tier"; limitCoeff: number; fullCoeff: number }
+  | { kind: "two_tier"; limitCoeff: number; fullCoeff: number; limitFixedRaw?: number }
   | { kind: "base"; coeff: number };
 
 export type PublicPointVersion = "V5" | "V4.5/旧版";
@@ -251,8 +251,10 @@ export function parseTieredExpr(expr: unknown): ParsedTieredExpr | null {
   const fullCoeff = coeffFromMatch(
     source.match(/tier\(\s*["']full["']\s*,\s*p\s*\*\s*(\d+)/i),
   );
-  if (limitCoeff != null && fullCoeff != null)
-    return { kind: "two_tier", limitCoeff, fullCoeff };
+  if (limitCoeff != null && fullCoeff != null) {
+    const limitFixedRaw = coeffFromMatch(source.match(/tier\(\s*["']limit["']\s*,\s*p\s*\*\s*0\s*\+\s*c\s*\*\s*0\s*\+\s*(\d+)\s*\)/i));
+    return { kind: "two_tier", limitCoeff, fullCoeff, ...(limitFixedRaw != null ? { limitFixedRaw } : {}) };
+  }
   const baseCoeff = coeffFromMatch(
     source.match(/tier\(\s*["']base["']\s*,\s*p\s*\*\s*(\d+)/i),
   );
@@ -296,7 +298,7 @@ export function snapshotFromRawPricing(
   const inCoeff = parsed.kind === "two_tier" ? parsed.limitCoeff : parsed.coeff;
   const outCoeff = parsed.kind === "two_tier" ? parsed.fullCoeff : parsed.coeff;
   const inEnvelopeUsd =
-    (envelopeUsageTokens(model) * inCoeff * ratio) / 1_000_000;
+    ((envelopeUsageTokens(model) * inCoeff + (parsed.kind === "two_tier" ? parsed.limitFixedRaw ?? 0 : 0)) * ratio) / 1_000_000;
   const outPerTokenUsd = (outCoeff * ratio) / 1_000_000;
   return {
     ...snapshot,

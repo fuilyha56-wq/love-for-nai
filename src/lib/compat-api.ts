@@ -100,7 +100,7 @@ type JsonRecord = Record<string, unknown>;
  * 外部图像端点的身份识别：任何有效的 NewAPI key 均可使用，
  * 分组不限（站点注册用户多在 Draw/default 等分组，NewAPI 上不存在
  * 全体用户共有的单一分组）。计费自我约束：优先扣 key 所属用户的
- * 图包/个人 AFF 余额；LFN 计费模型默认严格拒绝隐式钱包回退。
+ * 图包/个人 AFF 余额；不足时按配置转交 NewAPI 真实生成并独立结算。
  */
 export async function requireIkunExternalIdentity(authorization: string) {
   return resolveExternalApiIdentity(authorization);
@@ -457,7 +457,7 @@ export async function proxyImageWithCredits(
   if (ipEvidence) audit.record.ipEvidenceId = ipEvidence.evidenceId;
 
   const userId = apiIdentity.userId;
-  const strictBilling = isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false;
+  const strictBilling = userId == null || (isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false);
   if (userId != null) {
     try {
       const risk = await evaluateImageRisk({
@@ -556,7 +556,7 @@ export async function proxyImageWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" });
+        return watermarkJsonResponse(await auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" }), userId, imageRequest.generation.model, audit);
       }
       return auditedResponse(
         paymentResponse(
@@ -930,7 +930,7 @@ export async function proxyNaiNativeWithCredits(
 
   const userId = apiIdentity.userId;
   let risk: Awaited<ReturnType<typeof evaluateImageRisk>> | null = null;
-  const strictBilling = isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false;
+  const strictBilling = userId == null || (isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false);
   if (userId != null) {
     try {
       risk = await evaluateImageRisk({
@@ -1016,7 +1016,7 @@ export async function proxyNaiNativeWithCredits(
         externalLogMeta(logUser, imageRequest, fallbackEndpoint),
       )(-1);
       if (strictBilling) return auditedResponse(localBillingError("本站 AFF 或图包余额不足，本次未改用其他钱包扣费", 402), audit);
-      /* Explicit legacy billing mode only. */
+      // NewAPI 执行并结算自己的真实请求，不使用 LFN 每日阶梯价格。
       // 用户分组可能没有该模型的渠道（如 default 打 NAI 模型）：
       // 先取一把可用分组的托管密钥重试，取不到再用原 key 透传保留
       // 原始错误。
@@ -1051,7 +1051,8 @@ export async function proxyNaiNativeWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return auditedResponse(paymentResponse(await nativeResponseForPath(managedUpstream, pathname), "newapi"), audit, { paymentSource: "newapi" });
+        const marked = await watermarkImageResponse(managedUpstream, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
+        return auditedResponse(paymentResponse(await nativeResponseForPath(marked.response, pathname), "newapi"), audit, { paymentSource: "newapi", watermarkStatus: marked.status() });
       }
       return auditedResponse(
         paymentResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), "newapi"),
