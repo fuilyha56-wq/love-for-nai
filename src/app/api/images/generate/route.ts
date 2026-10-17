@@ -1,6 +1,9 @@
+import { dailyImagePolicy } from "@/lib/daily-image-billing";
+import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import {
+  affStatus,
   refundImageCredits,
   trySpendImageCredits,
   type ImageCreditCharge,
@@ -13,11 +16,12 @@ import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/li
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { validateModelId } from "@/lib/provider/validation";
-import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
+import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
 import { externalGeneration, imageRequestErrorBody } from "@/lib/compat-api";
+import { startRequestAudit } from "@/lib/request-audit";
 import {
   assertBodySize,
   assertImageModel,
@@ -137,15 +141,27 @@ export async function POST(request: Request) {
   if (!generation)
     return NextResponse.json({ message: "图像计费参数无效" }, { status: 400 });
   const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
+  const audit = await startRequestAudit({ request, source: "lfn", endpoint: "/api/images/generate", userId: session.userId, username: session.username, model, operation: "generate", parameters: generationPayload });
+  await audit.finish();
   const risk = await evaluateImageRisk({
     userId: session.userId,
     username: session.username,
     model,
+    requestId: audit.requestId,
     prompt: typeof body.prompt === "string" ? body.prompt : undefined,
   }).catch(() => null);
-  if (!risk)
+  if (!risk) {
+    await audit.finish({ status: 503, error: "风控服务暂时不可用" });
     return NextResponse.json({ message: "风控服务暂时不可用，请稍后重试" }, { status: 503 });
-  if (risk.decision === "deny") return riskBlockedResponse();
+  }
+  if (risk.decision === "deny") {
+    await audit.finish({ status: 403, risk });
+    return riskBlockedResponse(risk);
+  }
+  if (risk.decision === "rate-limit") {
+    await audit.finish({ status: 429, risk });
+    return await riskRateLimitedResponse(risk);
+  }
   let creditCharge: ImageCreditCharge | null = null;
   let settlementId: string | undefined;
   let affRefunded = false;
@@ -155,16 +171,17 @@ export async function POST(request: Request) {
   let upstreamAttempted = false;
   try {
     const aff = platformUpstream
-      ? await trySpendImageCredits(session.userId, generation)
+      ? await trySpendImageCredits(session.userId, generation, audit.requestId)
       : null;
+    if (nativeNaiModel && !aff && (await dailyImagePolicy()).strictApiBilling !== false) throw new RiskAdmissionError(platformUpstream ? "本站 AFF 或图包余额不足，本次未改用其他钱包扣费" : "未配置本地计费执行通道", platformUpstream ? "lfn_insufficient_credits" : "lfn_billing_unavailable", platformUpstream ? 402 : 503);
     let key: string;
     if (aff && platformUpstream) {
       key = platformUpstream.token;
       upstreamBaseUrl = platformUpstream.baseUrl;
       payment = "aff";
       creditCharge = aff;
-      settlementId = `settlement:${randomUUID()}`;
-      await createImageSettlement({ settlementId, requestId: settlementId, userId: session.userId, charge: aff });
+      settlementId = `settlement:${audit.requestId}`;
+      await createImageSettlement({ settlementId, requestId: audit.requestId, userId: session.userId, charge: aff });
       paymentSource =
         aff.packageCost > 0 && aff.personalCost > 0
           ? "mixed"
@@ -184,10 +201,10 @@ export async function POST(request: Request) {
     upstreamAttempted = true;
     const upstream = await fetchWithModelConcurrency(`${upstreamBaseUrl}/v1/images/generations`, {
       method: "POST",
-      headers: {
+      headers: queuedRiskHeaders(audit.requestId, {
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
-      },
+      }),
       body: JSON.stringify(nativeNaiModel ? generationPayload : {
         model,
         prompt: body.prompt,
@@ -199,7 +216,11 @@ export async function POST(request: Request) {
       signal: AbortSignal.timeout(120_000),
     });
     const result = await upstream.json();
+    audit.record.moderation = await moderationFromUpstream(result);
+    const anlasHeader = upstream.headers.get("x-anlas-cost");
+    const anlas = anlasHeader?.trim() ? Number(anlasHeader) : NaN;
     if (!upstream.ok || result.error) {
+      await audit.finish({ status: upstream.ok ? 502 : upstream.status, paymentSource, generatedSamples: 0, error: result.error?.message || result.message || "上游生成失败" });
       if (creditCharge) {
         affRefunded = true;
         await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });
@@ -211,13 +232,23 @@ export async function POST(request: Request) {
     }
     const images = imageFromResult(result);
     if (!images.length) {
+      await audit.finish({ status: 502, paymentSource, generatedSamples: 0, error: "上游未返回图片" });
       if (creditCharge) {
         affRefunded = true;
         await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });
       }
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
     }
-    if (settlementId) await updateImageSettlement(settlementId, { generatedSamples: samples, status: "succeeded" });
+    const completedSamples = Math.min(samples, images.length);
+    if (creditCharge && completedSamples < samples) {
+      await refundImageCredits(session.userId, creditCharge, completedSamples, { settlementId, requestId: audit.requestId });
+      const current = await affStatus(session.userId);
+      const packageCost = creditCharge.packageChargesBySample.slice(0, completedSamples).reduce((sum, value) => sum + value, 0);
+      const personalCost = creditCharge.personalChargesBySample.slice(0, completedSamples).reduce((sum, value) => sum + value, 0);
+      creditCharge = { ...creditCharge, ...current, cost: packageCost + personalCost, packageCost, personalCost };
+    }
+    if (settlementId && completedSamples === samples) await updateImageSettlement(settlementId, { generatedSamples: completedSamples, status: "succeeded" });
+    await audit.finish({ status: 200, paymentSource, generatedSamples: completedSamples, billing: { ...(creditCharge ? { lfnChargedAff: creditCharge.packageChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) + creditCharge.personalChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) } : {}), ...(Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : {}) } });
     return NextResponse.json({
       image: images[0],
       images,
@@ -244,9 +275,12 @@ export async function POST(request: Request) {
             totalBalance: creditCharge.totalBalance,
           }
         : null,
-    });
+    }, { headers: audit.responseHeaders() });
   } catch (error) {
+    const admission = riskAdmissionResponse(error);
+    if (admission) { await audit.finish({ status: admission.status }); return new Response(admission.body, { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
+    await audit.finish({ status: queueAborted ? 503 : 502, error: error instanceof Error ? error.message : "图像请求失败" });
     if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: settlementId });

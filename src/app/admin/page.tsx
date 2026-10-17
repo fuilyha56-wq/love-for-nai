@@ -1,4 +1,7 @@
 "use client";
+import { LfnSelect } from "@/app/ui/lfn-select";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import {
   AlertTriangle,
@@ -8,7 +11,6 @@ import {
   ChevronRight,
   CircleGauge,
   FileText,
-  Coins,
   ShieldAlert,
   ImageIcon,
   Megaphone,
@@ -20,16 +22,26 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import "./admin.css";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/app/markdown";
 import type { AnnouncementItem } from "@/app/announcement-dialog";
 import { PopupSelect } from "@/app/ui/popup-select";
 import CommentsDialog from "./comments-dialog";
-import GatewaySection from "./gateway-panel";
-import PlatformConfigPanel from "./platform-config-panel";
-import DocsPanel from "./docs-panel";
-import RewardsPanel from "./rewards-panel";
-import RedeemCodesPanel from "./redeem-codes-panel";
+const GatewaySection = dynamic(() => import("./gateway-panel"));
+const PlatformConfigPanel = dynamic(() => import("./platform-config-panel"));
+const DocsPanel = dynamic(() => import("./docs-panel"));
+const RewardsPanel = dynamic(() => import("./rewards-panel"));
+const ActivitiesPanel = dynamic(() => import("./activities/activities-panel"));
+const RedeemCodesPanel = dynamic(() => import("./redeem-codes-panel"));
+const LightRiskPanel = dynamic(() => import("./light-risk-panel"));
+const RiskPolicyPanel = dynamic(() => import("./risk-policy-panel"));
+const RiskRankingsPanel = dynamic(() => import("./risk-rankings-panel"));
+const RiskUserActions = dynamic(() => import("./risk-user-actions"));
+const ReferralsPanel = dynamic(() => import("./referrals-panel"));
+const SessionCleanupPanel = dynamic(() => import("./session-cleanup-panel"));
+const DailyBillingPanel = dynamic(() => import("./daily-billing-panel"));
 
 type AdminUser = {
   id: number;
@@ -45,7 +57,7 @@ type AdminUser = {
   aff?: { balance: number; packageBalance?: number } | null;
 };
 
-type Tab = "overview" | "users" | "sessions" | "risk" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform" | "docs" | "creator" | "rewards" | "redeem";
+type Tab = "overview" | "users" | "sessions" | "risk" | "credits" | "announcements" | "gallery" | "referrals" | "audits" | "platform" | "docs" | "creator" | "rewards" | "redeem" | "activities";
 type AdminModule = { id: Tab | string; label: string; description: string; enabled: boolean };
 type AdminNavGroup = { label: string; ids: Tab[] };
 type PlatformCapabilities = {
@@ -85,19 +97,6 @@ type CreditRow = {
   sourceTotals?: Record<string, number>;
   usage?: { requests5h: number; requests7d: number; requests30d: number; retainedRecords: number };
 };
-type CreditDetail = CreditRow & {
-  username?: string;
-  displayName?: string;
-  transactions: Array<{
-    id: string;
-    createdAt: string;
-    amount: number;
-    type: string;
-    description: string;
-    source?: string;
-    origin?: string;
-  }>;
-};
 type GalleryAdminItem = {
   id: string;
   title: string;
@@ -115,23 +114,7 @@ type GalleryAdminItem = {
   imageUrl: string;
   parameters?: Record<string, unknown>;
 };
-type ReferralRow = {
-  code: string;
-  inviterUserId: number;
-  inviterName?: string;
-  invitedCount: number;
-  createdAt: string;
-  registeredUserIds: number[];
-  registrations?: Array<{
-    registeredUserId: number;
-    registeredAt: string;
-    landingPath?: string;
-    referer?: string;
-    requestId?: string;
-    reward: number;
-    applied: boolean;
-  }>;
-};
+
 
 const DEFAULT_QUOTA_PER_UNIT = 500000;
 const ROLE_LABELS: Record<number, string> = { 1: "用户", 10: "管理员", 100: "Root" };
@@ -155,6 +138,16 @@ export default function AdminPage() {
   const [sessionFocusUserId, setSessionFocusUserId] = useState<number | null>(null);
   const [modules, setModules] = useState<AdminModule[]>([]);
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
+  const navigateTab = (id: Tab) => {
+    setTab(id);
+    window.history.replaceState(null, "", `/admin?tab=${id}`);
+    setMessage("");
+  };
+  useEffect(() => {
+    const value = new URLSearchParams(window.location.search).get("tab");
+    const allowed = ["overview", "users", "sessions", "risk", "credits", "announcements", "gallery", "referrals", "audits", "platform", "docs", "creator", "rewards", "activities", "redeem"];
+    if (value && allowed.includes(value)) void Promise.resolve().then(() => setTab(value as Tab));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +182,8 @@ export default function AdminPage() {
           { id: "platform", label: "平台配置", description: "改账号、图像、钱包上游和全部站点环境项", enabled: true },
           { id: "docs", label: "文档管理", description: "线上编辑 API 与帮助文档", enabled: true },
           { id: "creator", label: "投稿审核", description: "审核创作者投稿并发放奖励", enabled: true },
-          { id: "rewards", label: "奖励与活动", description: "结算投稿、周榜和人工发放", enabled: true },
+          { id: "rewards", label: "奖励与活动", description: "配置活动、自动结算周榜和人工发放", enabled: true },
+          { id: "activities", label: "活动管理", description: "创建、配置、删除和恢复活动", enabled: true },
           { id: "redeem", label: "兑换码", description: "批量生成和管理兑换码", enabled: true },
         ]
     ).filter((item) => item.enabled),
@@ -198,7 +192,7 @@ export default function AdminPage() {
   const navGroups: AdminNavGroup[] = [
     { label: "工作台", ids: ["overview"] },
     { label: "账号与安全", ids: ["users", "sessions", "risk"] },
-    { label: "运营内容", ids: ["credits", "announcements", "gallery", "referrals", "creator", "rewards", "redeem"] },
+      { label: "运营内容", ids: ["credits", "announcements", "gallery", "referrals", "creator", "rewards", "activities", "redeem"] },
     { label: "文档与系统", ids: ["docs", "audits", "platform"] },
   ];
   const current = visibleModules.find((item) => item.id === tab);
@@ -245,24 +239,24 @@ export default function AdminPage() {
           {navGroups.map((group) => {
             const items = group.ids.map((id) => moduleById.get(id)).filter((item): item is AdminModule => Boolean(item));
             if (!items.length) return null;
-            return <div key={group.label} className="mb-4 last:mb-0"><p className="px-3 pb-1.5 pt-2 text-[10px] font-bold tracking-[0.14em] text-[var(--muted)]">{group.label}</p>{items.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`admin-nav-item flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${tab === item.id ? "is-active" : "text-[var(--muted)]"}`}>{item.id === "overview" ? <CircleGauge size={15} /> : item.id === "users" ? <Users size={15} /> : item.id === "sessions" || item.id === "risk" ? <ShieldAlert size={15} /> : <FileText size={15} />}<span className="ml-2">{item.label}</span></button>)}</div>;
+            return <div key={group.label} className="mb-4 last:mb-0"><p className="px-3 pb-1.5 pt-2 text-[10px] font-bold tracking-[0.14em] text-[var(--muted)]">{group.label}</p>{items.map((item) => <button key={item.id} type="button" onClick={() => navigateTab(item.id as Tab)} className={`admin-nav-item flex w-full items-center rounded-lg px-3 py-2.5 text-left text-xs font-semibold ${tab === item.id ? "is-active" : "text-[var(--muted)]"}`}>{item.id === "overview" ? <CircleGauge size={15} /> : item.id === "users" ? <Users size={15} /> : item.id === "sessions" || item.id === "risk" ? <ShieldAlert size={15} /> : <FileText size={15} />}<span className="ml-2">{item.label}</span></button>)}</div>;
           })}
         </aside>
         <div className="min-w-0 flex-1">
           <div className="admin-mobile-nav mb-4 flex gap-1 overflow-x-auto rounded-lg border border-[var(--line)] bg-[var(--panel)] p-1 text-xs font-semibold lg:hidden">
-            {visibleModules.map((item) => <button key={item.id} type="button" onClick={() => setTab(item.id as Tab)} className={`shrink-0 rounded px-3 py-2 ${tab === item.id ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"}`}>{item.label}</button>)}
+            {visibleModules.map((item) => <button key={item.id} type="button" onClick={() => navigateTab(item.id as Tab)} className={`shrink-0 rounded px-3 py-2 ${tab === item.id ? "bg-[var(--rose)] text-white" : "text-[var(--muted)]"}`}>{item.label}</button>)}
           </div>
         {current?.description && (
           <p className="mb-5 text-sm leading-6 text-[var(--muted)]">{current.description}</p>
         )}
         {tab === "overview" ? (
-          <OverviewPanel capabilities={capabilities} modules={visibleModules} />
+          <OverviewPanel capabilities={capabilities} modules={visibleModules} onNavigate={navigateTab} />
         ) : tab === "users" ? (
-          <UsersPanel capabilities={capabilities} setMessage={setMessage} onFocusSession={(userId) => { setSessionFocusUserId(userId); setTab("sessions"); }} />
+          <UsersPanel capabilities={capabilities} setMessage={setMessage} onFocusSession={(userId) => { setSessionFocusUserId(userId); navigateTab("sessions"); }} />
         ) : tab === "sessions" ? (
           <SessionManagementPanel setMessage={setMessage} focusUserId={sessionFocusUserId} onClearFocus={() => setSessionFocusUserId(null)} />
         ) : tab === "risk" ? (
-          <RiskPanel setMessage={setMessage} />
+          <RiskPanel />
         ) : tab === "credits" ? (
           <CreditsPanel capabilities={capabilities} setMessage={setMessage} />
         ) : tab === "gallery" ? (
@@ -276,12 +270,15 @@ export default function AdminPage() {
         ) : tab === "docs" ? (
           <DocsPanel />
         ) : tab === "rewards" ? (
-          <RewardsPanel />
+          <RewardsPanel onManageActivities={() => navigateTab("activities")} />
+        ) : tab === "activities" ? (
+          <ActivitiesPanel />
         ) : tab === "redeem" ? (
           <RedeemCodesPanel />
         ) : tab === "platform" ? (
           <>
             <PlatformConfigPanel setMessage={setMessage} />
+            <div className="mt-5"><DailyBillingPanel /></div>
             {capabilities?.image?.provider === "gateway" && capabilities.image.enabled && (
               <section className="mt-5" aria-labelledby="gateway-management-heading">
                 <div className="mb-3">
@@ -301,147 +298,60 @@ export default function AdminPage() {
   );
 }
 
-function RiskPanel({ setMessage }: { setMessage: (message: string) => void }) {
-  const [items, setItems] = useState<Array<{
-    caseId: string;
-    userId: number;
-    username?: string;
-    level: string;
-    score: number;
-    status: string;
-    lastSeenAt: string;
-    lastRequestId?: string;
-    signals: Array<{ id: string; description: string }>;
-    usage?: { requests5h?: number; requests7d?: number; requests30d?: number };
-    enforcement?: { blocked?: boolean; blockReason?: string };
-  }>>([]);
-    const [ipItems, setIpItems] = useState<Array<{
-      evidenceId: string;
-      userId?: number;
-      username?: string;
-      family: string;
-      requestCount: number;
-      lastSeenAt: string;
-      geo?: { countryName?: string; region?: string; city?: string; asn?: string; organization?: string };
-    }>>([]);
+function RiskPanel() {
+  const [message, setMessage] = useState("");
+  const [expanded, setExpanded] = useState<{ userId: number; kind: "mark" | "ban" | "chain" } | null>(null);
+  type CaseRow = { caseId: string; userId: number; username?: string; level: string; score: number; lastSeenAt: string; signals: Array<{ id: string; description: string }>; usage?: { requests5h?: number; requests7d?: number; requests30d?: number }; enforcement?: { blocked?: boolean } };
+  type IpRow = { evidenceId: string; userId?: number; username?: string; family: string; requestCount: number; lastSeenAt: string; geo?: { countryName?: string; region?: string; city?: string; asn?: string; organization?: string } };
+  const [items, setItems] = useState<CaseRow[]>([]);
+  const [ipItems, setIpItems] = useState<IpRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    setLoading(true);
     try {
-        const [casesResponse, overviewResponse, ipResponse] = await Promise.all([
+      const [casesResponse, overviewResponse, ipResponse] = await Promise.all([
         fetch("/api/admin/risk/cases?limit=200", { cache: "no-store" }),
         fetch("/api/admin/risk/overview", { cache: "no-store" }),
-          fetch("/api/admin/risk/ip?limit=50", { cache: "no-store" }),
+        fetch("/api/admin/risk/ip?limit=50", { cache: "no-store" }),
       ]);
       const casesResult = await casesResponse.json();
       const overviewResult = await overviewResponse.json();
-        const ipResult = await ipResponse.json();
+      const ipResult = await ipResponse.json();
       if (!casesResponse.ok) throw new Error(casesResult.message || "读取风险案件失败");
       setItems(Array.isArray(casesResult.items) ? casesResult.items : []);
       setCounts(overviewResult.counts || {});
-        setIpItems(Array.isArray(ipResult.items) ? ipResult.items : []);
+      setIpItems(Array.isArray(ipResult.items) ? ipResult.items : []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "读取风险数据失败");
-    } finally {
-      setLoading(false);
     }
   }, [setMessage]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => { void load(); }, 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
 
-  async function action(userId: number, actionName: "mark" | "ban" | "unban") {
-    const reason = window.prompt(actionName === "ban" ? "请输入封禁原因" : "请输入风控操作原因", "管理员风控处理");
-    if (!reason?.trim()) return;
-    const body = actionName === "mark"
-      ? { action: "mark", level: "risk", reason }
-      : { action: actionName, scope: "user", reason };
-    const response = await fetch(`/api/admin/risk/users/${userId}/action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  function action(userId: number, actionName: "mark" | "ban" | "unban") { setExpanded({ userId, kind: actionName === "mark" ? "mark" : "ban" }); }
+  function previewChain(userId: number) { setExpanded({ userId, kind: "chain" }); }
+
+  async function queryGeo(evidenceId: string) {
+    const response = await fetch(`/api/admin/risk/ip/${evidenceId}/geo`, { method: "POST" });
     const result = await response.json();
-    if (!response.ok) {
-      setMessage(result.message || "风控操作失败");
-      return;
-    }
-    setMessage(`用户 ${userId} 风控状态已更新`);
+    if (!response.ok) { setMessage(result.message || "IP 归属地查询失败"); return; }
+    setMessage(`IP 归属地已更新：${result.geo?.countryName || result.geo?.countryCode || "未知"} ${result.geo?.city || ""}`);
     await load();
   }
 
-  async function previewChain(userId: number) {
-    const response = await fetch("/api/admin/risk/chain-preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId }),
-    });
-    const result = await response.json();
-    if (!response.ok) {
-      setMessage(result.message || "邀请链读取失败");
-      return;
-    }
-    const ids = result.component?.userIds || [];
-    setMessage(`用户 ${userId} 邀请链共 ${ids.length} 个账号：${ids.join(", ") || "无"}`);
-  }
-
-    async function queryGeo(evidenceId: string) {
-      const response = await fetch(`/api/admin/risk/ip/${evidenceId}/geo`, { method: "POST" });
-      const result = await response.json();
-      if (!response.ok) {
-        setMessage(result.message || "IP 归属地查询失败");
-        return;
-      }
-      setMessage(`IP 归属地已更新：${result.geo?.countryName || result.geo?.countryCode || "未知"} ${result.geo?.city || ""}`);
-      await load();
-    }
 
   return (
     <div className="space-y-4">
+      {message && <p role="status" className="rounded-lg border border-[var(--line)] p-3 text-sm">{message}</p>}
       <div className="grid gap-3 sm:grid-cols-4">
-        {[['案件', counts.cases], ['Risk', counts.risk], ['Critical', counts.critical], ['已封禁', counts.banned], ['重复聚类', counts.promptClusters], ['待退款', counts.pendingRefunds], ['IP 证据', counts.ipEvidence]].map(([label, value]) => (
-          <div key={String(label)} className="rounded-lg border border-[var(--line)] bg-white p-4">
-            <p className="text-xs text-[var(--muted)]">{label}</p>
-            <p className="mt-2 text-2xl font-semibold">{value ?? 0}</p>
-          </div>
-        ))}
+        {[['案件', counts.cases], ['Risk', counts.risk], ['Critical', counts.critical], ['已封禁', counts.banned], ['重复聚类', counts.promptClusters], ['待退款', counts.pendingRefunds], ['IP 证据', counts.ipEvidence]].map(([label, value]) => <div key={String(label)} className="rounded-lg border border-[var(--line)] bg-white p-4"><p className="text-xs text-[var(--muted)]">{label}</p><p className="mt-2 text-2xl font-semibold">{value ?? 0}</p></div>)}
       </div>
-      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        自动规则只标记风险，不自动封禁。IP 归属地和提示词均为辅助证据，管理员需要结合请求审计和邀请链确认。
-      </div>
-      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
-            <th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">等级 / 分数</th><th className="px-3 py-2.5">调用 5h / 7d / 30d</th><th className="px-3 py-2.5">最近信号</th><th className="px-3 py-2.5">最近时间</th><th className="px-3 py-2.5">操作</th>
-          </tr></thead>
-          <tbody>
-            {items.map((item) => <tr key={item.caseId} className="border-b border-[var(--line)] align-top last:border-0">
-              <td className="px-3 py-2.5"><b>{item.username || "-"}</b><p className="text-xs text-[var(--muted)]">#{item.userId}</p></td>
-              <td className="px-3 py-2.5"><span className="font-semibold">{item.level}</span><p className="text-xs text-[var(--muted)]">{item.score} 分 · {item.enforcement?.blocked ? "已封禁" : "未封禁"}</p></td>
-              <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? "-"} / {item.usage?.requests7d ?? "-"} / {item.usage?.requests30d ?? "-"}</td>
-              <td className="max-w-sm px-3 py-2.5 text-xs">{item.signals?.slice(0, 2).map((signal) => <p key={signal.id}>{signal.description}</p>) || "-"}</td>
-              <td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td>
-              <td className="px-3 py-2.5"><div className="flex flex-wrap gap-2 text-xs">
-                <button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void action(item.userId, "mark")}>标记</button>
-                {item.enforcement?.blocked ? <button type="button" className="rounded border border-emerald-300 px-2 py-1 text-emerald-700" onClick={() => void action(item.userId, "unban")}>解封</button> : <button type="button" className="rounded border border-rose-300 px-2 py-1 text-rose-700" onClick={() => void action(item.userId, "ban")}>封禁</button>}
-                <button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void previewChain(item.userId)}>邀请链</button>
-              </div></td>
-            </tr>)}
-            {!loading && !items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无风险案件</td></tr>}
-          </tbody>
-        </table>
-      </div>
-        <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
-          <div className="border-b border-[var(--line)] px-4 py-3"><h2 className="text-sm font-semibold">IP 溯源证据</h2><p className="mt-1 text-xs text-[var(--muted)]">仅显示脱敏摘要和归属地快照。完整 IP 默认不展示，归属地仅作辅助证据。</p></div>
-          <table className="w-full text-sm">
-            <thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">地址族 / 次数</th><th className="px-3 py-2.5">归属地</th><th className="px-3 py-2.5">最近出现</th><th className="px-3 py-2.5">操作</th></tr></thead>
-            <tbody>{ipItems.map((item) => <tr key={item.evidenceId} className="border-b border-[var(--line)] last:border-0"><td className="px-3 py-2.5">{item.username || "-"}<span className="ml-1 text-xs text-[var(--muted)]">#{item.userId || "-"}</span></td><td className="px-3 py-2.5 text-xs">{item.family} · {item.requestCount} 次</td><td className="px-3 py-2.5 text-xs">{[item.geo?.countryName, item.geo?.region, item.geo?.city].filter(Boolean).join(" / ") || "未查询"}<p className="text-[var(--muted)]">{item.geo?.asn || item.geo?.organization || "-"}</p></td><td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><button type="button" className="rounded border border-[var(--line)] px-2 py-1 text-xs" onClick={() => void queryGeo(item.evidenceId)}>查询归属地</button></td></tr>)}{!ipItems.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-[var(--muted)]">暂无 IP 证据</td></tr>}</tbody>
-          </table>
-        </div>
+      <LightRiskPanel />
+      <RiskPolicyPanel />
+      <RiskRankingsPanel />
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">自动规则只标记风险或执行本页配置的限流/拒绝动作，不会自动永久封禁。IP 归属地、提示词聚类和调用排行均为辅助证据，管理员仍需结合审计记录确认。</div>
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white"><table className="w-full text-sm"><thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">等级 / 分数</th><th className="px-3 py-2.5">调用 5h / 7d / 30d</th><th className="px-3 py-2.5">最近信号</th><th className="px-3 py-2.5">最近时间</th><th className="px-3 py-2.5">操作</th></tr></thead><tbody>{items.map((item) => <Fragment key={item.caseId}><tr key={item.caseId} className="border-b border-[var(--line)] align-top last:border-0"><td className="px-3 py-2.5"><b>{item.username || "-"}</b><p className="text-xs text-[var(--muted)]">#{item.userId}</p></td><td className="px-3 py-2.5"><span className="font-semibold">{item.level}</span><p className="text-xs text-[var(--muted)]">{item.score} 分 · {item.enforcement?.blocked ? "已封禁" : "未封禁"}</p></td><td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? "-"} / {item.usage?.requests7d ?? "-"} / {item.usage?.requests30d ?? "-"}</td><td className="max-w-sm px-3 py-2.5 text-xs">{item.signals?.slice(0, 2).map((signal) => <p key={signal.id}>{signal.description}</p>) || "-"}</td><td className="whitespace-nowrap px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><div className="flex flex-wrap gap-2 text-xs"><button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void action(item.userId, "mark")}>标记</button>{item.enforcement?.blocked ? <button type="button" className="rounded border border-emerald-300 px-2 py-1 text-emerald-700" onClick={() => void action(item.userId, "unban")}>解封</button> : <button type="button" className="rounded border border-rose-300 px-2 py-1 text-rose-700" onClick={() => void action(item.userId, "ban")}>封禁</button>}<button type="button" className="rounded border border-[var(--line)] px-2 py-1" onClick={() => void previewChain(item.userId)}>邀请链</button></div></td></tr>{expanded?.userId === item.userId && <tr><td colSpan={6} className="bg-[var(--surface-muted)] p-3"><RiskUserActions key={`${item.userId}:${expanded.kind}`} user={item} initial={expanded.kind} onClose={() => setExpanded(null)} onChanged={load} /></td></tr>}</Fragment>)}{!items.length && <tr><td colSpan={6} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无风险案件</td></tr>}</tbody></table></div>
+      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white"><div className="border-b border-[var(--line)] px-4 py-3"><h2 className="text-sm font-semibold">IP 溯源证据</h2><p className="mt-1 text-xs text-[var(--muted)]">仅显示脱敏摘要和归属地快照。完整 IP 默认不展示，归属地仅作辅助证据。</p></div><table className="w-full text-sm"><thead><tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]"><th className="px-3 py-2.5">用户</th><th className="px-3 py-2.5">地址族 / 次数</th><th className="px-3 py-2.5">归属地</th><th className="px-3 py-2.5">最近出现</th><th className="px-3 py-2.5">操作</th></tr></thead><tbody>{ipItems.map((item) => <tr key={item.evidenceId} className="border-b border-[var(--line)] last:border-0"><td className="px-3 py-2.5">{item.username || "-"}<span className="ml-1 text-xs text-[var(--muted)]">#{item.userId || "-"}</span></td><td className="px-3 py-2.5 text-xs">{item.family} · {item.requestCount} 次</td><td className="px-3 py-2.5 text-xs">{[item.geo?.countryName, item.geo?.region, item.geo?.city].filter(Boolean).join(" / ") || "未查询"}<p className="text-[var(--muted)]">{item.geo?.asn || item.geo?.organization || "-"}</p></td><td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.lastSeenAt).toLocaleString("zh-CN")}</td><td className="px-3 py-2.5"><button type="button" className="rounded border border-[var(--line)] px-2 py-1 text-xs" onClick={() => void queryGeo(item.evidenceId)}>查询归属地</button></td></tr>)}{!ipItems.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-sm text-[var(--muted)]">暂无 IP 证据</td></tr>}</tbody></table></div>
     </div>
   );
 }
@@ -449,9 +359,11 @@ function RiskPanel({ setMessage }: { setMessage: (message: string) => void }) {
 function OverviewPanel({
   capabilities,
   modules,
+  onNavigate,
 }: {
   capabilities: PlatformCapabilities | null;
   modules: AdminModule[];
+  onNavigate: (tab: Tab) => void;
 }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [error, setError] = useState("");
@@ -559,9 +471,12 @@ function OverviewPanel({
         <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">管理模块</p>
         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
           {modules.map((item) => (
-            <li key={item.id} className="rounded border border-[var(--line)] bg-[#faf9f5] px-3 py-2">
+            <li key={item.id}>
+              <button type="button" onClick={() => onNavigate(item.id as Tab)} className="admin-module-link w-full rounded border border-[var(--line)] bg-[var(--surface-muted)] px-3 py-3 text-left">
               <p className="text-sm font-semibold">{item.label}</p>
               <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{item.description}</p>
+              <span className="mt-2 block text-xs text-[var(--rose)]">进入 →</span>
+              </button>
             </li>
           ))}
         </ul>
@@ -596,7 +511,7 @@ function SessionManagementPanel({
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [cleaning, setCleaning] = useState(false);
-  const [filter, setFilter] = useState<SessionFilter>("over");
+  const [filter, setFilter] = useState<SessionFilter>("all");
   const [dangerOpen, setDangerOpen] = useState(false);
   const [userQuery, setUserQuery] = useState("");
 
@@ -628,7 +543,7 @@ function SessionManagementPanel({
     const prompt = scope === "all"
       ? "危险操作：确定撤销所有用户的全部上游登录会话？所有人都需要重新登录。"
       : `确定撤销全部超过 ${data?.threshold ?? 25} 个活跃会话的用户的全部活跃会话？`;
-    if (!window.confirm(prompt)) return;
+    if (!(await lfnConfirm(prompt))) return;
     setCleaning(true);
     setMessage("");
     try {
@@ -666,6 +581,7 @@ function SessionManagementPanel({
     .filter((item) => !effectiveQuery.trim() || `${item.username || ""} ${item.userId}`.toLowerCase().includes(effectiveQuery.trim().toLowerCase()));
   return (
     <div className="space-y-4">
+      <SessionCleanupPanel onCleaned={() => void load()} />
       <div className="grid gap-3 sm:grid-cols-3">
         <article className="rounded-lg border border-[var(--line)] bg-white px-4 py-3"><p className="text-xs text-[var(--muted)]">活跃会话总数</p><p className="mt-1 text-xl font-semibold tabular-nums">{loading ? "…" : data?.totalActiveSessions ?? 0}</p></article>
         <article className="rounded-lg border border-[var(--line)] bg-white px-4 py-3"><p className="text-xs text-[var(--muted)]">超过阈值用户</p><p className="mt-1 text-xl font-semibold tabular-nums">{loading ? "…" : overThreshold.length}</p></article>
@@ -828,7 +744,7 @@ function UsersPanel({
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!window.confirm(`确定清理用户 ${user.display_name || user.username}（ID ${user.id}）的全部登录会话？该用户所有设备将被登出。`)) return;
+                        if (!(await lfnConfirm(`确定清理用户 ${user.display_name || user.username}（ID ${user.id}）的全部登录会话？该用户所有设备将被登出。`))) return;
                         setMessage("");
                         try {
                           const response = await fetch("/api/admin/sessions", {
@@ -1081,7 +997,7 @@ function EditUserDialog({
           {localAuth && (
             <div className="grid grid-cols-2 gap-3">
               <label className="block font-semibold">角色
-                <select 
+                <LfnSelect
                   value={role} 
                   onChange={(e) => setRole(e.target.value)}
                   className="field mt-1.5 h-10 w-full px-3 text-sm"
@@ -1089,17 +1005,17 @@ function EditUserDialog({
                   <option value="1">用户</option>
                   <option value="10">管理员</option>
                   <option value="100">Root</option>
-                </select>
+                </LfnSelect>
               </label>
               <label className="block font-semibold">状态
-                <select 
+                <LfnSelect
                   value={status} 
                   onChange={(e) => setStatus(e.target.value)}
                   className="field mt-1.5 h-10 w-full px-3 text-sm"
                 >
                   <option value="1">正常</option>
                   <option value="0">停用</option>
-                </select>
+                </LfnSelect>
               </label>
             </div>
           )}
@@ -1137,11 +1053,6 @@ function CreditsPanel({
 }) {
   const [items, setItems] = useState<CreditRow[]>([]);
   const [keyword, setKeyword] = useState("");
-  const [detail, setDetail] = useState<CreditDetail | null>(null);
-  const [personalDelta, setPersonalDelta] = useState("0");
-  const [packageDelta, setPackageDelta] = useState("0");
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async (search: string) => {
     try {
@@ -1161,58 +1072,6 @@ function CreditsPanel({
   useEffect(() => {
     void Promise.resolve().then(() => load(""));
   }, [load]);
-
-  async function openLedger(userId: number) {
-    const response = await fetch(`/api/admin/credits?userId=${userId}`, { cache: "no-store" });
-    const result = await response.json();
-    if (!response.ok) {
-      setMessage(result.message || "账本读取失败");
-      return;
-    }
-    setDetail(result.item);
-    setPersonalDelta("0");
-    setPackageDelta("0");
-    setNote("");
-  }
-
-  async function adjust() {
-    if (!detail) return;
-    const personal = Number(personalDelta);
-    const pack = Number(packageDelta);
-    if (!Number.isFinite(personal) || !Number.isFinite(pack) || !Number.isInteger(personal * 2) || !Number.isInteger(pack * 2)) {
-      setMessage("调整金额必须为 0.5 的倍数");
-      return;
-    }
-    setSaving(true);
-    try {
-      const response = await fetch("/api/admin/credits/adjust", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: detail.userId,
-          personalDelta: personal,
-          packageDelta: pack,
-          description: note,
-        }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        setMessage(result.message || "调整失败");
-        return;
-      }
-      setDetail({
-        ...result.item,
-        username: detail.username,
-        displayName: detail.displayName,
-      });
-      setMessage(`用户 ${detail.userId} 额度已更新`);
-      load(keyword);
-    } catch {
-      setMessage("调整失败");
-    } finally {
-      setSaving(false);
-    }
-  }
 
   return (
     <div className="space-y-4">
@@ -1252,9 +1111,12 @@ function CreditsPanel({
                 <td className="px-3 py-2.5 tabular-nums">{item.totalBalance}</td>
                 <td className="px-3 py-2.5 font-mono text-xs tabular-nums">{item.usage?.requests5h ?? 0} / {item.usage?.requests7d ?? 0} / {item.usage?.requests30d ?? 0}</td>
                 <td className="px-3 py-2.5">
-                  <button type="button" onClick={() => openLedger(item.userId)} className="text-xs font-semibold text-[var(--rose)] hover:underline">
+                  <Link href={`/admin/credits/users/${item.userId}/ledger`} className="text-xs font-semibold text-[var(--rose)] hover:underline">
                     流水
-                  </button>
+                  </Link>
+                  <Link href={`/admin/credits/users/${item.userId}/ledger#ips`} className="text-xs font-semibold text-[var(--rose)] hover:underline">
+                    IP
+                  </Link>
                 </td>
               </tr>
             ))}
@@ -1266,61 +1128,6 @@ function CreditsPanel({
           </tbody>
         </table>
       </div>
-      {detail && (
-        <div className="fixed inset-0 z-[30000] grid place-items-center bg-[#202328]/45 p-4" onClick={() => setDetail(null)}>
-          <div className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-[var(--line)] bg-[#fffefa]" onClick={(event) => event.stopPropagation()}>
-            <div className="flex items-center justify-between border-b border-[var(--line)] bg-[#f5f3ed] px-5 py-4">
-              <div className="flex items-center gap-2">
-                <Coins size={16} className="text-[var(--rose)]" />
-                <b>用户 {detail.displayName || detail.username || detail.userId} 账本</b>
-              </div>
-              <button type="button" onClick={() => setDetail(null)} className="text-sm text-[var(--muted)]">关闭</button>
-            </div>
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 text-sm">
-              <p className="text-xs text-[var(--muted)]">
-                个人 {detail.balance} · 图包 {detail.packageBalance} · 合计 {detail.totalBalance}
-              </p>
-              <div className="rounded border border-[var(--line)] bg-white p-3 text-xs">
-                <p className="font-semibold">入账来源累计</p>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[var(--muted)]">
-                  {Object.entries(detail.sourceTotals || {}).filter(([, amount]) => amount > 0).map(([origin, amount]) => <span key={origin}>{origin}: {amount} AFF</span>)}
-                  {!Object.values(detail.sourceTotals || {}).some((amount) => amount > 0) && <span>旧流水来源未分类；新增流水开始累计</span>}
-                </div>
-                <p className="mt-2 text-[var(--muted)]">调用数：5 小时 {detail.usage?.requests5h ?? 0} · 7 天 {detail.usage?.requests7d ?? 0} · 30 天 {detail.usage?.requests30d ?? 0}；保留记录 {detail.usage?.retainedRecords ?? 0} 条</p>
-                <p className="mt-1 text-[var(--muted)]">此处仅统计 LFN 个人/图包 AFF。NewAPI quota 是独立上游余额，不计入 AFF 来源。</p>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block font-semibold">个人{creditLabel(capabilities)}调整
-                  <input value={personalDelta} onChange={(event) => setPersonalDelta(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
-                </label>
-                <label className="block font-semibold">{packageLabel(capabilities)}调整
-                  <input value={packageDelta} onChange={(event) => setPackageDelta(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" />
-                </label>
-              </div>
-              <label className="block font-semibold">备注
-                <input value={note} onChange={(event) => setNote(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm" placeholder="可选" />
-              </label>
-              <button type="button" disabled={saving} onClick={adjust} className="h-9 rounded bg-[var(--rose)] px-4 text-sm font-semibold text-white disabled:opacity-60">
-                {saving ? "写入中…" : "写入调整"}
-              </button>
-              <div className="space-y-2">
-                {(detail.transactions || []).map((item) => (
-                  <div key={item.id} className="rounded border border-[var(--line)] bg-white px-3 py-2">
-                    <div className="flex items-center justify-between gap-3 text-xs">
-                      <b className={item.amount >= 0 ? "text-[var(--mint)]" : "text-[var(--rose)]"}>
-                        {item.amount >= 0 ? "+" : ""}{item.amount}
-                      </b>
-                      <time className="text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</time>
-                    </div>
-                    <p className="mt-1 text-xs text-[var(--muted)]">{item.description} · {item.type}{item.source ? ` · ${item.source}` : ""}{item.origin ? ` · ${item.origin}` : ""}</p>
-                  </div>
-                ))}
-                {!detail.transactions?.length && <p className="py-6 text-center text-xs text-[var(--muted)]">暂无流水</p>}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1396,7 +1203,7 @@ function CreditsPanel({
   }
 
   async function remove(id: string) {
-    if (!window.confirm("确定下架这件作品？图片文件会一并删除。")) return;
+    if (!(await lfnConfirm("确定下架这件作品？图片文件会一并删除。"))) return;
     const response = await fetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
     const result = await response.json();
     if (!response.ok) {
@@ -1537,61 +1344,7 @@ function AuditsPanel() {
   );
 }
 
-function ReferralsPanel() {
-  const [items, setItems] = useState<ReferralRow[]>([]);
-  const [reward, setReward] = useState(100);
 
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.resolve().then(async () => {
-      const response = await fetch("/api/admin/referrals", { cache: "no-store" });
-      const result = await response.json();
-      if (cancelled || !response.ok) return;
-      setItems(result.items || []);
-      if (typeof result.reward === "number") setReward(result.reward);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-[var(--muted)]">邀请双方各得 {reward} 创作额度。这里可查看邀请码和每次注册的来源路径、请求 ID；IP 仅保存为不可逆摘要。</p>
-      <div className="overflow-x-auto rounded-lg border border-[var(--line)] bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[var(--line)] bg-[#f5f3ed] text-left text-xs text-[var(--muted)]">
-              <th className="px-3 py-2.5">邀请人</th>
-              <th className="px-3 py-2.5">邀请码</th>
-              <th className="px-3 py-2.5">已注册</th>
-              <th className="px-3 py-2.5">溯源记录</th>
-              <th className="px-3 py-2.5">创建时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.code} className="border-b border-[var(--line)] last:border-0">
-                <td className="px-3 py-2.5">{item.inviterName || item.inviterUserId}</td>
-                <td className="px-3 py-2.5 font-mono text-xs">{item.code}</td>
-                <td className="px-3 py-2.5 tabular-nums">{item.invitedCount}</td>
-                <td className="max-w-[28rem] px-3 py-2.5 text-xs text-[var(--muted)]">
-                  {item.registrations?.length ? item.registrations.map((entry) => `${entry.registeredUserId} · ${new Date(entry.registeredAt).toLocaleString("zh-CN")} · ${entry.landingPath || "-"} · ${entry.requestId || "-"}`).join("\n") : "-"}
-                </td>
-                <td className="px-3 py-2.5 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</td>
-              </tr>
-            ))}
-            {!items.length && (
-              <tr>
-                <td colSpan={5} className="px-3 py-10 text-center text-sm text-[var(--muted)]">暂无邀请记录</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 function AnnouncementsPanel({ setMessage }: { setMessage: (text: string) => void }) {
   const [items, setItems] = useState<AnnouncementItem[]>([]);
@@ -1650,7 +1403,7 @@ function AnnouncementsPanel({ setMessage }: { setMessage: (text: string) => void
   }
 
   async function remove(id: string) {
-    if (!window.confirm("确定删除这条公告？")) return;
+    if (!(await lfnConfirm("确定删除这条公告？"))) return;
     const response = await fetch(`/api/announcements/manage?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     const result = await response.json();
     if (!response.ok) {

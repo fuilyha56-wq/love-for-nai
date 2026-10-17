@@ -1,4 +1,6 @@
 "use client";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { AlertTriangle, BookOpen, ExternalLink, FilePlus2, Save, Send, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -179,7 +181,7 @@ export default function DocsPanel() {
 
   async function remove() {
     const item = selectedRef.current;
-    if (!item || item.builtIn || !window.confirm(`确定删除「${item.title}」？`)) return;
+    if (!item || item.builtIn || !(await lfnConfirm(`确定删除「${item.title}」？`))) return;
     const response = await fetch(`/api/admin/docs/${encodeURIComponent(item.id)}`, { method: "DELETE" });
     const result = (await response.json()) as { message?: string };
     if (!response.ok) { setMessage(result.message || "删除失败"); return; }

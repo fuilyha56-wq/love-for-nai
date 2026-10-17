@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { affCost, isInFreeEnvelope } from "@/lib/aff";
 import { gatewayAnlasCost, imageCreditCost } from "@/lib/image-pricing";
+import { CNY_PER_AFF, DEFAULT_DAILY_IMAGE_POLICY, quoteDailyImage } from "@/lib/daily-image-pricing";
 
 let dataDir = "";
 
@@ -71,14 +72,60 @@ describe("两档计费档内判定", () => {
 });
 
 describe("两档 AFF 计费", () => {
+  it("档内基础 AFF 不随图包兑换比例变化，人民币展示与扣款等值", () => {
+    const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 };
+    for (const cnyPerAff of [0.0025, 0.01]) {
+      expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, cnyPerAff, 0)).toMatchObject({ costAff: 4, costCny: 4 * cnyPerAff });
+      expect(quoteDailyImage({ ...generation, model: "nai-v4.5-full" }, DEFAULT_DAILY_IMAGE_POLICY, cnyPerAff, 0)).toMatchObject({ costAff: 1, costCny: cnyPerAff });
+    }
+  });
+
+  it("V5 第 51/101/201 张基础价分别应用 1.1/1.125/1.2 倍率", () => {
+    const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 };
+    for (const [startCount, expected] of [[49, 4], [50, 4.4], [100, 4.5], [200, 4.8]]) {
+      expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, 0.0025, startCount)?.costAff).toBe(expected);
+    }
+  });
+
+  it("V5 High 所有变体基础 4 AFF，Medium 保持 1 AFF", () => {
+    const generation = { width: 832, height: 1216, steps: 28, samples: 1 };
+    for (const model of ["nai-v5-full", "nai-v5-curated", "nai-v5-inpaint", "nai-v5-full-limit"]) {
+      expect(affCost({ ...generation, model })).toBe(4);
+      expect(quoteDailyImage({ ...generation, model }, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 0)).toMatchObject({ anlas: 0, costAff: 4, costCny: 0.02 });
+    }
+    expect(quoteDailyImage({ ...generation, model: "nai-v5-full-medium", steps: 14 }, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 0)?.costAff).toBe(1);
+  });
+
+  it("超范围 Anlas 按人民币换算，V5 单价为 V4.5 的 1.25 倍", () => {
+    const generation = { model: "nai-v4.5-full", width: 832, height: 1216, steps: 29, samples: 1 };
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 161, costCny: 0.805 });
+    expect(quoteDailyImage({ ...generation, model: "nai-v5-full" }, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas: 20, costAff: 204, costCny: 1.02 });
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 100)?.costAff).toBe(179);
+    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 200)?.costAff).toBe(182.4);
+  });
+
+  it("V4.5 LFN 阶梯在第 101/201 张添加人民币等值附加费", () => {
+    const generation = { model: "nai-v4.5-full", width: 832, height: 1216, steps: 28, samples: 1 };
+    for (const [startCount, expected] of [[99, 1], [100, 3], [199, 3], [200, 3.2]]) {
+      expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, startCount)?.costAff).toBe(expected);
+    }
+  });
+
+  it("V5 LFN 阶梯同时提高基础 AFF 和人民币换算的 Anlas 部分", () => {
+    const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1 };
+    for (const [startCount, expected] of [[49, 204], [50, 224.4], [100, 229.5], [200, 244.8]]) {
+      expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, startCount)?.costAff).toBe(expected);
+    }
+  });
+
   it("charges Medium one integer AFF per independently submitted image", () => {
     expect(affCost({ model: "nai-v5-full-medium", width: 1024, height: 1024, steps: 14, samples: 1 })).toBe(1);
     expect(affCost({ model: "nai-v5-inpaint-medium", width: 512, height: 512, steps: 14, samples: 1, operation: "inpainting" })).toBe(1);
   });
-  it("档内完整版与 -limit 同价：V5 1.5 AFF、V4.5 1 AFF", () => {
+  it("档内完整版与 -limit 同价：V5 4 AFF、V4.5 1 AFF", () => {
     expect(
       affCost({ model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 }),
-    ).toBe(1.5);
+    ).toBe(4);
     expect(
       affCost({ model: "nai-v4.5-full", width: 832, height: 1216, steps: 28, samples: 1 }),
     ).toBe(1);
@@ -92,7 +139,7 @@ describe("两档 AFF 计费", () => {
       model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1,
     });
     expect(outOfEnvelope).toBeGreaterThan(inEnvelope);
-    expect(outOfEnvelope).toBe(40);
+    expect(outOfEnvelope).toBe(29);
   });
 
   it("precise-reference 同步收取 Gateway 每参考图每样本 5 Anlas", () => {
@@ -106,7 +153,7 @@ describe("两档 AFF 计费", () => {
       referenceImageCount: 1,
     };
     expect(gatewayAnlasCost(generation)).toBe(100);
-    expect(affCost(generation)).toBe(100);
+    expect(affCost(generation)).toBe(70.5);
   });
 
   it("uncond_scale 同时进入 Gateway 对照值和 AFF 实际扣款", () => {
@@ -119,15 +166,15 @@ describe("两档 AFF 计费", () => {
       uncondScale: 2,
     };
     expect(gatewayAnlasCost(generation)).toBe(80);
-    expect(affCost(generation)).toBe(80);
+    expect(affCost(generation)).toBe(54);
   });
 
   it("图生图缺省强度按 0.7 本地计算，文生图带源图退出档内", () => {
     const base = { model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1 };
-    expect(affCost({ ...base, operation: "img2img" })).toBe(28);
+    expect(affCost({ ...base, operation: "img2img" })).toBe(21.5);
     expect(gatewayAnlasCost({ ...base, operation: "img2img" })).toBe(28);
-    expect(affCost({ ...base, operation: "img2img", strength: 1 })).toBe(40);
-    expect(affCost({ ...base, steps: 28, hasInputImage: true })).toBe(40);
+    expect(affCost({ ...base, operation: "img2img", strength: 1 })).toBe(29);
+    expect(affCost({ ...base, steps: 28, hasInputImage: true })).toBe(29);
   });
 
   it("未编码 Vibe 按首次编码价计费，编码复用不重复收取", () => {
@@ -154,23 +201,23 @@ describe("两档 AFF 计费", () => {
       operation: "vibe-transfer",
       referenceImageCount: 1,
     };
-    expect(affCost({ ...generation, sequential: true })).toBe(66);
-    expect(affCost(generation)).toBe(62);
+    expect(affCost({ ...generation, sequential: true })).toBe(69);
+    expect(affCost(generation)).toBe(65);
   });
 
   it("limit 超界不产生低价账单，独立单张按合法档内价收费", () => {
     expect(isInFreeEnvelope({ model: "nai-v5-full-limit", width: 1024, height: 1024, steps: 50, samples: 1 })).toBe(false);
     expect(isInFreeEnvelope({ model: "nai-v4.5-full-limit", width: 832, height: 1216, steps: 28, samples: 3 })).toBe(false);
-    expect(affCost({ model: "nai-v5-full-limit", width: 832, height: 1216, steps: 28, samples: 3, sequential: true })).toBe(4.5);
+    expect(affCost({ model: "nai-v5-full-limit", width: 832, height: 1216, steps: 28, samples: 3, sequential: true })).toBe(12);
   });
 
-  it("Director 使用固定价，固定模型单价与预估共享半点取整", () => {
+  it("Director 使用固定价，固定模型单价保持配置精度", () => {
     const base = { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 };
     expect(affCost({ ...base, operation: "director-lineart" })).toBe(5);
     expect(affCost({ ...base, operation: "director-bg-remover" })).toBe(65);
-    expect(imageCreditCost(base, 2.49)).toBe(2);
+    expect(imageCreditCost(base, 2.49)).toBe(2.49);
     expect(imageCreditCost({ ...base, samples: 3 }, 2.5)).toBe(7.5);
-    expect(imageCreditCost(base, 2.51)).toBe(3);
+    expect(imageCreditCost(base, 2.51)).toBe(2.51);
   });
 
   it("encode-vibe / upscale / annotate 按固定操作计费", () => {

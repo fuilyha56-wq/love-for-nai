@@ -1,0 +1,17 @@
+{
+  "provider": "ip2region",
+  "revision": "452713bdd24f39953b58f566dfca28cb3b904315",
+  "source": "https://github.com/lionsoul2014/ip2region",
+  "sourceUpdatedAt": "2026-10-13T10:21:07Z",
+  "downloadedAt": "2026-10-13T10:50:20.401319+00:00",
+  "files": {
+    "ip2region_v4.xdb": {
+      "bytes": 11122622,
+      "sha256": "61b1c8cd4a1e0935fc1d3bd915350cf38e34ab54e34c9146154956ce97bfa047"
+    },
+    "ip2region_v6.xdb": {
+      "bytes": 37277813,
+      "sha256": "939f6b46bd2b8bec3cf7c5ceb8ba782266ae9b1f35b5ba7916700dec0b7506ed"
+    }
+  }
+}

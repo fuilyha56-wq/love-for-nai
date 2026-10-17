@@ -2,6 +2,7 @@
 
 import { ChevronDown, History, MoreHorizontal, RefreshCw, Sparkles, WandSparkles, X } from "lucide-react";
 import { useState, type ReactNode, type RefObject } from "react";
+import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
 import "./mobile-studio-launcher.css";
 
 export type MobileStudioSheet = "prompt" | "reference" | "size" | "parameters" | "tools" | "history" | "assistant" | "session";
@@ -10,7 +11,19 @@ type MobileStudioPage = "history" | "generate" | "more";
 type Props = {
   promptSummary: string;
   model: string;
+  modelOptions?: SelectOption[];
+  modelSelectionValue?: string;
+  onModelChange?: (model: string) => void;
+  generationTier?: {
+    visible: boolean;
+    medium: boolean;
+    disabled: boolean;
+    canSelect: (effort: "high" | "medium") => boolean;
+    onChange: (effort: "high" | "medium") => void;
+  };
   operation: string;
+  operationId?: string;
+  generating?: boolean;
   isInpainting?: boolean;
   width: number;
   height: number;
@@ -37,19 +50,20 @@ const sheetTitles: Record<MobileStudioSheet, string> = {
   tools: "更多工具", history: "历史记录", assistant: "标签助手", session: "账户与会话",
 };
 
-export function MobileStudioLauncher({ promptSummary, model, operation, isInpainting = false, width, height, hasResults, resultContent, historyContent, moreContent, promptContent, onRefreshHistory, onSelectOperation, onOpenSheet, sheet, onCloseSheet, sheetRef, sheetContent, footerContent, referenceContent }: Props) {
+export function MobileStudioLauncher({ promptSummary, model, modelOptions = [], modelSelectionValue = model, onModelChange = () => undefined, generationTier, operation, operationId = "generate", generating = false, isInpainting = false, width, height, hasResults, resultContent, historyContent, moreContent, promptContent, onRefreshHistory, onSelectOperation, onOpenSheet, sheet, onCloseSheet, sheetRef, sheetContent, footerContent, referenceContent }: Props) {
   const [page, setPage] = useState<MobileStudioPage>("generate");
   const [promptOpen, setPromptOpen] = useState(false);
   const status = hasResults ? `最近结果 · ${width}×${height}` : "准备开始创作";
   const sheetFromLeft = sheet === "reference" || sheet === "size" || sheet === "tools" || sheet === "assistant";
   const generatePage = <>
     <header className="mobile-studio-workbar">
-      <div className="mobile-studio-workbar-title"><b>创作</b><small>{operation} · {model || "选择模型"}</small></div>
+      <div className="mobile-studio-workbar-title"><b>创作</b><small>{model || "选择模型"}</small></div>
       <button type="button" className="mobile-studio-assistant-button" aria-label="打开标签助手" onClick={() => onOpenSheet("assistant")}><WandSparkles size={20} /></button>
     </header>
+    <div className={`mobile-studio-current-mode${operationId !== "generate" ? " is-edit-mode" : ""}`} role="group" aria-label="当前生成模式" data-current-operation={operationId}><strong aria-live="polite" aria-atomic="true"><Sparkles size={14} aria-hidden="true" />当前：{operation}</strong>{operationId !== "generate" && <button type="button" disabled={generating} onClick={() => onSelectOperation?.("generate")}>切回文生图</button>}</div>
     <div className="mobile-studio-mode-tabs" role="tablist" aria-label="生成模式">
-      <button type="button" role="tab" aria-selected={!isInpainting} onClick={() => onSelectOperation?.("generate")}>文生图</button>
-      <button type="button" role="tab" aria-selected={isInpainting} onClick={() => onSelectOperation?.("inpainting")}>局部重绘</button>
+      <button type="button" role="tab" aria-selected={operationId === "generate"} disabled={generating} onClick={() => onSelectOperation?.("generate")}>文生图</button>
+      <button type="button" role="tab" aria-selected={isInpainting} disabled={generating} onClick={() => onSelectOperation?.("inpainting")}>局部重绘</button>
     </div>
     <div className={`mobile-studio-generate-scroll${isInpainting ? " is-inpainting" : ""}`}>
       <section className="mobile-studio-preview-section" aria-label="生成结果预览">
@@ -57,10 +71,36 @@ export function MobileStudioLauncher({ promptSummary, model, operation, isInpain
       </section>
       <section className={`mobile-studio-prompt-section${promptOpen ? " is-open" : " is-compact"}`} aria-label="提示词区域">
         {promptOpen && <div className="mobile-studio-prompt-content">{promptContent}</div>}
-        <button className="mobile-studio-prompt-entry" type="button" aria-expanded={promptOpen} onClick={() => setPromptOpen((open) => !open)}>
-          <span><b>{isInpainting ? "局部重绘提示词" : "提示词"}</b><small>{promptSummary || "输入提示词开始创作"}</small></span>
-          <ChevronDown className={promptOpen ? "is-open" : undefined} size={17} aria-hidden="true" />
-        </button>
+        <div className="mobile-studio-prompt-entry">
+          <button className="mobile-studio-prompt-toggle" type="button" aria-expanded={promptOpen} onClick={() => setPromptOpen((open) => !open)}>
+            <span><b>{isInpainting ? "局部重绘提示词" : "提示词"}</b><small>{promptSummary || "输入提示词开始创作"}</small></span>
+            <ChevronDown className={promptOpen ? "is-open" : undefined} size={17} aria-hidden="true" />
+          </button>
+          <div className="mobile-studio-model-controls" aria-label="模型与生成档位">
+            <PopupSelect
+              value={modelSelectionValue}
+              options={modelOptions}
+              onChange={onModelChange}
+              ariaLabel="模型"
+              searchable
+              searchPlaceholder="搜索模型"
+              emptyText="暂无可用模型"
+            />
+            {generationTier?.visible && <div className="mobile-studio-tier-buttons" role="group" aria-label="生成档位">
+              {(["high", "medium"] as const).map((effort) => (
+                <button
+                  key={effort}
+                  type="button"
+                  aria-pressed={(effort === "medium") === generationTier.medium}
+                  disabled={generationTier.disabled || !generationTier.canSelect(effort)}
+                  onClick={() => generationTier.onChange(effort)}
+                >
+                  {effort === "medium" ? "Medium" : "High"}
+                </button>
+              ))}
+            </div>}
+          </div>
+        </div>
       </section>
       <section className="mobile-studio-reference-panel" aria-label="参考图与编辑工具">{referenceContent}</section>
     </div>

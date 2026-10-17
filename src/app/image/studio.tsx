@@ -1,9 +1,15 @@
 "use client";
+import "./studio-mode-indicator.css";
+import { LfnSelect } from "@/app/ui/lfn-select";
+import { dailyImageDay, dailyImageFamily, quoteDailyImage, type DailyImageBillingState } from "@/lib/daily-image-pricing";
+import { lfnConfirm, lfnPrompt } from "@/app/ui/lfn-dialog";
+import { copyTextToClipboard } from "@/lib/client-clipboard";
+
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
-import { inpaintModelFor } from "@/lib/inpaint-model";
+import { generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
 import { parseImageHistoryMetadata, saveEditorComposite } from "@/lib/editor-composite-history";
 import type { GenerationParameters } from "@/lib/history";
 import {
@@ -185,6 +191,7 @@ import {
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
+  upscaleBillingModel,
   type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
 
@@ -197,6 +204,7 @@ type Aff = {
 };
 
 type WalletState = {
+  dailyBilling?: DailyImageBillingState;
   aff?: Aff & { enabled?: boolean };
   imagePackage?: {
     balance: number;
@@ -360,7 +368,7 @@ const schedules: SelectOption[] = [
   { value: "polyexponential", label: "多项式指数" },
 ];
 const modes: Array<{ id: Operation; label: string }> = [
-  { id: "generate", label: "生成" },
+  { id: "generate", label: "文生图" },
   { id: "img2img", label: "图生图" },
   { id: "inpainting", label: "局部重绘" },
   { id: "edits", label: "蒙版编辑" },
@@ -604,6 +612,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [operation, setOperation] = useState<Operation>("generate");
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
+  const generationModelBeforeInpaint = useRef<string | null>(null);
   const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
   const [modelPolicyReady, setModelPolicyReady] = useState(false);
   const [providerId, setProviderId] = useState("newapi");
@@ -694,6 +703,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [navRailExpanded, setNavRailExpanded] = useState(false);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
   const [inlineChatMenu, setInlineChatMenu] = useState<{
+    textarea: HTMLTextAreaElement;
     position: { x: number; y: number };
     anchor: { top: number; left: number; width: number };
     target: InlineChatTarget;
@@ -1178,7 +1188,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     setUpscaleSource(null);
     if (nextOperation === "inpainting" || nextOperation === "edits") {
       const inpaintModel = inpaintModelFor(model, imageProtocol);
-      if (inpaintModel) setModel(inpaintModel);
+      if (inpaintModel && inpaintModel !== model && modelOptions.some((item) => item.value === inpaintModel)) { generationModelBeforeInpaint.current = model; setModel(inpaintModel); }
     }
     setOperation(nextOperation);
     setSelectedImageIndex(0);
@@ -1192,9 +1202,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       applyImageAsSource(images[0], nextOperation);
       return;
     }
+    // Base-only NewAPI catalogs use the native request's infill mapping.
     if (nextOperation === "inpainting" || nextOperation === "edits") {
       const inpaintModel = inpaintModelFor(model, imageProtocol);
-      if (inpaintModel) setModel(inpaintModel);
+      if (inpaintModel && inpaintModel !== model && modelOptions.some((item) => item.value === inpaintModel)) { generationModelBeforeInpaint.current = model; setModel(inpaintModel); }
+    } else if (nextOperation === "generate" || nextOperation === "img2img") {
+      const baseModel = generationModelFor(model);
+      if (baseModel !== model) {
+        const previous = generationModelBeforeInpaint.current;
+        setModel(previous && inpaintModelFor(previous, imageProtocol) === model ? previous : baseModel);
+      }
+      generationModelBeforeInpaint.current = null;
     }
     setOperation(nextOperation);
     setNotice("");
@@ -1388,20 +1406,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
   }
 
-  // 内联聊天：文本域右键（有选中且已登录）弹出 AI 操作菜单；对话框锚定文本域下方。
+  // Clipboard actions also work with a caret and without an authenticated AI session.
   function openInlineChatMenu(
     event: React.MouseEvent<HTMLTextAreaElement>,
     target: InlineChatTarget,
   ) {
-    if (!signedIn) return;
     const textarea = event.currentTarget;
     const start = textarea.selectionStart ?? 0;
     const end = textarea.selectionEnd ?? 0;
-    // 无选中时走浏览器默认菜单。
-    if (start >= end) return;
     event.preventDefault();
     const rect = textarea.getBoundingClientRect();
     setInlineChatMenu({
+      textarea,
       position: { x: event.clientX, y: event.clientY },
       anchor: {
         top: rect.bottom + 6,
@@ -1416,7 +1432,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function pickInlineChatMenuItem(item: InlineChatMenuItem) {
-    if (!inlineChatMenu) return;
+    if (!inlineChatMenu || !signedIn || !inlineChatMenu.selection.text) return;
     const menu = inlineChatMenu;
     setInlineChatMenu(null);
     setInlineChat({
@@ -1433,9 +1449,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   function keepInlineChatResult(text: string) {
     const session = inlineChat;
     if (!session) return;
-    const { start, end } = session.selection;
+    replaceInlineSelection(session.target,session.selection,text);
+  }
+
+  function replaceInlineSelection(target: InlineChatTarget, selection: {start:number;end:number}, text: string) {
+    const { start, end } = selection;
     const apply = (value: string) => value.slice(0, start) + text + value.slice(end);
-    const target = session.target;
     if (target.kind === "prompt") setPrompt(apply);
     else if (target.kind === "negative") setNegative(apply);
     else if (target.characterId)
@@ -1448,6 +1467,30 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             : item,
         ),
       );
+  }
+
+  async function copyInlineSelection() {
+    const menu=inlineChatMenu;if(!menu?.selection.text)return;
+    setInlineChatMenu(null);
+    try {await copyTextToClipboard(menu.selection.text);setNotice("已复制所选内容");}
+    catch(error){setNotice(error instanceof Error?error.message:"复制失败");}
+    menu.textarea.focus({preventScroll:true});
+    menu.textarea.setSelectionRange(menu.selection.start,menu.selection.end);
+  }
+
+  async function pasteInlineSelection() {
+    const menu=inlineChatMenu;if(!menu)return;
+    setInlineChatMenu(null);
+    let text:string|null=null;
+    if(navigator.clipboard?.readText) {
+      try {text=await navigator.clipboard.readText();}catch { /* HTTP/permission fallback uses the LFN dialog */ }
+    }
+    if(text===null)text=await lfnPrompt("在下方粘贴文本（Ctrl+V / 手机长按粘贴），确认后写入当前光标或替换所选内容。","",{title:"粘贴文本",multiline:true});
+    if(text===null || text.length===0)return;
+    replaceInlineSelection(menu.target,menu.selection,text);
+    const caret=menu.selection.start+text.length;
+    requestAnimationFrame(()=>{if(menu.textarea.isConnected){menu.textarea.focus({preventScroll:true});menu.textarea.setSelectionRange(caret,caret);}});
+    setNotice("已粘贴文本");
   }
 
   useLayoutEffect(() => {
@@ -1798,22 +1841,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
   const signedIn = authenticated && sessionValid;
-  const explicitLogoutStarted = useRef(false);
 
-  // 页面被关闭或跨站离开时尽力撤销上游会话；显式登出走下面的 fetch，
-  // 先标记后不会再重复发送 beacon。sendBeacon 失败不影响页面离开。
-  useEffect(() => {
-    if (!signedIn) return;
-    const onPageHide = () => {
-      if (explicitLogoutStarted.current || !navigator.sendBeacon) return;
-      navigator.sendBeacon(
-        "/api/auth/logout",
-        new Blob(["{}"], { type: "application/json" }),
-      );
-    };
-    window.addEventListener("pagehide", onPageHide);
-    return () => window.removeEventListener("pagehide", onPageHide);
-  }, [signedIn]);
+  // Navigation and refresh preserve the login. Idle upstream sessions are
+  // revoked by the server's activity based cleanup; explicit logout stays below.
 
   useEffect(() => {
     const controller = new AbortController();
@@ -2232,7 +2262,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         cancelled = true;
       };
     }
-    fetch(`/api/pricing?model=${encodeURIComponent(model)}`, { cache: "no-store" })
+    const pricingModel = operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model;
+    fetch(`/api/pricing?model=${encodeURIComponent(pricingModel)}`, { cache: "no-store" })
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.message);
@@ -2244,7 +2275,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return () => {
       cancelled = true;
     };
-  }, [signedIn, providerId, model]);
+  }, [signedIn, providerId, model, operation, naturalImageModel, upscaleModel]);
 
   async function clearConversationHistory() {
     const response = await fetch("/api/assistant/tags", { method: "DELETE" });
@@ -2996,6 +3027,48 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>
   );
 
+  function selectImageModel(next: string) {
+    setModel(next);
+    const caps = resolveImageModelCapabilities(next, imageProtocol);
+    if (!caps.operations.includes(operation)) setOperation("generate");
+    if (caps.sizes.length) {
+      const [nextWidth, nextHeight] = nearestImageSize(width, height, caps.sizes).split("x").map(Number);
+      setWidth(nextWidth);
+      setHeight(nextHeight);
+    }
+  }
+
+  function generationEffortTarget(effort: "high" | "medium") {
+    return effort === "medium"
+      ? (model.includes("inpaint") ? "nai-v5-inpaint-medium" : "nai-v5-full-medium")
+      : highEffortSettings.current && model.includes("inpaint") === highEffortSettings.current.model.includes("inpaint")
+        ? highEffortSettings.current.model
+        : model.replace(/-medium$/, "");
+  }
+
+  function selectGenerationEffort(effort: "high" | "medium") {
+    const target = generationEffortTarget(effort);
+    if (!modelOptions.some((item) => item.value === target)) return;
+    if (effort === "medium" && !mediumEffort) {
+      highEffortSettings.current = { model, steps, sampler, cfgRescale, width, height, count };
+      const size = normalizeImageModelSize(target, width, height);
+      setWidth(size.width);
+      setHeight(size.height);
+      setSteps(14);
+      setSampler("k_euler_ancestral");
+      setCfgRescale(0);
+      setCount(1);
+    } else if (effort === "high" && highEffortSettings.current) {
+      setSteps(highEffortSettings.current.steps);
+      setSampler(highEffortSettings.current.sampler);
+      setCfgRescale(highEffortSettings.current.cfgRescale);
+      setWidth(highEffortSettings.current.width);
+      setHeight(highEffortSettings.current.height);
+      setCount(highEffortSettings.current.count);
+    }
+    setModel(target);
+  }
+
   const modelModeControls = (
     <div className="studio-model-controls space-y-3">
       <div className="nai-model-mode-row">
@@ -3023,12 +3096,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           <PopupSelect
             value={modelSelectionOptions.some((item) => item.value === modelSelectionValue) ? modelSelectionValue : ""}
             options={modelSelectionOptions}
-            onChange={(next) => {
-              setModel(next);
-              const caps = resolveImageModelCapabilities(next, imageProtocol);
-              if (!caps.operations.includes(operation)) setOperation("generate");
-              if (caps.sizes.length) { const [w, h] = nearestImageSize(width, height, caps.sizes).split("x").map(Number); setWidth(w); setHeight(h); }
-            }}
+            onChange={selectImageModel}
             ariaLabel="模型"
             searchable
             searchPlaceholder="搜索模型"
@@ -3057,36 +3125,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       {(mediumEffort || /^nai-v5-(?:full|inpaint)(?:-limit)?$/.test(model)) && <Control label="生成档位">
         <div role="group" aria-label="生成档位" className="flex gap-1">
           {(["high", "medium"] as const).map((effort) => {
-            const target = effort === "medium"
-              ? (model.includes("inpaint") ? "nai-v5-inpaint-medium" : "nai-v5-full-medium")
-              : highEffortSettings.current && model.includes("inpaint") === highEffortSettings.current.model.includes("inpaint")
-                ? highEffortSettings.current.model : model.replace(/-medium$/, "");
             return <button
               key={effort}
               type="button"
               aria-pressed={(effort === "medium") === mediumEffort}
-              disabled={generating || !modelOptions.some((item) => item.value === target)}
+              disabled={generating || !modelOptions.some((item) => item.value === generationEffortTarget(effort))}
               className={`h-9 flex-1 rounded border px-2 text-xs ${((effort === "medium") === mediumEffort) ? "border-[var(--rose)] text-[var(--rose)]" : "border-[var(--line)]"}`}
-              onClick={() => {
-                if (effort === "medium" && !mediumEffort) {
-                  highEffortSettings.current = { model, steps, sampler, cfgRescale, width, height, count };
-                  const size = normalizeImageModelSize(target, width, height);
-                  setWidth(size.width);
-                  setHeight(size.height);
-                  setSteps(14);
-                  setSampler("k_euler_ancestral");
-                  setCfgRescale(0);
-                  setCount(1);
-                } else if (effort === "high" && highEffortSettings.current) {
-                  setSteps(highEffortSettings.current.steps);
-                  setSampler(highEffortSettings.current.sampler);
-                  setCfgRescale(highEffortSettings.current.cfgRescale);
-                  setWidth(highEffortSettings.current.width);
-                  setHeight(highEffortSettings.current.height);
-                  setCount(highEffortSettings.current.count);
-                }
-                setModel(target);
-              }}
+              onClick={() => selectGenerationEffort(effort)}
             >
               {effort === "medium" ? "低成本 · Medium" : "常规 · High"}
             </button>;
@@ -3513,7 +3558,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
               V5 扩散超分：输出固定为源图的 2 倍，仅接受 PNG。
               {upscaleSource
-                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，消耗 ${upscaleAnlasCost(upscaleSource.width, upscaleSource.height)} AFF。`
+                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，优先消耗 ${upscaleAnlasCost(upscaleSource.width, upscaleSource.height)} AFF；图包和个人 AFF 不足时使用站内余额。`
                 : "请先上传源图以确认费用档位。"}
               {upscaleSource &&
                 upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS && (
@@ -4070,11 +4115,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 管理员配置了固定 AFF 单价的模型优先按固定价 × 张数。
   const upscaleDims = operation === "upscale" ? upscaleSource : null;
   const affFixedCost =
-    typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
+    operation !== "upscale" && typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
       ? ((modelPricing as unknown as { affFixedCost: number }).affFixedCost)
       : null;
-  const estimatedAffCost =
-    imageCreditCost({
+  const affGeneration = {
           model,
           operation,
           width: upscaleDims ? upscaleDims.width : width,
@@ -4086,9 +4130,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
           encodedVibeCount: 0,
           characterPromptCount: activeCharacterCount,
-        }, affFixedCost);
-  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
-    model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
+        };
+  const dailyFamily = dailyImageFamily(affGeneration);
+  const dailyQuote = wallet?.dailyBilling && dailyFamily && affFixedCost == null
+    ? quoteDailyImage(affGeneration, wallet.dailyBilling.policy, wallet.dailyBilling.cnyPerAff, wallet.dailyBilling.day === dailyImageDay() ? wallet.dailyBilling.counts[dailyFamily] : 0)
+    : null;
+  const estimatedAffCost = dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost);
+  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel && !upscaleDims) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
+    model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: outputCount,
     characterPromptCount: activeCharacterCount,
@@ -4103,7 +4152,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       : 0,
   );
   const estimatedPackageCost = wallet?.aff?.enabled
-    ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages).packageCost
+    ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages, dailyQuote?.affCosts).packageCost
     : 0;
   const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
   const canUseAffEstimate = Boolean(
@@ -4124,13 +4173,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       </div>
       <label className="mt-2 flex items-center justify-between gap-2 rounded border border-[var(--line)] bg-[var(--surface-muted)] px-2 py-1.5 text-[10px] text-[var(--muted)]">
         <span>图片历史保存</span>
-        <select className="bg-transparent text-[10px] font-semibold text-[var(--ink)] outline-none" value={imageHistoryMode} onChange={(event) => {
+        <LfnSelect className="bg-transparent text-[10px] font-semibold text-[var(--ink)] outline-none" value={imageHistoryMode} onChange={(event) => {
           const next = event.target.value as ImageHistoryMode;
           setImageHistoryMode(next);
           try { window.localStorage.setItem("lfn-image-history-mode-v1", next); window.dispatchEvent(new CustomEvent("lfn-image-history-mode", { detail: next })); } catch { setNotice("无法保存图片历史设置，请检查浏览器存储权限。"); }
         }} aria-label="图片历史保存方式">
           <option value="account">保存到 LFN</option><option value="local">仅保存本机</option><option value="none">不保存</option>
-        </select>
+        </LfnSelect>
       </label>
       <div className="session-history-list">
         {sessionHistory.length ? sessionHistory.map((item) => (
@@ -4187,11 +4236,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       if (
-                        window.confirm(
+                        (await lfnConfirm(
                           "确定清空助手对话记录？历史轮次与累积标签都会删除。",
-                        )
+                        ))
                       )
                         void clearConversationHistory();
                     }}
@@ -4608,7 +4657,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <button
                 type="button"
                 onClick={async () => {
-                  explicitLogoutStarted.current = true;
                   await fetch("/api/auth/logout", { method: "POST" });
                   router.push("/sign-in");
                   router.refresh();
@@ -4735,7 +4783,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         setOperation(nextOperation as Operation);
         if (nextOperation === "inpainting" || nextOperation === "edits") {
           const inpaintModel = inpaintModelFor(model, imageProtocol);
-          if (inpaintModel) setModel(inpaintModel);
+          if (inpaintModel && inpaintModel !== model && modelOptions.some((item) => item.value === inpaintModel)) { generationModelBeforeInpaint.current = model; setModel(inpaintModel); }
         }
         if (nextOperation === "suggest-tags") setAgentImage(reader.result);
         setNotice("已载入图片。");
@@ -4841,7 +4889,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       data-aaalice-dock={aaaliceDock ? "true" : undefined}
       data-has-images={displayedImages.length > 0 ? "true" : "false"}
       data-left-collapsed={nlwLayout && nlwLeftCollapsed ? "true" : undefined}
-      className="flex h-[100dvh] min-h-[560px] flex-col overflow-hidden bg-[var(--paper)]"
+      className="flex h-[100dvh] min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden bg-[var(--paper)]"
     >
       {(!replicaLayout || mobileViewportReady) && (
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
@@ -4865,8 +4913,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <Code2 size={16} />
             </a>
             <a
-              title="打开 NewAPI 控制台"
-              href="http://47.108.250.118:3000/"
+              title="打开账号中心"
+              href="/profile"
               target="_blank"
               rel="noreferrer"
               className="hidden h-9 w-9 place-items-center rounded border border-[var(--line)] bg-white sm:grid"
@@ -5026,7 +5074,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <MobileStudioLauncher
               promptSummary={prompt.trim().split("\\n")[0]?.slice(0, 56) || ""}
               model={modelOptions.find(item => item.value === model)?.label || model}
-              operation={modes.find(item => item.id === operation)?.label || "生成"}
+              modelOptions={modelSelectionOptions}
+              modelSelectionValue={modelSelectionOptions.some((item) => item.value === modelSelectionValue) ? modelSelectionValue : ""}
+              onModelChange={selectImageModel}
+              generationTier={{ visible: mediumEffort || /^nai-v5-(?:full|inpaint)(?:-limit)?$/.test(model), medium: mediumEffort, disabled: generating, canSelect: (effort) => modelOptions.some((item) => item.value === generationEffortTarget(effort)), onChange: selectGenerationEffort }}
+               operation={modes.find(item => item.id === operation)?.label || "文生图"}
+               operationId={operation}
+               generating={generating}
               width={width}
               height={height}
               isInpainting={operation === "inpainting"}
@@ -5152,9 +5206,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ))}
               </div>
             )}
-            <div className="studio-mode-badge pointer-events-none absolute left-4 top-3 z-10 rounded bg-[var(--paper)]/85 px-1.5 py-0.5 text-xs text-[var(--muted)]">
-              {modes.find((item) => item.id === operation)?.label} · {width}×
-              {height} · {count} 张
+            <div className={`studio-mode-badge${operation !== "generate" ? " is-edit-mode" : ""}`} role="group" aria-label="当前生成模式" data-current-operation={operation}>
+              <strong aria-live="polite" aria-atomic="true"><Sparkles size={14} aria-hidden="true" />当前：{modes.find((item) => item.id === operation)?.label || "文生图"}</strong>
+              <span>{width}×{height} · {count} 张</span>
+              {operation !== "generate" && <button type="button" disabled={generating} onClick={() => selectOperation("generate")}>切回文生图</button>}
             </div>
             {operation === "suggest-tags" && suggestedTags.length ? (
               <div className="flex max-w-3xl flex-wrap justify-center gap-2">
@@ -5345,6 +5400,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           position={inlineChatMenu.position}
           targetLabel={inlineChatMenu.target.label}
           onPick={pickInlineChatMenuItem}
+          onCopy={() => void copyInlineSelection()}
+          onPaste={() => void pasteInlineSelection()}
+          canCopy={Boolean(inlineChatMenu.selection.text)}
+          canUseAi={signedIn && Boolean(inlineChatMenu.selection.text)}
           onClose={() => setInlineChatMenu(null)}
         />,
         document.body,
@@ -5443,7 +5502,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 type="button"
                 className="nai-menu-item"
                 onClick={async () => {
-                  explicitLogoutStarted.current = true;
                   await fetch("/api/auth/logout", { method: "POST" });
                   router.push("/sign-in");
                   router.refresh();
@@ -5551,12 +5609,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <Code2 size={16} /> 源代码与 AGPL-3.0
             </a>
             <a
-              href="http://47.108.250.118:3000/"
+              href="/profile"
               target="_blank"
               rel="noreferrer"
               className="nai-menu-item"
             >
-              <ExternalLink size={16} /> NewAPI 控制台
+              <ExternalLink size={16} /> 账号中心
             </a>
 
             <p className="nai-menu-foot">

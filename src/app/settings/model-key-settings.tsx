@@ -1,4 +1,6 @@
 "use client";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import ProviderSettings from "./provider-settings";
 import TaggerSettings from "./tagger-settings";
@@ -257,7 +259,7 @@ export default function ModelKeySettings() {
   }
 
   async function remove(item: TokenItem) {
-    if (!window.confirm(`确认删除密钥“${item.name}”？`)) return;
+    if (!(await lfnConfirm(`确认删除密钥“${item.name}”？`))) return;
     setWorking(true);
     try {
       const response = await fetch(`/api/keys?id=${item.id}`, { method: "DELETE" });

@@ -1,4 +1,7 @@
 "use client";
+import { LfnSelect } from "@/app/ui/lfn-select";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { useEffect, useState } from "react";
 import { BookOpen, KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
@@ -60,7 +63,7 @@ export default function StoryProviderSettings() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("删除此模型源？使用它的故事需要重新选择模型。")) return;
+    if (!(await lfnConfirm("删除此模型源？使用它的故事需要重新选择模型。"))) return;
     setBusy(true); setMessage("");
     try {
       const response = await fetch(`/api/story-providers?id=${encodeURIComponent(id)}`, { method: "DELETE" });
@@ -96,14 +99,14 @@ export default function StoryProviderSettings() {
         <form onSubmit={(event) => void submit(event)} className="min-w-0 space-y-3 border-t border-[var(--line)] pt-4">
           <div className="flex items-center gap-2"><Plus size={16} className="text-[var(--rose)]" /><b className="text-sm">{editingId ? "编辑模型源" : "导入模型源"}</b></div>
           <label className="block text-xs font-semibold">来源
-            <select value={kind} onChange={(event) => { setKind(event.target.value as "openai" | "novelai"); setModel(event.target.value === "novelai" ? "llama-3-erato-v1" : ""); }} className="field mt-1 w-full px-3 py-2 text-sm">
+            <LfnSelect value={kind} onChange={(event) => { setKind(event.target.value as "openai" | "novelai"); setModel(event.target.value === "novelai" ? "llama-3-erato-v1" : ""); }} className="field mt-1 w-full px-3 py-2 text-sm">
               <option value="openai">OpenAI 兼容 API</option><option value="novelai">NovelAI 官方持久 Key</option>
-            </select>
+            </LfnSelect>
           </label>
           <label className="block text-xs font-semibold">显示名称<input required maxLength={60} value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === "novelai" ? "我的 NovelAI Key" : "我的文本模型"} className="field mt-1 w-full px-3 py-2 text-sm" /></label>
           {kind === "openai" && <label className="block text-xs font-semibold">API Base URL<input required type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" className="field mt-1 w-full px-3 py-2 text-sm" /></label>}
           <label className="block text-xs font-semibold">模型 ID
-            {kind === "novelai" ? <select value={model} onChange={(event) => setModel(event.target.value)} className="field mt-1 w-full px-3 py-2 text-sm"><option value="llama-3-erato-v1">Erato</option><option value="kayra-v1">Kayra</option></select> : <input required maxLength={120} value={model} onChange={(event) => setModel(event.target.value)} placeholder="上游真实模型 ID" className="field mt-1 w-full px-3 py-2 text-sm" />}
+            {kind === "novelai" ? <LfnSelect value={model} onChange={(event) => setModel(event.target.value)} className="field mt-1 w-full px-3 py-2 text-sm"><option value="llama-3-erato-v1">Erato</option><option value="kayra-v1">Kayra</option></LfnSelect> : <input required maxLength={120} value={model} onChange={(event) => setModel(event.target.value)} placeholder="上游真实模型 ID" className="field mt-1 w-full px-3 py-2 text-sm" />}
           </label>
           <label className="block text-xs font-semibold">{kind === "novelai" ? "NovelAI 持久 Key" : "API Key"}
             <input required={!editingId} type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} placeholder={editingId ? "留空则保留原密钥" : "输入密钥"} className="field mt-1 w-full px-3 py-2 text-sm" />

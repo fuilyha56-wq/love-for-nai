@@ -50,9 +50,17 @@ export type ReferralRiskComponent = {
     inviterUserId: number;
     registeredUserId: number;
     registeredAt?: string;
+    code?: string;
+    invitationLink?: string;
+    landingPath?: string;
+    referer?: string;
+    requestId?: string;
   }>;
   maxDepth: number;
   cycleDetected: boolean;
+  contextUserIds?: number[];
+  contextEdges?: ReferralRiskComponent["edges"];
+  truncated?: boolean;
 };
 
 type ReferralStore = { referrals: Referral[] };
@@ -224,17 +232,11 @@ export async function referralRiskComponent(
   maxDepth = 20,
 ): Promise<ReferralRiskComponent> {
   const referrals = (await readStore()).referrals;
-  const edges = referrals.flatMap((referral) => [
-    ...referral.registeredUserIds.map((registeredUserId) => ({
-      inviterUserId: referral.inviterUserId,
-      registeredUserId,
-    })),
-    ...(referral.registrations || []).map((registration) => ({
-      inviterUserId: registration.inviterUserId,
-      registeredUserId: registration.registeredUserId,
-      registeredAt: registration.registeredAt,
-    })),
-  ]);
+  const edges = referralGraphEdges(referrals);
+  maxDepth = Math.min(100, Math.max(1, Math.floor(maxDepth)));
+  const children = new Map<number, ReferralRiskComponent["edges"]>();
+  const parents = new Map<number, ReferralRiskComponent["edges"][number]>();
+  for (const edge of edges) { const list = children.get(edge.inviterUserId) || []; list.push(edge); children.set(edge.inviterUserId, list); parents.set(edge.registeredUserId, edge); }
   const ancestors: number[] = [];
   const descendants: number[] = [];
   const userIds = new Set<number>([rootUserId]);
@@ -242,7 +244,7 @@ export async function referralRiskComponent(
   let cycleDetected = false;
   let current = rootUserId;
   for (let depth = 0; depth < maxDepth; depth += 1) {
-    const edge = edges.find((item) => item.registeredUserId === current);
+    const edge = parents.get(current);
     if (!edge) break;
     if (seen.has(edge.inviterUserId)) {
       cycleDetected = true;
@@ -254,18 +256,34 @@ export async function referralRiskComponent(
     current = edge.inviterUserId;
   }
   const queue: Array<{ userId: number; depth: number }> = [{ userId: rootUserId, depth: 0 }];
-  while (queue.length) {
-    const currentItem = queue.shift()!;
+  let truncated = false;
+  for (let index = 0; index < queue.length; index += 1) {
+    const currentItem = queue[index];
     if (currentItem.depth >= maxDepth) continue;
-    for (const edge of edges.filter((item) => item.inviterUserId === currentItem.userId)) {
+    for (const edge of children.get(currentItem.userId) || []) {
       if (seen.has(edge.registeredUserId)) {
         cycleDetected = true;
         continue;
       }
+      if (userIds.size >= 1000) { truncated = true; break; }
       seen.add(edge.registeredUserId);
       descendants.push(edge.registeredUserId);
       userIds.add(edge.registeredUserId);
       queue.push({ userId: edge.registeredUserId, depth: currentItem.depth + 1 });
+    }
+  }
+  // Ancestor branches are visual context, kept separate from the action scope.
+  const contextIds = new Set(userIds);
+  const contextQueue = [{ userId: ancestors.at(-1) || rootUserId, depth: 0 }];
+  const contextSeen = new Set<number>();
+  for (let index = 0; index < contextQueue.length; index += 1) {
+    const node = contextQueue[index];
+    if (contextSeen.has(node.userId)) continue;
+    contextSeen.add(node.userId); contextIds.add(node.userId);
+    if (node.depth >= maxDepth) continue;
+    for (const edge of children.get(node.userId) || []) {
+      if (contextIds.size >= 1000 && !contextIds.has(edge.registeredUserId)) { truncated = true; continue; }
+      if (!contextSeen.has(edge.registeredUserId)) { contextIds.add(edge.registeredUserId); contextQueue.push({ userId: edge.registeredUserId, depth: node.depth + 1 }); }
     }
   }
   return {
@@ -276,5 +294,23 @@ export async function referralRiskComponent(
     edges: edges.filter((edge) => userIds.has(edge.inviterUserId) && userIds.has(edge.registeredUserId)),
     maxDepth,
     cycleDetected,
+    contextUserIds: [...contextIds],
+    contextEdges: edges.filter((edge) => contextIds.has(edge.inviterUserId) && contextIds.has(edge.registeredUserId)),
+    truncated,
   };
+}
+
+/** Both legacy ID lists and provenance records describe one invitation edge, not a cycle. */
+export function referralGraphEdges(referrals: Referral[]): ReferralRiskComponent["edges"] {
+  const byChild = new Map<number, ReferralRiskComponent["edges"][number]>();
+  for (const referral of referrals) {
+    const rows: ReferralRiskComponent["edges"] = [...referral.registeredUserIds.map((registeredUserId) => ({ inviterUserId: referral.inviterUserId, registeredUserId, code: referral.code })), ...(referral.registrations || [])];
+    for (const row of rows) {
+      if (!Number.isSafeInteger(row.registeredUserId) || row.registeredUserId <= 0) continue;
+      const existing = byChild.get(row.registeredUserId);
+      if (existing && existing.inviterUserId !== row.inviterUserId) continue;
+      byChild.set(row.registeredUserId, { ...existing, inviterUserId: row.inviterUserId, registeredUserId: row.registeredUserId, code: referral.code, ...("registeredAt" in row ? { registeredAt: row.registeredAt, invitationLink: row.invitationLink, landingPath: row.landingPath, referer: row.referer, requestId: row.requestId } : {}) });
+    }
+  }
+  return [...byChild.values()];
 }

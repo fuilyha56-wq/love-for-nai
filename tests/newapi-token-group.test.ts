@@ -41,7 +41,7 @@ function makeSession() {
 }
 
 function jsonResponse(payload: unknown, ok = true) {
-  return { ok, json: async () => payload, status: ok ? 200 : 400 };
+  return Response.json(payload, { status: ok ? 200 : 400 });
 }
 
 describe("模型密钥分组选择", () => {

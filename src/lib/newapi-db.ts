@@ -1,4 +1,5 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { getRiskSettings } from "./risk-settings";
 import { Pool } from "pg";
 import {
   getRuntimeSettings,
@@ -11,25 +12,25 @@ import {
 // 因此任何在 NewAPI 有效的密钥走 LFN 图像端点都能自动定位
 // 到对应的图包/个人 AFF 账本，用户不需要任何绑定操作。
 // 跨服务器部署（数据库不可直连）时改走管理 API 的 token 搜索做
-// HTTP 兜底识别；两者都不可用或 key 无效时返回 null，调用方退回
-// 透明代理（仅按 NewAPI 余额计费）。数据库配置存在但故障时抛错，
+// HTTP 兜底识别；两者都不可用或 key 无效时返回 null，LFN 严格计费入口拒绝
+// 转用其他钱包。数据库配置存在但故障时抛错，
 // 避免静默跳过图包扣费。
 
 export type ExternalApiIdentity = {
   userId: number | null;
   username: string | null;
   group: string | null;
+  allowedModels?: string[];
+  validUntil?: number;
 };
 
-type ApiKeyCacheEntry = ExternalApiIdentity & { expiresAt: number };
+type ApiKeyCacheEntry = ExternalApiIdentity & { expiresAt: number; validatedAt: number };
 
 const globalStore = globalThis as typeof globalThis & {
   __lfnNewApiDbPool?: Pool;
   __lfnApiKeyUserCache?: Map<string, ApiKeyCacheEntry>;
 };
 
-const CACHE_POSITIVE_MS = 60_000;
-const CACHE_NEGATIVE_MS = 15_000;
 const CACHE_MAX_KEYS = 2_000;
 
 function apiKeyCache(): Map<string, ApiKeyCacheEntry> {
@@ -64,6 +65,8 @@ type HttpTokenRow = {
   expired_time?: number | string;
   allow_ips?: string | null;
   group?: string | null;
+  model_limits_enabled?: boolean | number;
+  model_limits?: string;
 };
 
 // HTTP 兜底：数据库不可直连时，用管理令牌调 NewAPI 的 token 搜索接口，
@@ -116,13 +119,13 @@ async function resolveUserViaHttp(
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!userResponse.ok) return { userId, username: null, group };
+  if (!userResponse.ok) return { userId: null, username: null, group: null };
   const userPayload = (await userResponse.json()) as {
     data?: { status?: number | string; username?: string };
   };
-  if (Number(userPayload.data?.status) !== 1) return { userId, username: null, group };
+  if (Number(userPayload.data?.status) !== 1) return { userId: null, username: null, group: null };
   const username = userPayload.data?.username;
-  return { userId, username: username ? String(username) : null, group };
+  return { userId, username: username ? String(username) : null, group, validUntil: Number(match.expired_time) === -1 ? Infinity : Number(match.expired_time) * 1000, ...(match.model_limits_enabled ? { allowedModels: String(match.model_limits || "").split(",").map(s => s.trim()).filter(Boolean) } : {}) };
 }
 
 export function normalizeNewApiKey(authorization: string): string {
@@ -138,10 +141,12 @@ export async function resolveExternalApiIdentity(
   const key = normalizeNewApiKey(authorization);
   if (!key) return { userId: null, username: null, group: null };
   const now = Date.now();
+  const policy = await getRiskSettings();
+  const positiveMs = Number(policy.values["identity.cacheSeconds"]) * 1000, negativeMs = Number(policy.values["identity.negativeCacheSeconds"]) * 1000;
   const cache = apiKeyCache();
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now)
-    return { userId: cached.userId, username: cached.username, group: cached.group };
+  const cacheKey = createHash("sha256").update(key).digest("hex"), cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > now && now - cached.validatedAt < (cached.userId ? positiveMs : negativeMs))
+    return { userId: cached.userId, username: cached.username, group: cached.group, ...(cached.allowedModels ? { allowedModels: cached.allowedModels } : {}) };
   const pool = dbPool();
   if (!pool) {
     // 数据库不可直连（跨服务器部署）：走管理 API 兜底识别，
@@ -151,11 +156,13 @@ export async function resolveExternalApiIdentity(
       Math.floor(now / 1000),
     ).catch(() => ({ userId: null, username: null, group: null }));
     if (cache.size >= CACHE_MAX_KEYS) cache.clear();
-    cache.set(key, {
+    cache.set(cacheKey, {
       userId: httpIdentity.userId,
       username: httpIdentity.username,
       group: httpIdentity.group,
-      expiresAt: now + (httpIdentity.userId ? CACHE_POSITIVE_MS : CACHE_NEGATIVE_MS),
+      ...("allowedModels" in httpIdentity ? { allowedModels: httpIdentity.allowedModels } : {}),
+      validatedAt: now,
+      expiresAt: Math.min(now + (httpIdentity.userId ? positiveMs : negativeMs), "validUntil" in httpIdentity ? Number(httpIdentity.validUntil) : Infinity),
     });
     return httpIdentity;
   }
@@ -163,9 +170,11 @@ export async function resolveExternalApiIdentity(
   let userId: number | null = null;
   let username: string | null = null;
   let group: string | null = null;
+  let allowedModels: string[] | undefined;
+  let validUntil = Infinity;
   try {
-    const result = await pool.query<{ user_id: number; username: string; group: string }>(
-      `SELECT t.user_id, t."group", u.username
+    const result = await pool.query<{ user_id: number; username: string; group: string; model_limits_enabled: boolean; model_limits: string; expired_time: number }>(
+      `SELECT t.user_id, t."group", u.username, t.model_limits_enabled, t.model_limits, t.expired_time
          FROM tokens t
          JOIN users u ON u.id = t.user_id
         WHERE t.key = $1
@@ -185,6 +194,8 @@ export async function resolveExternalApiIdentity(
       userId = parsedUserId;
       username = row.username ? String(row.username) : null;
       group = row.group ? String(row.group) : null;
+      if (row.model_limits_enabled) allowedModels = String(row.model_limits || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (Number(row.expired_time) > 0) validUntil = Number(row.expired_time) * 1000;
     }
   } catch (error) {
     console.error("[lfn] NewAPI 数据库查询失败:", error);
@@ -192,13 +203,15 @@ export async function resolveExternalApiIdentity(
   }
 
   if (cache.size >= CACHE_MAX_KEYS) cache.clear();
-  cache.set(key, {
+  cache.set(cacheKey, {
     userId,
     username,
     group,
-    expiresAt: now + (userId ? CACHE_POSITIVE_MS : CACHE_NEGATIVE_MS),
+    ...(allowedModels ? { allowedModels } : {}),
+    validatedAt: now,
+    expiresAt: Math.min(now + (userId ? positiveMs : negativeMs), validUntil),
   });
-  return { userId, username, group };
+  return { userId, username, group, ...(allowedModels ? { allowedModels } : {}) };
 }
 
 export async function resolveExternalApiUser(

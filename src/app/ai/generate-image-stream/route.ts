@@ -1,5 +1,6 @@
 import {
   bearerAuthorization,
+  nativeRequestHeaders,
   externalGeneration,
   imageRequestErrorBody,
   naiGenerationPayload,
@@ -58,10 +59,7 @@ export async function POST(request: Request): Promise<Response> {
   const rawBody = await request.arrayBuffer();
   const proxyRequest = new Request(request.url, {
     method: "POST",
-    headers: {
-      Authorization: authorization,
-      Accept: request.headers.get("accept") || "application/x-msgpack",
-    },
+    headers: nativeRequestHeaders(request, authorization, request.headers.get("accept") || "application/x-msgpack"),
   });
   const response = await proxyNaiNativeWithCredits(
     proxyRequest,

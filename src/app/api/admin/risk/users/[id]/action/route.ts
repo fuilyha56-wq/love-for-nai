@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { parseJsonBody, optionalString } from "@/lib/request";
-import { getRiskCaseForUser, markRiskCase, recordRiskAction, setRiskBlocked } from "@/lib/risk-control";
+import { getRiskCaseForUser, markRiskCase, recordRiskAction, setRiskBlocked, getRiskPolicy } from "@/lib/risk-control";
 import { referralRiskComponent } from "@/lib/referral";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
@@ -26,8 +26,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
   if (action === "ban" || action === "unban") {
     const scope = optionalString(body.scope) === "referral-chain" ? "referral-chain" : "user";
-    const component = scope === "referral-chain" ? await referralRiskComponent(userId) : null;
+    const policy = await getRiskPolicy();
+    if (scope === "referral-chain" && action === "ban" && !policy.referralRiskEnabled)
+      return NextResponse.json({ message: "邀请链封禁已被管理员禁用" }, { status: 400 });
+    const component = scope === "referral-chain" ? await referralRiskComponent(userId, policy.referralMaxDepth) : null;
     const affectedUserIds = component?.userIds || [userId];
+    if (component) {
+      const previewIds = Array.isArray(body.previewUserIds) ? [...new Set(body.previewUserIds)].filter((id): id is number => typeof id === "number") : [];
+      if (previewIds.length !== affectedUserIds.length || affectedUserIds.some((id) => !previewIds.includes(id))) return NextResponse.json({ message: "邀请关系已变化或尚未预览，请重新查看关系树后确认影响账号" }, { status: 409 });
+    }
     const items = [];
     for (const affectedUserId of affectedUserIds) {
       items.push(await setRiskBlocked(affectedUserId, action === "ban", reason, operator, scope));

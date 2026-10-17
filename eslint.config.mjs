@@ -14,6 +14,7 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     "public/onnx/ort*.mjs",
     ".tmp/**",
+    "scripts/.tmp/**",
   ]),
 ]);
 

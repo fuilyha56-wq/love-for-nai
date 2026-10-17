@@ -1,4 +1,5 @@
 import { privateKey, SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
+import { cachedRiskSettings } from "./risk-settings";
 import { isNaiMediumModel, NAI_MEDIUM_NEGATIVE_PROMPT } from "@/lib/nai-native-request";
 
 export const MAX_IMAGE_SAMPLES = 30;
@@ -165,5 +166,7 @@ export function imageRateLimitKey(request: Pick<Request, "headers">, identity: s
 }
 
 export function checkImageRateLimit(request: Pick<Request, "headers">, identity: string): { allowed: boolean; retryAfterSeconds: number } {
-  return imageRequestLimiter.check(imageRateLimitKey(request, identity));
+  const userId = identity.match(/^(?:user|session):(\d+)$/)?.[1];
+  const settings = cachedRiskSettings(userId ? Number(userId) : undefined);
+  return imageRequestLimiter.check(imageRateLimitKey(request, identity), Date.now(), Number(settings.values[userId ? "rate.perMinute" : "rate.preAuthPerMinute"]));
 }

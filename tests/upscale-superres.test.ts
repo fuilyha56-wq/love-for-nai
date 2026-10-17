@@ -3,8 +3,20 @@ import { pngDimensions, stripDataUrl } from "@/lib/png-dims";
 import {
   UPSCALE_MAX_PIXELS,
   upscaleAnlasCost,
+  upscaleBillingModel,
+  snapshotFromRawPricing,
+  estimateNewApiCost,
 } from "@/lib/image-pricing";
 import { affCost } from "@/lib/aff";
+
+it("超分余额预估使用付费 V5 模型及真实面积档位，避开 limit 按次价", () => {
+  const model = upscaleBillingModel("nai-diffusion-5-full");
+  const pricing = snapshotFromRawPricing(model, { billing_mode: "tiered_expr", billing_expr: 'tier("base", p * 100000 + c * 0)', quota_type: 1 }, 1);
+  expect(model).toBe("nai-v5-full");
+  expect(upscaleBillingModel("nai-diffusion-5-curated")).toBe("nai-v5-curated");
+  expect(estimateNewApiCost(pricing, { model, operation: "upscale", width: 832, height: 1216, steps: 28, samples: 1 })).toBe(5);
+  expect(estimateNewApiCost(pricing, { model, operation: "upscale", width: 1536, height: 2048, steps: 28, samples: 1 })).toBe(20);
+});
 
 // 最小合法 PNG：1x1 红色像素（IHDR 宽高位于第 16-24 字节）。
 const PNG_1X1_BASE64 =

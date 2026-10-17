@@ -114,15 +114,16 @@ const EMPTY_SETTINGS: RuntimeSettings = {
   watermarkNote: "Generated through Love-for-NAI",
 };
 
-let lock: Promise<unknown> = Promise.resolve();
-let cached: RuntimeConfigStore | null = null;
+
 
 function withLock<T>(task: () => Promise<T>): Promise<T> {
-  const current = lock.then(task, task);
-  lock = current.catch(() => undefined);
+  const current = shared.lock.then(task, task);
+  shared.lock = current.catch(() => undefined);
   return current;
 }
 
+const runtimeState = globalThis as typeof globalThis & { __lfnRuntimeConfig?: { lock: Promise<unknown>; cached: RuntimeConfigStore | null; root: string } };
+const shared = (runtimeState.__lfnRuntimeConfig ??= { lock: Promise.resolve(), cached: null, root: "" });
 const storeRoot = () =>
   path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "platform");
 const storePath = () => path.join(storeRoot(), "config.json");
@@ -303,26 +304,27 @@ function normalizeModelBilling(raw: unknown): ModelBillingMap {
     const fixedCost = Number(entry.fixedCost);
     result[name] = {
       mode: entry.mode,
-      fixedCost: Number.isFinite(fixedCost) && fixedCost >= 0 ? fixedCost : 0,
+      fixedCost: Number.isFinite(fixedCost) && fixedCost >= 0 ? Math.round(fixedCost * 10_000) / 10_000 : 0,
     };
   }
   return result;
 }
 
 async function readStore(): Promise<RuntimeConfigStore> {
-  if (cached) return cached;
+  if (shared.root !== storePath()) { shared.cached = null; shared.root = storePath(); }
+  if (shared.cached) return shared.cached;
   try {
     const parsed = JSON.parse(await readFile(storePath(), "utf8")) as Partial<RuntimeConfigStore>;
     const settings = mergeSettings(parsed.settings);
     const endpoints = Array.isArray(parsed.endpoints)
       ? parsed.endpoints.map((item) => normalizeEndpoint(item))
       : defaultEndpoints(settings);
-    cached = { settings, endpoints, modelBilling: normalizeModelBilling(parsed.modelBilling) };
+    shared.cached = { settings, endpoints, modelBilling: normalizeModelBilling(parsed.modelBilling) };
   } catch {
     const settings = envSettings();
-    cached = { settings, endpoints: defaultEndpoints(settings), modelBilling: {} };
+    shared.cached = { settings, endpoints: defaultEndpoints(settings), modelBilling: {} };
   }
-  return cached;
+  return shared.cached;
 }
 
 async function writeStore(store: RuntimeConfigStore): Promise<void> {
@@ -330,7 +332,7 @@ async function writeStore(store: RuntimeConfigStore): Promise<void> {
   const temp = `${storePath()}.${randomBytes(6).toString("hex")}.tmp`;
   await writeFile(temp, JSON.stringify(store, null, 2), "utf8");
   await rename(temp, storePath());
-  cached = store;
+  shared.cached = store; shared.root = storePath();
 }
 
 export async function getRuntimeSettings(): Promise<RuntimeSettings> {
@@ -601,5 +603,5 @@ export async function runtimeRewards(): Promise<{
 }
 
 export function resetRuntimeConfigCache(): void {
-  cached = null;
+  shared.cached = null;
 }

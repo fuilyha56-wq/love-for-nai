@@ -88,6 +88,11 @@ export async function findLocalUserById(id: number): Promise<LocalUser | null> {
   return store.users.find((user) => user.id === id) || null;
 }
 
+export async function findLocalUsersByIds(ids: number[]): Promise<ReturnType<typeof publicLocalUser>[]> {
+  const wanted = new Set(ids);
+  return (await readStore()).users.filter((user) => wanted.has(user.id)).map(publicLocalUser);
+}
+
 export async function authenticateLocalUser(
   username: string,
   password: string,

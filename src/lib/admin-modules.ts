@@ -14,6 +14,7 @@ export type AdminModuleId =
   | "docs"
   | "creator"
   | "rewards"
+  | "activities"
   | "redeem";
 
 export type AdminModule = {
@@ -108,5 +109,6 @@ export function listAdminModules(
       description: "批量生成、停用和追踪创作额度兑换码。",
       enabled: capabilities.admin.credits,
     },
+    { id: "activities", label: "活动管理", description: "创建、编辑、删除活动，配置内容、参与资格、日期、预算和奖励。", enabled: capabilities.admin.credits },
   ];
 }

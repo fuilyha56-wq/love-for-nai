@@ -1,8 +1,11 @@
 "use client";
+import RiskSecurity from "./risk-security";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { WorkspaceNav } from "@/app/workspace-nav";
 
-import { ArrowLeft, CalendarCheck, ChevronLeft, ChevronRight, Copy, Coins, Images, LockKeyhole, Package, Save, UserRound, WalletCards } from "lucide-react";
+import { ArrowLeft, CalendarCheck, ChevronLeft, ChevronRight, Copy, Coins, Images, LockKeyhole, Package, Save, Ticket, UserRound, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./profile.css";
@@ -49,6 +52,7 @@ type LedgerTransaction = {
   source?: string;
 };
 type Ledger = { transactions: LedgerTransaction[] };
+type Redemption = { id: string; code: string; amount: number; rewardType: string; redeemedAt: string };
 const formatDollars = (value: number): string =>
   `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
 
@@ -95,6 +99,9 @@ export default function ProfilePage() {
   >("loading");
   const [referralError, setReferralError] = useState("");
   const [ledger, setLedger] = useState<Ledger | null>(null);
+  const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  const [redeemCode, setRedeemCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
   const [ledgerMonth, setLedgerMonth] = useState(() => new Date());
   const [activeSection, setActiveSection] = useState("profile-rewards");
   const referralInput = useRef<HTMLInputElement>(null);
@@ -151,7 +158,7 @@ export default function ProfilePage() {
     }
     const price = imagePackage.priceUsd * packageCount;
     const affAmount = imagePackage.affPerPackage * packageCount;
-    if (!window.confirm(`确认使用 $${price.toFixed(2)} NewAPI 余额购买 ${packageCount} 包图包，获得 ${affAmount} 图包 AFF？`)) return;
+    if (!(await lfnConfirm(`确认使用 $${price.toFixed(2)} NewAPI 余额购买 ${packageCount} 包图包，获得 ${affAmount} 图包 AFF？`))) return;
     setPurchasing(true);
     setMessage("");
     try {
@@ -169,6 +176,15 @@ export default function ProfilePage() {
       const response = await fetch("/api/aff/ledger", { cache: "no-store" });
       const result = await readJson<Ledger>(response, "读取奖励流水失败");
       setLedger(result);
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+    }
+  }, []);
+  const loadRedemptions = useCallback(async () => {
+    try {
+      const response = await fetch("/api/redeem/history", { cache: "no-store" });
+      const result = await readJson<{ items?: Redemption[] }>(response, "读取兑换记录失败");
+      setRedemptions(result.items || []);
     } catch (error) {
       if (error instanceof SessionExpiredError) setExpired(error.message);
     }
@@ -196,8 +212,37 @@ export default function ProfilePage() {
       loadWallet();
       loadReferral();
       loadLedger();
+      loadRedemptions();
     });
-  }, [loadLedger, loadProfile, loadReferral, loadWallet]);
+  }, [loadLedger, loadProfile, loadReferral, loadRedemptions, loadWallet]);
+
+  async function redeem() {
+    const code = redeemCode.trim();
+    if (!code || redeeming) return;
+    setRedeeming(true);
+    setMessage("");
+    try {
+      const response = await fetch("/api/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const result = await readJson<{ message?: string; balance?: number }>(response, "兑换失败");
+      setRedeemCode("");
+      setAff((current) => current ? {
+        ...current,
+        balance: result.balance ?? current.balance,
+        totalBalance: (result.balance ?? current.balance) + current.packageBalance,
+      } : current);
+      await Promise.all([loadRedemptions(), loadLedger(), loadWallet()]);
+      setMessage(result.message || "兑换成功，奖励已进入个人 AFF。");
+    } catch (error) {
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      setMessage(error instanceof Error ? error.message : "兑换失败");
+    } finally {
+      setRedeeming(false);
+    }
+  }
 
   useEffect(() => {
     const updateFromHash = () => {
@@ -396,6 +441,7 @@ export default function ProfilePage() {
           <a href="#profile-wallet" className="profile-account-link"><WalletCards size={14} /> 钱包与创作额度</a>
           <nav className="profile-sidebar-nav" aria-label="个人资料分区">
             <a href="#profile-rewards" aria-current={activeSection === "profile-rewards" ? "location" : undefined}>奖励与流水</a>
+              <a href="#profile-redeem" aria-current={activeSection === "profile-redeem" ? "location" : undefined}>兑换码</a>
             <a href="#profile-info" aria-current={activeSection === "profile-info" ? "location" : undefined}>资料信息</a>
             <a href="#profile-security" aria-current={activeSection === "profile-security" ? "location" : undefined}>密码与安全</a>
           </nav>
@@ -409,6 +455,7 @@ export default function ProfilePage() {
             <button type="button" onClick={checkIn} disabled={!profile || !aff || !aff.checkInEnabled || aff.checkedInToday || checkingIn} className="mt-4 flex h-9 w-full items-center justify-center gap-2 rounded bg-[var(--rose)] px-3 text-xs font-semibold text-white disabled:opacity-50"><CalendarCheck size={14} />{checkingIn ? "签到中…" : !aff ? "读取签到状态…" : !aff.checkInEnabled ? "签到功能未开启" : aff.checkedInToday ? "今日已签到" : `签到领取 ${aff.checkInReward} AFF`}</button>
           </section>
           <section id="profile-wallet" className="profile-card profile-wallet-card" aria-labelledby="wallet-heading"><div className="profile-card-header"><span className="profile-card-header-icon"><WalletCards size={17} /></span><div><h2 id="wallet-heading">钱包与图包</h2><p>上游余额、个人 AFF 与图包额度集中在这里管理。</p></div></div><div className="profile-wallet-grid"><div><p className="profile-wallet-label"><Coins size={13} />{capabilities?.labels.upstreamBalance || "NewAPI 余额"}</p><p className="profile-wallet-value">{walletState === "loading" ? "读取中…" : newApi ? formatDollars(newApi.balance) : "登录后读取"}</p><p className="profile-wallet-help">累计使用 {newApi ? formatDollars(newApi.used) : "登录后读取"}</p></div><div><p className="profile-wallet-label"><CalendarCheck size={13} />个人 AFF</p><p className="profile-wallet-value">{walletState === "loading" ? "读取中…" : aff ? aff.balance : "登录后读取"}</p><p className="profile-wallet-help">图包额度 {walletState === "loading" ? "读取中…" : aff ? aff.packageBalance : "登录后读取"}</p></div><div className="profile-package-buy"><p className="profile-wallet-label"><Package size={13} />购买图包</p>{walletState === "error" || !profile ? <p className="profile-wallet-help">请先登录后查看余额并购买图包。</p> : <><div className="profile-package-controls"><label className="field profile-package-count"><span>数量</span><input type="number" min={1} max={Math.max(1, maxAffordablePackages)} value={packageCount} onChange={(event) => { const next = Number(event.target.value); if (Number.isInteger(next)) setPackageCount(Math.min(Math.max(1, maxAffordablePackages), Math.max(1, next))); }} disabled={purchasing} /><span>包</span></label><button type="button" onClick={purchasePackages} disabled={!imagePackage?.purchaseEnabled || purchasing || maxAffordablePackages < 1 || packageCount > maxAffordablePackages} className="settings-primary-button">{purchasing ? "购买中…" : imagePackage?.purchaseEnabled ? `$${((imagePackage.priceUsd || 0) * packageCount).toFixed(0)} 购买` : "购买未启用"}</button></div><p className="profile-wallet-help">{imagePackage?.purchaseEnabled ? `每包 ${imagePackage.affPerPackage} AFF · 最多购买 ${maxAffordablePackages} 包 · ${imagePackage.rateLimit} 张/分钟` : "购买服务未配置，请联系管理员。"}</p></>}</div></div></section>
+            <section id="profile-redeem" className="profile-card profile-redeem-card" aria-labelledby="redeem-heading"><div className="profile-card-header"><span className="profile-card-header-icon"><Ticket size={17} /></span><div><h2 id="redeem-heading">兑换码</h2><p>输入管理员发放的兑换码，LFN 兑换码进入个人 AFF，NewAPI 兑换码进入 NewAPI 余额。</p></div></div><form className="profile-redeem-form" onSubmit={(event) => { event.preventDefault(); void redeem(); }}><label className="sr-only" htmlFor="profile-redeem-code">兑换码</label><input id="profile-redeem-code" className="field h-10 min-w-0 flex-1 px-3 text-sm" value={redeemCode} onChange={(event) => setRedeemCode(event.target.value)} placeholder="输入兑换码" autoComplete="off" disabled={!profile || redeeming} /><button type="submit" disabled={!profile || !redeemCode.trim() || redeeming} className="settings-primary-button h-10 min-w-[92px]">{redeeming ? "兑换中…" : "立即兑换"}</button></form><p className="mt-2 text-[11px] text-[var(--muted)]">每个兑换码只能由同一账号兑换一次，停用或过期的兑换码无法使用。</p>{redemptions.length > 0 && <div className="profile-redeem-history"><div className="profile-redeem-history-title">我的兑换记录</div>{redemptions.slice(0, 5).map((item) => <div key={item.id} className="profile-redeem-history-row"><span className="font-mono">{item.code.slice(0, 4)}••••{item.code.slice(-2)}</span><span className="text-[var(--mint)]">+{item.amount} {item.rewardType === "newapi-quota" ? "NewAPI $" : "AFF"}</span><time dateTime={item.redeemedAt}>{new Date(item.redeemedAt).toLocaleString("zh-CN")}</time></div>)}</div>}</section>
           <section className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5" aria-labelledby="referral-heading"><div className="flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--surface-muted)] text-[var(--rose)]"><Copy size={16} /></span><div><h2 id="referral-heading" className="text-base font-semibold">邀请奖励</h2><p className="mt-1 text-xs text-[var(--muted)]">好友通过链接完成注册后，奖励会自动计入你的个人 AFF。</p></div></div><div className="mt-4 grid gap-2 sm:grid-cols-2"><div><p className="text-[10px] text-[var(--muted)]">已邀请人数</p><p className="mt-1 text-xl font-semibold">{referral?.invitedCount ?? 0}</p></div><div><p className="text-[10px] text-[var(--muted)]">每次奖励</p><p className="mt-1 text-xl font-semibold">{referral?.registrationReward ?? 0} AFF</p></div></div><input ref={referralInput} aria-label="邀请注册链接" className="field mt-4 h-9 w-full px-3 text-xs" value={referralState === "loading" ? "正在生成邀请链接…" : referral && !referral.enabled ? "邀请功能未开启" : referral?.link || "邀请链接暂不可用"} readOnly disabled={!referral?.enabled} onFocus={(event) => event.currentTarget.select()} />{referralState === "error" && <p className="mt-2 text-xs text-amber-800">{referralError || "读取邀请链接失败"}</p>}<button type="button" onClick={copyReferral} disabled={!referral?.enabled || !referral.link || copyingReferral} className="mt-3 flex h-9 w-full items-center justify-center gap-2 rounded border border-[var(--line)] bg-[var(--surface)] px-3 text-xs font-semibold hover:border-[var(--rose)] disabled:opacity-50"><Copy size={14} />{copyingReferral ? "复制中…" : referral && !referral.enabled ? "邀请功能未开启" : "复制邀请链接"}</button></section>
           <section className="profile-card" aria-labelledby="ledger-heading"><div className="profile-card-header"><span className="profile-card-header-icon"><Copy size={16} /></span><div><h2 id="ledger-heading">奖励流水</h2><p>个人 AFF / 图包额度分开计账。</p></div></div><div className="mt-4 space-y-2">{ledger?.transactions.slice(0, 6).map((item) => <div key={item.id} className="flex items-start justify-between gap-3 border-b border-[var(--line)] pb-2 text-xs last:border-0"><div><p className="font-semibold">{item.description}</p><p className="mt-1 text-[10px] text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")} · {item.source === "package" ? "图包额度" : "个人 AFF"}</p></div><b className={item.amount >= 0 ? "text-[var(--mint)]" : "text-[var(--rose)]"}>{item.amount >= 0 ? "+" : ""}{item.amount}</b></div>)}{!ledger?.transactions.length && <p className="py-5 text-center text-xs text-[var(--muted)]">暂无奖励流水</p>}</div></section>
         </div>
@@ -469,6 +516,7 @@ export default function ProfilePage() {
         </form>
         </div>
         <div id="profile-security" className="profile-section">
+        <RiskSecurity />
         <form onSubmit={changePassword} className="profile-card profile-field-grid">
           <div className="profile-card-header">
             <span className="profile-card-header-icon"><LockKeyhole size={17} /></span>

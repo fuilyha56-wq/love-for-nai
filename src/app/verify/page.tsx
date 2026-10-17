@@ -49,7 +49,7 @@ export default function ImageVerifyPage() {
 
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) {
-      alert("请选择图片文件");
+      setResult({ valid: false, error: "请选择图片文件" });
       return;
     }
 

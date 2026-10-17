@@ -13,6 +13,11 @@ vi.mock("@/lib/newapi-db", () => ({
   resolveExternalApiIdentity: mocks.resolveExternalApiIdentity,
   ensureManagedFallbackToken: mocks.ensureManagedFallbackToken,
 }));
+// Legacy alternate-wallet product remains opt-in; default strict mode is covered by api-tier-billing.
+vi.mock("@/lib/daily-image-billing", async (original) => ({
+  ...await original<typeof import("@/lib/daily-image-billing")>(),
+  dailyImagePolicy: async () => ({ strictApiBilling: false }),
+}));
 vi.mock("@/lib/aff", () => ({
   trySpendImageCredits: mocks.trySpendImageCredits,
   refundImageCredits: mocks.refundImageCredits,
@@ -159,6 +164,7 @@ describe("外部 LFN 图像入口计费", () => {
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(
       41,
       expect.objectContaining({ model: "nai-v5-full", samples: 1 }),
+      expect.any(String),
     );
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes("price-quote"))).toBe(false);
     const gatewayCall = vi.mocked(fetch).mock.calls.find(
@@ -197,7 +203,7 @@ describe("外部 LFN 图像入口计费", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("package");
-    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything());
+    expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(41, expect.anything(), expect.any(String));
   });
 
   it("无余额时直接用托管密钥走 NewAPI 计费（按用户分组自动换组）", async () => {
@@ -223,7 +229,7 @@ describe("外部 LFN 图像入口计费", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-lfn-payment-source")).toBe("newapi");
-    expect(newapiCalls).toEqual(["Bearer sk-managedkey48hex00000000000000000000"]);
+    expect(newapiCalls).toEqual(["Bearer sk-managed-fixture"]);
     expect(mocks.ensureManagedFallbackToken).toHaveBeenCalledWith(41, "nai-v5-full");
   });
 

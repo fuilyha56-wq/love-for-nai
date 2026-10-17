@@ -1,4 +1,5 @@
 import { getSession } from "@/lib/session";
+import { fetchNewApiSelf } from "@/lib/shared-user-self";
 import {
   runtimeAdminToken,
   runtimeAffGateway,
@@ -221,11 +222,7 @@ async function resolveToken(
 ): Promise<string> {
   const baseUrl = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
-  const selfResponse = await fetch(`${baseUrl}/api/user/self`, {
-    headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
+  const selfResponse = await fetchNewApiSelf(baseUrl, headers);
   const selfResult = (await selfResponse.json()) as ApiResult<{
     group?: string;
     user?: { group?: string };

@@ -1,4 +1,7 @@
 "use client";
+import { LfnSelect } from "@/app/ui/lfn-select";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
@@ -334,7 +337,7 @@ export default function ProviderSettings() {
   }
 
   async function removeProvider(provider: Provider) {
-    if (!window.confirm(`删除「${provider.name}」？此操作会移除保存的 API key。`)) return;
+    if (!(await lfnConfirm(`删除「${provider.name}」？此操作会移除保存的 API key。`))) return;
     setProvidersError("");
     setProvidersMessage("");
     setProviderBusy(provider.id);
@@ -414,7 +417,7 @@ export default function ProviderSettings() {
   }
 
   async function removeNovelAi() {
-    if (!window.confirm("移除 NovelAI key？需要重新导入才能继续使用官方账号。")) return;
+    if (!(await lfnConfirm("移除 NovelAI key？需要重新导入才能继续使用官方账号。"))) return;
     setAccountBusy(true);
     setAccountError("");
     setAccountMessage("");
@@ -543,9 +546,9 @@ export default function ProviderSettings() {
             <label className="block text-xs font-semibold">模型能力<div className="mt-1.5"><PopupSelect value={capability} onChange={(value) => { setCapability(value as CapabilityChoice); if (value !== "story") setEditingStoryId(""); }} ariaLabel="模型能力" options={[{ value: "image", label: "图像", description: "生图与图像模型" }, { value: "story", label: "故事", description: "故事文本生成" }, { value: "both", label: "图像 + 故事", description: "统一来源同时提供两类模型" }]} /></div></label>
             <label className="block text-xs font-semibold">名称<input required maxLength={80} className="field mt-1.5 h-10 w-full px-3 text-sm" value={providerName} onChange={(event) => setProviderName(event.target.value)} placeholder={capability === "story" ? "例如：我的文本模型" : "例如：我的图像接口"} /></label>
             {capability === "story" ? <>
-              <label className="block text-xs font-semibold">来源<select value={storyKind} onChange={(event) => { const value = event.target.value as "openai" | "novelai"; setStoryKind(value); setStoryModel(value === "novelai" ? "llama-3-erato-v1" : ""); }} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="openai">OpenAI 兼容 API</option><option value="novelai">NovelAI 官方持久 Key</option></select></label>
+              <label className="block text-xs font-semibold">来源<LfnSelect value={storyKind} onChange={(event) => { const value = event.target.value as "openai" | "novelai"; setStoryKind(value); setStoryModel(value === "novelai" ? "llama-3-erato-v1" : ""); }} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="openai">OpenAI 兼容 API</option><option value="novelai">NovelAI 官方持久 Key</option></LfnSelect></label>
               {storyKind === "openai" && <label className="block text-xs font-semibold">API 地址<input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://example.com/v1" autoComplete="url" spellCheck={false} /></label>}
-              <label className="block text-xs font-semibold">模型 ID{storyKind === "novelai" ? <select value={storyModel} onChange={(event) => setStoryModel(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="llama-3-erato-v1">Erato</option><option value="kayra-v1">Kayra</option></select> : <input required maxLength={120} value={storyModel} onChange={(event) => setStoryModel(event.target.value)} placeholder="上游真实模型 ID" className="field mt-1.5 h-10 w-full px-3 text-sm" />}</label>
+              <label className="block text-xs font-semibold">模型 ID{storyKind === "novelai" ? <LfnSelect value={storyModel} onChange={(event) => setStoryModel(event.target.value)} className="field mt-1.5 h-10 w-full px-3 text-sm"><option value="llama-3-erato-v1">Erato</option><option value="kayra-v1">Kayra</option></LfnSelect> : <input required maxLength={120} value={storyModel} onChange={(event) => setStoryModel(event.target.value)} placeholder="上游真实模型 ID" className="field mt-1.5 h-10 w-full px-3 text-sm" />}</label>
             </> : <>
               <label className="block text-xs font-semibold">API 地址<input required type="url" className="field mt-1.5 h-10 w-full px-3 text-sm" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" autoComplete="url" spellCheck={false} /></label>
               <label className="block text-xs font-semibold">图像接口协议<div className="mt-1.5"><PopupSelect value={protocol} onChange={(value) => setProtocol(value as ImageProviderProtocol)} ariaLabel="图像接口协议" options={[{ value: "auto", label: "NAI 原生", description: "按模型自动适配" }, { value: "openai-images", label: "GPT Images", description: "OpenAI Images 接口" }, { value: "gemini", label: "Nano Banana", description: "Gemini 原生接口" }]} /></div></label>

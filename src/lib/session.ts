@@ -4,10 +4,15 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto";
-import { cookies } from "next/headers";
-import { getRuntimeSettings, updateRuntimeSettings } from "@/lib/runtime-config";
+import { cookies, headers } from "next/headers";
+import { recordIpEvidence } from "@/lib/risk-ip";
+import {
+  getRuntimeSettings,
+  updateRuntimeSettings,
+} from "@/lib/runtime-config";
 
 export type LfnSession = {
+  authenticatedAt?: number;
   userId: number;
   username: string;
   displayName: string;
@@ -66,10 +71,14 @@ export async function encodeSession(session: LfnSession): Promise<string> {
     currentSessionEpoch(),
     currentUserSessionEpoch(session.userId),
   ]);
-  return encodeWithEpoch(session, epoch, userEpoch);
+  return encodeWithEpoch({ ...session, authenticatedAt: session.authenticatedAt ?? Date.now() }, epoch, userEpoch);
 }
 
-function encodeWithEpoch(session: LfnSession, epoch: number, userEpoch: number): string {
+function encodeWithEpoch(
+  session: LfnSession,
+  epoch: number,
+  userEpoch: number,
+): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
   const encrypted = Buffer.concat([
@@ -126,7 +135,9 @@ async function currentSessionEpoch(): Promise<number> {
 async function currentUserSessionEpoch(userId: number): Promise<number> {
   const settings = await getRuntimeSettings().catch(() => null);
   const epoch = settings?.sessionEpochs?.[String(userId)];
-  return typeof epoch === "number" && Number.isFinite(epoch) && epoch >= SESSION_EPOCH_DEFAULT
+  return typeof epoch === "number" &&
+    Number.isFinite(epoch) &&
+    epoch >= SESSION_EPOCH_DEFAULT
     ? Math.floor(epoch)
     : SESSION_EPOCH_DEFAULT;
 }
@@ -145,23 +156,55 @@ async function validDecodedSession(raw?: string): Promise<LfnSession | null> {
   if (!decoded) return null;
   // 纪元不一致（含未带纪元字段的旧 cookie）一律视为已失效。
   if ((decoded.epoch ?? 0) !== (await currentSessionEpoch())) return null;
-  if ((decoded.userEpoch ?? 0) !== (await currentUserSessionEpoch(decoded.userId))) return null;
+  if (
+    (decoded.userEpoch ?? 0) !== (await currentUserSessionEpoch(decoded.userId))
+  )
+    return null;
   return decoded;
 }
 
+const requestSessions = new WeakMap<object, Promise<LfnSession | null>>();
 export async function getSession(): Promise<LfnSession | null> {
-  return validDecodedSession((await cookies()).get(COOKIE_NAME)?.value);
+  const store = await cookies();
+  let pending = requestSessions.get(store);
+  if (!pending) {
+    pending = (async () => {
+      const session = await validDecodedSession(store.get(COOKIE_NAME)?.value);
+      if (session) {
+        const requestHeaders = await headers();
+        await recordIpEvidence(
+          new Request("http://lfn.internal/session", {
+            headers: requestHeaders,
+          }),
+          requestHeaders.get("x-request-id") || randomBytes(12).toString("hex"),
+          session.userId,
+          session.username,
+          true,
+        ).catch((error) =>
+          console.error(
+            "[lfn] IP evidence write failed",
+            (error as Error).message,
+          ),
+        );
+      }
+      return session;
+    })();
+    requestSessions.set(store, pending);
+  }
+  return pending;
 }
 
-export function encodePendingSession(pending: LfnPendingSession): Promise<string> {
+export function encodePendingSession(
+  pending: LfnPendingSession,
+): Promise<string> {
   return encodeSession(pending as unknown as LfnSession);
 }
 
 export async function getPendingSession(): Promise<LfnPendingSession | null> {
   const raw = (await cookies()).get(PENDING_COOKIE_NAME)?.value;
-  const decoded = (await validDecodedSession(raw)) as unknown as
-    | LfnPendingSession
-    | null;
+  const decoded = (await validDecodedSession(
+    raw,
+  )) as unknown as LfnPendingSession | null;
   return decoded?.flowToken ? decoded : null;
 }
 

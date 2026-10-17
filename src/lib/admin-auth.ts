@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { fetchNewApiSelf } from "@/lib/shared-user-self";
 import { getSession } from "@/lib/session";
 import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
 import type { Session } from "@/lib/newapi";
@@ -23,11 +24,7 @@ export async function readUserRole(
     return user ? user.role : null;
   }
   try {
-    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
-      headers: userHeaders(session),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
+    const upstream = await fetchNewApiSelf(await resolvedNewApiBaseUrl(), userHeaders(session));
     const result = (await upstream.json()) as SelfResult;
     if (!upstream.ok || !result.success) return null;
     const data = result.data;

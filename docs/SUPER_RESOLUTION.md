@@ -115,6 +115,8 @@ LFN AFF 消耗 = NAI Anlas 消耗，图包/个人 AFF、退款逻辑不变（sam
 
 原 409 拦截移除，新增 upscale 分支：计费 → 调上游 → ZIP 解包（JSZip）→ `saveHistory` → 返回与其它操作一致的 `{images, payment, paymentSource, aff}` JSON。请求字段 `upscale_model`（`nai-diffusion-5-full` / `nai-diffusion-5-curated`），与生成模型字段 `model` 解耦。
 
+2026-10-16 修复：放大原先在图包和个人 AFF 不足时直接返回 402，遗漏站内余额回退。现先尝试图包、个人 AFF；不足时使用对应非 limit 模型 `nai-v5-full` / `nai-v5-curated`，经 NewAPI `/v1/images/generations` 的 `novelai_operation: "upscale"` 支付。Gateway 按源图面积返回 1–4 Anlas、50–200 prompt tokens，沿用 NewAPI 实际模型表达式与分组倍率计费。AFF 支付的原生 ZIP 路径继续使用；站内余额路径解析 OpenAI JSON，响应及审计记录实际支付来源。历史保存失败仍返回已生成图片，避免付费结果丢失。本地账号未接入 NewAPI 时，额度不足会明确提示。
+
 ### 3.4 Studio 前端入口
 
 - “放大”操作从 `unsupportedOperations` 移出，可正常提交

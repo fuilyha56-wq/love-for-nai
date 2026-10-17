@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { resolveClientIp } from "./risk-ip";
 
 export type RateLimitResult = {
   allowed: boolean;
@@ -29,10 +30,15 @@ export class SlidingWindowRateLimiter {
     this.maxKeys = maxKeys;
   }
 
-  check(key: string, now = Date.now()): RateLimitResult {
-    for (const [tracked, times] of this.requests) {
-      if (times.every((time) => now - time >= this.windowMs))
-        this.requests.delete(tracked);
+  check(key: string, now = Date.now(), configuredLimit = this.limit): RateLimitResult {
+    const limit = Number.isSafeInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : this.limit;
+    // Insertion order tracks last access. Bound cleanup work per check rather
+    // than scanning every active caller on the hot path.
+    let cleanupBudget = 64;
+    while (cleanupBudget-- > 0) {
+      const first = this.requests.entries().next().value as [string, number[]] | undefined;
+      if (!first || first[1].some(time => now - time < this.windowMs)) break;
+      this.requests.delete(first[0]);
     }
 
     if (this.requests.size >= this.maxKeys && !this.requests.has(key))
@@ -44,7 +50,8 @@ export class SlidingWindowRateLimiter {
     const recent = (this.requests.get(key) || []).filter(
       (time) => now - time < this.windowMs,
     );
-    if (recent.length >= this.limit) {
+    this.requests.delete(key);
+    if (recent.length >= limit) {
       this.requests.set(key, recent);
       return {
         allowed: false,
@@ -70,11 +77,8 @@ export function trustedClientKey(
   request: Pick<Request, "headers">,
 ): string | null {
   if (process.env.LFN_TRUST_PROXY !== "true") return null;
-  const forwarded = request.headers
-    .get("x-forwarded-for")
-    ?.split(",")[0]
-    ?.trim();
-  return forwarded && isIP(forwarded) ? forwarded : null;
+  const ip = resolveClientIp(request as Request).ip;
+  return ip && isIP(ip) ? ip : null;
 }
 
 export function privateKey(value: string): string {

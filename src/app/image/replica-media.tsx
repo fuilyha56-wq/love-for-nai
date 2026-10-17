@@ -41,9 +41,10 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
   const imageWidth = firstNatural?.width ?? fallbackWidth;
   const imageHeight = firstNatural?.height ?? fallbackHeight;
   const fitted = fitMediaSize(imageWidth, imageHeight, available.width, available.height);
+  // A natural-pixel fallback can pan a narrow visual viewport before measurement.
   const singleStyle: CSSProperties = fitted.width > 0
-    ? { width: fitted.width, height: fitted.height }
-    : { width: imageWidth, aspectRatio: `${imageWidth} / ${imageHeight}`, maxWidth: "100%", maxHeight: "100%" };
+    ? { width: fitted.width, height: fitted.height, maxWidth: "100%" }
+    : { width: "100%", aspectRatio: `${imageWidth} / ${imageHeight}`, maxHeight: "100%" };
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -56,14 +57,27 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
       };
       setAvailable((previous) => previous.width === next.width && previous.height === next.height ? previous : next);
     };
+    let frame = 0;
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure(); });
+    };
     measure();
+    window.visualViewport?.addEventListener("resize", schedule);
     if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", measure);
-      return () => window.removeEventListener("resize", measure);
+      window.addEventListener("resize", schedule);
+      return () => {
+        cancelAnimationFrame(frame);
+        window.removeEventListener("resize", schedule);
+        window.visualViewport?.removeEventListener("resize", schedule);
+      };
     }
-    const observer = new ResizeObserver(measure);
+    const observer = new ResizeObserver(schedule);
     observer.observe(stage);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      window.visualViewport?.removeEventListener("resize", schedule);
+    };
   }, [images.length]);
 
   function imageCard(image: string, index: number, single: boolean): ReactElement {

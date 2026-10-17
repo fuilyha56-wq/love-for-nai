@@ -1,4 +1,6 @@
 "use client";
+import { LfnSelect } from "@/app/ui/lfn-select";
+
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
@@ -234,7 +236,7 @@ export function ReplicaControls(p: Props) {
         {capabilities.edit && <Section title="精准参考" icon={<UserRound size={20} />}>
           <p className="replica-hint">添加参考图并设置类型和参数。</p><SourcePreview source={activeSource("precise-reference")} onRemove={p.onRemoveSource} />
           <button type="button" className="replica-tonal-button" onClick={() => upload("precise-reference")}><Plus size={19} />添加参考图</button>
-          <label className="replica-reference-type">参考类型<select value={p.referenceType} onChange={event => p.setReferenceType(event.target.value)}><option value="character&style">角色与风格</option><option value="character">角色</option><option value="style">风格</option></select></label>
+          <label className="replica-reference-type">参考类型<LfnSelect value={p.referenceType} onChange={event => p.setReferenceType(event.target.value)}><option value="character&style">角色与风格</option><option value="character">角色</option><option value="style">风格</option></LfnSelect></label>
           <button type="button" className="replica-library-button" onClick={() => p.onGallery("precise-reference")}><Folder size={18} />从库导入</button>
         </Section>}
       </> : null}

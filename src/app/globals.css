@@ -1273,6 +1273,9 @@ html[data-theme="night"] .mask-editor-number {
 .inline-chat-menu-item:hover {
   background: color-mix(in srgb, var(--rose) 8%, var(--panel));
 }
+.inline-chat-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+.inline-chat-menu-item:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }
+.inline-chat-menu-divider { height: 1px; margin: 4px 5px; background: var(--line); }
 .inline-chat-menu-item svg {
   flex: 0 0 auto;
   margin-top: 1px;

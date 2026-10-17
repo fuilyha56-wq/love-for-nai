@@ -22,14 +22,21 @@
 .mobile-studio-prompt-content { min-height: 0; overflow-y: auto; padding: 10px 12px 0; }
 .mobile-studio-prompt-section.is-open .mobile-studio-prompt-content { order: 1; }
 .mobile-studio-prompt-section.is-open .mobile-studio-prompt-entry { order: 2; border-top: 1px solid var(--line); }
-.mobile-studio-prompt-entry > svg { transition: transform 180ms ease; }
-.mobile-studio-prompt-entry > svg.is-open { transform: rotate(180deg); }
-.mobile-studio-prompt-entry { display: flex; width: 100%; min-height: 58px; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 0; background: transparent; color: inherit; text-align: left; }
-.mobile-studio-prompt-entry > span { display: grid; min-width: 0; gap: 3px; }
-.mobile-studio-prompt-entry b { font-size: 13px; }
-.mobile-studio-prompt-entry small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.mobile-studio-prompt-entry > svg { flex: 0 0 auto; color: var(--muted); }
-.mobile-studio-prompt-entry:hover, .mobile-studio-prompt-entry:focus-visible { background: var(--surface-muted); }
+.mobile-studio-prompt-entry { display: grid; width: 100%; min-width: 0; gap: 8px; padding: 8px 12px 10px; border: 0; background: transparent; color: inherit; text-align: left; }
+.mobile-studio-prompt-toggle { display: flex; width: 100%; min-height: 42px; align-items: center; justify-content: space-between; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.mobile-studio-prompt-toggle > span { display: grid; min-width: 0; gap: 3px; }
+.mobile-studio-prompt-toggle b { font-size: 13px; }
+.mobile-studio-prompt-toggle small { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-studio-prompt-toggle > svg { flex: 0 0 auto; color: var(--muted); transition: transform 180ms ease; }
+.mobile-studio-prompt-toggle > svg.is-open { transform: rotate(180deg); }
+.mobile-studio-prompt-toggle:hover, .mobile-studio-prompt-toggle:focus-visible { color: var(--rose); }
+.mobile-studio-model-controls { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(132px, .72fr); align-items: center; gap: 7px; }
+.mobile-studio-model-controls .popup-select { min-width: 0; }
+.mobile-studio-model-controls .popup-select-trigger { min-height: 36px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); color: var(--ink); font-size: 11px; font-weight: 650; }
+.mobile-studio-tier-buttons { display: grid; min-width: 0; grid-template-columns: 1fr 1fr; gap: 4px; }
+.mobile-studio-tier-buttons button { min-width: 0; min-height: 36px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-muted); color: var(--muted); font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-studio-tier-buttons button[aria-pressed="true"] { border-color: var(--rose); background: color-mix(in srgb, var(--rose) 10%, var(--panel)); color: var(--rose); }
+.mobile-studio-tier-buttons button:disabled { cursor: not-allowed; opacity: .45; }
 .mobile-studio-section-heading { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
 .mobile-studio-section-heading button { display: grid; width: 32px; height: 32px; place-items: center; border: 0; background: transparent; color: var(--muted); }
 .mobile-studio-prompt-section > .replica-controls { display: block; }
@@ -104,13 +111,21 @@
 .mobile-reference-current { display: grid; justify-items: center; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-muted); color: var(--muted); font-size: 11px; }
 .mobile-reference-current img { width: min(100%, 240px); height: auto; max-height: 280px; object-fit: contain; border-radius: 8px; background: var(--paper); }
 @keyframes mobile-studio-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes mobile-studio-prompt-sheet-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
-@keyframes mobile-studio-tool-open { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes mobile-studio-content-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes mobile-studio-content-in-left { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes mobile-studio-sheet-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: translateX(0); } }
-@keyframes mobile-studio-sheet-in-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes mobile-studio-prompt-sheet-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: none; } }
+@keyframes mobile-studio-tool-open { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes mobile-studio-content-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@keyframes mobile-studio-content-in-left { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+@keyframes mobile-studio-sheet-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes mobile-studio-sheet-in-left { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
 @media (max-width: 1023px) {
+  /* Constrain the flex/grid sizing chain when a result first gains intrinsic size. */
+  .mobile-studio-mount, .mobile-studio-launcher, .mobile-studio-page,
+  .mobile-studio-generate-scroll, .mobile-studio-history-scroll, .mobile-studio-more-scroll {
+    min-inline-size: 0; inline-size: 100%; max-inline-size: 100%; box-sizing: border-box;
+  }
+  .mobile-studio-preview-section { contain: inline-size; }
+  .mobile-studio-launcher .replica-media-card { max-inline-size: 100%; }
+  .mobile-studio-launcher .replica-media-open img { max-inline-size: 100%; }
   .mobile-studio-launcher { display: flex; }
   .mobile-studio-mount { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
   .mobile-studio-mount + * { display: none; }

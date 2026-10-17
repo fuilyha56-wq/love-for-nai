@@ -1,4 +1,6 @@
 "use client";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { WorkspaceNav } from "@/app/workspace-nav";
 
@@ -188,7 +190,7 @@ export default function HistoryPage() {
   }
 
   async function remove(id: string) {
-    if (!window.confirm("确认删除这张历史图片？删除后无法恢复。")) return;
+    if (!(await lfnConfirm("确认删除这张历史图片？删除后无法恢复。"))) return;
     const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
     });

@@ -43,7 +43,8 @@ type LegacyImageStore = { version: 1; items: Array<Partial<CustomProvider>>; nov
 type LegacyStoryProvider = { id: string; kind: ProviderKind; name: string; model: string; baseUrl: string; encryptedKey: string };
 
 const emptyStore = (): UnifiedStore => ({ version: 2, entries: [] });
-const dataRoot = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"));
+// Provider files live in the runtime data volume, never in the deploy bundle.
+const dataRoot = () => path.resolve(/* turbopackIgnore: true */ process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"));
 const root = () => path.join(dataRoot(), "providers");
 const storePath = (userId: number) => path.join(root(), `${userId}.enc`);
 const legacyStoryPath = (userId: number) => path.join(dataRoot(), "story-providers", `${userId}.json`);

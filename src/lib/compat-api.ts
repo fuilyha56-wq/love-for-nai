@@ -1,9 +1,11 @@
+import { moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 /**
  * 适配器系统兼容层
  * 将现有 compat-api 逻辑迁移到适配器系统，保持 API 向后兼容
  */
 
 import JSZip from "jszip";
+import { encode } from "@msgpack/msgpack";
 import { Buffer } from "node:buffer";
 import {
   affStatus,
@@ -48,11 +50,14 @@ import {
   fetchWithModelConcurrency,
 } from "@/lib/model-concurrency";
 import { withExternalCors } from "@/lib/external-cors";
-import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
+import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { recordIpEvidence } from "@/lib/risk-ip";
-import { isNaiMediumModel } from "@/lib/nai-native-request";
+import { isNaiMediumModel, naiUsageModel } from "@/lib/nai-native-request";
 import { imagePricingStrength } from "@/lib/image-pricing";
+import { observeNativeImageCompletion } from "@/lib/nai-stream-completion";
+import { roundAffAmount } from "@/lib/daily-image-pricing";
+import { dailyImagePolicy } from "@/lib/daily-image-billing";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -66,6 +71,15 @@ const droppedResponseHeaders = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+
+/** Preserve verified ingress context without duplicating case-insensitive headers. */
+export function nativeRequestHeaders(request: Request, authorization: string, accept?: string): Headers {
+  const headers = new Headers(request.headers);
+  headers.set("Authorization", authorization);
+  if (accept) headers.set("Accept", accept);
+  headers.delete("content-length");
+  return headers;
+}
 const droppedRequestHeaders = new Set([
   ...droppedResponseHeaders,
   "content-length",
@@ -84,7 +98,7 @@ type JsonRecord = Record<string, unknown>;
  * 外部图像端点的身份识别：任何有效的 NewAPI key 均可使用，
  * 分组不限（站点注册用户多在 Draw/default 等分组，NewAPI 上不存在
  * 全体用户共有的单一分组）。计费自我约束：优先扣 key 所属用户的
- * 图包/个人 AFF 余额，无余额则透明代理回 NewAPI 按其分组通道计费。
+ * 图包/个人 AFF 余额；LFN 计费模型默认严格拒绝隐式钱包回退。
  */
 export async function requireIkunExternalIdentity(authorization: string) {
   return resolveExternalApiIdentity(authorization);
@@ -203,6 +217,10 @@ export async function proxyNewApi(
   }
 }
 
+function localBillingError(message: string, status: number): Response {
+  return withExternalCors(Response.json({ error: { message, type: "billing_error", code: status === 402 ? "lfn_insufficient_credits" : "lfn_billing_unavailable" } }, { status }));
+}
+
 function paymentResponse(response: Response, source: "package" | "personal" | "mixed" | "newapi"): Response {
   const headers = new Headers(response.headers);
   headers.set("X-LFN-Payment-Source", source);
@@ -218,11 +236,17 @@ async function auditedResponse(
   audit: Awaited<ReturnType<typeof startRequestAudit>>,
   patch: Parameters<Awaited<ReturnType<typeof startRequestAudit>>["finish"]>[0] = {},
 ): Promise<Response> {
-  await audit.finish({ ...patch, status: response.status });
-  return withExternalCors(new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: audit.responseHeaders(response.headers),
+  const anlas = response.headers.get("x-anlas-cost");
+  const cost = anlas?.trim() ? Number(anlas) : NaN;
+  if (Number.isFinite(cost) && cost >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: cost };
+  const countHeader = response.headers.get("x-lfn-generated-samples");
+  const generatedSamples = countHeader?.trim() ? Number(countHeader) : undefined;
+  await audit.finish({ ...patch, status: response.status, ...(generatedSamples != null && Number.isInteger(generatedSamples) ? { generatedSamples } : {}) });
+  const forwarded = forwardResponse(response);
+  return withExternalCors(new Response(forwarded.body, {
+    status: forwarded.status,
+    statusText: forwarded.statusText,
+    headers: audit.responseHeaders(forwarded.headers),
   }));
 }
 
@@ -251,8 +275,17 @@ async function watermarkJsonResponse(
     }));
     const body = JSON.stringify(data.length ? { ...payload, data: marked } : payload);
     const headers = audit.responseHeaders(response.headers);
+    // The JSON body may change size after watermark metadata is embedded. Do
+    // not forward entity/framing headers that describe the upstream body.
+    for (const name of droppedResponseHeaders) headers.delete(name);
+    for (const name of ["content-range", "content-md5", "digest", "etag"]) headers.delete(name);
     headers.set("content-type", "application/json");
-    await audit.finish({ status: response.status, watermarkStatus });
+    const generatedSamples = imageCountFromJson(payload);
+    headers.set("X-LFN-Generated-Samples", String(generatedSamples));
+    const rawAnlas = response.headers.get("x-anlas-cost");
+    const reportedAnlas = rawAnlas?.trim() ? Number(rawAnlas) : NaN;
+    if (Number.isFinite(reportedAnlas) && reportedAnlas >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: reportedAnlas };
+    await audit.finish({ status: response.status, watermarkStatus, generatedSamples });
     return withExternalCors(new Response(body, { status: response.status, statusText: response.statusText, headers }));
   } catch {
     return auditedResponse(response, audit, { watermarkStatus: "failed" });
@@ -298,6 +331,7 @@ async function settleExternalCharge(
   if ((response.headers.get("content-type") || "").includes("application/json")) {
     try {
       const payload = (await response.clone().json()) as JsonRecord;
+      if (audit) audit.record.moderation = await moderationFromUpstream(payload);
       if (isRecord(payload.usage)) gatewayUsage = payload.usage;
     } catch {
       gatewayUsage = undefined;
@@ -316,6 +350,7 @@ async function settleExternalCharge(
   };
   const settleLocal = async (generatedSamples: number): Promise<void> => {
     const completed = Math.min(charge.samples, Math.max(0, generatedSamples));
+    if (audit) audit.record.generatedSamples = completed;
     if (completed < charge.samples)
       await refundImageCredits(userId, charge, completed, { settlementId, requestId });
     const chargedAmount = charge.packageChargesBySample.slice(0, completed).reduce((sum, value) => sum + value, 0) +
@@ -339,13 +374,22 @@ async function settleExternalCharge(
     await settleLocal(charge.samples);
     return paymentResponse(response, paymentSource);
   }
+  let payload: unknown;
   try {
-    const payload = (await response.clone().json()) as unknown;
-    const generated = imageCountFromJson(payload);
-    await settleLocal(generated);
+    payload = await response.clone().json();
   } catch {
     await refundImageCredits(userId, charge, 0, { settlementId, requestId });
+    if (audit) audit.record.generatedSamples = 0;
+    recordBilling(0);
+    return paymentResponse(Response.json({
+      error: {
+        message: "上游图像响应不完整或不是有效 JSON，本站已退还本次图像额度",
+        type: "api_error",
+        code: "lfn_image_invalid_response",
+      },
+    }, { status: 502 }), paymentSource);
   }
+  await settleLocal(imageCountFromJson(payload));
   return paymentResponse(response, paymentSource);
 }
 
@@ -385,6 +429,7 @@ export async function proxyImageWithCredits(
     ));
   }
   if (apiIdentity instanceof Response) return apiIdentity;
+  if (apiIdentity.allowedModels && !apiIdentity.allowedModels.some(m => naiUsageModel(m) === naiUsageModel(imageRequest.generation.model))) return withExternalCors(Response.json({ error: { message: "此 API Key 未授权当前模型", code: "lfn_key_model_forbidden" } }, { status: 403 }));
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
   const audit = await startRequestAudit({
     request,
@@ -396,10 +441,11 @@ export async function proxyImageWithCredits(
     model: imageRequest.generation.model,
     parameters: imageRequest.generation as unknown as Record<string, unknown>,
   });
-  const ipEvidence = await recordIpEvidence(request, audit.requestId, apiIdentity.userId ?? undefined, logUser).catch(() => null);
+  const ipEvidence = await recordIpEvidence(request, audit.requestId, apiIdentity.userId ?? undefined, logUser, true).catch(() => null);
   if (ipEvidence) audit.record.ipEvidenceId = ipEvidence.evidenceId;
 
   const userId = apiIdentity.userId;
+  const strictBilling = isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false;
   if (userId != null) {
     try {
       const risk = await evaluateImageRisk({
@@ -422,7 +468,9 @@ export async function proxyImageWithCredits(
         decision: risk.decision,
       };
       if (risk.decision === "deny")
-        return auditedResponse(withExternalCors(riskBlockedResponse()), audit, { error: "账号已被风控封禁" });
+        return auditedResponse(withExternalCors(riskBlockedResponse(risk)), audit, { error: "账号已被风控封禁" });
+      if (risk.decision === "rate-limit")
+        return auditedResponse(withExternalCors(await riskRateLimitedResponse(risk)), audit, { error: "账号触发风控限流" });
     } catch (error) {
       return auditedResponse(
         withExternalCors(Response.json(
@@ -439,12 +487,14 @@ export async function proxyImageWithCredits(
   const imageAdapter = await registry.getImageAdapter();
   const platformUpstream = await resolvedImageUpstream();
   if (!imageAdapter && !platformUpstream) {
+    if (strictBilling) return auditedResponse(localBillingError("没有可用的本地计费执行通道", 503), audit);
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
     )(-1);
     return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), audit);
   }
   if (userId == null) {
+    if (strictBilling) return auditedResponse(localBillingError("暂时无法确认 API Key 对应账号，请稍后重试", 503), audit);
     // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
@@ -463,8 +513,9 @@ export async function proxyImageWithCredits(
   let settled = false;
   let settlementId: string | undefined;
   try {
-    charge = await trySpendImageCredits(userId, imageRequest.generation);
+    charge = await trySpendImageCredits(userId, imageRequest.generation, audit.requestId);
     if (!charge) {
+      if (strictBilling) return auditedResponse(localBillingError("本站 AFF 或图包余额不足，本次未改用其他钱包扣费", 402), audit);
       gatewayLogStart(externalLogMeta(logUser, imageRequest, pathname))(-1);
       // 用户分组可能没有该模型的渠道：先尝试托管密钥换组重试。
       const managedKey = await ensureManagedFallbackToken(
@@ -565,7 +616,7 @@ export async function proxyImageWithCredits(
 
     // 回退：使用环境变量配置的端点
     if (platformUpstream) {
-      const headers = new Headers({
+      const headers = queuedRiskHeaders(audit.requestId, {
         Authorization: `Bearer ${platformUpstream.token}`,
         ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
       });
@@ -589,6 +640,8 @@ export async function proxyImageWithCredits(
 
     throw new Error("No image service available");
   } catch (error) {
+    const admission = riskAdmissionResponse(error);
+    if (admission) return auditedResponse(admission, audit);
     if (charge && !settled) await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
     const response = Response.json(
       {
@@ -619,11 +672,15 @@ export function forwardResponse(upstream: Response): Response {
 async function validatedNativeZipResponse(upstream: Response): Promise<Response | null> {
   try {
     const body = await upstream.arrayBuffer();
-    await JSZip.loadAsync(body);
+    const zip = await JSZip.loadAsync(body);
+    const count = Object.values(zip.files).filter((entry) => !entry.dir && /\.(png|webp|jpe?g)$/i.test(entry.name)).length;
+    if (!count) return null;
+    const headers = new Headers(upstream.headers);
+    headers.set("X-LFN-Generated-Samples", String(count));
     return new Response(body, {
       status: upstream.status,
       statusText: upstream.statusText,
-      headers: upstream.headers,
+      headers,
     });
   } catch {
     return null;
@@ -658,6 +715,9 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   const rest = { ...parameters };
   delete rest.n;
   delete rest.n_samples;
+  // OpenAI fallback must return final base64 images. A native "msgpack"
+  // stream flag is not an OpenAI boolean stream flag.
+  delete rest.stream;
   validateMediumRequest(model, { ...rest, width, height, n: samples, steps }, operation ?? action);
   return {
     ...rest,
@@ -697,15 +757,56 @@ export async function naiZipResponse(upstream: Response): Promise<Response> {
     archive.file(`image_${index}.png`, image, { base64: true });
   });
   const zip = await archive.generateAsync({ type: "arraybuffer" });
-  const headers = new Headers({
-    "Content-Type": "application/zip",
-    "Content-Length": String(zip.byteLength),
-    "Content-Disposition": 'attachment; filename="images.zip"',
-    "X-LFN-Usage": encodeURIComponent(JSON.stringify(result.usage ?? null)),
-  });
+  const headers = new Headers(upstream.headers);
+  headers.set("Content-Type", "application/zip");
+  headers.set("Content-Length", String(zip.byteLength));
+  headers.set("Content-Disposition", 'attachment; filename="images.zip"');
+  headers.set("X-LFN-Usage", encodeURIComponent(JSON.stringify(result.usage ?? null)));
+  headers.set("X-LFN-Generated-Samples", String(images.length));
   const paymentSource = upstream.headers.get("x-lfn-payment-source");
   if (paymentSource) headers.set("X-LFN-Payment-Source", paymentSource);
   return withExternalCors(new Response(zip, { headers }));
+}
+
+/** Launcher v4 accepts big-endian length-prefixed MessagePack, including on NewAPI fallback. */
+export async function naiMsgpackResponse(upstream: Response): Promise<Response> {
+  if (!upstream.ok) return withExternalCors(forwardResponse(upstream));
+  const type = (upstream.headers.get("content-type") || "").toLowerCase();
+  if (type.includes("msgpack") || type.includes("octet-stream")) return withExternalCors(forwardResponse(upstream));
+  let images: Uint8Array[] = [];
+  const headers = new Headers(upstream.headers);
+  if (type.includes("json")) {
+    const result = await upstream.json() as JsonRecord;
+    images = (Array.isArray(result.data) ? result.data : []).flatMap((item) => {
+      if (!isRecord(item) || typeof item.b64_json !== "string") return [];
+      return [Uint8Array.from(Buffer.from(item.b64_json.replace(/^data:image\/[^;]+;base64,/, ""), "base64"))];
+    });
+    headers.set("X-LFN-Usage", encodeURIComponent(JSON.stringify(result.usage ?? null)));
+  } else if (type.includes("zip")) {
+    const zip = await JSZip.loadAsync(await upstream.arrayBuffer());
+    images = await Promise.all(Object.values(zip.files).filter((item) => !item.dir && /\.(png|webp|jpe?g)$/i.test(item.name)).map((item) => item.async("uint8array")));
+  }
+  if (!images.length || images.some((image) => !image.length)) return withExternalCors(Response.json({ message: "上游没有返回有效图片", code: "lfn_native_empty_image" }, { status: 502 }));
+  const frames = images.map((image, index) => {
+    const payload = encode({ event_type: "final", samp_ix: index, image });
+    const frame = new Uint8Array(4 + payload.length);
+    new DataView(frame.buffer).setUint32(0, payload.length, false);
+    frame.set(payload, 4);
+    return frame;
+  });
+  const bytes = new Uint8Array(frames.reduce((sum, frame) => sum + frame.length, 0));
+  let offset = 0;
+  for (const frame of frames) { bytes.set(frame, offset); offset += frame.length; }
+  headers.set("Content-Type", "application/x-msgpack");
+  headers.set("Content-Length", String(bytes.length));
+  headers.set("X-LFN-Stream-Mode", "final-fallback");
+  headers.set("X-LFN-Generated-Samples", String(images.length));
+  return withExternalCors(new Response(bytes, { headers }));
+}
+
+async function nativeResponseForPath(response: Response, pathname: string): Promise<Response> {
+  if (!pathname.startsWith("/ai/generate-image")) return response;
+  return pathname.endsWith("-stream") ? naiMsgpackResponse(response) : naiZipResponse(response);
 }
 
 export function unsupportedNaiOperation(request: Request, operation: string): Response {
@@ -802,6 +903,7 @@ export async function proxyNaiNativeWithCredits(
     ));
   }
   if (apiIdentity instanceof Response) return apiIdentity;
+  if (apiIdentity.allowedModels && !apiIdentity.allowedModels.some(m => naiUsageModel(m) === naiUsageModel(imageRequest.generation.model))) return withExternalCors(Response.json({ error: { message: "此 API Key 未授权当前模型", code: "lfn_key_model_forbidden" } }, { status: 403 }));
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
   const audit = await startRequestAudit({
     request,
@@ -816,6 +918,7 @@ export async function proxyNaiNativeWithCredits(
 
   const userId = apiIdentity.userId;
   let risk: Awaited<ReturnType<typeof evaluateImageRisk>> | null = null;
+  const strictBilling = isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false;
   if (userId != null) {
     try {
       risk = await evaluateImageRisk({
@@ -848,7 +951,9 @@ export async function proxyNaiNativeWithCredits(
       decision: risk.decision,
     };
     if (risk.decision === "deny")
-      return auditedResponse(withExternalCors(riskBlockedResponse()), audit, { error: "账号已被风控封禁" });
+      return auditedResponse(withExternalCors(riskBlockedResponse(risk)), audit, { error: "账号已被风控封禁" });
+    if (risk.decision === "rate-limit")
+      return auditedResponse(withExternalCors(await riskRateLimitedResponse(risk)), audit, { error: "账号触发风控限流" });
   }
 
   const preferImage = IMAGE_NATIVE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
@@ -856,6 +961,7 @@ export async function proxyNaiNativeWithCredits(
     ? (await resolvedNaiImageUpstream()) || (await resolvedNaiAccountUpstream())
     : (await resolvedNaiAccountUpstream()) || (await resolvedNaiImageUpstream());
   if (!nativeUpstream) {
+    if (strictBilling) return auditedResponse(localBillingError("没有可用的本地计费执行通道", 503), audit);
     // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
     const fallbackEndpoint =
       newApiFallback && newApiFallback !== "unsupported"
@@ -874,6 +980,7 @@ export async function proxyNaiNativeWithCredits(
       : pathname;
   if (userId == null) {
     // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
+    if (strictBilling) return auditedResponse(localBillingError("暂时无法确认 API Key 对应账号，请稍后重试", 503), audit);
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
@@ -891,11 +998,13 @@ export async function proxyNaiNativeWithCredits(
   let settled = false;
   let settlementId: string | undefined;
   try {
-    charge = await trySpendImageCredits(userId, imageRequest.generation);
+    charge = await trySpendImageCredits(userId, imageRequest.generation, audit.requestId);
     if (!charge) {
       gatewayLogStart(
         externalLogMeta(logUser, imageRequest, fallbackEndpoint),
       )(-1);
+      if (strictBilling) return auditedResponse(localBillingError("本站 AFF 或图包余额不足，本次未改用其他钱包扣费", 402), audit);
+      /* Explicit legacy billing mode only. */
       // 用户分组可能没有该模型的渠道（如 default 打 NAI 模型）：
       // 先取一把可用分组的托管密钥重试，取不到再用原 key 透传保留
       // 原始错误。
@@ -904,15 +1013,15 @@ export async function proxyNaiNativeWithCredits(
         imageRequest.generation.model,
       ).catch(() => null);
       if (managedKey) {
-        const managedHeaders = new Headers({
-          Authorization: `Bearer sk-${managedKey}`,
-          "Content-Type": imageRequest.contentType || "application/json",
-        });
-        const accept = request.headers.get("accept");
-        if (accept) managedHeaders.set("Accept", accept);
         const target = newApiFallback && newApiFallback !== "unsupported"
           ? newApiFallback
           : { pathname, body: imageRequest.body, contentType: imageRequest.contentType };
+        const managedHeaders = new Headers({
+          Authorization: `Bearer sk-${managedKey}`,
+          "Content-Type": target.contentType || "application/json",
+        });
+        const accept = request.headers.get("accept");
+        if (accept) managedHeaders.set("Accept", accept);
         const finishManagedLog = gatewayLogStart(
           externalLogMeta(logUser, imageRequest, target.pathname),
         );
@@ -930,7 +1039,7 @@ export async function proxyNaiNativeWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" });
+        return auditedResponse(paymentResponse(await nativeResponseForPath(managedUpstream, pathname), "newapi"), audit, { paymentSource: "newapi" });
       }
       return auditedResponse(
         paymentResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), "newapi"),
@@ -953,7 +1062,7 @@ export async function proxyNaiNativeWithCredits(
       };
     }
 
-    const headers = new Headers({
+    const headers = queuedRiskHeaders(audit.requestId, {
       Authorization: `Bearer ${nativeUpstream.token}`,
       ...(imageRequest.contentType ? { "Content-Type": imageRequest.contentType } : {}),
     });
@@ -973,16 +1082,20 @@ export async function proxyNaiNativeWithCredits(
       throw error;
     });
     finishNativeLog(upstream.status);
-    settled = true;
     if (!upstream.ok) {
+      if ((upstream.headers.get("content-type") || "").includes("application/json")) {
+        try { audit.record.moderation = await moderationFromUpstream(await upstream.clone().json()); } catch { /* Unknown result remains unaudited. */ }
+      }
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
       return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
     }
     const upstreamContentType = (upstream.headers.get("content-type") || "").toLowerCase();
     const expectedNativeResponse = pathname.endsWith("-stream")
-      ? /(?:msgpack|octet-stream|event-stream)/.test(upstreamContentType)
-      : /zip/.test(upstreamContentType);
+      ? /(?:msgpack|octet-stream|zip|json)/.test(upstreamContentType)
+      : /(?:zip|json)/.test(upstreamContentType);
     if (!expectedNativeResponse) {
+      // Release the native account's stream/queue before returning a format error.
+      await upstream.body?.cancel().catch(() => undefined);
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
       const response = Response.json(
         {
@@ -1000,9 +1113,13 @@ export async function proxyNaiNativeWithCredits(
       });
     }
     const nativeResponse = pathname.endsWith("-stream")
-      ? upstream
-      : await validatedNativeZipResponse(upstream);
-    if (!nativeResponse) {
+      ? await naiMsgpackResponse(upstream)
+      : upstreamContentType.includes("json") ? await naiZipResponse(upstream) : await validatedNativeZipResponse(upstream);
+    if (nativeResponse && !nativeResponse.ok) {
+      await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
+      return auditedResponse(paymentResponse(nativeResponse, paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge), generatedSamples: 0, error: "原生上游未返回有效图片" });
+    }
+    if (!nativeResponse || pathname.endsWith("-stream") && !nativeResponse.body) {
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
       const response = Response.json(
         {
@@ -1019,12 +1136,16 @@ export async function proxyNaiNativeWithCredits(
         error: "原生上游 ZIP 响应无效",
       });
     }
+    const nativeProduced = pathname.endsWith("-stream") ? charge.samples : Math.min(charge.samples, Number(nativeResponse.headers.get("X-LFN-Generated-Samples")) || charge.samples);
+    if (!pathname.endsWith("-stream") && nativeProduced < charge.samples) await refundImageCredits(userId, charge, nativeProduced, { settlementId, requestId: audit.requestId });
     settled = true;
     if (settlementId) {
-      const anlasCost = Number(upstream.headers.get("x-anlas-cost"));
-      const promptTokens = Number(upstream.headers.get("x-prompt-tokens"));
+      const anlasHeader = upstream.headers.get("x-anlas-cost");
+      const promptHeader = upstream.headers.get("x-prompt-tokens");
+      const anlasCost = anlasHeader?.trim() ? Number(anlasHeader) : NaN;
+      const promptTokens = promptHeader?.trim() ? Number(promptHeader) : NaN;
       audit.record.billing = {
-        lfnChargedAff: charge.cost,
+        lfnChargedAff: roundAffAmount(charge.packageChargesBySample.slice(0, nativeProduced).reduce((sum, cost) => sum + cost, 0) + charge.personalChargesBySample.slice(0, nativeProduced).reduce((sum, cost) => sum + cost, 0)),
         ...(Number.isSafeInteger(anlasCost) && anlasCost >= 0
           ? { gatewayAnlasCost: anlasCost }
           : {}),
@@ -1032,14 +1153,30 @@ export async function proxyNaiNativeWithCredits(
           ? { gatewayPromptTokens: promptTokens }
           : {}),
       };
-      await updateImageSettlement(settlementId, {
-        generatedSamples: charge.samples,
-        status: "succeeded",
+      if (!pathname.endsWith("-stream")) {
+        if (nativeProduced === charge.samples) await updateImageSettlement(settlementId, { generatedSamples: nativeProduced, status: "succeeded" });
+        audit.record.generatedSamples = nativeProduced;
+        if (audit.record.settlement) audit.record.settlement.status = nativeProduced === charge.samples ? "succeeded" : "partially-refunded";
+      }
+    }
+    if (pathname.endsWith("-stream")) {
+      const source = paymentSourceForCharge(charge);
+      const reservedCharge = charge;
+      const observed = observeNativeImageCompletion(nativeResponse, charge.samples, async ({ samples: produced, error }) => {
+        if (produced < reservedCharge.samples) await refundImageCredits(userId, reservedCharge, produced, { settlementId, requestId: audit.requestId, reason: error });
+        else if (settlementId) await updateImageSettlement(settlementId, { generatedSamples: produced, status: "succeeded" });
+        const actualCost = roundAffAmount(reservedCharge.packageChargesBySample.slice(0, produced).reduce((sum, cost) => sum + cost, 0) + reservedCharge.personalChargesBySample.slice(0, produced).reduce((sum, cost) => sum + cost, 0));
+        audit.record.billing = { ...audit.record.billing, lfnChargedAff: actualCost };
+        if (audit.record.settlement) Object.assign(audit.record.settlement, { chargedAmount: actualCost, refundedAmount: roundAffAmount(reservedCharge.cost - actualCost), status: produced === reservedCharge.samples ? "succeeded" : produced ? "partially-refunded" : "refunded" });
+        await audit.finish({ status: error ? produced ? 206 : 502 : 200, paymentSource: source, generatedSamples: produced, ...(error ? { error } : {}) });
       });
-      if (audit.record.settlement) audit.record.settlement.status = "succeeded";
+      const response = paymentResponse(observed, source);
+      return withExternalCors(new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) }));
     }
     return auditedResponse(paymentResponse(forwardResponse(nativeResponse), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
   } catch (error) {
+    const admission = riskAdmissionResponse(error);
+    if (admission) return auditedResponse(admission, audit);
     if (charge && !settled) await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
     return withExternalCors(Response.json(
       {
@@ -1063,13 +1200,13 @@ async function nativeNewApiFallback(
   if (newApiFallback === "unsupported")
     return unsupportedNaiOperation(request, pathname.replace(/^\/ai\//, ""));
   if (newApiFallback)
-    return proxyNewApi(
+    return nativeResponseForPath(await proxyNewApi(
       request,
       newApiFallback.pathname,
       newApiFallback.body,
       newApiFallback.contentType,
-    );
-  return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+    ), pathname);
+  return nativeResponseForPath(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), pathname);
 }
 
 export function isRecord(value: unknown): value is JsonRecord {
@@ -1141,9 +1278,9 @@ export async function parseNaiGenerationBody(
     return (await request.json()) as Record<string, unknown>;
   const form = await request.formData();
   const requestPart = form.get("request");
-  if (!(requestPart instanceof File))
+  if (!(requestPart instanceof File) && typeof requestPart !== "string")
     throw new Error("multipart 请求缺少 request 部件");
-  const json = JSON.parse(await requestPart.text()) as JsonRecord;
+  const json = JSON.parse(typeof requestPart === "string" ? requestPart : await requestPart.text()) as JsonRecord;
   const parts = new Map<string, string>();
   for (const [name, value] of form.entries()) {
     if (name === "request" || !(value instanceof File)) continue;
@@ -1153,11 +1290,13 @@ export async function parseNaiGenerationBody(
     const substituteIn = (container: JsonRecord): void => {
       for (const [key, value] of Object.entries(container)) {
         if (typeof value === "string") {
-          if ((value === key || key === "data") && parts.has(value))
+          if ((/^(image|mask|reference_image|data)$/.test(key) || /images|image_multiple/.test(key)) && parts.has(value))
             container[key] = parts.get(value);
         } else if (Array.isArray(value)) {
-          value.forEach((item) => {
+          container[key] = value.map((item) => {
             if (isRecord(item)) substituteIn(item);
+            if (typeof item === "string" && /images|image_multiple/.test(key) && parts.has(item)) return parts.get(item);
+            return item;
           });
         } else if (isRecord(value)) {
           substituteIn(value);

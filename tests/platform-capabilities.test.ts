@@ -60,6 +60,7 @@ describe("平台能力探测", () => {
       "creator",
       "rewards",
       "redeem",
+      "activities",
     ]);
     expect(modules.filter((item) => item.enabled).every((item) => item.description)).toBe(true);
     expect(modules.find((item) => item.id === "sessions")).toMatchObject({ enabled: false });

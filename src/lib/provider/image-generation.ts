@@ -1,12 +1,15 @@
+import { riskAdmissionResponse } from "@/lib/light-risk";
 import { NextResponse } from "next/server";
 import { splitImageBatches } from "@/lib/image-batches";
 import { saveHistory } from "@/lib/history";
 import { checkImageRateLimit, ImageRequestValidationError, normalizeSamples } from "@/lib/image-request";
 import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { buildImageTransportRequest, finishImageTransportImages, imageTransportOutputDimensions, parseImageTransportResult, type ImageTransportRequest } from "@/lib/image-transport";
+import { recheckQueuedRisk } from "@/lib/light-risk";
 import { ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import type { LfnSession } from "@/lib/session";
 import { startRequestAudit } from "@/lib/request-audit";
+import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from "@/lib/risk-control";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { ProviderInputError, validateModelId } from "./validation";
 import { downloadProviderImage } from "./http";
@@ -50,6 +53,25 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
     model,
     parameters: requestBody,
   });
+  const risk = await evaluateImageRisk({
+    userId: session.userId,
+    username: session.username,
+    model,
+    prompt: typeof body.prompt === "string" ? body.prompt : undefined,
+    requestId: audit.requestId,
+  }).catch(() => null);
+  if (!risk) {
+    await audit.finish({ status: 503, error: "风控服务暂时不可用" });
+    return NextResponse.json({ message: "风控服务暂时不可用，请稍后重试" }, { status: 503 });
+  }
+  if (risk.decision === "deny") {
+    await audit.finish({ status: 403, risk });
+    return riskBlockedResponse(risk);
+  }
+  if (risk.decision === "rate-limit") {
+    await audit.finish({ status: 429, risk });
+    return await riskRateLimitedResponse(risk);
+  }
   const images: string[] = [];
   let usage: unknown = null;
   let watermarkStatus: "embedded" | "disabled" | "skipped" | "failed" = "skipped";
@@ -76,6 +98,7 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
       if (request.signal.aborted) return partial("生成已取消", 499);
       const nextBody = { ...requestBody, ...(resolveImageModelCapabilities(model, options.protocol).seed && typeof body.seed === "number" ? { seed: (body.seed + images.length) % 2 ** 32 } : {}) };
       const upstreamRequest = index === 0 ? firstRequest : await buildImageTransportRequest(nextBody, options.apiKey, options.protocol, batches[index]);
+      await recheckQueuedRisk(audit.requestId);
       const response = await options.send(upstreamRequest);
       const raw = await response.text();
       if (raw.length > 70_000_000) return partial("上游图像响应超过大小限制", 502);
@@ -121,6 +144,8 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
     await audit.finish({ historyIds, status: 200, paymentSource: options.paymentSource, watermarkStatus });
     return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, requestId: audit.requestId, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   } catch (error) {
+    const admission = riskAdmissionResponse(error);
+    if (admission) { await audit.finish({ status: admission.status }); return NextResponse.json(await admission.json(), { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
     const invalid = error instanceof ImageRequestValidationError || error instanceof ProviderInputError;
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
     await audit.finish({ status: invalid ? 400 : queueAborted ? 503 : 502, error: error instanceof Error ? error.message : "图像请求失败" });

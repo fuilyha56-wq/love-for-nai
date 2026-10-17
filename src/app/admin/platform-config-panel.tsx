@@ -1,4 +1,6 @@
 "use client";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import { Pencil, Plus, Power, PowerOff, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -244,7 +246,7 @@ export default function PlatformConfigPanel({ setMessage }: { setMessage: (msg: 
   }
 
   async function removeEndpoint(item: EndpointConfig) {
-    if (!window.confirm(`确定删除端点「${item.name}」？`)) return;
+    if (!(await lfnConfirm(`确定删除端点「${item.name}」？`))) return;
     const response = await fetch(`/api/admin/platform/endpoints?id=${encodeURIComponent(item.id)}`, {
       method: "DELETE",
     });

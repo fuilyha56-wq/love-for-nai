@@ -99,10 +99,10 @@ async function writeStore(store: GalleryStore): Promise<void> {
   await rename(temp, target);
 }
 export function galleryWeekKey(date = new Date()): string {
-  const day = new Date(date.getTime() + 8 * 3600_000);
-  const monday = new Date(day);
+  const monday = new Date(date);
   const offset = (monday.getUTCDay() + 6) % 7;
   monday.setUTCDate(monday.getUTCDate() - offset);
+  monday.setUTCHours(0, 0, 0, 0);
   return monday.toISOString().slice(0, 10);
 }
 /**

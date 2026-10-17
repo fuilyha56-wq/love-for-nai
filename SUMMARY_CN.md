@@ -211,7 +211,7 @@ export type EndpointConfig = {
 
 ```bash
 # 设置环境变量
-export DATABASE_URL="postgresql://user:pass@host:5432/lfn"
+export DATABASE_URL="${NEWAPI_DB_URL}
 
 # 运行迁移
 bash scripts/migrate.sh

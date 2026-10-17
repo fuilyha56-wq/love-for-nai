@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let cookieValue: string | undefined;
 
 vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers()),
   cookies: vi.fn(async () => ({
     get: (name: string) =>
       (name === "lfn_session" || name === "lfn_2fa") && cookieValue
@@ -18,6 +19,7 @@ vi.mock("next/headers", () => ({
 async function importFresh(epoch: string) {
   vi.resetModules();
   process.env.LFN_SESSION_EPOCH = epoch;
+  (await import("@/lib/runtime-config")).resetRuntimeConfigCache();
   return await import("@/lib/session");
 }
 

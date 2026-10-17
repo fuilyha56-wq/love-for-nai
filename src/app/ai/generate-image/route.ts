@@ -1,11 +1,13 @@
 import {
   bearerAuthorization,
+  nativeRequestHeaders,
   externalGeneration,
   imageOperationFromBody,
   imageRequestErrorBody,
   isRecord,
   naiGenerationPayload,
   naiZipResponse,
+  naiMsgpackResponse,
   parseNaiGenerationBody,
   proxyImageWithCredits,
   proxyNaiNativeWithCredits,
@@ -73,12 +75,7 @@ export async function POST(request: Request): Promise<Response> {
       : body;
     const proxyRequest = new Request(request.url, {
       method: "POST",
-      headers: {
-        Authorization: authorization,
-        Accept: wantsStream
-          ? "application/x-msgpack"
-          : request.headers.get("accept") || "application/zip",
-      },
+      headers: nativeRequestHeaders(request, authorization, wantsStream ? "application/x-msgpack" : request.headers.get("accept") || "application/zip"),
     });
     const native = await proxyNaiNativeWithCredits(
       proxyRequest,
@@ -97,11 +94,11 @@ export async function POST(request: Request): Promise<Response> {
     );
     // 原生 Gateway 的响应保持协议、字节和响应头透传；只有没有原生上游时，
     // 下方的 OpenAI 回退结果才需要转换成 Launcher 能识别的 ZIP。
-    return native;
+    return wantsStream ? naiMsgpackResponse(native) : naiZipResponse(native);
   }
   const proxyRequest = new Request(request.url, {
     method: "POST",
-    headers: { Authorization: authorization },
+    headers: nativeRequestHeaders(request, authorization),
   });
   const upstream = await proxyImageWithCredits(
     proxyRequest,
@@ -113,5 +110,5 @@ export async function POST(request: Request): Promise<Response> {
       prompt: typeof body.input === "string" ? body.input : undefined,
     },
   );
-  return naiZipResponse(upstream);
+  return wantsStream ? naiMsgpackResponse(upstream) : naiZipResponse(upstream);
 }

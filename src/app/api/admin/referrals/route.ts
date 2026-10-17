@@ -1,28 +1,24 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
-import { findLocalUserById } from "@/lib/local-users";
-import { resolvedAuthProviderId } from "@/lib/platform";
+import { userDisplayNames } from "@/lib/user-display";
 import { listReferrals, referralInvitedCount, referralReward } from "@/lib/referral";
 
 export async function GET() {
   const gate = await requireAdmin();
   if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
   const items = await listReferrals();
-  const local = (await resolvedAuthProviderId()) === "local";
-  const enriched = await Promise.all(
-    items.map(async (item) => {
-      const inviter = local ? await findLocalUserById(item.inviterUserId) : null;
+  const names = await userDisplayNames(items.map((item) => item.inviterUserId));
+  const reward = await referralReward();
+  const enriched = items.map((item) => {
       return {
-        ...item,
+        code: item.code, inviterUserId: item.inviterUserId, createdAt: item.createdAt,
         invitedCount: referralInvitedCount(item),
-        inviterName: inviter?.displayName || inviter?.username,
-        reward: await referralReward(),
+        inviterName: names.get(item.inviterUserId)?.name || `账号 #${item.inviterUserId}`,
       };
-    }),
-  );
+    });
   return NextResponse.json({
     items: enriched.sort((a, b) => b.invitedCount - a.invitedCount),
     total: enriched.length,
-    reward: await referralReward(),
+    reward,
   });
 }
