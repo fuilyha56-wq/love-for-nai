@@ -27,7 +27,7 @@ export const workspaceDestinations = [
   { href: "/history", label: "图片历史", detail: "回看最近的创作，继续打磨灵感。", icon: History, group: "创作" },
   { href: "/verify", label: "图片溯源检测", detail: "验证图片签名并查询生成记录。", icon: ShieldCheck, group: "工具" },
   { href: "/gallery", label: "图片广场", detail: "发现作品，分享你的创作。", icon: Images, group: "创作" },
-  { href: "/studio", label: "创作者工作台", detail: "查看投稿审核状态，管理创作者资料。", icon: BriefcaseBusiness, group: "创作" },
+  { href: "/studio", label: "创作者工作台", detail: "参与创作活动，查看投稿审核状态，管理创作者资料。", icon: BriefcaseBusiness, group: "创作" },
   { href: "/usage", label: "使用记录", detail: "查看每一次调用与余额消耗。", icon: Coins, group: "账号" },
   { href: "/settings", label: "设置", detail: "管理外观、个人资料、模型密钥和提示词库。", icon: Palette, group: "设置" },
   { href: "/announcements", label: "站点公告", detail: "了解最近的更新与站点消息。", icon: Megaphone, group: "发现" },

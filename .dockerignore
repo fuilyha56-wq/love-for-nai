@@ -6,7 +6,8 @@ npm-debug.log
 .env.local
 README.md
 *.backup
-src/lib/compat-api.ts.backup.rsh*.py
+src/lib/compat-api.ts.backup
+.rsh*.py
 *.tar
 *.tar.gz
 .zcode
@@ -22,3 +23,16 @@ SERVER_CONNECTION_GUIDE.md
 .vscode
 .idea
 .mimosa
+.venv
+scripts/.tmp
+.tmp
+tests
+*.log
+*.zip
+*.bak*
+AGENTS.md
+**/__pycache__
+**/*.pyc
+FOLLOWUP-*.md
+IMPLEMENTATION-*.md
+IP-GEO-MODE-CLIPBOARD-*.md

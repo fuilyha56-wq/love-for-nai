@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/admin-auth";
 import { adjustAff, adjustPackageBalance, affLedger } from "@/lib/aff";
-import { isHalfStepAmount } from "@/lib/image-pricing";
+import { isAffAmount } from "@/lib/daily-image-pricing";
 import {
   invalidJsonResponse,
   optionalNumber,
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "缺少用户 id" }, { status: 400 });
   const personalDelta = optionalNumber(raw.personalDelta) ?? 0;
   const packageDelta = optionalNumber(raw.packageDelta) ?? 0;
-  if (!isHalfStepAmount(personalDelta) || !isHalfStepAmount(packageDelta))
-    return NextResponse.json({ message: "调整金额必须为 0.5 的倍数" }, { status: 400 });
+  if (!isAffAmount(personalDelta) || !isAffAmount(packageDelta))
+    return NextResponse.json({ message: "调整金额最多四位小数" }, { status: 400 });
   if (personalDelta === 0 && packageDelta === 0)
     return NextResponse.json({ message: "请填写要发放或回收的额度" }, { status: 400 });
   const note = optionalString(raw.description)?.trim().slice(0, 120);

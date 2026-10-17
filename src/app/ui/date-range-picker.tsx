@@ -13,6 +13,8 @@ type DateRangePickerProps = {
   max?: string;
   quickRanges?: Array<{ label: string; getValue: () => DateRangeValue }>;
   ariaLabel?: string;
+  single?: boolean;
+  disabled?: boolean;
 };
 
 function parseDate(value: string): Date | null {
@@ -31,7 +33,7 @@ function sameDay(a: Date | null, b: Date | null): boolean {
   return Boolean(a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate());
 }
 
-export function DateRangePicker({ value, onChange, min, max, quickRanges = [], ariaLabel = "日期范围" }: DateRangePickerProps) {
+export function DateRangePicker({ value, onChange, min, max, quickRanges = [], ariaLabel = "日期范围", single = false, disabled = false }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
   const [selectingEnd, setSelectingEnd] = useState(false);
   const [month, setMonth] = useState(() => parseDate(value.start) || new Date());
@@ -68,14 +70,15 @@ export function DateRangePicker({ value, onChange, min, max, quickRanges = [], a
   function choose(date: Date) {
     const iso = toIso(date);
     if (minDate && date < minDate || maxDate && date > maxDate) return;
+    if (single) { onChange({ start: iso, end: iso }); setOpen(false); return; }
     if (!selectingEnd || !start) { onChange({ start: iso, end: iso }); setSelectingEnd(true); return; }
     if (date < start) { onChange({ start: iso, end: value.end }); return; }
     onChange({ start: value.start, end: iso }); setSelectingEnd(false); setOpen(false);
   }
-  const display = value.start && value.end ? `${value.start} ~ ${value.end}` : value.start || "选择日期范围";
-  const mobileDisplay = value.start && value.end ? `${value.start.slice(5)}–${value.end.slice(5)}` : "选择日期";
+  const display = single ? value.start || "选择日期" : value.start && value.end ? `${value.start} ~ ${value.end}` : value.start || "选择日期范围";
+  const mobileDisplay = single ? display : value.start && value.end ? `${value.start.slice(5)}–${value.end.slice(5)}` : "选择日期";
   return <div className="date-range-picker">
-    <button ref={triggerRef} type="button" className="date-range-trigger" aria-label={ariaLabel} aria-controls={id} aria-expanded={open} onClick={() => { setOpen((current) => !current); setSelectingEnd(false); }}>
+    <button ref={triggerRef} disabled={disabled} type="button" className="date-range-trigger" aria-label={ariaLabel} aria-controls={id} aria-expanded={open} onClick={() => { setOpen((current) => !current); setSelectingEnd(false); setMonth(parseDate(value.start) || new Date()); }}>
       <CalendarDays size={15} aria-hidden="true" /><span className="date-range-label-wide">{display}</span><span className="date-range-label-narrow">{mobileDisplay}</span>
     </button>
     {open && createPortal(<div ref={popoverRef} id={id} role="dialog" aria-label={ariaLabel} className="date-range-popover" style={style}>

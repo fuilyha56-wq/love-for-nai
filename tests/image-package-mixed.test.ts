@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { affStatus, refundImageCredits, trySpendImageCredits } from "@/lib/aff";
 import { createImageSettlement, getImageSettlement } from "@/lib/risk-settlement";
+import { dailyImageBillingState, reserveDailyImageQuote } from "@/lib/daily-image-billing";
+import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
 
 let dataDir = "";
 
@@ -27,6 +29,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  resetRuntimeConfigCache();
   await rm(dataDir, { recursive: true, force: true });
   delete process.env.LFN_DATA_DIR;
   delete process.env.LFN_AFF_GATEWAY_URL;
@@ -34,22 +37,54 @@ afterEach(async () => {
 });
 
 describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
+  it("图包折扣变化不改变固定 AFF 面值和 V5 计价", async () => {
+    const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1 };
+    for (const [index, priceUsd, affPerPackage] of [[0, 200, 400], [1, 400, 100]] as const) {
+      await updateRuntimeSettings({ imagePackagePriceUsd: priceUsd, imagePackageAffPerPackage: affPerPackage });
+      const userId = 930 + index;
+      await expect(dailyImageBillingState(userId)).resolves.toMatchObject({ cnyPerAff: 0.005, packageCny: priceUsd / 200, affPerPackage });
+      await seedAccount(userId, { balance: 300, packageBalance: 0, transactions: [] });
+      await expect(trySpendImageCredits(userId, generation, `fixed-cny-${index}`)).resolves.toMatchObject({ cost: 204, personalCost: 204, balance: 96, dailyQuote: { anlas: 20, costCny: 1.02 } });
+    }
+  });
+
+  it("跨 V5 第 50 张逐张扣款，失败部分按原阶梯和来源退款", async () => {
+    const userId = 920;
+    const generation = { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 };
+    await seedAccount(userId, { balance: 20, packageBalance: 4, transactions: [] });
+    await reserveDailyImageQuote(userId, { ...generation, samples: 30, sequential: true }, "daily-30");
+    await reserveDailyImageQuote(userId, { ...generation, samples: 19, sequential: true }, "daily-19");
+    const charge = await trySpendImageCredits(userId, { ...generation, samples: 3, sequential: true }, "daily-crossing");
+    expect(charge).toMatchObject({ cost: 12.8, packageCost: 4, personalCost: 8.8 });
+    expect(charge?.dailyQuote?.affCosts).toEqual([4, 4.4, 4.4]);
+    await refundImageCredits(userId, charge!, 1);
+    await expect(affStatus(userId)).resolves.toMatchObject({ balance: 20, packageBalance: 0 });
+    await expect(dailyImageBillingState(userId)).resolves.toMatchObject({ counts: { v5: 50 } });
+  });
+
+  it("有请求 ID 但余额不足时也释放每日预留张数", async () => {
+    const userId = 921;
+    await seedAccount(userId, { balance: 0, packageBalance: 0, transactions: [] });
+    await expect(trySpendImageCredits(userId, { model: "nai-v5-full", width: 832, height: 1216, steps: 28, samples: 1 }, "insufficient-with-id")).resolves.toBeNull();
+    await expect(dailyImageBillingState(userId)).resolves.toMatchObject({ counts: { v5: 0 } });
+  });
+
   it("超界 limit 在扣费前拒绝，钱包余额不变", async () => {
     await seedAccount(911, { balance: 50, packageBalance: 5, transactions: [], packageUsage: [], packageOrders: [] });
     await expect(trySpendImageCredits(911, { model: "nai-v5-full-limit", width: 1024, height: 1024, steps: 50, samples: 1 })).rejects.toThrow("limit");
     await expect(affStatus(911)).resolves.toMatchObject({ balance: 50, packageBalance: 5 });
   });
 
-  it("limit 顺序分批逐张验证尺寸、步数和参考图，合法请求扣半点价", async () => {
+  it("limit 顺序分批逐张验证尺寸、步数和参考图，合法请求按每张 4 AFF 扣费", async () => {
     await seedAccount(912, { balance: 50, packageBalance: 5, transactions: [], packageUsage: [], packageOrders: [] });
     const base = { model: "nai-v5-full-limit", width: 832, height: 1216, steps: 28, samples: 3, sequential: true };
     for (const override of [{ steps: 50 }, { width: 1088, height: 1024 }, { referenceImageCount: 1 }])
       await expect(trySpendImageCredits(912, { ...base, ...override })).rejects.toThrow("limit");
     await expect(affStatus(912)).resolves.toMatchObject({ balance: 50, packageBalance: 5 });
-    await expect(trySpendImageCredits(912, base)).resolves.toMatchObject({ cost: 4.5, packageCost: 4.5 });
+    await expect(trySpendImageCredits(912, base)).resolves.toMatchObject({ cost: 12, packageCost: 5, personalCost: 7 });
   });
   it("新结算全失败退回两个钱包，并发重试只退款一次", async () => {
-    await seedAccount(910, { balance: 50, packageBalance: 5, transactions: [], packageUsage: [], packageOrders: [] });
+    await seedAccount(910, { balance: 500, packageBalance: 5, transactions: [], packageUsage: [], packageOrders: [] });
     const charge = await trySpendImageCredits(910, {
       model: "nai-v5-full", width: 832, height: 1216, steps: 29, samples: 1,
     });
@@ -60,11 +95,11 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       refundImageCredits(910, charge!, 0, { settlementId }),
       refundImageCredits(910, charge!, 0, { settlementId }),
     ]);
-    await expect(affStatus(910)).resolves.toMatchObject({ balance: 50, packageBalance: 5 });
-    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 40 });
+    await expect(affStatus(910)).resolves.toMatchObject({ balance: 500, packageBalance: 5 });
+    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 204 });
   });
 
-  it("图包 12 + 个人 5，档内 V5 只需 1.5 AFF：个人不动", async () => {
+  it("图包 12 + 个人 5，档内 V5 只需 4 AFF：个人不动", async () => {
     await seedAccount(900, {
       balance: 5,
       packageBalance: 12,
@@ -82,16 +117,16 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 1.5,
-      packageCost: 1.5,
+      cost: 4,
+      packageCost: 4,
       personalCost: 0,
       packageImages: 1,
       balance: 5,
-      packageBalance: 10.5,
+      packageBalance: 8,
     });
   });
 
-  it("图包 1 + 个人 10，档外（steps29）V5 40 AFF 不足时整体回退", async () => {
+  it("图包 1 + 个人 10，档外（steps29）V5 204 AFF 不足时整体回退", async () => {
     await seedAccount(901, {
       balance: 10,
       packageBalance: 1,
@@ -116,9 +151,9 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
   });
 
-  it("图包 5 + 个人 40，档外（steps29）V5 40 AFF：混合扣 图包 5 + 个人 35", async () => {
+  it("图包 5 + 个人 240，档外（steps29）V5 204 AFF：混合扣 图包 5 + 个人 199", async () => {
     await seedAccount(903, {
-      balance: 40,
+      balance: 240,
       packageBalance: 5,
       transactions: [],
       packageUsage: [],
@@ -134,16 +169,16 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 40,
+      cost: 204,
       packageCost: 5,
-      personalCost: 35,
+      personalCost: 199,
       packageImages: 1,
-      balance: 5,
+      balance: 41,
       packageBalance: 0,
     });
   });
 
-  it("图包 1 + 个人 5，档外 40 AFF 不足时整体回退不动本地余额", async () => {
+  it("图包 1 + 个人 5，档外 204 AFF 不足时整体回退不动本地余额", async () => {
     await seedAccount(902, {
       balance: 5,
       packageBalance: 1,

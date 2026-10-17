@@ -23,6 +23,7 @@ export type CreatorRewardGrant = {
   createdAt: string;
   actorId?: number;
   error?: string;
+  campaignId?: string;
 };
 
 export type CreatorRewardCampaign = {
@@ -32,8 +33,28 @@ export type CreatorRewardCampaign = {
   startsAt?: string;
   endsAt?: string;
   submissionReward: number;
-  weeklyRewards: [number, number, number];
+  weeklyRewards: number[];
   budget?: number;
+  summary?: string;
+  description?: string;
+  rules?: string;
+  coverUrl?: string;
+  requiredTag?: string;
+  allowedRatings?: Array<"general" | "r13" | "r17" | "r18">;
+  minWeeklyLikes?: number;
+  submissionLimitPerUser?: number;
+  priority?: number;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string;
+};
+
+export type CreatorRewardAutomation = {
+  enabled: true;
+  timezone: "UTC";
+  weekStartsOn: "monday";
+  lastCheckedWeek: string;
+  previousWeek: string;
 };
 
 type CreatorRewardStore = {
@@ -55,11 +76,12 @@ async function readStore(): Promise<CreatorRewardStore> {
   try {
     const parsed = JSON.parse(await readFile(storePath(), "utf8")) as Partial<CreatorRewardStore>;
     return {
-      campaigns: Array.isArray(parsed.campaigns) ? parsed.campaigns : [],
+      campaigns: Array.isArray(parsed.campaigns) && parsed.campaigns.length ? parsed.campaigns : [defaultCampaign()],
       grants: Array.isArray(parsed.grants) ? parsed.grants : [],
     };
-  } catch {
-    return { campaigns: [], grants: [] };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { campaigns: [defaultCampaign()], grants: [] };
   }
 }
 
@@ -72,7 +94,60 @@ async function writeStore(store: CreatorRewardStore): Promise<void> {
 }
 
 function nonNegativeInteger(value: unknown, fallback: number): number {
-  return Number.isInteger(value) && Number(value) >= 0 ? Number(value) : fallback;
+  return Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 10_000_000 ? Number(value) : fallback;
+}
+
+function validDate(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) throw new Error("活动时间必须是合法日期");
+  return new Date(value).toISOString();
+}
+
+function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorRewardCampaign {
+  const id = typeof value.id === "string" ? value.id.trim().slice(0, 80) : "default";
+  const base = defaultCampaign();
+  const startsAt = validDate(value.startsAt);
+  const endsAt = validDate(value.endsAt);
+  if (startsAt && endsAt && Date.parse(startsAt) >= Date.parse(endsAt)) throw new Error("活动开始时间必须早于结束时间");
+  const weeklyRewards = Array.isArray(value.weeklyRewards) && value.weeklyRewards.length > 0 && value.weeklyRewards.length <= 20
+    ? value.weeklyRewards.map((amount) => {
+      if (!Number.isSafeInteger(amount) || amount < 0 || amount > 10_000_000) throw new Error("周榜奖励必须是 0 到 10000000 的整数");
+      return amount;
+    })
+    : base.weeklyRewards;
+  const rawBudget = value.budget as number | null | undefined;
+  for (const key of ["submissionReward", "budget", "minWeeklyLikes", "submissionLimitPerUser", "priority"] as const) {
+    const amount = value[key];
+    if (amount != null && (!Number.isSafeInteger(amount) || amount < 0 || amount > 10_000_000)) throw new Error(`${key} 必须是 0 到 10000000 的整数`);
+  }
+  const budget = rawBudget === null
+    ? undefined
+    : rawBudget === undefined
+      ? undefined
+      : nonNegativeInteger(rawBudget, 0);
+  const text = (key: "summary" | "description" | "rules" | "requiredTag", max: number) => typeof value[key] === "string" ? value[key]!.trim().slice(0, max) : "";
+  const coverUrl = typeof value.coverUrl === "string" ? value.coverUrl.trim().slice(0, 2000) : "";
+  if (coverUrl && !/^https?:\/\//i.test(coverUrl)) throw new Error("活动封面必须是 http 或 https 图片地址");
+  if (value.weeklyRewards && (value.weeklyRewards.length < 1 || value.weeklyRewards.length > 20)) throw new Error("周榜支持 1 到 20 个奖励名次");
+  if (value.allowedRatings && !value.allowedRatings.length) throw new Error("活动至少需要允许一种作品评级");
+  return {
+    id: id || "default",
+    name: typeof value.name === "string" && value.name.trim() ? value.name.trim().slice(0, 120) : base.name,
+    enabled: typeof value.enabled === "boolean" ? value.enabled : base.enabled,
+    ...(startsAt ? { startsAt } : {}),
+    ...(endsAt ? { endsAt } : {}),
+    submissionReward: nonNegativeInteger(value.submissionReward, base.submissionReward),
+    weeklyRewards,
+    ...(budget === undefined ? {} : { budget }),
+    summary: text("summary", 300), description: text("description", 12000), rules: text("rules", 12000), requiredTag: text("requiredTag", 100), coverUrl,
+    allowedRatings: (value.allowedRatings || ["general", "r13", "r17", "r18"]).filter((rating) => ["general", "r13", "r17", "r18"].includes(rating)),
+    minWeeklyLikes: nonNegativeInteger(value.minWeeklyLikes, 1),
+    submissionLimitPerUser: nonNegativeInteger(value.submissionLimitPerUser, 0),
+    priority: nonNegativeInteger(value.priority, 0),
+    createdAt: value.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...(value.deletedAt ? { deletedAt: value.deletedAt } : {}),
+  };
 }
 
 function defaultCampaign(): CreatorRewardCampaign {
@@ -86,14 +161,13 @@ function defaultCampaign(): CreatorRewardCampaign {
 }
 
 function activeCampaign(campaigns: CreatorRewardCampaign[], now = Date.now()): CreatorRewardCampaign {
-  const matching = campaigns.find((campaign) => {
-    if (!campaign.enabled) return false;
+  const matching = [...campaigns].sort((a, b) => (b.priority || 0) - (a.priority || 0)).find((campaign) => {
+    if (!campaign.enabled || campaign.deletedAt) return false;
     const start = campaign.startsAt ? Date.parse(campaign.startsAt) : Number.NEGATIVE_INFINITY;
     const end = campaign.endsAt ? Date.parse(campaign.endsAt) : Number.POSITIVE_INFINITY;
     return now >= start && now <= end;
   });
   if (matching) return matching;
-  if (!campaigns.length) return defaultCampaign();
   return { ...defaultCampaign(), id: "disabled", name: "奖励活动未启用", enabled: false, submissionReward: 0, weeklyRewards: [0, 0, 0] };
 }
 
@@ -114,9 +188,15 @@ export async function listCreatorRewardGrants(): Promise<CreatorRewardGrant[]> {
   return (await creatorRewardStore()).grants;
 }
 
-export async function listCreatorRewardCampaigns(): Promise<CreatorRewardCampaign[]> {
+export async function listCreatorRewardCampaigns(includeDeleted = false): Promise<CreatorRewardCampaign[]> {
   const store = await creatorRewardStore();
-  return store.campaigns.length ? store.campaigns : [defaultCampaign()];
+  return store.campaigns.filter((item) => includeDeleted || !item.deletedAt);
+}
+
+export async function publicCreatorRewardCampaigns() {
+  const campaigns = await listCreatorRewardCampaigns();
+  const now = Date.now();
+  return campaigns.filter((item) => item.enabled).sort((a, b) => (b.priority || 0) - (a.priority || 0)).map((campaign) => ({ ...campaign, phase: campaign.endsAt && Date.parse(campaign.endsAt) < now ? "已结束" : campaign.startsAt && Date.parse(campaign.startsAt) > now ? "即将开始" : "进行中" }));
 }
 
 export async function upsertCreatorRewardCampaign(input: Partial<CreatorRewardCampaign> & { id?: string }): Promise<CreatorRewardCampaign> {
@@ -125,23 +205,35 @@ export async function upsertCreatorRewardCampaign(input: Partial<CreatorRewardCa
     const id = String(input.id || "default").trim().slice(0, 80) || "default";
     const existing = store.campaigns.find((item) => item.id === id);
     const base = existing || defaultCampaign();
-    const weekly = Array.isArray(input.weeklyRewards) && input.weeklyRewards.length >= 3
-      ? input.weeklyRewards.slice(0, 3).map((value) => nonNegativeInteger(value, 0)) as [number, number, number]
-      : base.weeklyRewards;
-    const next: CreatorRewardCampaign = {
-      ...base,
-      ...input,
-      id,
-      name: typeof input.name === "string" && input.name.trim() ? input.name.trim().slice(0, 120) : base.name,
-      enabled: input.enabled === undefined ? base.enabled : Boolean(input.enabled),
-      submissionReward: nonNegativeInteger(input.submissionReward, base.submissionReward),
-      weeklyRewards: weekly,
-      ...(input.budget === undefined ? {} : { budget: nonNegativeInteger(input.budget, 0) }),
-    };
-    if (existing) Object.assign(existing, next);
+    const next = normalizeCampaign({ ...base, ...input, id });
+    if (existing) store.campaigns[store.campaigns.indexOf(existing)] = next;
     else store.campaigns.push(next);
     await writeStore(store);
     return next;
+  });
+}
+
+export async function deleteCreatorRewardCampaign(id: string): Promise<void> {
+  return withLock(async () => {
+    const store = await readStore();
+    const campaign = store.campaigns.find((item) => item.id === id);
+    if (!campaign) throw new Error("活动不存在");
+    campaign.enabled = false;
+    campaign.deletedAt = new Date().toISOString();
+    campaign.updatedAt = campaign.deletedAt;
+    await writeStore(store);
+  });
+}
+
+export async function restoreCreatorRewardCampaign(id: string): Promise<void> {
+  return withLock(async () => {
+    const store = await readStore();
+    const campaign = store.campaigns.find((item) => item.id === id);
+    if (!campaign) throw new Error("活动不存在");
+    delete campaign.deletedAt;
+    campaign.enabled = false;
+    campaign.updatedAt = new Date().toISOString();
+    await writeStore(store);
   });
 }
 
@@ -156,6 +248,7 @@ export async function grantCreatorReward(input: {
   description: string;
   referenceId: string;
   actorId?: number;
+  campaignId?: string;
 }): Promise<CreatorRewardGrant> {
   assertUserId(input.userId);
   assertAmount(input.amount);
@@ -175,8 +268,29 @@ export async function grantCreatorReward(input: {
       status: "failed",
       createdAt: new Date().toISOString(),
       ...(input.actorId ? { actorId: input.actorId } : {}),
+      ...(input.campaignId ? { campaignId: input.campaignId } : {}),
     };
     try {
+      if (input.campaignId) {
+        const campaign = store.campaigns.find((item) => item.id === input.campaignId);
+        if (input.kind === "submission" && campaign?.submissionLimitPerUser && store.grants.filter((item) => item.kind === "submission" && item.campaignId === input.campaignId && item.userId === input.userId && item.status === "granted").length >= campaign.submissionLimitPerUser) {
+          record.status = "skipped";
+          record.error = "已达到活动的个人投稿奖励次数上限";
+          store.grants.unshift(record);
+          await writeStore(store);
+          return record;
+        }
+        const spent = store.grants
+          .filter((item) => item.campaignId === input.campaignId && item.status === "granted")
+          .reduce((sum, item) => sum + item.amount, 0);
+        if (campaign?.budget !== undefined && campaign.budget > 0 && spent + input.amount > campaign.budget) {
+          record.status = "skipped";
+          record.error = "活动预算已用尽";
+          store.grants.unshift(record);
+          await writeStore(store);
+          return record;
+        }
+      }
       const result = await grantAffOnce(input.userId, input.amount, record.description, referenceId, "creator-reward");
       record.status = result.granted ? "granted" : "skipped";
       store.grants.unshift(record);
@@ -192,7 +306,8 @@ export async function grantCreatorReward(input: {
 }
 
 export async function grantSubmissionReward(userId: number, submissionId: string, actorId?: number): Promise<CreatorRewardGrant> {
-  const campaign = activeCampaign(await listCreatorRewardCampaigns());
+  const item = (await listGalleryAdmin()).find((entry) => entry.id === submissionId);
+  const campaign = activeCampaign((await listCreatorRewardCampaigns()).filter((entry) => campaignAllowsItem(entry, item)));
   return grantCreatorReward({
     kind: "submission",
     userId,
@@ -200,18 +315,28 @@ export async function grantSubmissionReward(userId: number, submissionId: string
     description: `${campaign.name}：投稿奖励`,
     referenceId: `creator-submission:${campaign.id}:${submissionId}`,
     actorId,
+    campaignId: campaign.id,
   });
+}
+
+function campaignAllowsItem(campaign: CreatorRewardCampaign, item: GalleryItem | undefined): boolean {
+  if (campaign.requiredTag && !item?.tags.includes(campaign.requiredTag)) return false;
+  if (campaign.allowedRatings?.length && item && !campaign.allowedRatings.includes(item.rating)) return false;
+  return true;
 }
 
 export async function settleWeeklyCreatorRewards(week = galleryWeekKey(new Date(Date.now() - 7 * 24 * 3600_000))): Promise<{
   week: string;
   items: CreatorRewardGrant[];
 }> {
-  const campaign = activeCampaign(await listCreatorRewardCampaigns());
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(week) || galleryWeekKey(new Date(`${week}T00:00:00.000Z`)) !== week)
+    throw new Error("周榜起点必须是 UTC 周一日期");
+  const weekEnd = new Date(Date.parse(`${week}T00:00:00.000Z`) + 7 * 86_400_000 - 1);
+  const campaign = activeCampaign(await listCreatorRewardCampaigns(), weekEnd.getTime());
   const gallery = await listGalleryAdmin();
-  const winners = gallery.filter((item) => item.status === "approved")
+  const winners = gallery.filter((item) => item.status === "approved" && campaignAllowsItem(campaign, item) && (item.weeklyLikes?.[week] || 0) >= (campaign.minWeeklyLikes ?? 1))
     .sort((a, b) => (b.weeklyLikes?.[week] || 0) - (a.weeklyLikes?.[week] || 0))
-    .slice(0, 3)
+    .slice(0, campaign.enabled ? campaign.weeklyRewards.length : 0)
     .filter((item) => Boolean(item.weeklyLikes?.[week]));
   const items: CreatorRewardGrant[] = [];
   for (const [index, item] of winners.entries()) {
@@ -221,6 +346,7 @@ export async function settleWeeklyCreatorRewards(week = galleryWeekKey(new Date(
       amount: campaign.weeklyRewards[index] || 0,
       description: `${campaign.name}：图库周榜第 ${index + 1} 名`,
       referenceId: `gallery-week:${week}:${item.id}`,
+      campaignId: campaign.id,
     }));
   }
   await markGalleryRewards(week, winners.map((item) => item.id));
@@ -247,4 +373,35 @@ export async function manuallyGrantCreatorReward(input: {
 
 export function creatorRewardWinner(item: GalleryItem, week: string): { userId: number; likes: number; referenceId: string } {
   return { userId: item.ownerId, likes: item.weeklyLikes?.[week] || 0, referenceId: `gallery-week:${week}:${item.id}` };
+}
+
+let automaticSettlementTimer: ReturnType<typeof setInterval> | undefined;
+let automaticSettlementLastCheck = "";
+let automaticSettlementInFlight: Promise<{ week: string; items: CreatorRewardGrant[] }> | undefined;
+
+export function creatorRewardAutomation(now = Date.now()): CreatorRewardAutomation {
+  const previousWeek = galleryWeekKey(new Date(now - 7 * 24 * 3600_000));
+  return { enabled: true, timezone: "UTC", weekStartsOn: "monday", lastCheckedWeek: automaticSettlementLastCheck, previousWeek };
+}
+
+export async function settlePreviousCreatorRewardWeek(now = Date.now()): Promise<{ week: string; items: CreatorRewardGrant[] }> {
+  const week = galleryWeekKey(new Date(now - 7 * 24 * 3600_000));
+  if (automaticSettlementLastCheck === week) return { week, items: [] };
+  if (automaticSettlementInFlight) return automaticSettlementInFlight;
+  automaticSettlementInFlight = settleWeeklyCreatorRewards(week).then((result) => {
+    automaticSettlementLastCheck = week;
+    return result;
+  }).finally(() => {
+    automaticSettlementInFlight = undefined;
+  });
+  return automaticSettlementInFlight;
+}
+
+export function startAutomaticCreatorRewardSettlement(): void {
+  if (automaticSettlementTimer) return;
+  void settlePreviousCreatorRewardWeek().catch((error) => console.error("[lfn] 自动结算周榜失败", error));
+  automaticSettlementTimer = setInterval(() => {
+    void settlePreviousCreatorRewardWeek().catch((error) => console.error("[lfn] 自动结算周榜失败", error));
+  }, 5 * 60_000);
+  automaticSettlementTimer.unref?.();
 }

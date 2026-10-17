@@ -3,6 +3,8 @@ import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/600.css";
 import "@fontsource/noto-sans-sc/700.css";
 import "./globals.css";
+import "./lfn-controls.css";
+import { LfnDialogHost } from "./ui/lfn-dialog";
 import { AppearanceProvider } from "./appearance";
 import { createAppearancePrepaintScript } from "@/lib/appearance-store";
 import { LayoutAnnouncements } from "./layout-announcements";
@@ -33,6 +35,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_PREPAINT }} />
         <AppearanceProvider>
           {children}
+          <LfnDialogHost />
           <LayoutAnnouncements />
           <OnboardingGuide />
         </AppearanceProvider>

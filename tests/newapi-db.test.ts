@@ -129,7 +129,7 @@ describe("resolveExternalApiUser", () => {
       .mockResolvedValueOnce(jsonResponse({ data: { status: 2 } }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(resolveExternalApiUser("Bearer sk-banned")).resolves.toBeNull();
+    await expect(resolveExternalApiUser("Bearer sk-x")).resolves.toBeNull();
   });
 
   it("HTTP 兜底缺管理令牌时直接返回 null，不发起请求", async () => {
@@ -139,5 +139,10 @@ describe("resolveExternalApiUser", () => {
 
     await expect(resolveExternalApiUser("Bearer sk-x")).resolves.toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("HTTP token 命中但账号状态服务失败时不授权本地扣费", async () => {
+    runtimeMocks.runtimeAdminToken.mockReturnValue("admin-token"); runtimeMocks.runtimeNewApiBaseUrl.mockReturnValue("http://newapi.test");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ data: { items: [{ user_id: 41, key: "valid", status: 1, expired_time: -1 }] } })).mockResolvedValueOnce(jsonResponse({}, 503)));
+    await expect(resolveExternalApiUser("Bearer sk-valid")).resolves.toBeNull();
   });
 });

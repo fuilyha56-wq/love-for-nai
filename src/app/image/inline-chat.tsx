@@ -2,10 +2,12 @@
 
 // VSCode 内联聊天的 LFN 版：选中文本→右键菜单（1_chat 组语义）→
 // 锚定在文本域下方的对话框，Keep 用结果替换所选内容。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "@/app/ui/tooltip";
 import {
   Check,
+  Copy,
+  ClipboardPaste,
   Languages,
   RotateCcw,
   SendHorizontal,
@@ -87,12 +89,41 @@ export function InlineChatMenu({
   targetLabel,
   onPick,
   onClose,
+  onCopy,
+  onPaste,
+  canCopy,
+  canUseAi,
 }: {
   position: { x: number; y: number };
   targetLabel: string;
   onPick: (item: InlineChatMenuItem) => void;
   onClose: () => void;
+  onCopy: () => void;
+  onPaste: () => void;
+  canCopy: boolean;
+  canUseAi: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [placement, setPlacement] = useState({ x: position.x, y: position.y });
+  useLayoutEffect(() => {
+    const place = () => {
+      const rect = ref.current?.getBoundingClientRect();
+      if (rect)
+        setPlacement({
+          x: Math.max(
+            8,
+            Math.min(position.x, window.innerWidth - rect.width - 8),
+          ),
+          y: Math.max(
+            8,
+            Math.min(position.y, window.innerHeight - rect.height - 8),
+          ),
+        });
+    };
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [position.x, position.y]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -115,20 +146,50 @@ export function InlineChatMenu({
         }}
       />
       <div
+        ref={ref}
         className="inline-chat-menu"
         role="menu"
-        aria-label={`AI 操作 · ${targetLabel}`}
+        aria-label={`文本操作 · ${targetLabel}`}
         style={{
-          left: Math.max(8, Math.min(position.x, window.innerWidth - 258)),
-          top: Math.max(8, Math.min(position.y, window.innerHeight - 238)),
+          left: placement.x,
+          top: placement.y,
+          maxHeight: "calc(100dvh - 16px)",
+          overflowY: "auto",
         }}
       >
+        <button
+          type="button"
+          role="menuitem"
+          className="inline-chat-menu-item"
+          disabled={!canCopy}
+          onClick={onCopy}
+        >
+          <Copy size={14} />
+          <span>
+            <b>复制</b>
+            <small>复制所选内容 · Ctrl+C</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="inline-chat-menu-item"
+          onClick={onPaste}
+        >
+          <ClipboardPaste size={14} />
+          <span>
+            <b>粘贴</b>
+            <small>粘贴到当前光标或替换所选内容</small>
+          </span>
+        </button>
+        <div role="separator" className="inline-chat-menu-divider" />
         {INLINE_CHAT_MENU_ITEMS.map((item) => (
           <button
             key={item.id}
             type="button"
             role="menuitem"
             className="inline-chat-menu-item"
+            disabled={!canUseAi}
             onClick={() => onPick(item)}
           >
             {item.icon}
@@ -282,22 +343,24 @@ export function InlineChatZone({
             }
           }}
         />
-        <Tooltip label={running ? "停止" : "发送"}><button
-          type="button"
-          className="inline-chat-send"
-          aria-label={running ? "停止处理" : "发送指令"}
-          onClick={() => {
-            if (running) {
-              stopPolling();
-              setRunning(false);
-              setError("");
-              return;
-            }
-            run("ask", input);
-          }}
-        >
-          {running ? <Square size={12} /> : <SendHorizontal size={13} />}
-        </button></Tooltip>
+        <Tooltip label={running ? "停止" : "发送"}>
+          <button
+            type="button"
+            className="inline-chat-send"
+            aria-label={running ? "停止处理" : "发送指令"}
+            onClick={() => {
+              if (running) {
+                stopPolling();
+                setRunning(false);
+                setError("");
+                return;
+              }
+              run("ask", input);
+            }}
+          >
+            {running ? <Square size={12} /> : <SendHorizontal size={13} />}
+          </button>
+        </Tooltip>
       </div>
       {(result !== null || error) && (
         <div
@@ -313,38 +376,44 @@ export function InlineChatZone({
           {session.target.label} · 所选 {session.selection.text.length} 字
         </span>
         <span className="inline-chat-status-actions">
-          <Tooltip label="用结果替换所选内容"><button
-            type="button"
-            className="is-primary"
-            disabled={!result || running}
-            onClick={() => {
-              if (result !== null && !running) {
-                onKeep(result);
+          <Tooltip label="用结果替换所选内容">
+            <button
+              type="button"
+              className="is-primary"
+              disabled={!result || running}
+              onClick={() => {
+                if (result !== null && !running) {
+                  onKeep(result);
+                  onClose();
+                }
+              }}
+            >
+              <Check size={13} />
+              保留
+            </button>
+          </Tooltip>
+          <Tooltip label="重新生成">
+            <button
+              type="button"
+              disabled={running}
+              onClick={() => run(session.mode, input)}
+            >
+              <RotateCcw size={13} />
+              重试
+            </button>
+          </Tooltip>
+          <Tooltip label="关闭（Esc）">
+            <button
+              type="button"
+              onClick={() => {
+                stopPolling();
                 onClose();
-              }
-            }}
-          >
-            <Check size={13} />
-            保留
-          </button></Tooltip>
-          <Tooltip label="重新生成"><button
-            type="button"
-            disabled={running}
-            onClick={() => run(session.mode, input)}
-          >
-            <RotateCcw size={13} />
-            重试
-          </button></Tooltip>
-          <Tooltip label="关闭（Esc）"><button
-            type="button"
-            onClick={() => {
-              stopPolling();
-              onClose();
-            }}
-          >
-            <X size={13} />
-            关闭
-          </button></Tooltip>
+              }}
+            >
+              <X size={13} />
+              关闭
+            </button>
+          </Tooltip>
         </span>
       </div>
     </div>

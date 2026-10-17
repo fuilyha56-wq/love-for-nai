@@ -1,3 +1,5 @@
+import { dailyImagePolicy } from "@/lib/daily-image-billing";
+import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { MAX_IMAGE_REQUEST_SAMPLES, splitImageBatches } from "@/lib/image-batches";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
@@ -7,9 +9,9 @@ import {
   trySpendImageCredits,
   type ImageCreditCharge,
 } from "@/lib/aff";
-import { UPSCALE_MODELS, upscaleAnlasCost } from "@/lib/image-pricing";
+import { UPSCALE_MODELS, upscaleAnlasCost, upscaleBillingModel } from "@/lib/image-pricing";
 import { pngDimensions } from "@/lib/png-dims";
-import { getSession } from "@/lib/session";
+import { getSession, type LfnSession } from "@/lib/session";
 import {
   getImageToken,
   imageFromResult,
@@ -31,9 +33,10 @@ import { handleNaturalImagePromptSuggestion } from "@/lib/provider/prompt-sugges
 import { resolveImageModelCapabilities, isImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
-import { evaluateImageRisk, riskBlockedResponse } from "@/lib/risk-control";
+import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { externalGeneration, imageRequestErrorBody } from "@/lib/compat-api";
+import { startRequestAudit } from "@/lib/request-audit";
 import { validateModelId } from "@/lib/provider/validation";
 import {
   assertBodySize,
@@ -72,49 +75,53 @@ const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 // NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
 // 计费口径与上游实扣 Anlas 1:1，详见 docs/SUPER_RESOLUTION.md。
 async function handleUpscale(
-  session: { userId: number; username: string },
+  request: Request,
+  session: LfnSession,
   body: Record<string, unknown> & { operation?: string; model?: string },
-): Promise<NextResponse> {
+): Promise<Response> {
+  const audit = await startRequestAudit({ request, source: "lfn", endpoint: "/api/images/operate", userId: session.userId, username: session.username,
+    model: typeof body.upscale_model === "string" ? body.upscale_model : "nai-diffusion-5-curated", operation: "upscale", parameters: body });
+  const finish = async (response: Response, patch: Record<string, unknown> = {}): Promise<Response> => {
+    await audit.finish({ status: response.status, ...patch });
+    return new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) });
+  };
   const nativeImage = await resolvedNaiImageUpstream();
-  if (!nativeImage)
-    return NextResponse.json(
-      { message: "超分需要 NAI 原生图像上游（Gateway），当前未配置" },
-      { status: 503 },
-    );
 
   const rawImage = typeof body.image === "string" ? body.image : "";
   if (!rawImage)
-    return NextResponse.json({ message: "请先上传要超分的图片" }, { status: 400 });
+    return finish(NextResponse.json({ message: "请先上传要超分的图片" }, { status: 400 }));
   const image = rawImage.replace(DATA_URL, "");
   const dims = pngDimensions(image);
   if (!dims)
-    return NextResponse.json(
+    return finish(NextResponse.json(
       { message: "超分仅接受 PNG 图片（JPEG/WEBP 请先转为 PNG）" },
       { status: 400 },
-    );
+    ));
 
   const upscaleModel =
     typeof body.upscale_model === "string" && body.upscale_model
       ? body.upscale_model
       : "nai-diffusion-5-curated";
   if (!UPSCALE_MODELS.has(upscaleModel))
-    return NextResponse.json(
+    return finish(NextResponse.json(
       { message: `超分模型仅支持 nai-diffusion-5-full / nai-diffusion-5-curated` },
       { status: 400 },
-    );
+    ));
 
   try {
     upscaleAnlasCost(dims.width, dims.height);
   } catch (error) {
-    return NextResponse.json(
+    return finish(NextResponse.json(
       { message: error instanceof Error ? error.message : "超分参数无效" },
       { status: 400 },
-    );
+    ));
   }
 
-  const platformUpstream = await resolvedImageUpstream();
-  if (!platformUpstream)
-    return NextResponse.json({ message: "未配置图像上游，无法超分" }, { status: 503 });
+  const risk = await evaluateImageRisk({ userId: session.userId, username: session.username, model: upscaleModel, requestId: audit.requestId }).catch(() => null);
+  if (!risk) return finish(NextResponse.json({ message: "风控服务暂时不可用，请稍后重试" }, { status: 503 }), { error: "风控服务暂时不可用" });
+  if (risk.decision === "deny") return finish(riskBlockedResponse(risk), { risk });
+  if (risk.decision === "rate-limit") return finish(await riskRateLimitedResponse(risk), { risk });
+
   const generation = {
     model: upscaleModel,
     width: dims.width,
@@ -123,37 +130,51 @@ async function handleUpscale(
     samples: 1,
     operation: "upscale",
   };
-  const credits = await trySpendImageCredits(session.userId, generation);
-  if (!credits)
-    return NextResponse.json({ message: "AFF 余额不足，无法超分" }, { status: 402 });
-  const payment = "aff" as const;
-  const paymentSource: "package" | "personal" | "mixed" =
-    credits.packageCost > 0 && credits.personalCost > 0
+  let credits: ImageCreditCharge | null;
+  try { credits = nativeImage ? await trySpendImageCredits(session.userId, generation, audit.requestId) : null; }
+  catch (error) { const admission = riskAdmissionResponse(error); if (admission) return finish(admission); throw error; }
+  if (!credits && (await dailyImagePolicy()).strictApiBilling !== false) return finish(Response.json({ message: nativeImage ? "本站 AFF 或图包余额不足" : "未配置本地计费执行通道" }, { status: nativeImage ? 402 : 503 }));
+  if (!credits && (await resolvedAuthProviderId()) === "local")
+    return finish(NextResponse.json({ message: nativeImage ? "图包和个人 AFF 不足，当前账号未启用站内余额支付" : "未配置超分图像上游" }, { status: nativeImage ? 402 : 503 }), { generatedSamples: 0 });
+  const payment = credits ? "aff" : "newapi";
+  const paymentSource = credits
+    ? credits.packageCost > 0 && credits.personalCost > 0
       ? "mixed"
       : credits.packageCost > 0
         ? "package"
-        : "personal";
+        : "personal"
+    : "newapi";
+  let refunded = false;
+  const refund = async () => {
+    if (credits && !refunded) {
+      refunded = true;
+      await refundImageCredits(session.userId, credits, 0, { requestId: audit.requestId });
+    }
+  };
 
   try {
+    const billingModel = upscaleBillingModel(upscaleModel);
+    const baseUrl = credits && nativeImage ? nativeImage.baseUrl : await resolvedNewApiBaseUrl();
+    const token = credits && nativeImage ? nativeImage.token : await getImageToken(session, billingModel);
+    const endpoint = credits ? "/ai/upscale" : "/v1/images/generations";
+    const payload = credits
+      ? { image, model: upscaleModel, declared_blur_sigma: 0 }
+      : { image, model: billingModel, novelai_operation: "upscale", response_format: "b64_json", n: 1 };
     const finishGatewayLog = gatewayLogStart({
       source: "lfn",
       user: session.username,
-      endpoint: "/ai/upscale",
+      endpoint,
       op: "upscale",
       model: upscaleModel,
       samples: 1,
     });
-    const upstream = await fetchWithModelConcurrency(`${nativeImage.baseUrl}/ai/upscale`, {
+    const upstream = await fetchWithModelConcurrency(`${baseUrl}${endpoint}`, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${nativeImage.token}`,
+      headers: queuedRiskHeaders(audit.requestId, {
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        image,
-        model: upscaleModel,
-        declared_blur_sigma: 0,
       }),
+      body: JSON.stringify(payload),
       cache: "no-store",
       signal: AbortSignal.timeout(180_000),
     }).catch((error: unknown) => {
@@ -161,22 +182,36 @@ async function handleUpscale(
       throw error;
     });
     finishGatewayLog(upstream.status);
+    const anlasHeader = upstream.headers.get("x-anlas-cost");
+    const anlas = anlasHeader?.trim() ? Number(anlasHeader) : NaN;
+    const billing = Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : undefined;
     if (!upstream.ok) {
-      await refundImageCredits(session.userId, credits, 0);
+      await refund();
       const raw = (await upstream.text()).slice(0, 300);
-      return NextResponse.json(
+      return finish(NextResponse.json(
         { message: raw || `上游超分失败（${upstream.status}）` },
         { status: upstream.status || 502 },
-      );
+      ), { risk, paymentSource, generatedSamples: 0, ...(billing ? { billing } : {}) });
     }
-    const png = await extractUpscaledPng(await upstream.arrayBuffer());
-    if (!png) {
-      await refundImageCredits(session.userId, credits, 0);
-      return NextResponse.json({ message: "上游超分响应中没有图片" }, { status: 502 });
+    let images: string[];
+    if (credits) {
+      const png = await extractUpscaledPng(await upstream.arrayBuffer());
+      images = png ? [pngDataUrl(png)] : [];
+    } else {
+      const result = await upstream.json();
+    audit.record.moderation = await moderationFromUpstream(result);
+      if (result.error || result.detail) throw new Error(result.error?.message || result.detail || "上游超分失败");
+      images = imageFromResult(result).slice(0, 1);
     }
-    const images = [pngDataUrl(png)];
-    const history = await saveHistory(session.userId, body, images, null);
-    return NextResponse.json({
+    if (!images.length || !pngDimensions(images[0])) {
+      await refund();
+      return finish(NextResponse.json({ message: "上游超分响应中没有有效 PNG 图片" }, { status: 502 }), { risk, paymentSource, generatedSamples: 0, ...(billing ? { billing } : {}) });
+    }
+    let history: Awaited<ReturnType<typeof saveHistory>> = [];
+    let warning = "";
+    try { history = await saveHistory(session.userId, body, images, null); }
+    catch { warning = "图片已放大，但暂时无法保存历史记录"; }
+    return finish(NextResponse.json({
       images,
       image: images[0],
       width: dims.width * 2,
@@ -184,21 +219,22 @@ async function handleUpscale(
       historyIds: history.map((item) => item.id),
       payment,
       paymentSource,
-      aff: {
+      ...(warning ? { warning } : {}),
+      aff: credits ? {
         cost: credits.cost,
         balance: credits.balance,
         packageCost: credits.packageCost,
         personalCost: credits.personalCost,
         packageBalance: credits.packageBalance,
         totalBalance: credits.totalBalance,
-      },
-    });
+      } : null,
+    }, { headers: { "X-LFN-Payment-Source": paymentSource } }), { status: 200, risk, paymentSource, generatedSamples: 1, historyIds: history.map((item) => item.id), ...(billing ? { billing } : {}) });
   } catch (error) {
-    await refundImageCredits(session.userId, credits, 0);
-    return NextResponse.json(
+    await refund();
+    return finish(NextResponse.json(
       { message: error instanceof Error ? error.message : "上游超分失败" },
       { status: 502 },
-    );
+    ), { risk, paymentSource, generatedSamples: 0, error: error instanceof Error ? error.message : "上游超分失败" });
   }
 }
 
@@ -316,7 +352,7 @@ export async function POST(request: Request) {
       },
       { status: 409 },
     );
-  if (operation === "upscale") return handleUpscale(session, body);
+  if (operation === "upscale") return handleUpscale(request, session, body);
   if (operation !== "suggest-tags" && !unifiedOperations.has(operation))
     return NextResponse.json({ message: "不支持的 NAI 操作" }, { status: 400 });
   const implicitInpaintModel = /^nai-v(?:4\.5|5)-(?:full|curated)(?:-limit|-medium)?$/.test(model);
@@ -356,6 +392,16 @@ export async function POST(request: Request) {
       { status: 429, headers: { "Retry-After": String(rate.retryAfterSeconds) } },
     );
 
+  const audit = await startRequestAudit({ request, source: "lfn", endpoint: "/api/images/operate", userId: session.userId, username: session.username, model, operation, parameters: body });
+  body._lfnRequestId = audit.requestId;
+  await audit.finish();
+  let recordedAnlas: number | undefined;
+  const recordUpstream = async (response: Response): Promise<void> => {
+    const header = response.headers.get("x-anlas-cost");
+    const amount = header?.trim() ? Number(header) : NaN;
+    if (response.ok && Number.isFinite(amount) && amount >= 0) recordedAnlas = (recordedAnlas ?? 0) + amount;
+    await audit.finish({ status: response.status, ...(recordedAnlas != null ? { billing: { gatewayAnlasCost: recordedAnlas } } : {}) });
+  };
   const risk = await evaluateImageRisk({
     userId: session.userId,
     username: session.username,
@@ -363,9 +409,18 @@ export async function POST(request: Request) {
     prompt: typeof body.prompt === "string" ? body.prompt : undefined,
     requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined,
   }).catch(() => null);
-  if (!risk)
+  if (!risk) {
+    await audit.finish({ status: 503, error: "风控服务暂时不可用" });
     return NextResponse.json({ message: "风控服务暂时不可用，请稍后重试" }, { status: 503 });
-  if (risk.decision === "deny") return riskBlockedResponse();
+  }
+  if (risk.decision === "deny") {
+    await audit.finish({ status: 403, risk });
+    return riskBlockedResponse(risk);
+  }
+  if (risk.decision === "rate-limit") {
+    await audit.finish({ status: 429, risk });
+    return await riskRateLimitedResponse(risk);
+  }
 
   let creditCharge: ImageCreditCharge | null = null;
   let affRefunded = false;
@@ -404,8 +459,9 @@ export async function POST(request: Request) {
       if (!generation) return NextResponse.json({ message: "图像计费参数无效" }, { status: 400 });
       const platformUpstream = nativeNaiModel ? await resolvedImageUpstream() : null;
       const credits = platformUpstream
-        ? await trySpendImageCredits(session.userId, generation)
+        ? await trySpendImageCredits(session.userId, generation, audit.requestId)
         : null;
+      if (nativeNaiModel && !credits && (await dailyImagePolicy()).strictApiBilling !== false) throw new RiskAdmissionError(platformUpstream ? "本站 AFF 或图包余额不足" : "未配置本地计费执行通道", platformUpstream ? "lfn_insufficient_credits" : "lfn_billing_unavailable", platformUpstream ? 402 : 503);
       if (credits && platformUpstream) {
         token = platformUpstream.token;
         baseUrlOverride = platformUpstream.baseUrl;
@@ -417,8 +473,8 @@ export async function POST(request: Request) {
             : credits.packageCost > 0
               ? "package"
               : "personal";
-            settlementId = `settlement:${typeof body._lfnRequestId === "string" ? body._lfnRequestId : randomUUID()}`;
-            await createImageSettlement({ settlementId, requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : settlementId, userId: session.userId, charge: credits });
+            settlementId = `settlement:${audit.requestId}`;
+            await createImageSettlement({ settlementId, requestId: audit.requestId, userId: session.userId, charge: credits });
       } else if ((await resolvedAuthProviderId()) === "local") {
         if (!nativeNaiModel)
           return NextResponse.json({ message: "本地账号不能使用 NewAPI 模型" }, { status: 400 });
@@ -477,11 +533,11 @@ export async function POST(request: Request) {
         `${nativeImage.baseUrl}/ai/generate-image-stream`,
         {
           method: "POST",
-          headers: {
+          headers: queuedRiskHeaders(audit.requestId, {
             Authorization: `Bearer ${nativeImage.token}`,
             "Content-Type": "application/json",
             Accept: "application/x-msgpack",
-          },
+          }),
           body: JSON.stringify(nativeBody),
           cache: "no-store",
           signal: abort.signal,
@@ -491,6 +547,7 @@ export async function POST(request: Request) {
         throw error;
       });
       finishGatewayLog(nativeResponse.status);
+      await recordUpstream(nativeResponse);
       // 流式初始化失败不再直接报错：保留扣费，回退到下方缓冲端点生成。
       const streamReady = nativeResponse.ok && Boolean(nativeResponse.body);
       if (!streamReady) {
@@ -628,10 +685,10 @@ export async function POST(request: Request) {
                     `${fallbackBase}/v1/images/generations`,
                     {
                       method: "POST",
-                      headers: {
+                      headers: queuedRiskHeaders(audit.requestId, {
                         Authorization: `Bearer ${token}`,
                         "Content-Type": "application/json",
-                      },
+                      }),
                       body: JSON.stringify(payload),
                       cache: "no-store",
                       signal: AbortSignal.timeout(180_000),
@@ -641,6 +698,7 @@ export async function POST(request: Request) {
                     throw error;
                   });
                   finishFallbackLog(resp.status);
+                  await recordUpstream(resp);
                   if (!resp.ok) {
                     await resp.body?.cancel().catch(() => undefined);
                     throw new Error(`fallback ${resp.status}`);
@@ -770,10 +828,10 @@ export async function POST(request: Request) {
       });
       const upstream = await fetchWithModelConcurrency(`${baseUrl}${endpoint}`, {
         method: "POST",
-        headers: {
+        headers: queuedRiskHeaders(audit.requestId, {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
-        },
+        }),
         // 分批续传时种子按已完成张数偏移，模拟 NAI 单请求多张的种子序列，
         // 避免同种子各批生成重复图。
         body: JSON.stringify(nativeNaiModel ? {
@@ -792,6 +850,7 @@ export async function POST(request: Request) {
         throw error;
       });
       finishGatewayLog(upstream.status);
+      await recordUpstream(upstream);
       const contentType = upstream.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         await upstream.body?.cancel().catch(() => undefined);
@@ -893,8 +952,10 @@ export async function POST(request: Request) {
             totalBalance: creditCharge.totalBalance,
           }
         : null,
-    });
+    }, { headers: audit.responseHeaders() });
   } catch (error) {
+    const admission = riskAdmissionResponse(error);
+    if (admission) { await audit.finish({ status: admission.status }); return new Response(admission.body, { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
     if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
       affRefunded = true;

@@ -133,7 +133,7 @@ describe("工作台布局按主题隔离", () => {
     expect(html).toContain("--lfn-left:310px");
     expect(html).toContain('aria-label="返回 Love for NAI 首页"');
     expect(html).toContain('title="源代码与 AGPL-3.0"');
-    expect(html).toContain('title="打开 NewAPI 控制台"');
+    expect(html).toContain('title="打开账号中心"');
     expect(html).toContain('title="我的账号：资料、钱包、签到与邀请"');
     expect(left).not.toContain("<textarea");
     expect(left).toContain('aria-label="采样步数"');

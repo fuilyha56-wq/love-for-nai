@@ -4,13 +4,15 @@ import path from "node:path";
 import {
   affCost as calculateAffCost,
   imageCreditCost,
-  isHalfStepAmount,
   isInFreeEnvelope as calculateIsInFreeEnvelope,
   splitImageCreditCost,
 } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
 import { runtimeModelFixedCost, runtimeRewards } from "@/lib/runtime-config";
 import { MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
+import { isAffAmount, roundAffAmount, type DailyImageQuote } from "@/lib/daily-image-pricing";
+import { reserveDailyImageQuote, settleDailyImageUsage } from "@/lib/daily-image-billing";
+import { assertFreeGrant } from "@/lib/light-risk";
 
 export type AffTransaction = {
   id: string;
@@ -60,6 +62,8 @@ type AffAccount = {
 export type AffGeneration = ImagePricingGeneration;
 
 export type ImageCreditCharge = {
+  dailyReservationId?: string;
+  dailyQuote?: DailyImageQuote | null;
   cost: number;
   samples: number;
   packageCost: number;
@@ -97,7 +101,8 @@ const affRoot = () =>
   );
 const accountPath = (userId: number) => path.join(affRoot(), `${userId}.json`);
 
-const userLocks = new Map<number, Promise<unknown>>();
+const accountRuntime = globalThis as typeof globalThis & { __lfnAffUserLocks?: Map<number, Promise<unknown>> };
+const userLocks = (accountRuntime.__lfnAffUserLocks ??= new Map<number, Promise<unknown>>());
 
 function chinaDay(now = new Date()): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -117,7 +122,7 @@ function emptyAccount(): AffAccount {
 }
 
 function validNonNegativeAmount(value: unknown): number {
-  return typeof value === "number" && isHalfStepAmount(value) && value >= 0
+  return typeof value === "number" && isAffAmount(value) && value >= 0
     ? value
     : 0;
 }
@@ -171,6 +176,8 @@ async function readAccount(userId: number): Promise<AffAccount> {
 }
 
 async function writeAccount(userId: number, account: AffAccount): Promise<void> {
+  account.balance = roundAffAmount(account.balance);
+  account.packageBalance = roundAffAmount(account.packageBalance);
   await mkdir(affRoot(), { recursive: true });
   const target = accountPath(userId);
   const temporary = `${target}.${randomUUID()}.tmp`;
@@ -371,6 +378,7 @@ export async function trySpendAff(
 export async function trySpendImageCredits(
   userId: number,
   generation: AffGeneration,
+  requestId?: string,
 ): Promise<ImageCreditCharge | null> {
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
@@ -384,10 +392,14 @@ export async function trySpendImageCredits(
       throw new Error("limit 模型仅允许单张、28 步以内、1024² 以内且无付费参考图的请求");
     // 管理员为模型配置了固定单价时覆盖内置公式；0 = 免费该模型。
     const fixedCostPerSample = await runtimeModelFixedCost(generation.model);
-    const cost = imageCreditCost(generation, fixedCostPerSample);
-    if (!isHalfStepAmount(cost) || cost < 0)
+    const reservationId = requestId || randomUUID();
+    let committed = false;
+    try {
+    const dailyQuote = await reserveDailyImageQuote(userId, generation, reservationId);
+    const cost = fixedCostPerSample != null ? imageCreditCost(generation, fixedCostPerSample) : dailyQuote?.costAff ?? imageCreditCost(generation);
+    if (!isAffAmount(cost) || cost < 0)
       throw new Error("图像费用计算结果无效");
-    if (fixedCostPerSample == null && cost === 0)
+    if (fixedCostPerSample == null && !dailyQuote && cost === 0)
       throw new Error("图像费用计算结果无效");
     const { rateLimit } = await import("@/lib/runtime-config").then(({ runtimeImagePackageSettings }) => runtimeImagePackageSettings());
     const packageRemaining = packageRateLimitRemaining(account, Date.now(), rateLimit);
@@ -396,8 +408,15 @@ export async function trySpendImageCredits(
       ? 0
       : Math.min(samples, packageRemaining);
     const { packageCost, personalCost, packageChargesBySample, personalChargesBySample } =
-      splitImageCreditCost(cost, samples, account.packageBalance, availablePackageImages);
-    if (account.balance < personalCost) return null;
+      splitImageCreditCost(cost, samples, account.packageBalance, availablePackageImages, fixedCostPerSample == null ? dailyQuote?.affCosts : Array(samples).fill(roundAffAmount(fixedCostPerSample)));
+    if (account.balance < personalCost) {
+      await settleDailyImageUsage(userId, reservationId, generation, 0);
+      return null;
+    }
+    if (personalCost > 0 || cost === 0) {
+      try { await assertFreeGrant(userId, reservationId); }
+      catch (error) { await settleDailyImageUsage(userId, reservationId, generation, 0); throw error; }
+    }
     const packageImageIndexes = packageChargesBySample.reduce<number[]>(
       (indexes, charge, index) => {
         if (charge > 0) indexes.push(index);
@@ -408,8 +427,8 @@ export async function trySpendImageCredits(
     const packageImages = packageImageIndexes.length;
     const packageUsageIds = packageImageIndexes.map(() => randomUUID());
     const now = Date.now();
-    account.packageBalance -= packageCost;
-    account.balance -= personalCost;
+    account.packageBalance = roundAffAmount(account.packageBalance - packageCost);
+    account.balance = roundAffAmount(account.balance - personalCost);
     account.packageUsage.push(
       ...packageUsageIds.map((id, index) => ({ id, at: now + index })),
     );
@@ -433,7 +452,10 @@ export async function trySpendImageCredits(
         "personal",
       );
     await writeAccount(userId, account);
+    committed = true;
     return {
+      dailyReservationId: reservationId,
+      dailyQuote,
       cost,
       samples,
       packageCost,
@@ -448,6 +470,10 @@ export async function trySpendImageCredits(
       packageBalance: account.packageBalance,
       totalBalance: account.balance + account.packageBalance,
     };
+    } catch (error) {
+      if (!committed) await settleDailyImageUsage(userId, reservationId, generation, 0);
+      throw error;
+    }
   });
 }
 
@@ -470,12 +496,12 @@ export async function refundImageCredits(
       if (settlement && ["refunded", "succeeded", "partially-refunded"].includes(settlement.status)) return;
     }
     const account = await readAccount(userId);
-    const packageRefund = charge.packageChargesBySample
+    const packageRefund = roundAffAmount(charge.packageChargesBySample
       .slice(generated)
-      .reduce((sum, value) => sum + value, 0);
-    const personalRefund = charge.personalChargesBySample
+      .reduce((sum, value) => sum + value, 0));
+    const personalRefund = roundAffAmount(charge.personalChargesBySample
       .slice(generated)
-      .reduce((sum, value) => sum + value, 0);
+      .reduce((sum, value) => sum + value, 0));
     if (packageRefund > 0) {
       account.packageBalance += packageRefund;
       addTransaction(
@@ -519,6 +545,7 @@ export async function refundImageCredits(
         (item) => !unusedIds.has(item.id),
       );
     await writeAccount(userId, account);
+    if (charge.dailyReservationId) await settleDailyImageUsage(userId, charge.dailyReservationId, null, generated, charge.dailyQuote ? Date.parse(`${charge.dailyQuote.day}T00:00:00+08:00`) : undefined);
     if (options.settlementId) {
       const refundedAmount = packageRefund + personalRefund;
       const previous = await getImageSettlement(options.settlementId);
@@ -539,7 +566,7 @@ export async function refundAff(
   cost: number,
   description: string,
 ): Promise<void> {
-  if (!isHalfStepAmount(cost) || cost <= 0) return;
+  if (!isAffAmount(cost) || cost <= 0) return;
   await withUserLock(userId, async () => {
     const account = await readAccount(userId);
     account.balance += cost;
@@ -574,8 +601,8 @@ export async function adjustAff(
   delta: number,
   description: string,
 ): Promise<number> {
-  if (!isHalfStepAmount(delta) || delta === 0)
-    throw new Error("AFF 调整金额必须为非零的 0.5 倍数");
+  if (!isAffAmount(delta) || delta === 0)
+    throw new Error("AFF 调整金额必须非零且最多四位小数");
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
     const next = account.balance + delta;
@@ -669,8 +696,8 @@ export async function adjustPackageBalance(
   delta: number,
   description: string,
 ): Promise<number> {
-  if (!isHalfStepAmount(delta) || delta === 0)
-    throw new Error("图包额度调整必须为非零的 0.5 倍数");
+  if (!isAffAmount(delta) || delta === 0)
+    throw new Error("图包额度调整必须非零且最多四位小数");
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
     const next = account.packageBalance + delta;

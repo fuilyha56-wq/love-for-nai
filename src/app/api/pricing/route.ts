@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { fetchNewApiSelf } from "@/lib/shared-user-self";
 import { getSession } from "@/lib/session";
 import { LFN_MODEL_GROUP, resolvedNewApiBaseUrl, selectModelGroup, userHeaders } from "@/lib/newapi";
 import { snapshotFromRawPricing } from "@/lib/image-pricing";
@@ -24,11 +25,7 @@ export async function GET(request: Request) {
         cache: "no-store",
         signal: AbortSignal.timeout(15_000),
       }),
-      fetch(`${baseUrl}/api/user/self`, {
-        headers,
-        cache: "no-store",
-        signal: AbortSignal.timeout(10_000),
-      }),
+      fetchNewApiSelf(baseUrl, headers),
       fetch(`${baseUrl}/api/user/self/groups`, {
         headers,
         cache: "no-store",

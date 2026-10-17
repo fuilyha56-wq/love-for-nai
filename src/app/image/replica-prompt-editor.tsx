@@ -17,6 +17,8 @@ import { tagZh } from '@/lib/tag-translations';
 import "./replica-prompt-editor.css";
 import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { composeModelPrompt, transformModelPromptOnBlur } from "@/lib/model-prompt";
+import { copyTextToClipboard } from "@/lib/client-clipboard";
+import { lfnPrompt } from "@/app/ui/lfn-dialog";
 
 export type ReplicaPromptEditorProps = {
   variant: ReplicaVariant;
@@ -37,8 +39,7 @@ export type ReplicaPromptEditorProps = {
 const memoryStorage = new Map<string, string>();
 const STORAGE_EVENT = "replica-prompt-config-change";
 async function copyPromptText(text: string) {
-  if (!navigator.clipboard) throw new Error("剪贴板暂不可用");
-  await navigator.clipboard.writeText(text);
+  await copyTextToClipboard(text);
 }
 function translatedPrompt(text: string) {
   return splitPromptTags(text).map((tag) => tagZh(tag.replace(/^[{[]+|[}\]]+$/g, "").replaceAll(" ", "_")) || tag).join(", ");
@@ -220,7 +221,7 @@ function PromptTextInput({ variant, target, value, onChange, config, onAssistant
   const editor = useRef<HTMLDivElement>(null);
   const inputId = useId();
   const highlight = useRef<HTMLPreElement>(null);
-  const [menuSelection, setMenuSelection] = useState<{ position: { x: number; y: number }; session: InlineChatSession } | null>(null);
+  const [menuSelection, setMenuSelection] = useState<{ position: { x: number; y: number }; session: InlineChatSession; textarea: HTMLTextAreaElement } | null>(null);
   const [session, setSession] = useState<InlineChatSession | null>(null);
   const displayParts = value.split(/(\{+|\}+|\[+|\]+|\(+|\)+|-?(?:\d+(?:\.\d+)?|\.\d+)::|::|<[^<>\n]*>)/g);
   function contextMenu(event: React.MouseEvent<HTMLTextAreaElement>) {
@@ -228,14 +229,44 @@ function PromptTextInput({ variant, target, value, onChange, config, onAssistant
     const start = element.selectionStart;
     const end = element.selectionEnd;
     const selected = value.slice(start, end);
-    if (!selected.trim() || (!assistantModel && !onAssistant)) return;
     event.preventDefault();
     const bounds = element.getBoundingClientRect();
-    setMenuSelection({ position: { x: event.clientX, y: event.clientY }, session: {
+    setMenuSelection({ textarea: element, position: { x: event.clientX, y: event.clientY }, session: {
       target: { kind: target === 'positive' ? 'prompt' : 'negative', label: natural ? target === 'positive' ? '场景描述' : '排除要求' : target === 'positive' ? '正向提示词' : '负向提示词' },
       anchor: { top: Math.min(bounds.bottom + 5, Math.max(8, window.innerHeight - 200)), left: Math.max(8, bounds.left), width: Math.min(Math.max(bounds.width, 280), window.innerWidth - Math.max(8, bounds.left) - 8) },
       selection: { start, end, text: selected }, contextBefore: value.slice(0, start), contextAfter: value.slice(end), mode: 'ask', autoSend: false,
     } });
+  }
+  async function copySelection() {
+    const menu = menuSelection;
+    if (!menu?.session.selection.text) return;
+    setMenuSelection(null);
+    const selected = menu.session.selection.text;
+    try {
+      await copyTextToClipboard(config.settings.resolveAliasesOnCopy ? resolvePromptAliases(selected, config.library) : selected);
+      onError("已复制所选内容");
+    } catch (error) { onError(error instanceof Error ? error.message : "复制失败"); }
+    menu.textarea.focus({ preventScroll: true });
+    menu.textarea.setSelectionRange(menu.session.selection.start, menu.session.selection.end);
+  }
+  async function pasteSelection() {
+    const menu = menuSelection;
+    if (!menu) return;
+    setMenuSelection(null);
+    let text: string | null = null;
+    if (navigator.clipboard?.readText) {
+      try { text = await navigator.clipboard.readText(); } catch { /* use the LFN paste dialog */ }
+    }
+    if (text === null) text = await lfnPrompt("在下方粘贴文本（Ctrl+V / 手机长按粘贴），确认后写入当前光标或替换所选内容。", "", { title: "粘贴文本", multiline: true });
+    if (!text) return;
+    const { start, end } = menu.session.selection;
+    const current = menu.textarea.value;
+    onChange(current.slice(0, start) + text + current.slice(end));
+    const caret = start + text.length;
+    requestAnimationFrame(() => {
+      if (menu.textarea.isConnected) { menu.textarea.focus({ preventScroll: true }); menu.textarea.setSelectionRange(caret, caret); }
+    });
+    onError("已粘贴文本");
   }
   return <div ref={editor} style={{ height }} className={'replica-text-editor' + (!natural && config.settings.highlight ? ' has-highlight' : '')}
     onScrollCapture={(event) => { if (event.target instanceof HTMLTextAreaElement && highlight.current) { highlight.current.scrollTop = event.target.scrollTop; highlight.current.scrollLeft = event.target.scrollLeft; } }}
@@ -259,7 +290,10 @@ function PromptTextInput({ variant, target, value, onChange, config, onAssistant
       onContextMenu={contextMenu} className='replica-raw-textarea' />
     {onAssistant && <button type='button' className='replica-editor-assistant' aria-label='打开提示词助手' title='提示词助手' onClick={() => onAssistant(value)}><Sparkles size={17} /></button>}
     {menuSelection && createPortal(<div className='replica-prompt-overlay replica-inline-host' data-variant={variant}>
-      <InlineChatMenu position={menuSelection.position} targetLabel={menuSelection.session.target.label} onClose={() => setMenuSelection(null)} onPick={(item) => {
+      <InlineChatMenu position={menuSelection.position} targetLabel={menuSelection.session.target.label}
+        onCopy={() => void copySelection()} onPaste={() => void pasteSelection()}
+        canCopy={Boolean(menuSelection.session.selection.text)} canUseAi={Boolean(menuSelection.session.selection.text.trim() && (assistantModel || onAssistant))}
+        onClose={() => setMenuSelection(null)} onPick={(item) => {
         if (assistantModel) setSession({ ...menuSelection.session, mode: item.id, autoSend: item.autoSend });
         else onAssistant?.(item.description + '\n\n' + menuSelection.session.selection.text);
         setMenuSelection(null);

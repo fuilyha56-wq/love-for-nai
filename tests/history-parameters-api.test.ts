@@ -41,7 +41,7 @@ describe("按用户归属读取历史生成参数", () => {
     const response = await get(item.id);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
-    expect(await response.json()).toEqual({ parameters });
+    expect(await response.json()).toEqual({ id: item.id, createdAt: item.createdAt, imageUrl: `/api/history/${item.id}/image`, parameters });
   });
 
   it("未登录时拒绝读取已存在的记录", async () => {
@@ -66,6 +66,6 @@ describe("按用户归属读取历史生成参数", () => {
   it("保留旧 NAI 预设信息，忽略非法数值及模型来源选项", async () => {
     const [item] = await saveHistory(41, { operation: "generate", model: "nai-v5-full", qualityToggle: false, ucPreset: 3, width: "invalid", providerId: "bad/provider", imageProtocol: "unknown", imageSize: "8K", scale: Number.NaN }, [image], null);
     const response = await get(item.id);
-    expect(await response.json()).toEqual({ parameters: { operation: "generate", model: "nai-v5-full", qualityToggle: false, ucPreset: 3 } });
+    expect(await response.json()).toEqual({ id: item.id, createdAt: item.createdAt, imageUrl: `/api/history/${item.id}/image`, parameters: { operation: "generate", model: "nai-v5-full", qualityToggle: false, ucPreset: 3 } });
   });
 });

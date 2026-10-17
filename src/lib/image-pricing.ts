@@ -88,6 +88,7 @@ export function officialNaiAnlasCost(generation: ImagePricingGeneration, opusEli
 
 export const MEDIUM_ANLAS_RATIO = 18 / 26;
 export const MEDIUM_AFF_PER_IMAGE = Math.max(1, Math.round(2 * MEDIUM_ANLAS_RATIO));
+export const V5_BASE_AFF_PER_IMAGE = 4;
 const DIRECTOR_COSTS: Record<string, number> = {
   declutter: 5,
   "bg-removal": 65,
@@ -100,29 +101,31 @@ const DIRECTOR_COSTS: Record<string, number> = {
 
 export function imageCreditCost(generation: ImagePricingGeneration, fixedCostPerSample: number | null = null): number {
   return fixedCostPerSample != null
-    ? roundBillingAmount(fixedCostPerSample) * generation.samples
+    ? Math.round(fixedCostPerSample * generation.samples * 10_000) / 10_000
     : affCost(generation);
 }
 
-export function splitImageCreditCost(cost: number, samples: number, packageBalance: number, availablePackageImages: number) {
-  const costUnits = Math.round(cost * 2);
+export function splitImageCreditCost(cost: number, samples: number, packageBalance: number, availablePackageImages: number, sampleCosts?: number[]) {
+  const precision = isHalfStepAmount(cost) ? 2 : 10_000;
+  const costUnits = Math.round(cost * precision);
   const baseUnits = Math.floor(costUnits / samples);
   const remainderUnits = costUnits % samples;
   let remainingPackage = packageBalance;
   const packageChargesBySample: number[] = [];
   const personalChargesBySample: number[] = [];
   for (let index = 0; index < samples; index += 1) {
-    const sampleCost = (baseUnits + (index < remainderUnits ? 1 : 0)) / 2;
-    const packageCharge = index < availablePackageImages ? Math.min(remainingPackage, sampleCost) : 0;
-    remainingPackage -= packageCharge;
+    const round = (amount: number) => Math.round(amount * 10_000) / 10_000;
+    const sampleCost = sampleCosts?.[index] ?? (baseUnits + (index < remainderUnits ? 1 : 0)) / precision;
+    const packageCharge = index < availablePackageImages ? round(Math.min(remainingPackage, sampleCost)) : 0;
+    remainingPackage = round(remainingPackage - packageCharge);
     packageChargesBySample.push(packageCharge);
-    personalChargesBySample.push(sampleCost - packageCharge);
+    personalChargesBySample.push(round(sampleCost - packageCharge));
   }
   return {
     packageChargesBySample,
     personalChargesBySample,
-    packageCost: packageChargesBySample.reduce((total, value) => total + value, 0),
-    personalCost: personalChargesBySample.reduce((total, value) => total + value, 0),
+    packageCost: Math.round(packageChargesBySample.reduce((total, value) => total + value, 0) * 10_000) / 10_000,
+    personalCost: Math.round(personalChargesBySample.reduce((total, value) => total + value, 0) * 10_000) / 10_000,
   };
 }
 
@@ -310,6 +313,11 @@ export function snapshotFromRawPricing(
 export const UPSCALE_MAX_PIXELS = 3_145_728;
 export const UPSCALE_MODELS = new Set(NAI_UPSCALE_MODEL_IDS);
 
+export function upscaleBillingModel(model: string): string {
+  if (!UPSCALE_MODELS.has(model)) throw new Error("超分模型无效");
+  return model === "nai-diffusion-5-full" ? "nai-v5-full" : "nai-v5-curated";
+}
+
 export function upscaleAnlasCost(width: number, height: number): number {
   const pixels = width * height;
   if (!Number.isSafeInteger(pixels) || pixels <= 0)
@@ -389,7 +397,7 @@ export function affCost(generation: ImagePricingGeneration): number {
   if (directorCost != null) return directorCost * generation.samples;
   if (isNaiMediumModel(model)) return MEDIUM_AFF_PER_IMAGE * generation.samples;
   if (isInFreeEnvelope(generation)) {
-    if (modelPointVersion(model) === "V5") return roundBillingAmount(1.5 * generation.samples);
+    if (modelPointVersion(model) === "V5") return V5_BASE_AFF_PER_IMAGE * generation.samples;
     return generation.samples;
   }
 
@@ -415,8 +423,10 @@ export function affCost(generation: ImagePricingGeneration): number {
       total += 2 * billableCount + 2 * Math.max(0, billableCount - 4);
     }
   }
-  if (modelPointVersion(model) === "V5") total *= 2;
-  return Math.max(1, roundBillingAmount(total));
+  const v5 = modelPointVersion(model) === "V5";
+  total *= v5 ? 1.25 : 1;
+  total += (v5 ? V5_BASE_AFF_PER_IMAGE : 1) * generation.samples;
+  return Math.max(1, Math.round(total * 10_000) / 10_000);
 }
 
 // Estimate the NewAPI balance charge from the effective model/group pricing.

@@ -10,6 +10,6 @@ describe("个人资料分区导航", () => {
   });
 
   it("分区顺序稳定，奖励作为默认首屏", () => {
-    expect(PROFILE_SECTION_IDS).toEqual(["profile-rewards", "profile-info", "profile-security"]);
+    expect(PROFILE_SECTION_IDS).toEqual(["profile-rewards", "profile-redeem", "profile-info", "profile-security"]);
   });
 });

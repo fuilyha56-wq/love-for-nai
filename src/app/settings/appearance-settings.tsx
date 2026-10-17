@@ -1,4 +1,5 @@
 "use client";
+import { LfnColorPicker } from "@/app/ui/lfn-color-picker";
 
 import {
   Check,
@@ -785,23 +786,7 @@ export default function AppearanceSettings() {
               }}
               aria-hidden="true"
             />
-            <label
-              className="grid h-10 w-full cursor-pointer place-items-center overflow-hidden rounded border border-[var(--line)] bg-[var(--panel)] text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] sm:w-14"
-              title="打开取色器"
-            >
-              取色
-              <input
-                type="color"
-                value={
-                  customAccentInput && isSafeHexColor(customAccentInput)
-                    ? customAccentInput
-                    : (accentOptions.find((option) => option.value === preferences.accentPreset)?.color ?? "#a83a4c")
-                }
-                onChange={(event) => setCustomAccent(event.target.value)}
-                className="sr-only"
-                aria-label="选择自定义强调色"
-              />
-            </label>
+            <LfnColorPicker value={customAccentInput && isSafeHexColor(customAccentInput) ? customAccentInput : (accentOptions.find((option) => option.value === preferences.accentPreset)?.color ?? "#a83a4c")} onChange={setCustomAccent} />
           </div>
           {customAccentInput && !isSafeHexColor(customAccentInput) && (
             <p className="mt-2 text-xs text-[var(--rose)]">请输入格式为 #RRGGBB 的颜色。</p>

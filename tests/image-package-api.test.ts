@@ -157,6 +157,9 @@ describe("图包购买请求", () => {
 
 describe("内部生成 fallback", () => {
   it("仅按实际转发的文生图参数计费，保留 uncond_scale 和 service_tier", async () => {
+    const { saveDailyImagePolicy } = await import("@/lib/daily-image-billing");
+    const { DEFAULT_DAILY_IMAGE_POLICY } = await import("@/lib/daily-image-pricing");
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: false });
     affMocks.trySpendImageCredits.mockClear();
     const { POST } = await import("@/app/api/images/generate/route");
     const response = await POST(new Request("http://localhost/api/images/generate", {
@@ -171,7 +174,7 @@ describe("内部生成 fallback", () => {
     expect(affMocks.trySpendImageCredits).toHaveBeenCalledWith(session.userId, expect.objectContaining({
       operation: "generate", uncondScale: 2, serviceTier: "priority",
       referenceImageCount: 0, hasInputImage: false,
-    }));
+    }), expect.any(String));
     const sent = currentFetch.mock.calls.find(([url]) => url === "http://newapi.test/v1/images/generations");
     const payload = JSON.parse(String(sent?.[1]?.body));
     expect(payload).toMatchObject({ uncond_scale: 2, service_tier: "priority" });
@@ -193,7 +196,10 @@ describe("内部生成 fallback", () => {
     expect(currentFetch).not.toHaveBeenCalled();
   });
 
-  it("uses NewAPI only when Medium has no local credits and defaults to 14 steps", async () => {
+  it("explicit legacy mode can use NewAPI when Medium has no local credits", async () => {
+    const { saveDailyImagePolicy } = await import("@/lib/daily-image-billing");
+    const { DEFAULT_DAILY_IMAGE_POLICY } = await import("@/lib/daily-image-pricing");
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: false });
     affMocks.trySpendImageCredits.mockClear();
     const { POST } = await import("@/app/api/images/generate/route");
     const response = await POST(new Request("http://localhost/api/images/generate", {
@@ -203,10 +209,10 @@ describe("内部生成 fallback", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).paymentSource).toBe("newapi");
     expect(affMocks.trySpendImageCredits).toHaveBeenCalledTimes(1);
-    expect(affMocks.trySpendImageCredits).toHaveBeenCalledWith(session.userId, expect.objectContaining({ steps: 14, samples: 1 }));
+    expect(affMocks.trySpendImageCredits).toHaveBeenCalledWith(session.userId, expect.objectContaining({ steps: 14, samples: 1 }), expect.any(String));
     const sent = currentFetch.mock.calls.find(([url]) => url === "http://newapi.test/v1/images/generations");
     expect(JSON.parse(String(sent?.[1]?.body))).toMatchObject({ model: "nai-v5-full-medium", steps: 14, n: 1 });
-    expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
+    expect(currentFetch.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).startsWith("http://gateway.test"))).toBe(false);
   });
   it("允许登录账号可用的 NewAPI 图片模型生成，且不扣 AFF 或发送到 Gateway", async () => {
     modelMocks.userCanGenerateWithNewApiModel.mockResolvedValue(true);
@@ -232,7 +238,7 @@ describe("内部生成 fallback", () => {
       n: 1,
       response_format: "b64_json",
     });
-    expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
+    expect(currentFetch.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).startsWith("http://gateway.test"))).toBe(false);
   });
 
   it("拒绝账号未开放的 NewAPI 模型，不扣费也不请求生图上游", async () => {
@@ -251,6 +257,9 @@ describe("内部生成 fallback", () => {
   });
 
   it("AFF 不足时使用 NewAPI 地址和 NewAPI token，不把 token 发给 Gateway", async () => {
+    const { saveDailyImagePolicy } = await import("@/lib/daily-image-billing");
+    const { DEFAULT_DAILY_IMAGE_POLICY } = await import("@/lib/daily-image-pricing");
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: false });
     const { POST } = await import("@/app/api/images/generate/route");
     const response = await POST(
       new Request("http://localhost/api/images/generate", {
@@ -265,13 +274,10 @@ describe("内部生成 fallback", () => {
       }),
     );
     expect(response.status).toBe(200);
-    expect(currentFetch).toHaveBeenCalledWith(
-      "http://newapi.test/v1/images/generations",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer newapi-token" }),
-      }),
-    );
-    expect(currentFetch.mock.calls.some(([url]) => String(url).startsWith("http://gateway.test"))).toBe(false);
+    const billedCall = currentFetch.mock.calls.find(([url, init]) => url === "http://newapi.test/v1/images/generations" && init?.method === "POST");
+    expect(billedCall).toBeTruthy();
+    expect(new Headers(billedCall?.[1]?.headers).get("Authorization")).toBe("Bearer newapi-token");
+    expect(currentFetch.mock.calls.some(([url, init]) => init?.method === "POST" && String(url).startsWith("http://gateway.test"))).toBe(false);
   });
 
   it("拒绝非法样本数，不调用 AFF 或上游", async () => {

@@ -153,6 +153,7 @@ describe("NovelAI 原生兼容层", () => {
     expect(mocks.trySpendImageCredits).toHaveBeenCalledWith(
       41,
       expect.objectContaining({ operation: "encode-vibe" }),
+      expect.any(String),
     );
   });
 

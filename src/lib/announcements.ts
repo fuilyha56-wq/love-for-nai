@@ -110,7 +110,7 @@ curl -X POST http://你的NewAPI地址/v1/images/generations \\
   -d '{"model":"nai-v4.5-full","prompt":"1girl","size":"832x1216","response_format":"b64_json"}'
 \`\`\`
 
-三种方式计费都走 NewAPI 余额；LFN 两种入口只是协议转换，不加价。
+LFN 的网页、OpenAI 兼容和 NAI 原生入口对站内计费模型共用账号每日阶梯，优先使用图包/个人 AFF；默认余额不足即拒绝，不会静默切换钱包。直接调用 NewAPI 属于另一项服务，按其自身政策计费。
 
 ## 图片广场
 

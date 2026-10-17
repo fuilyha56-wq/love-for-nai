@@ -20,6 +20,13 @@ const modelAliases: Record<string, string> = {
   "nai-v3-furry-inpaint": "nai-diffusion-furry-3-inpainting",
 };
 
+export function naiUsageModel(model: string): string {
+  const normalized = model.trim().toLowerCase().replace(/-limit(?=-|$)/g, "");
+  if (normalized === "nai-diffusion-5") return "nai-v5-full";
+  if (normalized === "nai-diffusion-5-inpainting") return "nai-v5-inpaint";
+  return Object.entries(modelAliases).find(([, native]) => native === normalized)?.[0] || normalized;
+}
+
 export function stripDataUrl(value: unknown): unknown {
   if (typeof value === "string")
     return DATA_URL.test(value) ? value.replace(DATA_URL, "") : value;

@@ -21,6 +21,16 @@
 .admin-setting-switch { width: 100%; min-width: 0; }
 .admin-setting-switch:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
 .admin-setting-switch .token-quota-switch-label { overflow: hidden; text-overflow: ellipsis; }
+.admin-module-link:hover, .admin-module-link:focus-visible { border-color: var(--rose); outline: none; background: color-mix(in srgb, var(--rose) 5%, var(--panel)); }
+.referral-tree-scroll { max-height: 520px; overflow: auto; padding: 4px; border-radius: 8px; background: var(--surface-muted); }
+.referral-tree, .referral-tree ul { margin: 0; padding: 0; list-style: none; }
+.referral-tree ul { margin: 6px 0 6px 15px; padding-left: 16px; border-left: 1px solid var(--line); }
+.referral-tree li { margin: 6px 0; position: relative; }
+.referral-tree ul > li::before { content: ""; position: absolute; left: -16px; top: 20px; width: 16px; border-top: 1px solid var(--line); }
+.referral-node { display: flex; gap: 8px; align-items: center; min-width: 230px; padding: 9px 10px; border: 1px solid transparent; border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 12px; }
+.referral-node small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.referral-node.is-root { border-color: var(--rose); }
+.referral-node.is-selected { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); box-shadow: inset 3px 0 var(--rose); }
 
 .admin-card { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); box-shadow: 0 8px 24px rgb(32 35 40 / 4%); }
 .admin-card-header, .admin-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--line); }

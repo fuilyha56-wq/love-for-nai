@@ -1,4 +1,6 @@
 "use client";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
+
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -360,7 +362,7 @@ export default function StoriesWorkspace({
   }
 
   async function deleteActiveStory() {
-    if (!activeStory || !window.confirm(`确定删除《${activeStory.title}》吗？此操作无法撤销。`)) return;
+    if (!activeStory || !(await lfnConfirm(`确定删除《${activeStory.title}》吗？此操作无法撤销。`))) return;
     setBusy(true);
     try {
       await readJson(await fetch(`/api/stories/${activeStory.id}`, { method: "DELETE" }));
@@ -793,7 +795,6 @@ export default function StoriesWorkspace({
           <p className="story-kicker">LOVE FOR NAI / WRITING</p>
           <h1>故事工作台</h1>
           <p>用 Sol 与 Luna 续写、改写和分支你的长篇故事，在需要时把场景直接带到图片工作台。</p>
-          <div><span>IKUN ONLY</span><span>2 路并发</span><span>自动保存</span></div>
         </div>
         <div className="story-news-visual" aria-hidden="true">
           <div className="story-visual-page"><i /><i /><i /><i /><i /><i /></div>

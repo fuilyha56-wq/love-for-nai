@@ -32,6 +32,14 @@
 .profile-wallet-value { margin-top: 7px; font-size: 20px; font-weight: 700; line-height: 1.1; }
 .profile-wallet-help { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.45; }
 .profile-package-buy { grid-column: 1 / -1; }
+.profile-redeem-card { padding: 16px; }
+.profile-redeem-form { display: flex; gap: 8px; margin-top: 16px; }
+.profile-redeem-form input { text-transform: uppercase; }
+.profile-redeem-history { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.profile-redeem-history-title { color: var(--muted); font-size: 11px; font-weight: 650; }
+.profile-redeem-history-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; border-bottom: 1px solid var(--line); padding: 9px 0; font-size: 11px; }
+.profile-redeem-history-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.profile-redeem-history-row time { color: var(--muted); font-size: 10px; white-space: nowrap; }
 .profile-package-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(108px, auto); gap: 8px; margin-top: 9px; align-items: stretch; }
 .profile-package-count { display: flex; min-width: 140px; min-height: 36px; align-items: center; gap: 8px; padding: 0 9px; }
 .profile-package-count span { color: var(--muted); font-size: 11px; font-weight: 600; }
@@ -62,6 +70,10 @@
   .profile-wallet-grid { grid-template-columns: 1fr 1fr; }
   .profile-package-controls { grid-template-columns: minmax(0, 1fr) auto; }
   .profile-package-controls .settings-primary-button { min-width: 108px; }
+  .profile-redeem-form { align-items: stretch; }
+  .profile-redeem-form .settings-primary-button { min-width: 92px; }
+  .profile-redeem-history-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .profile-redeem-history-row time { grid-column: 1 / -1; }
   .profile-field-grid button, .profile-field-grid .settings-primary-button { width: 100%; justify-content: center; }
 }
 @media (max-width: 380px) {
@@ -71,4 +83,6 @@
   .profile-section, .profile-card { padding: 13px; }
   .profile-package-controls { grid-template-columns: 1fr; }
   .profile-package-controls .settings-primary-button { width: 100%; }
+  .profile-redeem-form { display: grid; grid-template-columns: 1fr; }
+  .profile-redeem-form .settings-primary-button { width: 100%; }
 }

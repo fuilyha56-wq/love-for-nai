@@ -1,4 +1,6 @@
 "use client";
+import { LfnSelect } from "@/app/ui/lfn-select";
+
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -136,7 +138,7 @@ function FixedTagEditor({ variant, entry, categories, onSave, onClose }: {
         <label className="replica-weight-label">权重 <output>{draft.weight.toFixed(2)}x</output></label>
         <div className="replica-dialog-weight"><span>0.5</span><input type="range" min={0.5} max={2} step={0.05} aria-label="固定词权重" value={draft.weight} onChange={(event) => setDraft({ ...draft, weight: Number(event.target.value) })} /><span>2.0</span><button type="button" aria-label="重置固定词权重" onClick={() => setDraft({ ...draft, weight: 1 })}><RotateCcw size={16} /></button></div>
         <label className="replica-enabled-control">已启用<input type="checkbox" role="switch" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} /></label>
-        <label>保存到类别<select value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}>{[...new Set(["根目录", ...categories])].map((category) => <option key={category}>{category}</option>)}</select></label>
+        <label>保存到类别<LfnSelect value={draft.category} onChange={(event) => setDraft({ ...draft, category: event.target.value })}>{[...new Set(["根目录", ...categories])].map((category) => <option key={category}>{category}</option>)}</LfnSelect></label>
         <label className="replica-save-library"><input type="checkbox" checked={saveToLibrary} onChange={(event) => setSaveToLibrary(event.target.checked)} /><span>同时保存到词库<small>方便日后在词库中重复使用</small></span></label>
       </div>
     </div>
