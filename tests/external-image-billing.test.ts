@@ -209,7 +209,7 @@ describe("外部 LFN 图像入口计费", () => {
   it("无余额时直接用托管密钥走 NewAPI 计费（按用户分组自动换组）", async () => {
     mocks.resolveExternalApiIdentity.mockResolvedValue({ userId: 41, username: "user-41", group: "default" });
     mocks.trySpendImageCredits.mockResolvedValue(null);
-    mocks.ensureManagedFallbackToken.mockResolvedValue("managedkey48hex00000000000000000000");
+    mocks.ensureManagedFallbackToken.mockResolvedValue("managed-fixture");
     const newapiCalls: string[] = [];
     vi.stubGlobal(
       "fetch",

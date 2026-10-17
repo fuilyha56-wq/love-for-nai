@@ -92,7 +92,7 @@ def main():
     transport = client.get_transport()
     if transport is not None:
         transport.set_keepalive(15)
-    remote_archive = f'/tmp/lfn-{tag}.tar.gz'
+    remote_archive = None
     compose = backup = None
     previous = None
     switched = False
@@ -119,6 +119,19 @@ def main():
 
         sftp = client.open_sftp()
         try:
+            # /tmp can be RAM-backed on small hosts. Keep large image artifacts
+            # beside the existing deployment on its persistent filesystem.
+            upload_dir = deploy_dir.rstrip('/') + '/.release-upload'
+            try:
+                sftp.mkdir(upload_dir, mode=0o700)
+            except IOError:
+                import stat
+                if not stat.S_ISDIR(sftp.lstat(upload_dir).st_mode):
+                    raise RuntimeError('Upload directory is not a real directory')
+            available_kib = int(run_remote(client, f'df -k --output=avail {shlex.quote(upload_dir)} | tail -n1', quiet=True))
+            if available_kib * 1024 < compressed.stat().st_size + 512 * 1024 * 1024:
+                raise RuntimeError('Insufficient persistent disk space for the image archive and extraction')
+            remote_archive = upload_dir + f'/lfn-{tag}.tar.gz'
             with sftp.open(compose, 'r') as source:
                 original = source.read().decode('utf-8')
             updated, count = re.subn(r'(?m)^(\s*image:\s*)(?:love-for-nai:[^\r\n]+|\$\{LFN_IMAGE[^\r\n]+)', lambda match: match[1] + image, original)
@@ -137,6 +150,7 @@ def main():
                     print(f'Upload {sent / max(total, 1):.0%} ({sent / 1048576:.1f} MiB)', flush=True)
                     last_progress[0] = time.monotonic()
             sftp.put(str(compressed), remote_archive, callback=progress)
+            sftp.chmod(remote_archive, 0o600)
             remote_checksum = run_remote(client, f'sha256sum {shlex.quote(remote_archive)}', quiet=True).split()[0]
             if remote_checksum != checksum:
                 raise RuntimeError('Uploaded image archive checksum mismatch')
@@ -176,7 +190,7 @@ def main():
         raise
     finally:
         try:
-            if transport is not None and transport.is_active():
+            if remote_archive and transport is not None and transport.is_active():
                 run_remote(client, f'rm -f {shlex.quote(remote_archive)}', quiet=True)
         finally:
             client.close()
