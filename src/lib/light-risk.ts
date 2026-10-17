@@ -54,6 +54,13 @@ function state(): Runtime {
 }
 const secret = () => process.env.LFN_RISK_HASH_SECRET?.trim() || process.env.LFN_SESSION_SECRET?.trim();
 function digest(value: string) { const key = secret(); return key ? createHmac("sha256", key).update(value).digest("hex") : undefined; }
+// Exercise the running process's cached policy and the actual ingress headers.
+// This probe does not create a grant, mutate an account, or call a provider.
+export async function freeGrantReadiness(request: Request): Promise<boolean> {
+  const settings = await getRiskSettings();
+  if (!flag(settings, "grant.enabled") || settings.values["grant.unknownIp"] === "observe") return true;
+  return Boolean(secret() && (await resolveTrustedClientIp(request)).ip);
+}
 function signDevice(id: string) { return `${id}.${digest(`device:${id}`)}`; }
 function verifiedDevice(raw: string): string | undefined {
   if (!secret() || !/^[\da-f]{32}\.[\da-f]{64}$/.test(raw)) return;

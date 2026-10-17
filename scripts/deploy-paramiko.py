@@ -64,7 +64,12 @@ def health(client, image):
         return False
     for url in ['http://127.0.0.1:41801/api/health', 'http://127.0.0.1:41800/api/health']:
         raw = run_remote(client, f'curl --fail --silent --max-time 8 {shlex.quote(url)}', quiet=True)
-        if json.loads(raw).get('status') != 'ok':
+        payload = json.loads(raw)
+        if payload.get('status') != 'ok':
+            return False
+        # A live process alone is insufficient: the real edge must satisfy the
+        # same cached-policy/source check used for free image admission.
+        if ':41800/' in url and payload.get('readiness', {}).get('freeImageAdmission') != 'ready':
             return False
     return True
 
@@ -199,7 +204,7 @@ def main():
                     pass
                 time.sleep(5)
             else:
-                raise RuntimeError('New LFN container did not pass health checks')
+                raise RuntimeError('New LFN container did not pass health and edge free-image admission checks')
             run_remote(client, 'curl --fail --silent --max-time 15 http://127.0.0.1:41800/studio -o /dev/null')
             print(f'DEPLOYED={image}\nPREVIOUS={previous}\nCOMPOSE_BACKUP={backup}', flush=True)
         finally:
