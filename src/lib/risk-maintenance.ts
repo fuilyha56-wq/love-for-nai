@@ -5,7 +5,7 @@ import { getRiskSettings } from "./risk-settings";
 let lastRoot = "", lastRun = 0, running: Promise<void> | undefined;
 /** Only generated diagnostics/grants expire here; financial ledgers are never touched. */
 export function maintainRiskStorage(now = Date.now()): Promise<void> {
-  const root = path.resolve(process.env.LFN_DATA_DIR || "data");
+  const root = path.resolve(/* turbopackIgnore: true */ process.env.LFN_DATA_DIR || "data");
   if (running) return running;
   if (lastRoot === root && now - lastRun < 3600000) return Promise.resolve();
   lastRoot = root; lastRun = now;
