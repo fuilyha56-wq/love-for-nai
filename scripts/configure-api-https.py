@@ -45,19 +45,24 @@ def container_command(image, script, writable=False):
             ' --entrypoint node ' + shlex.quote(image) + ' -e ' + shlex.quote(script))
 
 
-def reload_host_nginx(deploy, client, image):
-    listing = deploy.run_remote(client, 'ps -eo pid,comm,args | awk \'$2 == "nginx" && /master process/ {print}\'', quiet=True)
-    matches = re.findall(r'^\s*(\d+)\s+nginx\s+nginx: master process /www/server/nginx/sbin/nginx -c /www/server/nginx/conf/nginx.conf\s*$', listing, re.M)
-    if len(matches) != 1:
-        raise RuntimeError('Cannot uniquely identify the existing TLS nginx master')
-    pid = int(matches[0])
-    # HUP makes the existing master validate its own complete configuration and
-    # keys, then reload gracefully. Invalid configuration leaves old workers up.
-    code = ('const fs=require("fs");const pid=' + str(pid) + ';'
-            'const command=fs.readFileSync("/proc/"+pid+"/cmdline","utf8");'
-            'if(!command.includes("nginx: master process /www/server/nginx/sbin/nginx -c /www/server/nginx/conf/nginx.conf"))throw Error("TLS master changed");'
-            'process.kill(pid,"SIGHUP");')
-    deploy.run_remote(client, 'docker run --rm --network none --read-only --user 0 --pid host --cap-drop ALL --cap-add KILL --security-opt no-new-privileges --entrypoint node ' + shlex.quote(image) + ' -e ' + shlex.quote(code), quiet=True)
+def run_sudo_remote(deploy, client, command):
+    # Use the existing SSH administrator's normal sudo authority. Passwords go
+    # only over SSH stdin, never into process arguments, files or tool output.
+    password = deploy.load_ssh_config()[3]
+    stdin, stdout, stderr = client.exec_command("sudo -S -p '' -- /bin/sh -c " + shlex.quote(command), timeout=45)
+    stdin.write(password + '\n')
+    stdin.flush()
+    stdin.channel.shutdown_write()
+    output = stdout.read().decode('utf-8', errors='replace')
+    error = stderr.read().decode('utf-8', errors='replace')
+    if stdout.channel.recv_exit_status():
+        raise RuntimeError('Host nginx operation failed: ' + (output + error)[-1000:])
+
+
+def reload_host_nginx(deploy, client):
+    nginx = '/www/server/nginx/sbin/nginx'
+    config = ' -c /www/server/nginx/conf/nginx.conf'
+    run_sudo_remote(deploy, client, nginx + ' -t' + config + ' && ' + nginx + ' -s reload' + config)
 
 
 def main():
@@ -86,10 +91,12 @@ def main():
                  '(umask 077; set -C; cat > "$file") || exit 1; '
                  'trap \'rm -f "$file"\' EXIT; nginx -t -c "$file"')
         deploy.run_remote(client, "printf '%s' " + shlex.quote(validation) + ' | docker exec -i lfn-edge sh -c ' + shlex.quote(check), quiet=True)
+        if apply:
+            run_sudo_remote(deploy, client, '/www/server/nginx/sbin/nginx -t -c /www/server/nginx/conf/nginx.conf')
         result = json.loads(deploy.run_remote(client, container_command(image, script, apply), quiet=True))
         if apply:
             if result['changed']:
-                reload_host_nginx(deploy, client, image)
+                reload_host_nginx(deploy, client)
             url = 'https://' + site + '/lfn/api/health'
             # A short bounded retry accommodates graceful worker replacement.
             payload = json.loads(deploy.run_remote(client, 'curl --fail --silent --show-error --retry 3 --retry-delay 1 --retry-all-errors --max-time 10 ' + shlex.quote(url), quiet=True))
@@ -104,7 +111,7 @@ def main():
                         'if(!fs.readFileSync(file,"utf8").startsWith(' + json.dumps(LABEL) + '))throw Error("Extension changed externally");' +
                         ('fs.copyFileSync(file+".bak-"+' + json.dumps(tag) + ',file);' if result.get('backupCreated') else 'fs.unlinkSync(file);'))
             deploy.run_remote(client, container_command(image, rollback, True), quiet=True)
-            reload_host_nginx(deploy, client, image)
+            reload_host_nginx(deploy, client)
         raise
     finally:
         client.close()
