@@ -11,7 +11,7 @@ export type DailyPriceTier = {
 };
 export type DailyImagePolicy = {
   enabled: boolean;
-  /** A local-price request must never silently change to NewAPI wallet pricing. */
+  /** Optional restriction: disallow switching to NewAPI's independently billed generation. */
   strictApiBilling?: boolean;
   displayUsdPerCny: number;
   v45AnlasCny: number;
@@ -42,7 +42,7 @@ export type DailyImageBillingState = {
 
 export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
   enabled: true,
-  strictApiBilling: true,
+  strictApiBilling: false,
   displayUsdPerCny: 200,
   v45AnlasCny: 0.04,
   v5AnlasCny: 0.05,

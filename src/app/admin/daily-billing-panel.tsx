@@ -119,6 +119,12 @@ export default function DailyBillingPanel() {
               label="启用每日阶梯"
               onChange={(enabled) => setPolicy({ ...policy, enabled })}
             />
+            <LfnSwitch
+              checked={policy.strictApiBilling === false}
+              disabled={busy}
+              label="额度不足时转交 NewAPI 生成"
+              onChange={(allowed) => setPolicy({ ...policy, strictApiBilling: !allowed })}
+            />
             {dirty && (
               <span className="text-xs text-amber-700">有未保存修改</span>
             )}
@@ -178,7 +184,7 @@ export default function DailyBillingPanel() {
             {packageCny.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}；计价面值固定为 1 AFF = ¥{cnyPerAff}，不随图包折扣变化。
             V4.5 基础 1 AFF、V5 High 基础 {V5_BASE_AFF_PER_IMAGE} AFF、Medium 基础 1 AFF；
             超范围每 Anlas 分别为 {Number((policy.v45AnlasCny / cnyPerAff).toFixed(4))}/{Number((policy.v5AnlasCny / cnyPerAff).toFixed(4))} AFF。
-            日阶梯只影响 LFN AFF/图包，不改变 NewAPI 自身计价。
+            日阶梯只影响 LFN AFF/图包。转交 NewAPI 后由 NewAPI 生成、记录请求并按其模型配置计费，不参与本站每日张数阶梯。
           </p>
           {(["v45", "v5"] as const).map((family) => (
             <div

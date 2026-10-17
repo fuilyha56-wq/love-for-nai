@@ -322,7 +322,7 @@ export async function startRequestAudit(input: {
       if (completed.userId && completed.status !== undefined) {
         await finishLightRisk({ userId: completed.userId, requestId, acceptedAt: startedAt, status: completed.status, cost: completed.billing?.lfnChargedAff, moderation: completed.moderation });
         const generation = auditGeneration(completed);
-        const successful = completed.status >= 200 && completed.status < 300 && !/custom|personal-key|provider/.test(completed.paymentSource || "");
+        const successful = completed.status >= 200 && completed.status < 300 && !/custom|personal-key|provider|newapi/.test(completed.paymentSource || "");
         await settleDailyImageUsage(completed.userId, requestId, generation, successful ? completed.generatedSamples ?? (completed.historyIds.length || generation?.samples || 0) : 0, Date.parse(completed.createdAt));
       }
       if (completed.status !== undefined) releaseRiskContext(requestId);

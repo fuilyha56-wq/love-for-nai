@@ -61,7 +61,9 @@ import { POST as nativePOST } from "@/app/ai/generate-image/route";
 import {
   dailyImageBillingState,
   reserveDailyImageQuote,
+  saveDailyImagePolicy,
 } from "@/lib/daily-image-billing";
+import { DEFAULT_DAILY_IMAGE_POLICY } from "@/lib/daily-image-pricing";
 import { affStatus } from "@/lib/aff";
 import { flushRequestAudits } from "@/lib/request-audit";
 import {
@@ -348,6 +350,7 @@ describe("API tiers with real local wallet and daily reservations", () => {
     ).toEqual([-4.4, -4]);
   });
   it("does not silently charge NewAPI when local credits are insufficient", async () => {
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: true });
     await writeFile(
       path.join(directory, "aff", "801.json"),
       JSON.stringify({ balance: 0, packageBalance: 0, transactions: [] }),
@@ -359,6 +362,7 @@ describe("API tiers with real local wallet and daily reservations", () => {
     expect((await dailyImageBillingState(801)).counts.v5).toBe(0);
   });
   it("does not execute an unowned key or missing local channel through a different pricing policy", async () => {
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, strictApiBilling: true });
     upstream.userId = null;
     expect((await invoke("unknown-owner")).status).toBe(503);
     expect(upstream.send).not.toHaveBeenCalled();
@@ -366,6 +370,43 @@ describe("API tiers with real local wallet and daily reservations", () => {
     upstream.configured = false;
     expect((await invoke("missing-local-channel")).status).toBe(503);
     expect(upstream.send).not.toHaveBeenCalled();
+  });
+  it("defaults to an actual NewAPI generation when AFF is insufficient, leaving the local count unchanged", async () => {
+    await writeFile(path.join(directory, "aff", "801.json"), JSON.stringify({ balance: 1, packageBalance: 0, transactions: [] }));
+    upstream.fallback.mockResolvedValue("managed-fixture-key");
+    const response = await invoke("newapi-balance");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-LFN-Payment-Source")).toBe("newapi");
+    expect(response.headers.get("X-LFN-Watermark")).toBe("embedded");
+    const body = await response.json();
+    expect(await verifyWatermark(`data:image/png;base64,${body.data[0].b64_json}`)).toMatchObject({ valid: true });
+    expect(upstream.send).toHaveBeenCalledTimes(1);
+    expect(upstream.send.mock.calls[0][0]).toBe("https://fallback.invalid/v1/images/generations");
+    expect((await affStatus(801)).balance).toBe(1);
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(0);
+  });
+  it("still rejects an unowned key when independent NewAPI billing is allowed", async () => {
+    upstream.userId = null;
+    expect((await invoke("unowned-key")).status).toBe(503);
+    expect(upstream.send).not.toHaveBeenCalled();
+  });
+  it.each([false, true])("preserves NewAPI billing and signatures in native fallback, stream=%s", async (stream) => {
+    upstream.native = true;
+    upstream.fallback.mockResolvedValue("managed-fixture-key");
+    await writeFile(path.join(directory, "aff", "801.json"), JSON.stringify({ balance: 1, packageBalance: 0, transactions: [] }));
+    const response = await nativePOST(new Request(`https://lfn.test/ai/generate-image${stream ? "-stream" : ""}`, {
+      method: "POST", headers: { authorization: "Bearer paid-native", "content-type": "application/json", "x-real-ip": "203.0.113.71" },
+      body: JSON.stringify({ input: "billing fixture", model: "nai-diffusion-5-full", action: "generate", parameters: { width: 832, height: 1216, steps: 28, n_samples: 1 } }),
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("X-LFN-Payment-Source")).toBe("newapi");
+    const body = new Uint8Array(await response.arrayBuffer());
+    const image = stream ? (decode(body.subarray(4)) as { image: Uint8Array }).image : await (await JSZip.loadAsync(body)).file("image_0.png")!.async("uint8array");
+    expect(await verifyWatermark(`data:image/png;base64,${Buffer.from(image).toString("base64")}`)).toMatchObject({ valid: true });
+    expect(upstream.send).toHaveBeenCalledTimes(1);
+    expect(upstream.send.mock.calls[0][0]).toBe("https://fallback.invalid/v1/images/generations");
+    expect((await affStatus(801)).balance).toBe(1);
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(0);
   });
   it("refunds a failed upstream at the original tier and releases its daily reservation", async () => {
     upstream.send.mockImplementation(async () =>

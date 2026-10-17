@@ -30,6 +30,19 @@ const liveV5 = snapshotFromRawPricing(
 );
 
 describe("NewAPI image cost previews", () => {
+  it("reads a flat small-image tier and preserves the dynamic V5 coefficient", () => {
+    const tiered = snapshotFromRawPricing(base.model, {
+      quota_type: 1, billing_mode: "tiered_expr",
+      billing_expr: 'p < 100 ? tier("limit", p * 0 + c * 0 + 8000000) : tier("full", p * 100000 + c * 0)',
+    }, 1);
+    expect(estimateNewApiCost(tiered, base)).toBe(8);
+    expect(estimateNewApiCost(tiered, { ...base, steps: 29 })).toBe(210);
+    const half = snapshotFromRawPricing(base.model, {
+      billing_mode: "tiered_expr",
+      billing_expr: 'p < 100 ? tier("limit", p * 0 + c * 0 + 8000000) : tier("full", p * 100000 + c * 0)',
+    }, 0.5);
+    expect(estimateNewApiCost(half, base)).toBe(4);
+  });
   it("applies the AFF half-point rounding boundary", () => {
     expect(roundBillingAmount(2.49)).toBe(2);
     expect(roundBillingAmount(2.5)).toBe(2.5);
