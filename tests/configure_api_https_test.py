@@ -4,7 +4,7 @@ import json
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
@@ -14,15 +14,25 @@ spec.loader.exec_module(module)
 
 
 class ApiHttpsConfigurationTest(unittest.TestCase):
-    def test_reload_signals_only_the_identified_existing_master(self):
-        deploy = Mock()
-        deploy.run_remote.side_effect = [' 123 nginx nginx: master process /www/server/nginx/sbin/nginx -c /www/server/nginx/conf/nginx.conf\n', '']
-        module.reload_host_nginx(deploy, object(), 'love-for-nai:test')
-        command = deploy.run_remote.call_args.args[1]
-        self.assertIn('--cap-drop ALL --cap-add KILL', command)
-        self.assertIn('const pid=123;', command)
-        self.assertIn('"SIGHUP"', command)
-        self.assertNotIn('--privileged', command)
+    def test_reload_checks_complete_host_configuration_before_native_reload(self):
+        with patch.object(module, 'run_sudo_remote') as operation:
+            module.reload_host_nginx(object(), object())
+        command = operation.call_args.args[2]
+        self.assertIn('nginx -t -c', command)
+        self.assertIn(' && ', command)
+        self.assertIn('nginx -s reload -c', command)
+        self.assertNotIn('docker', command)
+
+    def test_sudo_password_is_sent_only_over_stdin(self):
+        deploy, client, stdin, stdout, stderr = [Mock() for _ in range(5)]
+        deploy.load_ssh_config.return_value = ('test-host', 22, 'operator', 'synthetic-fixture-password')
+        client.exec_command.return_value = (stdin, stdout, stderr)
+        stdout.read.return_value = b''
+        stderr.read.return_value = b'configuration test successful'
+        stdout.channel.recv_exit_status.return_value = 0
+        module.run_sudo_remote(deploy, client, 'nginx -t')
+        self.assertNotIn('synthetic-fixture-password', client.exec_command.call_args.args[0])
+        stdin.write.assert_called_once_with('synthetic-fixture-password\n')
 
     def test_preview_backup_update_and_repetition_leave_existing_tls_site_unchanged(self):
         with tempfile.TemporaryDirectory(prefix='lfn-api-tls-') as directory:
