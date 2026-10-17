@@ -44,7 +44,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       const userId = 930 + index;
       await expect(dailyImageBillingState(userId)).resolves.toMatchObject({ cnyPerAff: 0.005, packageCny: priceUsd / 200, affPerPackage });
       await seedAccount(userId, { balance: 300, packageBalance: 0, transactions: [] });
-      await expect(trySpendImageCredits(userId, generation, `fixed-cny-${index}`)).resolves.toMatchObject({ cost: 204, personalCost: 204, balance: 96, dailyQuote: { anlas: 20, costCny: 1.02 } });
+      await expect(trySpendImageCredits(userId, generation, `fixed-cny-${index}`)).resolves.toMatchObject({ cost: 104, personalCost: 104, balance: 196, dailyQuote: { anlas: 20, costCny: 0.52 } });
     }
   });
 
@@ -96,7 +96,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       refundImageCredits(910, charge!, 0, { settlementId }),
     ]);
     await expect(affStatus(910)).resolves.toMatchObject({ balance: 500, packageBalance: 5 });
-    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 204 });
+    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 104 });
   });
 
   it("图包 12 + 个人 5，档内 V5 只需 4 AFF：个人不动", async () => {
@@ -151,7 +151,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
   });
 
-  it("图包 5 + 个人 240，档外（steps29）V5 204 AFF：混合扣 图包 5 + 个人 199", async () => {
+  it("图包 5 + 个人 240，档外（steps29）V5 104 AFF：混合扣 图包 5 + 个人 99", async () => {
     await seedAccount(903, {
       balance: 240,
       packageBalance: 5,
@@ -169,11 +169,11 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 204,
+      cost: 104,
       packageCost: 5,
-      personalCost: 199,
+      personalCost: 99,
       packageImages: 1,
-      balance: 41,
+      balance: 141,
       packageBalance: 0,
     });
   });

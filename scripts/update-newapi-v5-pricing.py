@@ -11,17 +11,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-MODELS = ["nai-v5-full", "nai-v5-curated", "nai-v5-inpaint"]
-
-
-def build_expression(v45_coefficient, small_balance):
-    coefficient = v45_coefficient * 1.25
-    raw = small_balance * 1_000_000
-    if coefficient != int(coefficient) or raw != int(raw):
-        raise ValueError("Pricing coefficients must be exact integers")
-    return f'p < 100 ? tier("limit", p * 0 + c * 0 + {int(raw)}) : tier("full", p * {int(coefficient)} + c * 0)'
-
-
 REMOTE = r'''
 const fs=require('fs'),path=require('path');
 const root=path.resolve(process.env.LFN_DATA_DIR||'data');

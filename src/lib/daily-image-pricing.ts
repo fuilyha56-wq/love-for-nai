@@ -44,8 +44,8 @@ export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
   enabled: true,
   strictApiBilling: false,
   displayUsdPerCny: 200,
-  v45AnlasCny: 0.04,
-  v5AnlasCny: 0.05,
+  v45AnlasCny: 0.02,
+  v5AnlasCny: 0.025,
   v45: [
     { afterImages: 0, baseCny: 0, anlasMultiplier: 1, totalMultiplier: 1 },
     {

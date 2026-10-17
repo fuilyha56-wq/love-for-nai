@@ -182,7 +182,7 @@ export default function DailyBillingPanel() {
           <p className="text-xs leading-6 text-[var(--muted)]">
             当前图包售价：{data?.affPerPackage} AFF ≈ ¥
             {packageCny.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}；计价面值固定为 1 AFF = ¥{cnyPerAff}，不随图包折扣变化。
-            V4.5 基础 1 AFF、V5 High 基础 {V5_BASE_AFF_PER_IMAGE} AFF、Medium 基础 1 AFF；
+            LFN 小图保留当前 AFF 阶梯：V4.5 基础 1 AFF、V5 High 基础 {V5_BASE_AFF_PER_IMAGE} AFF、Medium 基础 1 AFF。人民币基准价只计算相对首档的附加费；NewAPI 的独立小图价格不套用这里的 AFF 基础价。
             超范围每 Anlas 分别为 {Number((policy.v45AnlasCny / cnyPerAff).toFixed(4))}/{Number((policy.v5AnlasCny / cnyPerAff).toFixed(4))} AFF。
             日阶梯只影响 LFN AFF/图包。转交 NewAPI 后由 NewAPI 生成、记录请求并按其模型配置计费，不参与本站每日张数阶梯。
           </p>
@@ -225,7 +225,7 @@ export default function DailyBillingPanel() {
                         { key: "afterImages", label: "超过每日张数", step: 1 },
                         {
                           key: "baseCny",
-                          label: "阶梯基准价（¥）",
+                          label: "附加价参考值（¥）",
                           step: 0.001,
                         },
                         {
@@ -282,7 +282,7 @@ export default function DailyBillingPanel() {
             </div>
           ))}
           <p className="text-xs leading-6 text-[var(--muted)]">
-            每张 AFF =（基础 AFF +（本档基准价减首档基准价，最低为 0 + 本张 Anlas × 人民币单价 × Anlas 倍率）÷ {cnyPerAff}）×
+            每张 AFF =（基础 AFF +（本档参考值减首档参考值，最低为 0 + 本张 Anlas × 人民币单价 × Anlas 倍率）÷ {cnyPerAff}）×
             整体倍率。批次跨档时逐张计算，失败张数退回原扣费来源并释放每日计数。编码、放大和
             Director 工具继续使用各自计费公式。
           </p>
