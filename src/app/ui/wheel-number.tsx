@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+
+export function commitNumberDraft(draft: string, current: number, min: number, max: number, step: number): number {
+  const parsed = draft.trim() ? Number(draft) : current;
+  const finite = Number.isFinite(parsed) ? parsed : Number.isFinite(current) ? current : min;
+  return Math.min(max, Math.max(min, step >= 1 ? Math.round(finite) : finite));
+}
 
 // 悬停在数字输入框上滚动滚轮即可按 step 增减。
 // React 的合成 onWheel 走 passive 监听，preventDefault 不生效，
@@ -60,20 +66,31 @@ export function WheelNumberInput({
   step: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  useWheelStep(inputRef, (direction) =>
-    setValue(quantizeStepValue(value, direction, min, max, step)),
-  );
+  // Editing text, including an empty field, must never reach pricing as 0/NaN.
+  const [draft, setDraft] = useState<string | null>(null);
+  useWheelStep(inputRef, (direction) => {
+    const current = draft === null ? value : commitNumberDraft(draft, value, min, max, step);
+    const next = quantizeStepValue(current, direction, min, max, step);
+    setValue(next);
+    if (draft !== null) setDraft(String(next));
+  });
   return (
     <input
       ref={inputRef}
       className={className}
       aria-label={ariaLabel}
       type="number"
-      value={value}
+      value={draft ?? value}
       min={min}
       max={max}
       step={step}
-      onChange={(event) => setValue(Number(event.target.value))}
+      onFocus={() => setDraft(String(value))}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        if (draft !== null) setValue(commitNumberDraft(draft, value, min, max, step));
+        setDraft(null);
+      }}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
     />
   );
 }

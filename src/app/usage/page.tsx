@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { PopupSelect } from "@/app/ui/popup-select";
 import { DateRangePicker } from "@/app/ui/date-range-picker";
+import { usageCost, paymentLabel } from "@/lib/usage-billing";
 import {
   readJson,
   SessionExpiredError,
@@ -16,7 +17,7 @@ import {
 
 type LogItem = Record<string, unknown>;
 type DateRange = { start: string; end: string };
-type Filters = DateRange & { model: string; status: string; source: string; requestId: string; startTime: string; endTime: string; sort: "asc" | "desc" };
+type Filters = DateRange & { model: string; status: string; source: string; payment: string; requestId: string; startTime: string; endTime: string; sort: "asc" | "desc" };
 
 function toDateString(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -50,6 +51,7 @@ function initialFilters(): Filters {
     model: params.get("model") || "",
     status: params.get("status") || "",
     source: params.get("source") || "",
+    payment: params.get("payment") || "",
     requestId: params.get("requestId") || "",
     startTime: params.get("startTime") || "",
     endTime: params.get("endTime") || "",
@@ -65,6 +67,8 @@ export default function UsagePage() {
     return Number.isInteger(value) && value > 0 ? value : 1;
   });
   const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [notice, setNotice] = useState("");
   const [message, setMessage] = useState("");
   const [expired, setExpired] = useState("");
   const [loading, setLoading] = useState(true);
@@ -73,7 +77,7 @@ export default function UsagePage() {
   const [filters, setFilters] = useState<Filters>(initialFilters);
   const [advancedOpen, setAdvancedOpen] = useState(true);
   const [modelOptions, setModelOptions] = useState<Array<{ value: string; label: string }>>([]);
-  const [sourceOptions, setSourceOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const sourceOptions = [{value:"lfn",label:"LFN"},{value:"newapi",label:"NewAPI"},{value:"novelai",label:"NovelAI"}];
   const range: DateRange = { start: filters.start, end: filters.end };
 
   useEffect(() => {
@@ -98,6 +102,7 @@ export default function UsagePage() {
     if (filters.model) params.set("model", filters.model);
     if (filters.status) params.set("status", filters.status);
     if (filters.source) params.set("source", filters.source);
+    if (filters.payment) params.set("payment", filters.payment);
     if (filters.requestId) params.set("requestId", filters.requestId);
     if (filters.startTime) params.set("startTime", filters.startTime);
     if (filters.endTime) params.set("endTime", filters.endTime);
@@ -113,6 +118,7 @@ export default function UsagePage() {
     if (filters.model) query.set("model", filters.model);
     if (filters.status) query.set("status", filters.status);
     if (filters.source) query.set("source", filters.source);
+    if (filters.payment) query.set("payment", filters.payment);
     if (filters.requestId) query.set("requestId", filters.requestId);
     if (filters.startTime) query.set("startTime", filters.startTime);
     if (filters.endTime) query.set("endTime", filters.endTime);
@@ -121,16 +127,16 @@ export default function UsagePage() {
       signal: controller.signal,
     })
       .then((response) =>
-        readJson<{ items?: LogItem[]; total?: number }>(
+        readJson<{ items?: LogItem[]; total?: number; hasMore?: boolean; notice?: string }>(
           response,
           "读取使用记录失败",
         ),
       )
       .then((result) => {
         setItems(result.items || []);
-        const sources = Array.from(new Set((result.items || []).map((item) => usageSource(item)).filter(Boolean)));
-        setSourceOptions(sources.map((value) => ({ value, label: sourceLabel(value) })));
         setTotal(result.total || 0);
+        setHasMore(Boolean(result.hasMore));
+        setNotice(result.notice || "");
         setMessage("");
       })
       .catch((error) => {
@@ -159,12 +165,14 @@ export default function UsagePage() {
     <ProductPage title="使用记录" icon={<ListFilter size={20} />}>
       {expired && <SessionExpiredNotice message={expired} />}
       {message && <Notice>{message}</Notice>}
+      {notice && <Notice>{notice}</Notice>}
         <div className="usage-filter-card mb-4" aria-label="使用记录筛选">
           <div className="usage-filter-primary">
             <DateRangePicker value={range} onChange={(value) => updateFilter(value)} quickRanges={[{ label: "今天", getValue: () => presetRange(1) }, { label: "最近 7 天", getValue: () => presetRange(7) }, { label: "最近 30 天", getValue: () => presetRange(30) }]} />
             <div className="usage-filter-field usage-filter-model"><span>模型</span><PopupSelect ariaLabel="模型筛选" value={filters.model} options={[{ value: "", label: "全部模型" }, ...modelOptions]} onChange={(value) => updateFilter({ model: value })} searchable searchPlaceholder="搜索模型" /></div>
             <div className="usage-filter-field usage-filter-status"><span>状态</span><PopupSelect ariaLabel="状态筛选" value={filters.status} options={[{ value: "", label: "全部状态" }, { value: "pending", label: "进行中" }, { value: "success", label: "成功" }, { value: "failed", label: "失败" }]} onChange={(value) => updateFilter({ status: value })} /></div>
             {sourceOptions.length > 0 && <div className="usage-filter-field usage-filter-source"><span>来源</span><PopupSelect ariaLabel="来源筛选" value={filters.source} options={[{ value: "", label: "全部来源" }, ...sourceOptions]} onChange={(value) => updateFilter({ source: value })} /></div>}
+            <div className="usage-filter-field"><span>付款</span><PopupSelect ariaLabel="付款来源筛选" value={filters.payment} options={[{ value: "", label: "全部付款来源" }, { value: "aff", label: "个人 AFF（含混合）" }, { value: "package", label: "图包（含混合）" }, { value: "mixed", label: "AFF + 图包" }, { value: "newapi", label: "NewAPI 余额" }]} onChange={(value) => updateFilter({ payment: value })} /></div>
             <PopupSelect ariaLabel="结果排序" value={filters.sort} options={[{ value: "desc", label: "最新优先" }, { value: "asc", label: "最早优先" }]} onChange={(value) => updateFilter({ sort: value as Filters["sort"] })} />
             <button type="button" className="usage-filter-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen((value) => !value)}>{advancedOpen ? "收起" : "更多筛选"}<ChevronDown size={14} className={advancedOpen ? "rotate-180" : ""} /></button>
           </div>
@@ -183,7 +191,7 @@ export default function UsagePage() {
         ) : loading ? (
           <Empty text="正在读取使用记录…" />
           ) : items.length ? (
-          items.filter((item) => isNaiItem(item) && (!filters.source || usageSource(item) === filters.source)).map((item, index) => {
+          items.filter(isNaiItem).map((item, index) => {
             // new-api 返回的日志 id 是每页从 1 重排的假序号，会撞车；
             // request_id 才是全局唯一，没有时退到「页索引+序号」。
             const rowId =
@@ -210,8 +218,9 @@ export default function UsagePage() {
                         item.request_id || item.token_name || item.type || "-",
                       )}
                     </span>
+                    <span className="mt-1 block text-[10px] text-[var(--muted)]">{paymentLabel(item)}</span>
                     <span className="mt-1.5 flex flex-wrap gap-x-3 text-[10px] text-[var(--muted)] sm:hidden">
-                      <span>消耗 {formatQuota(item.quota ?? item.cost ?? item.amount)}</span>
+                      <span>消耗 {usageCost(item)}</span>
                       <span>{String(item.status || item.type_name || "已记录")}</span>
                       <span>
                         {formatTime(
@@ -221,7 +230,7 @@ export default function UsagePage() {
                     </span>
                   </div>
                   <span className="max-sm:hidden">
-                    {formatQuota(item.quota ?? item.cost ?? item.amount)}
+                    {usageCost(item)}
                   </span>
                   <span className="max-sm:hidden">{String(item.status || item.type_name || "已记录")}</span>
                   <span className="max-sm:hidden">
@@ -260,7 +269,7 @@ export default function UsagePage() {
           </button>
           <button
             className="page-button"
-            disabled={items.length < 20}
+            disabled={!hasMore}
             onClick={() => {
               setLoading(true);
               setPage((value) => value + 1);
@@ -293,31 +302,6 @@ function isNaiItem(item: LogItem): boolean {
   return model.toLowerCase().startsWith("nai-");
 }
 
-function usageSource(item: LogItem): string {
-  const other = parseOther(item.other);
-  const raw = String(
-    item.provider || item.provider_id || item.providerId || other?.providerId || other?.billing_source || other?.request_path || "newapi",
-  ).toLowerCase();
-  if (raw.includes("lfn")) return "lfn";
-  if (raw.includes("api") || raw.includes("newapi")) return "newapi";
-  if (raw.includes("novelai") || raw.includes("nai")) return "novelai";
-  return raw || "other";
-}
-
-function sourceLabel(value: string): string {
-  if (value === "lfn") return "LFN API";
-  if (value === "newapi") return "NewAPI";
-  if (value === "novelai") return "NovelAI";
-  return value;
-}
-
-// NewAPI 返回原始 quota，除以 QUOTA_PER_UNIT(500000) 才是美元消耗。
-function formatQuota(value: unknown): string {
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric === 0) return "-";
-  return `$${(numeric / 500000).toFixed(2)}`;
-}
-
 // 展开区：聚合日志行与 other 里的计费参数，分组呈现。
 function LogDetail({ item }: { item: LogItem }) {
   const other = parseOther(item.other);
@@ -339,7 +323,8 @@ function LogDetail({ item }: { item: LogItem }) {
   sections.push({ title: "请求信息", rows: base });
 
   const usage: [string, string][] = [
-    ["消耗", formatQuota(item.quota ?? item.cost ?? item.amount)],
+    ["付款来源", paymentLabel(item)],
+    ["消耗", usageCost(item)],
     ["prompt_tokens", String(item.prompt_tokens ?? "-")],
     ["completion_tokens", String(item.completion_tokens ?? "-")],
   ];

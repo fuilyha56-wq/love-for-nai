@@ -99,6 +99,7 @@ field("audit", "flushSeconds", "普通诊断批写秒数", 10, 1, 300);
 field("audit", "batch", "普通诊断批量条数", 100, 10, 1000);
 field("audit", "queueLimit", "普通诊断队列容量", 2000, 100, 20000);
 field("audit", "retentionDays", "诊断保留天数", 7, 1, 90);
+field("trust", "enabled", "启用高频申请与账号高频限制", true, undefined, undefined, "关闭后隐藏申请菜单，不执行这套账号令牌桶和在途限制；系统原有限速、通道并发及内容处置仍生效");
 field("trust", "minimumAccountDays", "稳定账号最少天数", 7, 1, 365);
 field("trust", "autoApprove", "正常历史达到条件后自动批准有限高频", false);
 field("trust", "minimumActiveDays", "最少正常活跃日", 3, 1, 90);

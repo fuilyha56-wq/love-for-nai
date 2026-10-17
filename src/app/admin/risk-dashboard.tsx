@@ -63,6 +63,11 @@ const size = 10;
 export default function RiskDashboard() {
   const [view, setView] = useState("config"),
     [visited, setVisited] = useState(["config"]);
+  const [accessEnabled, setAccessEnabled] = useState(true);
+  const updateAccess = useCallback((enabled: boolean) => {
+    setAccessEnabled(enabled);
+    if (!enabled) setView(current => current === "access" ? "config" : current);
+  }, []);
   const [items, setItems] = useState<CaseRow[]>([]),
     [ips, setIps] = useState<IpRow[]>([]),
     [counts, setCounts] = useState<Record<string, number>>({});
@@ -97,6 +102,7 @@ export default function RiskDashboard() {
       );
       setItems(results[0].items || []);
       setCounts(results[1].counts || {});
+      updateAccess(results[1].accessEnabled !== false);
       setIps(results[2].items || []);
       setExpanded((current) =>
         current
@@ -114,7 +120,7 @@ export default function RiskDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [updateAccess]);
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => clearTimeout(timer);
@@ -234,7 +240,7 @@ export default function RiskDashboard() {
           { id: "cases", label: "风险案件", Icon: FileWarning },
           { id: "ips", label: "IP 证据", Icon: Globe2 },
           { id: "access", label: "高频申请", Icon: Users },
-        ].map(({ id, label, Icon }) => (
+        ].filter(item => item.id !== "access" || accessEnabled).map(({ id, label, Icon }) => (
           <button
             key={id}
             type="button"
@@ -258,7 +264,7 @@ export default function RiskDashboard() {
         id="risk-pane-config"
         hidden={view !== "config"}
       >
-        <LightRiskPanel />
+        <LightRiskPanel onAccessChange={updateAccess} />
         <details className="risk-legacy">
           <summary>旧版观察条例与邀请链设置</summary>
           <p className="risk-muted mt-3">
@@ -557,7 +563,7 @@ export default function RiskDashboard() {
           归属地用于辅助复核，不直接作为违规或中转的认定依据。
         </p>
       </section>
-      {visited.includes("access") && (
+      {accessEnabled && visited.includes("access") && (
         <section
           className="risk-pane risk-panel risk-panel-body"
           id="risk-pane-access"

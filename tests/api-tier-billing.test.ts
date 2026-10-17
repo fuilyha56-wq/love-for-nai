@@ -12,6 +12,7 @@ const upstream = vi.hoisted(() => ({
   allowedModels: undefined as string[] | undefined,
   fallback: vi.fn(),
 }));
+vi.mock("@/lib/session", () => ({ getSession: async () => ({ userId:801,username:"billing-test" }) }));
 vi.mock("@/lib/newapi-db", () => ({
   resolveExternalApiIdentity: vi.fn(async () => ({
     userId: upstream.userId,
@@ -21,6 +22,8 @@ vi.mock("@/lib/newapi-db", () => ({
   ensureManagedFallbackToken: upstream.fallback,
 }));
 vi.mock("@/lib/newapi", () => ({
+  getImageToken: async () => "managed-fixture-key",
+  imageFromResult: (result:{data?:Array<{b64_json?:string}>}) => (result.data||[]).flatMap(item=>item.b64_json?[`data:image/png;base64,${item.b64_json}`]:[]),
   resolvedImageUpstream: vi.fn(async () =>
     upstream.configured
       ? { baseUrl: "https://fixture.invalid", token: "fixture-token" }
@@ -58,6 +61,7 @@ vi.mock("@/lib/runtime-config", async (original) => ({
 }));
 import { POST } from "@/app/v1/images/generations/route";
 import { POST as nativePOST } from "@/app/ai/generate-image/route";
+import { POST as operatePOST } from "@/app/api/images/operate/route";
 import {
   dailyImageBillingState,
   reserveDailyImageQuote,
@@ -65,7 +69,7 @@ import {
 } from "@/lib/daily-image-billing";
 import { DEFAULT_DAILY_IMAGE_POLICY } from "@/lib/daily-image-pricing";
 import { affStatus } from "@/lib/aff";
-import { flushRequestAudits } from "@/lib/request-audit";
+import { flushRequestAudits, listUserImageUsage } from "@/lib/request-audit";
 import {
   freeGrantReadiness,
   resetLightRisk,
@@ -147,6 +151,19 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 describe("API tiers with real local wallet and daily reservations", () => {
+  it("retains the real studio payment and final charge for the usage filter",async()=>{
+    const response=await operatePOST(new Request("https://lfn.test/api/images/operate",{method:"POST",headers:{"content-type":"application/json","x-real-ip":"203.0.113.71"},body:JSON.stringify({model:"nai-v5-full",operation:"generate",prompt:"billing fixture",width:832,height:1216,steps:28,n:1})}));
+    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({paymentSource:"personal"});
+    expect((await listUserImageUsage(801))[0]).toMatchObject({payment_source:"personal",charged_aff:4,status:"success"});
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(1);
+  });
+  it("keeps a studio NewAPI fallback out of local daily counts and local payment rows",async()=>{
+    await writeFile(path.join(directory,"aff/801.json"),JSON.stringify({balance:0,packageBalance:0,transactions:[]}));
+    const response=await operatePOST(new Request("https://lfn.test/api/images/operate",{method:"POST",headers:{"content-type":"application/json","x-real-ip":"203.0.113.71"},body:JSON.stringify({model:"nai-v5-full",operation:"generate",prompt:"billing fixture",width:832,height:1216,steps:28,n:1})}));
+    expect(response.status).toBe(200);expect(await response.json()).toMatchObject({paymentSource:"newapi"});
+    expect(upstream.send.mock.calls[0][0]).toBe("https://fallback.invalid/v1/images/generations");
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(0);expect(await listUserImageUsage(801)).toEqual([]);
+  });
   it("returns a cryptographically valid signature through the actual OpenAI image route", async () => {
     const response = await invoke("signed-key"),
       body = await response.json();
@@ -384,6 +401,14 @@ describe("API tiers with real local wallet and daily reservations", () => {
     expect(upstream.send.mock.calls[0][0]).toBe("https://fallback.invalid/v1/images/generations");
     expect((await affStatus(801)).balance).toBe(1);
     expect((await dailyImageBillingState(801)).counts.v5).toBe(0);
+  });
+  it.each(["nai-v5-full", "nai-v5-full-limit", "nai-v4.5-full-limit"])("uses real NewAPI for %s with both local wallets at zero", async (model) => {
+    await writeFile(path.join(directory,"aff/801.json"),JSON.stringify({balance:0,packageBalance:0,transactions:[]}));
+    upstream.fallback.mockResolvedValue("managed-fixture-key");
+    const response=await POST(new Request("https://lfn.test/v1/images/generations",{method:"POST",headers:{authorization:"Bearer owned", "content-type":"application/json","x-real-ip":"203.0.113.71"},body:JSON.stringify({model,prompt:"billing fixture",size:"832x1216",steps:28,n:1})}));
+    expect(response.status).toBe(200);expect(response.headers.get("X-LFN-Payment-Source")).toBe("newapi");await response.json();
+    expect(upstream.send.mock.calls[0][0]).toBe("https://fallback.invalid/v1/images/generations");
+    expect((await affStatus(801)).balance).toBe(0);expect((await dailyImageBillingState(801)).counts).toEqual({v45:0,v5:0});
   });
   it("still rejects an unowned key when independent NewAPI billing is allowed", async () => {
     upstream.userId = null;

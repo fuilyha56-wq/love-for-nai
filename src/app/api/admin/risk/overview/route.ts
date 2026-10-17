@@ -3,6 +3,7 @@ import { requireAdmin } from "@/lib/admin-auth";
 import { listImageSettlements } from "@/lib/risk-settlement";
 import { listIpEvidence } from "@/lib/risk-ip";
 import { listPromptClusters, listRiskActions, listRiskCases } from "@/lib/risk-control";
+import { getRiskSettings, riskFlag } from "@/lib/risk-settings";
 
 export async function GET() {
   const gate = await requireAdmin();
@@ -15,6 +16,7 @@ export async function GET() {
     listRiskActions(5000),
   ]);
   return NextResponse.json({
+    accessEnabled: riskFlag(await getRiskSettings(), "trust.enabled"),
     counts: {
       cases: cases.length,
       watch: cases.filter((item) => item.level === "watch").length,

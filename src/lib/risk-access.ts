@@ -26,6 +26,7 @@ async function approve(entry: RiskAccessRequest, operator: string, reason: strin
 export async function submitRiskAccessRequest(userId: number, input: { reason: string; perMinute: number; concurrency: number; hours: number }): Promise<RiskAccessRequest> {
   return lock(async () => {
     const settings = await getRiskSettings(), multiplier = riskNumber(settings, "trust.maxRateMultiplier");
+    if (!riskFlag(settings, "trust.enabled")) throw new Error("高频申请功能已关闭，无需提交申请");
     if (typeof input.reason !== "string" || !input.reason.trim() || input.reason.length > 500 || ![input.perMinute, input.concurrency, input.hours].every(Number.isSafeInteger) || input.perMinute < 1 || input.perMinute > riskNumber(settings, "rate.perMinute") * multiplier || input.concurrency < 1 || input.concurrency > riskNumber(settings, "rate.maxInFlight") * multiplier || input.hours < 1 || input.hours > riskNumber(settings, "trust.grantHours")) throw new Error("申请超出当前允许的速率、并发或期限，请联系管理员");
     const entries = await listRiskAccessRequests();
     if (entries.some(e => e.userId === userId && Date.now() - Date.parse(e.createdAt) < riskNumber(settings, "trust.requestCooldownSeconds") * 1000)) throw new Error("申请提交过于频繁，请稍后再试");
@@ -44,6 +45,7 @@ export async function decideRiskAccessRequest(id: string, action: "approve" | "d
     if (action === "approve") {
       if (entry.status !== "pending") throw new Error("申请已处理");
       const settings = await getRiskSettings(), snapshot = await riskUserSnapshot(entry.userId);
+      if (!riskFlag(settings, "trust.enabled")) throw new Error("高频申请功能已关闭");
       if (await isRiskBlocked(entry.userId) || snapshot.restrictions.length || snapshot.trust.unresolvedStrongEvidence) throw new Error("存在未解决的明确风险，请先复核案件");
       if (entry.perMinute > riskNumber(settings, "rate.perMinute") * riskNumber(settings, "trust.maxRateMultiplier") || entry.concurrency > riskNumber(settings, "rate.maxInFlight") * riskNumber(settings, "trust.maxRateMultiplier") || entry.hours > riskNumber(settings, "trust.grantHours")) throw new Error("策略变化后此申请超限，请重新申请");
       entries[index] = await approve(entry, operator, reason);

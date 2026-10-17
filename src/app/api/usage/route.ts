@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
 import { listHistory } from "@/lib/history";
+import { listUserImageUsage } from "@/lib/request-audit";
+import { paymentMatches, usageOrigin } from "@/lib/usage-billing";
 
 type LogEntry = Record<string, unknown>;
 type UpstreamPage = { items: LogEntry[]; total: number };
@@ -17,6 +19,8 @@ type UsageFilters = {
   model: string;
   status: string;
   requestId: string;
+  payment: string;
+  source: string;
   sort: "asc" | "desc";
   range: { start: number; end: number };
 };
@@ -73,6 +77,8 @@ function resolveFilters(request: NextRequest): UsageFilters {
     model: (params.get("model") || "").trim().slice(0, 160),
     status: (params.get("status") || "").trim().toLowerCase().slice(0, 40),
     requestId: (params.get("requestId") || "").trim().slice(0, 160),
+    payment: params.get("payment") || "",
+    source: (params.get("source") || "").trim().slice(0, 80),
     sort: rawSort === "asc" || rawSort === "oldest" ? "asc" : "desc",
     range: resolveRange(request),
   };
@@ -80,7 +86,7 @@ function resolveFilters(request: NextRequest): UsageFilters {
 
 function statusMatches(item: LogEntry, requested: string): boolean {
   if (!requested || requested === "all") return true;
-  const value = String(item.status || item.type_name || "").toLowerCase();
+  const value = String(item.status || item.type_name || item.type || "").toLowerCase();
   if (requested === "success") return ["success", "succeeded", "completed", "完成", "成功", "2"].some((token) => value.includes(token));
   if (requested === "failed") return ["fail", "error", "失败", "错误", "4", "5"].some((token) => value.includes(token));
   if (requested === "pending" || requested === "running") return ["pending", "process", "running", "进行", "排队", "处理中", "1"].some((token) => value.includes(token));
@@ -107,7 +113,9 @@ function filterItems(items: LogEntry[], filters: UsageFilters): LogEntry[] {
   return items.filter((item) =>
     (!filters.model || itemModel(item) === filters.model) &&
     (!filters.requestId || itemRequestId(item).toLowerCase().includes(filters.requestId.toLowerCase())) &&
-    statusMatches(item, filters.status),
+    statusMatches(item, filters.status) && paymentMatches(item, filters.payment) &&
+    (!filters.source || usageOrigin(item) === filters.source) &&
+    itemTime(item) >= filters.range.start && itemTime(item) <= filters.range.end,
   );
 }
 
@@ -175,6 +183,8 @@ export async function GET(request: NextRequest) {
     : 1;
   const headers = userHeaders(session);
   const filters = resolveFilters(request);
+  if (!["", "aff", "package", "mixed", "newapi"].includes(filters.payment))
+    return NextResponse.json({ message: "付款来源筛选参数无效" }, { status: 400 });
   const allowedStatuses = new Set(["", "all", "pending", "running", "success", "failed"]);
   if (!allowedStatuses.has(filters.status))
     return NextResponse.json({ message: "状态筛选参数无效" }, { status: 400 });
@@ -182,7 +192,13 @@ export async function GET(request: NextRequest) {
       (request.nextUrl.searchParams.get("endTime") && parseClock(request.nextUrl.searchParams.get("endTime")) == null))
     return NextResponse.json({ message: "时间筛选参数无效，请使用 HH:mm 或 HH:mm:ss" }, { status: 400 });
   const range = filters.range;
+  let local: LogEntry[] = [];
   try {
+    local = await listUserImageUsage(session.userId);
+    // Local wallets do not create NewAPI consumption logs. Filter before paging,
+    // and avoid contacting NewAPI entirely when only local payments are requested.
+    if (["aff", "package", "mixed"].includes(filters.payment) || filters.source === "lfn")
+      return usageResponse(session.userId, local, filters, page);
     let pages: UpstreamPage[];
     let total: number;
     const discoveredModels = await fetchNaiModelNames(headers);
@@ -210,10 +226,10 @@ export async function GET(request: NextRequest) {
     } else {
       // 兜底：通配一次（较慢，仅在模型发现不可用时）。
       const params = new URLSearchParams({
-        p: String(page),
-        page: String(page),
-        size: String(PAGE_SIZE),
-        page_size: String(PAGE_SIZE),
+        p: "1",
+        page: "1",
+        size: String(PER_MODEL_LIMIT),
+        page_size: String(PER_MODEL_LIMIT),
         type: "2",
         model_name: filters.model || "nai-%",
         start_timestamp: String(range.start),
@@ -238,23 +254,13 @@ export async function GET(request: NextRequest) {
       ];
       total = pages[0].total;
     }
-    // 上游返回的 id 是分页内假序号；筛选后重新计数，时间序按用户选择排序。
-    const filtered = filterItems(pages.flatMap((item) => item.items), filters);
-    const merged = filtered.sort((a, b) => {
-      const delta = itemTime(a) - itemTime(b);
-      return filters.sort === "asc" ? delta : -delta;
-    });
-    const start = (page - 1) * PAGE_SIZE;
-    const visible = merged.slice(start, start + PAGE_SIZE);
-    return NextResponse.json({
-      items: await attachGenerationParams(session.userId, visible),
-      total: filters.model || filters.status || filters.requestId ? merged.length : total,
-      page,
-      range,
-      filters: { model: filters.model, status: filters.status, requestId: filters.requestId, sort: filters.sort },
-    });
+    const upstream = pages.flatMap((item) => item.items).map(item => ({ ...item, payment_source: "newapi" }));
+    const notice = total > upstream.length ? "NewAPI 返回记录达到每模型读取上限；请缩小时间范围查看其他记录。" : "";
+    return usageResponse(session.userId, [...upstream, ...local], filters, page, notice);
   } catch (error) {
     const message = error instanceof Error ? error.message : "无法读取使用记录";
+    if (local.length && filters.payment !== "newapi" && filters.source !== "newapi")
+      return usageResponse(session.userId, local, filters, page, "NewAPI 记录暂时不可用，当前仅显示本站保留的 AFF／图包记录。");
     if (isUpstreamAuthError(message))
       return NextResponse.json(
         { message: "登录状态已过期，请重新登录", sessionExpired: true },
@@ -262,6 +268,17 @@ export async function GET(request: NextRequest) {
       );
     return NextResponse.json({ message }, { status: 502 });
   }
+}
+
+async function usageResponse(userId: number, candidates: LogEntry[], filters: UsageFilters, page: number, notice = "") {
+  const unique = new Map<string, LogEntry>();
+  candidates.forEach((item, index) => unique.set(itemRequestId(item) || `unattributed:${index}`, item));
+  const merged = filterItems([...unique.values()], filters).sort((a,b) => filters.sort === "asc" ? itemTime(a)-itemTime(b) : itemTime(b)-itemTime(a));
+  const start = (page - 1) * PAGE_SIZE;
+  return NextResponse.json({ items: await attachGenerationParams(userId, merged.slice(start, start + PAGE_SIZE)), total: merged.length, page,
+    hasMore: start + PAGE_SIZE < merged.length, notice, range: filters.range,
+    filters: { model: filters.model, status: filters.status, payment: filters.payment, source: filters.source, requestId: filters.requestId, sort: filters.sort } },
+    { headers: { "Cache-Control": "private, no-store" } });
 }
 
 // NewAPI 日志只有计费信息；用 LFN 自己的生成历史按「同模型 + 时间相近」

@@ -400,7 +400,7 @@ export async function POST(request: Request) {
     const header = response.headers.get("x-anlas-cost");
     const amount = header?.trim() ? Number(header) : NaN;
     if (response.ok && Number.isFinite(amount) && amount >= 0) recordedAnlas = (recordedAnlas ?? 0) + amount;
-    await audit.finish({ status: response.status, ...(recordedAnlas != null ? { billing: { gatewayAnlasCost: recordedAnlas } } : {}) });
+    if (recordedAnlas != null) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: recordedAnlas };
   };
   const risk = await evaluateImageRisk({
     userId: session.userId,
@@ -427,6 +427,18 @@ export async function POST(request: Request) {
   let generatedSamples = 0;
   let payment: "aff" | "newapi" = "newapi";
   let paymentSource: "package" | "personal" | "mixed" | "newapi" = "newapi";
+  const finishGenerationAudit = async (status: number, historyIds: string[] = []) => {
+    let chargedAff: number | undefined;
+    if (creditCharge) {
+      chargedAff = generatedSamples > 0
+        ? [...creditCharge.packageChargesBySample.slice(0, generatedSamples), ...creditCharge.personalChargesBySample.slice(0, generatedSamples)].reduce((sum, value) => sum + value, 0)
+        : affRefunded ? 0 : creditCharge.cost;
+    }
+    await audit.finish({
+      status, paymentSource, generatedSamples, historyIds,
+      billing: { ...audit.record.billing, ...(chargedAff != null ? { lfnChargedAff: Math.round(chargedAff * 10000) / 10000 } : {}) },
+    });
+  };
   let baseUrlOverride = "";
   let settlementId: string | undefined;
   let upstreamAttempted = false;
@@ -475,6 +487,7 @@ export async function POST(request: Request) {
               : "personal";
             settlementId = `settlement:${audit.requestId}`;
             await createImageSettlement({ settlementId, requestId: audit.requestId, userId: session.userId, charge: credits });
+            audit.record.paymentSource = paymentSource;
       } else if ((await resolvedAuthProviderId()) === "local") {
         if (!nativeNaiModel)
           return NextResponse.json({ message: "本地账号不能使用 NewAPI 模型" }, { status: 400 });
@@ -764,6 +777,7 @@ export async function POST(request: Request) {
               affRefunded = true;
               await refundImageCredits(session.userId, creditCharge, generatedSamples);
             }
+            await finishGenerationAudit(errorMessage ? generatedSamples ? 207 : 502 : 200);
             controller.close();
           }
         },
@@ -909,6 +923,7 @@ export async function POST(request: Request) {
         affRefunded = true;
         await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
       }
+      await finishGenerationAudit(generatedSamples ? 207 : lastStatus || 502);
       return NextResponse.json(
         {
           message: generatedSamples
@@ -919,8 +934,10 @@ export async function POST(request: Request) {
         { status: generatedSamples ? 207 : lastStatus || 502 },
       );
     }
-    if (operation === "suggest-tags")
+    if (operation === "suggest-tags") {
+      await finishGenerationAudit(200);
       return NextResponse.json({ tags: lastResult.tags || lastResult, raw: lastResult });
+    }
 
     if (creditCharge && settlementId) {
       if (generatedSamples < creditCharge.samples) {
@@ -934,6 +951,7 @@ export async function POST(request: Request) {
     const history = deferPatchHistory
       ? []
       : await saveHistory(session.userId, body, images, usage);
+    await finishGenerationAudit(200, history.map(item=>item.id));
     return NextResponse.json({
       images,
       image: images[0],
@@ -961,6 +979,7 @@ export async function POST(request: Request) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, generatedSamples);
     }
+    await finishGenerationAudit(queueAborted ? 503 : 502);
     return NextResponse.json(
       { message: queueAborted ? "图像请求排队超时，尚未发送到上游。请稍后重试。" : error instanceof Error ? error.message : "NAI 操作失败" },
       { status: queueAborted ? 503 : 502 },
