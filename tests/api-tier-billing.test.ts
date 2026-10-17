@@ -12,10 +12,11 @@ vi.mock("@/lib/image-watermark", () => ({ watermarkImages: vi.fn(async (images: 
 vi.mock("@/lib/gateway-log", () => ({ gatewayLogStart: () => () => undefined, maskKeyForLog: () => "masked" }));
 vi.mock("@/lib/runtime-config", async original => ({ ...await original<typeof import("@/lib/runtime-config")>(), isNaiModelEnabled: vi.fn(async () => true) }));
 import { POST } from "@/app/v1/images/generations/route";
+import { POST as nativePOST } from "@/app/ai/generate-image/route";
 import { dailyImageBillingState, reserveDailyImageQuote } from "@/lib/daily-image-billing";
 import { affStatus } from "@/lib/aff";
 import { flushRequestAudits } from "@/lib/request-audit";
-import { resetLightRisk } from "@/lib/light-risk";
+import { freeGrantReadiness, resetLightRisk, riskUserSnapshot } from "@/lib/light-risk";
 import { resetRiskSettingsCache } from "@/lib/risk-settings";
 import { resetRuntimeConfigCache } from "@/lib/runtime-config";
 let directory = "";
@@ -31,6 +32,47 @@ beforeEach(async () => {
 });
 afterEach(async () => { await flushRequestAudits(); resetLightRisk(); resetRiskSettingsCache(); resetRuntimeConfigCache(); for (const key of ["LFN_DATA_DIR", "LFN_TRUST_PROXY", "LFN_RISK_HASH_SECRET"]) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; } await rm(directory, { recursive: true, force: true }); });
 describe("API tiers with real local wallet and daily reservations", () => {
+  it("preserves trusted ingress through the native API's OpenAI compatibility path", async () => {
+    const response = await nativePOST(new Request("https://lfn.test/ai/generate-image", {
+      method: "POST",
+      headers: { authorization: "Bearer native-test-key", "content-type": "application/json", "x-real-ip": "203.0.113.71" },
+      body: JSON.stringify({ input: "native billing fixture", model: "nai-diffusion-4-5-full", action: "generate", parameters: { width: 832, height: 1216, steps: 28, n_samples: 1 } }),
+    }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("application/zip");
+    await response.arrayBuffer();
+    expect(upstream.send).toHaveBeenCalledTimes(1);
+    expect((await riskUserSnapshot(801)).grant?.exits).toBe(1);
+    expect((await dailyImageBillingState(801)).counts.v45).toBe(1);
+  });
+  it("detects a stale proxy configuration before release and restores real API admission after restart", async () => {
+    const platform = path.join(directory, "platform", "config.json");
+    await mkdir(path.dirname(platform), { recursive: true });
+    await writeFile(platform, JSON.stringify({ settings: { trustProxy: false } }));
+    const probe = new Request("https://lfn.test/api/health", { headers: { "x-real-ip": "203.0.113.71" } });
+    expect(await freeGrantReadiness(probe)).toBe(false);
+    const blocked = await invoke("known-account-key");
+    expect(blocked.status).toBe(503);
+    expect((await blocked.json()).error.code).toBe("lfn_source_unavailable");
+    expect((await affStatus(801)).balance).toBe(1000);
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(0);
+    expect(upstream.send).not.toHaveBeenCalled();
+
+    // An offline file migration does not invalidate the live process's cache.
+    await writeFile(platform, JSON.stringify({ settings: { trustProxy: true } }));
+    expect(await freeGrantReadiness(probe)).toBe(false);
+    expect((await invoke("known-account-key")).status).toBe(503);
+
+    // Recreating the service loads the migrated settings before accepting traffic.
+    resetRuntimeConfigCache();
+    expect(await freeGrantReadiness(probe)).toBe(true);
+    const restored = await invoke("known-account-key");
+    expect(restored.status).toBe(200); await restored.arrayBuffer();
+    expect(upstream.send).toHaveBeenCalledTimes(1);
+    expect((await affStatus(801)).balance).toBe(996);
+    expect((await dailyImageBillingState(801)).counts.v5).toBe(1);
+    expect((await riskUserSnapshot(801)).grant?.exits).toBe(1);
+  });
   it("actually debits across the V5 50th boundary and shares counts across API keys", async () => {
     await reserveDailyImageQuote(801, { ...generation, samples: 30, sequential: true }, "earlier-30"); await reserveDailyImageQuote(801, { ...generation, samples: 19, sequential: true }, "earlier-19");
     const first = await invoke("first-key"); expect(first.status).toBe(200); expect(first.headers.get("X-LFN-Payment-Source")).toBe("personal"); await first.json();
