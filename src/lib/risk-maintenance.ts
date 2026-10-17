@@ -18,7 +18,8 @@ export function maintainRiskStorage(now = Date.now()): Promise<void> {
     let budget = 100;
     for (const target of targets) {
       let files: string[];
-      try { files = await readdir(target.directory); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; throw e; }
+      // These are runtime volume directories, never deployment dependencies.
+      try { files = await readdir(/* turbopackIgnore: true */ target.directory); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") continue; throw e; }
       for (const file of files.sort()) {
         const match = target.pattern.exec(file); if (!match) continue;
         const at = target.date ? Date.parse(`${match[1]}T00:00:00+08:00`) : Number(match[1]);
