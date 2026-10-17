@@ -9,6 +9,7 @@ import { encode } from "@msgpack/msgpack";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { watermarkImageResponse } from "@/lib/image-response-watermark";
+import { compatibleNaiZipResponse } from "@/lib/nai-zip-response";
 import {
   affStatus,
   refundImageCredits,
@@ -681,24 +682,6 @@ export function forwardResponse(upstream: Response): Response {
   });
 }
 
-async function validatedNativeZipResponse(upstream: Response): Promise<Response | null> {
-  try {
-    const body = await upstream.arrayBuffer();
-    const zip = await JSZip.loadAsync(body);
-    const count = Object.values(zip.files).filter((entry) => !entry.dir && /\.(png|webp|jpe?g)$/i.test(entry.name)).length;
-    if (!count) return null;
-    const headers = new Headers(upstream.headers);
-    headers.set("X-LFN-Generated-Samples", String(count));
-    return new Response(body, {
-      status: upstream.status,
-      statusText: upstream.statusText,
-      headers,
-    });
-  } catch {
-    return null;
-  }
-}
-
 export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
   const model = assertImageModel(modelAlias(body.model));
@@ -747,37 +730,8 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
 }
 
 export async function naiZipResponse(upstream: Response): Promise<Response> {
-  const contentType = upstream.headers.get("content-type") || "";
-  if (!upstream.ok || !contentType.includes("application/json"))
-    return withExternalCors(forwardResponse(upstream));
-
-  const result = (await upstream.json()) as JsonRecord;
-  const data = Array.isArray(result.data) ? result.data : [];
-  const images = data.flatMap((item) => {
-    if (!isRecord(item) || typeof item.b64_json !== "string") return [];
-    return [item.b64_json.replace(/^data:image\/[^;]+;base64,/, "")];
-  });
-  if (!images.length) {
-    return withExternalCors(Response.json(
-      { message: "NewAPI returned no base64 image data" },
-      { status: 502 },
-    ));
-  }
-
-  const archive = new JSZip();
-  images.forEach((image, index) => {
-    archive.file(`image_${index}.png`, image, { base64: true });
-  });
-  const zip = await archive.generateAsync({ type: "arraybuffer" });
-  const headers = new Headers(upstream.headers);
-  headers.set("Content-Type", "application/zip");
-  headers.set("Content-Length", String(zip.byteLength));
-  headers.set("Content-Disposition", 'attachment; filename="images.zip"');
-  headers.set("X-LFN-Usage", encodeURIComponent(JSON.stringify(result.usage ?? null)));
-  headers.set("X-LFN-Generated-Samples", String(images.length));
-  const paymentSource = upstream.headers.get("x-lfn-payment-source");
-  if (paymentSource) headers.set("X-LFN-Payment-Source", paymentSource);
-  return withExternalCors(new Response(zip, { headers }));
+  if (!upstream.ok) return withExternalCors(forwardResponse(upstream));
+  return withExternalCors(await compatibleNaiZipResponse(upstream));
 }
 
 /** Launcher v4 accepts big-endian length-prefixed MessagePack, including on NewAPI fallback. */
@@ -1105,7 +1059,7 @@ export async function proxyNaiNativeWithCredits(
     const upstreamContentType = (upstream.headers.get("content-type") || "").toLowerCase();
     const expectedNativeResponse = pathname.endsWith("-stream")
       ? /(?:msgpack|octet-stream|zip|json)/.test(upstreamContentType)
-      : /(?:zip|json)/.test(upstreamContentType);
+      : /(?:zip|json|octet-stream|image\/)/.test(upstreamContentType);
     if (!expectedNativeResponse) {
       // Release the native account's stream/queue before returning a format error.
       await upstream.body?.cancel().catch(() => undefined);
@@ -1127,7 +1081,7 @@ export async function proxyNaiNativeWithCredits(
     }
     const nativeResponse = pathname.endsWith("-stream")
       ? await naiMsgpackResponse(upstream)
-      : upstreamContentType.includes("json") ? await naiZipResponse(upstream) : await validatedNativeZipResponse(upstream);
+      : await naiZipResponse(upstream);
     if (nativeResponse && !nativeResponse.ok) {
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
       return auditedResponse(paymentResponse(nativeResponse, paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge), generatedSamples: 0, error: "原生上游未返回有效图片" });

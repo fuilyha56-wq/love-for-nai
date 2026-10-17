@@ -173,7 +173,7 @@ export function validateRiskSettings(raw: RiskSettings): RiskSettings {
     const original = defaults.rules.find(r => r.id === rule.id);
     if (!original || rule.family !== original.family || rule.strong !== original.strong || !["disabled", "observe", "enforce"].includes(rule.mode) || !["observe", "rate-limit", "deny"].includes(rule.action)) throw new Error("规则标识、证据级别或动作无效");
     for (const key of ["points", "maxPoints", "cooldownSeconds", "expiresSeconds", "durationSeconds"] as const) if (!Number.isSafeInteger(rule[key]) || rule[key] < 0 || rule[key] > (key.includes("Seconds") ? 604800 : Number(values["global.scoreCap"]))) throw new Error(`规则数值无效：${rule.id}.${key}`);
-    if (rule.maxPoints < rule.points || rule.expiresSeconds < 1 || !original.strong && rule.action !== "observe") throw new Error("弱证据只能观察，规则上限/有效期需合法");
+    if (rule.maxPoints < rule.points || rule.expiresSeconds < 1 || rule.mode === "enforce" && rule.action !== "observe" && rule.durationSeconds < 1) throw new Error("规则上限/有效期需合法，执行动作必须设置正数处置期限");
   }
   if (raw.levels.length !== 7 || new Set(raw.levels.map(l => l.id)).size !== 7) throw new Error("必须包含七个不同风险等级");
   for (const [index, level] of raw.levels.entries()) {

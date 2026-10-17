@@ -549,13 +549,13 @@ export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (e
                   {selectedRule.id} · {selectedRule.label}
                 </h4>
                 <RiskBadge tone={selectedRule.strong ? "warning" : "neutral"}>
-                  {selectedRule.strong ? "明确证据" : "辅助观察"}
+                  {selectedRule.strong ? "明确证据" : "辅助信号"}
                 </RiskBadge>
               </div>
               <p className="risk-section-copy">
                 {selectedRule.strong
                   ? "依照本规则的模式、动作与期限执行。"
-                  : "此类证据用于辅助观察，增加分数不会将它变成强证据。"}
+                  : "辅助信号默认观察；可按需配置限时限流或拒绝。证据类别保持不变，调整分数不会将其变成明确证据。"}
               </p>
               <div className="risk-field-grid">
                 <label className="risk-input-label">
@@ -605,7 +605,7 @@ export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (e
                 ))}
                 <label className="risk-input-label">
                   命中后动作
-                  {selectedRule.strong ? <LfnSelect
+                  <LfnSelect
                     aria-label="规则命中后动作"
                     className="field"
                     value={selectedRule.action}
@@ -620,8 +620,8 @@ export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (e
                         {optionLabels[m]}
                       </option>
                     ))}
-                  </LfnSelect> : <div className="field p-3">仅观察 · 辅助证据</div>}
-                  <small className="risk-muted">{selectedRule.strong ? selectedRule.mode === "enforce" ? "按所选动作执行；保存修改后发布生效。" : "切换运行模式为“执行配置动作”并发布后，所选动作才会执行。" : "重复提示词、设备/IP 关联等辅助信号只能观察。需要综合处置时，请配置风险等级及独立强证据条件。"}</small>
+                  </LfnSelect>
+                  <small className="risk-muted">{selectedRule.mode === "enforce" ? "命中后按所选动作和处置期限执行；填写原因并发布后生效。" : "切换运行模式为“执行配置动作”并发布后，所选动作才会执行。"}{!selectedRule.strong && " 辅助信号可能误判正常重试、共享网络或设备，建议先观察并使用较短期限。"}</small>
                 </label>
               </div>
               <details className="risk-toolbox mt-5">
