@@ -13,7 +13,7 @@ vi.mock("@/lib/newapi-db", () => ({
   resolveExternalApiIdentity: mocks.resolveExternalApiIdentity,
   ensureManagedFallbackToken: mocks.ensureManagedFallbackToken,
 }));
-// Legacy alternate-wallet product remains opt-in; default strict mode is covered by api-tier-billing.
+// NewAPI fallback still requires an identified account for LFN risk admission.
 vi.mock("@/lib/daily-image-billing", async (original) => ({
   ...await original<typeof import("@/lib/daily-image-billing")>(),
   dailyImagePolicy: async () => ({ strictApiBilling: false }),
@@ -137,19 +137,19 @@ describe("外部 LFN 图像入口计费", () => {
     expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it("key 无法识别时透明代理到 NewAPI，不扣图包", async () => {
+  it("key 无法归属账号时拒绝生成，不扣图包或绕过风控", async () => {
     const { POST } = await import("@/app/v1/images/generations/route");
     const response = await POST(request());
     const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.data?.[0]?.b64_json).toBe("abc");
+    expect(response.status).toBe(503);
+    expect(body.error?.code).toBe("lfn_billing_unavailable");
     expect(mocks.trySpendImageCredits).not.toHaveBeenCalled();
     expect(
       vi
         .mocked(fetch)
         .mock.calls.some(([url]) => url === "http://newapi.test/v1/images/generations"),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("有效 key 自动识别用户且图包足够时走 Gateway，不把用户 key 发给上游", async () => {
