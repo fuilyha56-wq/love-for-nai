@@ -14,9 +14,26 @@
   background: var(--panel);
   color: var(--ink);
   box-shadow: 0 3px 12px color-mix(in srgb, var(--rose) 12%, transparent);
+  appearance: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
   font-size: 12px;
   line-height: 1.4;
   pointer-events: auto;
+}
+.studio-mode-badge:not(:disabled):hover {
+  border-color: var(--rose);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--rose) 20%, transparent);
+}
+.studio-mode-badge:focus-visible {
+  outline: 2px solid var(--rose);
+  outline-offset: 3px;
+}
+.studio-mode-badge:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }
 .studio-mode-badge strong,
 .mobile-studio-current-mode strong {
@@ -31,6 +48,10 @@
 }
 .studio-mode-badge > span {
   color: var(--muted);
+}
+.studio-mode-badge .studio-mode-toggle-hint {
+  font-size: 10px;
+  white-space: nowrap;
 }
 .studio-mode-badge.is-edit-mode strong,
 .mobile-studio-current-mode.is-edit-mode strong {
