@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const page = params.get("p") || "1";
   const size = params.get("size") || "20";
-  const keyword = params.get("keyword") || "";
+  const keyword = params.get("keyword")?.trim() || "";
   try {
     if ((await resolvedAuthProviderId()) === "local") {
       const listed = await listLocalUsers({
@@ -38,9 +38,10 @@ export async function GET(request: Request) {
         quotaPerUnit: await runtimeQuotaPerUnit(),
       });
     }
-    const query = new URLSearchParams({ p: page, size });
+    const query = new URLSearchParams({ p: page, page_size: size });
     if (keyword) query.set("keyword", keyword);
-    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/?${query}`, {
+    const endpoint = keyword ? "/api/user/search" : "/api/user/";
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}${endpoint}?${query}`, {
       headers: userHeaders(gate.session),
       cache: "no-store",
       signal: AbortSignal.timeout(15_000),
