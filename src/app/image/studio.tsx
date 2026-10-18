@@ -886,7 +886,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
   const modePickerOptions: Array<{ id: Operation; label: string; detail: string }> = [
     { id: "generate", label: "文生图", detail: "根据提示词生成图片。" },
-    ...referenceOperations.filter((item) => modelCapabilities.operations.includes(item.id)),
+    ...referenceOperations,
   ];
   const mediumEffort = isNaiMediumModel(model);
   const highEffortSettings = useRef<{ model: string; steps: number; sampler: string; cfgRescale: number; width: number; height: number; count: number } | null>(null);
@@ -5256,7 +5256,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 <div className="studio-mode-picker-menu" id="studio-mode-picker-menu" role="dialog" aria-label="选择生成模式">
                   <div className="studio-mode-picker-heading">
                     <strong>选择生成模式</strong>
-                    <span>根据当前模型显示可用模式</span>
+                    <span>当前模型不支持的模式会禁用，不会自动切换档位</span>
                   </div>
                   <div className="studio-mode-picker-options">
                     {modePickerOptions.map((item) => (
@@ -5265,13 +5265,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                         key={item.id}
                         className={`studio-mode-option${operation === item.id ? " is-active" : ""}`}
                         aria-pressed={operation === item.id}
+                        disabled={!modelCapabilities.operations.includes(item.id)}
                         onClick={() => {
                           selectOperation(item.id);
                           setModePickerOpen(false);
                         }}
                       >
                         <ImagePlus size={18} aria-hidden="true" />
-                        <span><b>{item.label}</b><small>{item.detail}</small></span>
+                        <span>
+                          <b>{item.label}</b>
+                          <small>{item.detail}</small>
+                          {!modelCapabilities.operations.includes(item.id) && <small>当前模型不支持此模式</small>}
+                        </span>
                       </button>
                     ))}
                   </div>
