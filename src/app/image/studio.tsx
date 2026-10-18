@@ -610,6 +610,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const composedPromptLayout = replicaLayout || customWorkspace;
   const sidebarPromptLayout = replicaLayout || customWorkspace;
   const [operation, setOperation] = useState<Operation>("generate");
+  const [modePickerOpen, setModePickerOpen] = useState(false);
   const [contentMode, setContentMode] = useState<"anime" | "furry">("anime");
   const [model, setModel] = useState(models[0].value);
   const generationModelBeforeInpaint = useRef<string | null>(null);
@@ -701,6 +702,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("account");
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
+  const modePickerRef = useRef<HTMLDivElement>(null);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
   const [inlineChatMenu, setInlineChatMenu] = useState<{
     textarea: HTMLTextAreaElement;
@@ -882,6 +884,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const selectedProvider = customProviders.find((item) => item.id === providerId);
   const imageProtocol = providerId === "newapi" ? newApiImageProtocol : providerId === "novelai" ? "auto" : resolveProviderImageProtocol(selectedProvider?.protocol, selectedProvider?.baseUrl || "");
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
+  const modePickerOptions: Array<{ id: Operation; label: string; detail: string }> = [
+    { id: "generate", label: "文生图", detail: "根据提示词生成图片。" },
+    ...referenceOperations.filter((item) => modelCapabilities.operations.includes(item.id)),
+  ];
   const mediumEffort = isNaiMediumModel(model);
   const highEffortSettings = useRef<{ model: string; steps: number; sampler: string; cfgRescale: number; width: number; height: number; count: number } | null>(null);
   useEffect(() => {
@@ -900,6 +906,23 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     });
     return () => { active = false; };
   }, [mediumEffort, model, imageProtocol, operation, width, height, count]);
+  useEffect(() => {
+    if (!modePickerOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !modePickerRef.current?.contains(event.target)) {
+        setModePickerOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setModePickerOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [modePickerOpen]);
   // 输出设置的门控能力：未选具体模型时（如刚切换接口）按接口的代表性模型
   // 展示与校验，否则用户的选择会因空模型能力列表被立即重置回默认值。
   const displayModel = model
@@ -5212,19 +5235,49 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ))}
               </div>
             )}
-            <button
-              type="button"
-              className={`studio-mode-badge${operation !== "generate" ? " is-edit-mode" : ""}`}
-              aria-label={`当前${modes.find((item) => item.id === operation)?.label || "文生图"}，点击切换到${operation === "generate" ? "图生图" : "文生图"}`}
-              title={`点击切换到${operation === "generate" ? "图生图" : "文生图"}`}
-              data-current-operation={operation}
-              disabled={generating || (operation === "generate" && !modelCapabilities.operations.includes("img2img"))}
-              onClick={() => selectOperation(operation === "generate" ? "img2img" : "generate")}
-            >
-              <strong aria-live="polite" aria-atomic="true"><Sparkles size={14} aria-hidden="true" />当前：{modes.find((item) => item.id === operation)?.label || "文生图"}</strong>
-              <span>{width}×{height} · {count} 张</span>
-              <span className="studio-mode-toggle-hint">点击切换</span>
-            </button>
+            <div className="studio-mode-picker" ref={modePickerRef}>
+              <button
+                type="button"
+                className={`studio-mode-badge${operation !== "generate" ? " is-edit-mode" : ""}`}
+                aria-label={`当前${modes.find((item) => item.id === operation)?.label || "文生图"}，点击选择生成模式`}
+                title="点击选择生成模式"
+                aria-haspopup="dialog"
+                aria-expanded={modePickerOpen}
+                aria-controls="studio-mode-picker-menu"
+                data-current-operation={operation}
+                disabled={generating}
+                onClick={() => setModePickerOpen((open) => !open)}
+              >
+                <strong aria-live="polite" aria-atomic="true"><Sparkles size={14} aria-hidden="true" />当前：{modes.find((item) => item.id === operation)?.label || "文生图"}</strong>
+                <span>{width}×{height} · {count} 张</span>
+                <span className="studio-mode-toggle-hint">点击选择模式</span>
+              </button>
+              {modePickerOpen && (
+                <div className="studio-mode-picker-menu" id="studio-mode-picker-menu" role="dialog" aria-label="选择生成模式">
+                  <div className="studio-mode-picker-heading">
+                    <strong>选择生成模式</strong>
+                    <span>根据当前模型显示可用模式</span>
+                  </div>
+                  <div className="studio-mode-picker-options">
+                    {modePickerOptions.map((item) => (
+                      <button
+                        type="button"
+                        key={item.id}
+                        className={`studio-mode-option${operation === item.id ? " is-active" : ""}`}
+                        aria-pressed={operation === item.id}
+                        onClick={() => {
+                          selectOperation(item.id);
+                          setModePickerOpen(false);
+                        }}
+                      >
+                        <ImagePlus size={18} aria-hidden="true" />
+                        <span><b>{item.label}</b><small>{item.detail}</small></span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             {operation === "suggest-tags" && suggestedTags.length ? (
               <div className="flex max-w-3xl flex-wrap justify-center gap-2">
                 {suggestedTags.map((tag) => (
