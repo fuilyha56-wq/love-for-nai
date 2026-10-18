@@ -3781,7 +3781,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     };
     base._lfnRequestId = createBrowserRequestId();
     if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
-    if (modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
+    if (!mediumEffort && modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (modelCapabilities.seed && seed.trim() && Number(seed) !== 0) base.seed = Number(seed);
     // 质量词 / UC 预设注入：NAI 默认档交给服务端（qualityToggle + ucPreset），
     // 其余档位按 Aaalice 语义本地注入（质量词→正向末尾，UC→负向前缀），
@@ -3835,7 +3835,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (mediumEffort) {
       base.steps = 14;
       base.sampler = "k_euler_ancestral";
-      base.cfg_rescale = 0;
+      // Medium rejects cfg_rescale by parameter presence, including an explicit zero.
+      delete base.cfg_rescale;
       base.negative_prompt = "";
       base.ucPreset = 0;
       base.tag_hint_uc_preset = 2;
