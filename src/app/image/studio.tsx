@@ -5211,11 +5211,19 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ))}
               </div>
             )}
-            <div className={`studio-mode-badge${operation !== "generate" ? " is-edit-mode" : ""}`} role="group" aria-label="当前生成模式" data-current-operation={operation}>
+            <button
+              type="button"
+              className={`studio-mode-badge${operation !== "generate" ? " is-edit-mode" : ""}`}
+              aria-label={`当前${modes.find((item) => item.id === operation)?.label || "文生图"}，点击切换到${operation === "generate" ? "图生图" : "文生图"}`}
+              title={`点击切换到${operation === "generate" ? "图生图" : "文生图"}`}
+              data-current-operation={operation}
+              disabled={generating || (operation === "generate" && !modelCapabilities.operations.includes("img2img"))}
+              onClick={() => selectOperation(operation === "generate" ? "img2img" : "generate")}
+            >
               <strong aria-live="polite" aria-atomic="true"><Sparkles size={14} aria-hidden="true" />当前：{modes.find((item) => item.id === operation)?.label || "文生图"}</strong>
               <span>{width}×{height} · {count} 张</span>
-              {operation !== "generate" && <button type="button" disabled={generating} onClick={() => selectOperation("generate")}>切回文生图</button>}
-            </div>
+              <span className="studio-mode-toggle-hint">点击切换</span>
+            </button>
             {operation === "suggest-tags" && suggestedTags.length ? (
               <div className="flex max-w-3xl flex-wrap justify-center gap-2">
                 {suggestedTags.map((tag) => (
