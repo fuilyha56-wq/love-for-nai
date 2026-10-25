@@ -81,6 +81,10 @@
   white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;color:var(--rp-text);
 }
 .replica-prompt[data-variant="nai"] .replica-syntax-highlight {padding:6px 10px 25px;font-size:13px;line-height:23px}
+/* The visible mirror and the transparent input must use the same glyph sizes.
+   Mobile inputs use 16px to avoid keyboard zoom; applying it to only the input
+   puts its caret and deletion position ahead of the text users can see. */
+.replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-text-editor :is(.replica-raw-textarea,.replica-syntax-highlight) {font-size:16px}
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-syntax-highlight span {color:var(--rp-accent)}
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-screen-reader-label {position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-shared-tag-editor {min-height:96px;padding:10px;background:var(--rp-control);border-radius:8px;overflow:auto}

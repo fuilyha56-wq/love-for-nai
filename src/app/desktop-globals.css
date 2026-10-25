@@ -961,6 +961,21 @@ html[data-theme="night"] .mask-editor-number {
 .studio-layout {
   grid-template-columns: 1fr;
 }
+@media (min-width: 840px) {
+  /* Resized prompt editors may exceed the viewport; keep the canvas reachable. */
+  [data-studio-layout] .studio-layout > .studio-canvas {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+  [data-studio-layout] .studio-canvas > .studio-preview {
+    min-height: 280px;
+    flex: 1 0 280px;
+  }
+  [data-studio-layout] .studio-canvas > :not(.studio-preview) {
+    flex-shrink: 0;
+  }
+}
 @media (min-width: 1024px) {
   .studio-layout {
     grid-template-columns:

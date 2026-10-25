@@ -2273,16 +2273,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       }
       if (active) {
         const importedDataUrl = await blobToDataUrl(blob);
-        setImages([importedDataUrl]);
+        if (!active) return;
         const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
-        if (importMode === "img2img") {
-          const file = new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type });
-          await importImageAndParameters(file);
-          setOperation("img2img");
-        } else {
-          setSource(null);
-          setOperation("generate");
-        }
+        const file = new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type });
+        // Both modes restore metadata; only img2img retains the image as a source.
+        if (!await importImageAndParameters(file, importMode, () => active) || !active) return;
+        setImages([importedDataUrl]);
         if (galleryId && !galleryUseRecorded.current.has(galleryId)) {
           galleryUseRecorded.current.add(galleryId);
           void fetch(`/api/gallery/${encodeURIComponent(galleryId)}/use`, { method: "POST" }).catch(() => undefined);
@@ -2564,13 +2560,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     else await searchDanbooru(input);
   }
 
-  // 拖入/选入 NAI 图片：解析元数据并回填参数；图片本体同时进入图生图源图。
-  async function importImageAndParameters(file?: File) {
-    if (!file) return;
+  // Parse parameters for both import modes; ordinary uploads still default to a source image.
+  async function importImageAndParameters(file?: File, targetOperation?: "generate" | "img2img", isActive = () => true) {
+    if (!file || !isActive()) return false;
     const invalid = validateUploadFile(file);
     if (invalid) {
       setNotice(invalid);
-      return;
+      return false;
     }
     try {
       const data = await new Promise<string>((resolve, reject) => {
@@ -2582,22 +2578,28 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       const { parseNaiImageMetadata } = await import("@/lib/nai-metadata");
       const bytes = new Uint8Array(await file.arrayBuffer());
       const metadata = parseNaiImageMetadata(bytes);
-      setSource({ data, name: file.name });
+      if (!isActive()) return false;
+      setSource(targetOperation === "generate" ? null : { data, name: file.name });
       setMask(null);
       setUpscaleSource(null);
-      if (operation === "generate" || operation === "suggest-tags")
+      if (targetOperation) setOperation(targetOperation);
+      else if (operation === "generate" || operation === "suggest-tags")
         setOperation("img2img");
       if (!metadata) {
-        setNotice(`已导入 ${file.name}，未检测到 NAI 参数（仅作为源图）。`);
-        return;
+        if (targetOperation === "generate") {
+          setPrompt(""); setNegative("");
+          setNotice("已切换到文生图；作品未包含可读取的公开参数，请填写提示词后生成。");
+        } else setNotice(`已导入 ${file.name}，未检测到 NAI 参数（仅作为源图）。`);
+        return true;
       }
       const { mapNaiParameters } = await import("@/lib/nai-import");
       const imported = mapNaiParameters(
         metadata.parameters,
         models.map(({ value }) => value),
       );
-      if (imported.prompt) setPrompt(imported.prompt);
-      if (imported.negativePrompt) setNegative(imported.negativePrompt);
+      if (!isActive()) return false;
+      if (imported.prompt || targetOperation) setPrompt(imported.prompt || "");
+      if (imported.negativePrompt || targetOperation) setNegative(imported.negativePrompt || "");
       if (imported.model) setModel(imported.model);
       if (imported.width) setWidth(imported.width);
       if (imported.height) setHeight(imported.height);
@@ -2609,9 +2611,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (imported.seed != null && Number(imported.seed) !== 0) setSeed(imported.seed);
       if (imported.count != null) setCount(imported.count);
       if (imported.strength != null) setStrength(imported.strength);
-      setNotice(`已从 ${file.name} 导入图片与生成参数。`);
+      setNotice(targetOperation === "generate" ? "已载入提示词和生成参数；当前为文生图，原图仅供预览。" : `已从 ${file.name} 导入图片与生成参数。`);
+      return true;
     } catch {
-      setNotice("读取图片失败，请重试。");
+      if (isActive()) setNotice("读取图片失败，请重试。");
+      return false;
     }
   }
 
@@ -5458,7 +5462,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             )}
           <div
             ref={positionOverlayRef}
-            className={`relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5${replicaLayout ? " replica-preview-host" : ""}`}
+            className={`studio-preview relative flex min-h-0 flex-1 items-center justify-center overflow-auto p-3 sm:p-5${replicaLayout ? " replica-preview-host" : ""}`}
           >
             {modelCapabilities.characters && charactersEnabled && !aiAutoPosition && ["generate", "img2img", "inpainting"].includes(operation) && (
               // 手动定位坐标系：X 轴=水平滑块，Y 轴=垂直滑块，多角色多色十字线，

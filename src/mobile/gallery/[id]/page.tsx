@@ -2,7 +2,7 @@
 
 import { Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
 import Image from "@/mobile/cached-image";
-import Link from "next/link";
+import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { ImageDetailWorkspace, ImageMetadataParameters, ImagePromptSection } from "@/mobile/ui/image-detail-workspace";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
 import { useEffect, useState } from "react";
@@ -57,10 +57,6 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-function importHref(item: GalleryItem): string {
-  return `/image?galleryId=${encodeURIComponent(item.id)}`;
-}
-
 export default function GalleryItemPage({
   params,
 }: {
@@ -68,6 +64,7 @@ export default function GalleryItemPage({
 }) {
   const [item, setItem] = useState<GalleryItem | null>(null);
   const [message, setMessage] = useState("");
+  const [importItem, setImportItem] = useState<GalleryItem | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [liked, setLiked] = useState(false);
   const [rewardNotice, setRewardNotice] = useState("");
@@ -118,7 +115,7 @@ export default function GalleryItemPage({
 
   const isHidden = (item?.rating === "r17" || item?.rating === "r18") && !revealed;
 
-  return <ImageDetailWorkspace title={item?.title || "作品详情"} backHref="/gallery" backLabel="图片广场" loading={!item && !message} error={!item ? message : undefined}
+  return <>{importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}<ImageDetailWorkspace title={item?.title || "作品详情"} backHref="/gallery" backLabel="图片广场" loading={!item && !message} error={!item ? message : undefined}
     notice={(rewardNotice || (item && message)) ? <><span>{rewardNotice && <><Trophy size={18} className="inline-block" /> {rewardNotice}</>}</span>{item && message && <p>{message}</p>}</> : undefined}
     image={item && (<div className={`launcher-detail-image ${rewardNotice ? "ring-4 ring-amber-400 shadow-[0_0_0_8px_rgba(245,158,11,.12)]" : ""}`}>
               <Image
@@ -206,13 +203,13 @@ export default function GalleryItemPage({
                 </div>
               )}
               <div className="flex gap-2">
-                <Link
-                  href={importHref(item)}
+                <button
+                  type="button" onClick={() => setImportItem(item)}
                   className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"
                 >
                   <RotateCcw size={14} />
                   导入图片到工作台
-                </Link>
+                </button>
               </div>
               {Object.keys(item.parameters).length > 0 && (
                 <>
@@ -221,5 +218,5 @@ export default function GalleryItemPage({
                 </>
               )}
             {Object.keys(item.parameters).length > 0 && <ImageMetadataParameters entries={Object.entries(item.parameters).filter(([key]) => key !== "prompt" && key !== "negative_prompt")} />}
-            </aside>)} />;
+            </aside>)} /></>;
 }

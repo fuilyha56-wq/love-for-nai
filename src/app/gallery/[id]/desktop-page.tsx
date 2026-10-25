@@ -2,7 +2,7 @@
 
 import { Check, Copy, Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
 import Image from "@/app/cached-image";
-import Link from "next/link";
+import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { PublicHeader } from "@/app/public-header";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { useEffect, useState } from "react";
@@ -57,10 +57,6 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-function importHref(item: GalleryItem): string {
-  return `/image?galleryId=${encodeURIComponent(item.id)}`;
-}
-
 export default function GalleryItemPage({
   params,
 }: {
@@ -68,6 +64,7 @@ export default function GalleryItemPage({
 }) {
   const [item, setItem] = useState<GalleryItem | null>(null);
   const [message, setMessage] = useState("");
+  const [importItem, setImportItem] = useState<GalleryItem | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [liked, setLiked] = useState(false);
   const [rewardNotice, setRewardNotice] = useState("");
@@ -219,13 +216,13 @@ export default function GalleryItemPage({
                 </div>
               )}
               <div className="flex gap-2">
-                <Link
-                  href={importHref(item)}
+                <button
+                  type="button" onClick={() => setImportItem(item)}
                   className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"
                 >
                   <RotateCcw size={14} />
                   导入图片到工作台
-                </Link>
+                </button>
               </div>
               {Object.keys(item.parameters).length > 0 && (
                 <>
@@ -237,6 +234,7 @@ export default function GalleryItemPage({
           </div>
         )}
       </section>
+      {importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}
     </main>
   );
 }

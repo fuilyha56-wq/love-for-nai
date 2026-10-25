@@ -5,16 +5,13 @@ import { WorkspaceNav } from "@/app/workspace-nav";
 import { Eye, EyeOff, Heart, Link2, RotateCcw, SearchX, Send } from "lucide-react";
 import Image from "@/app/cached-image";
 import Link from "next/link";
+import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { useState } from "react";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
 import { PublicHeader } from "@/app/public-header";
 import { GalleryFilters } from "./gallery-filters";
 import { useGalleryDiscovery, type GalleryItem } from "./use-gallery-discovery";
 import styles from "@/app/ui/discovery-controls.module.css";
-
-function importHref(item: GalleryItem): string {
-  return `/image?galleryId=${encodeURIComponent(item.id)}`;
-}
 
 const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r17: "R17", r18: "R18", sensitive: "R13" };
 function ratingLabel(rating: string): string { return ratingLabels[rating] || rating; }
@@ -49,6 +46,7 @@ export default function GalleryPage() {
   const gallery = useGalleryDiscovery();
   const { items, loadState, error } = gallery;
   const [message, setMessage] = useState("");
+  const [importItem, setImportItem] = useState<GalleryItem | null>(null);
   const [expired, setExpired] = useState("");
   const [submitForm, setSubmitForm] = useState<GallerySubmitForm | null>(null);
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -146,7 +144,7 @@ export default function GalleryPage() {
               <p className="mt-2 text-[10px] text-[var(--muted)]">↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p>
               <div className="mt-3 flex min-h-[26px] flex-wrap gap-1">{item.tags.map((tag) => <span key={tag} className="rounded bg-[var(--surface-muted)] px-2 py-1 text-[10px]">{tag}</span>)}</div>
               <div className="mt-auto pt-4">
-                <Link href={importHref(item)} className="flex h-9 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"><RotateCcw size={14} />导入图片到工作台</Link>
+                <button type="button" onClick={() => setImportItem(item)} className="flex h-9 w-full items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white"><RotateCcw size={14} />导入图片到工作台</button>
               </div>
             </div>
           </article>
@@ -165,6 +163,7 @@ export default function GalleryPage() {
           onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}
         />
       )}
+      {importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}
     </main>
   );
 }

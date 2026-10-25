@@ -5,6 +5,7 @@ import { WorkspaceNav } from "@/mobile/workspace-nav";
 import { Eye, EyeOff, Heart, Link2, RotateCcw, SearchX, Send } from "lucide-react";
 import Image from "@/mobile/cached-image";
 import Link from "next/link";
+import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { useState } from "react";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/mobile/gallery-submit";
 import { CollectionPagination, ImageCardMenu } from "@/mobile/ui/collection-workspace";
@@ -13,10 +14,6 @@ import { PopupSelect } from "@/mobile/ui/popup-select";
 import styles from "@/app/ui/discovery-controls.module.css";
 import { GalleryFilters } from "@/app/gallery/gallery-filters";
 import { useGalleryDiscovery, type GalleryItem } from "@/app/gallery/use-gallery-discovery";
-
-function importHref(item: GalleryItem): string {
-  return `/image?galleryId=${encodeURIComponent(item.id)}`;
-}
 
 const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r17: "R17", r18: "R18", sensitive: "R13" };
 function ratingLabel(rating: string): string { return ratingLabels[rating] || rating; }
@@ -51,6 +48,7 @@ export default function GalleryPage() {
   const gallery = useGalleryDiscovery();
   const { items, loadState, error } = gallery;
   const [message, setMessage] = useState("");
+  const [importItem, setImportItem] = useState<GalleryItem | null>(null);
   const [expired, setExpired] = useState("");
   const [submitForm, setSubmitForm] = useState<GallerySubmitForm | null>(null);
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -131,7 +129,7 @@ export default function GalleryPage() {
                   </span>
                 </button>
               )}
-              {!isHidden && <ImageCardMenu label={`作品操作：${item.title}`}><Link href={`/gallery/${item.id}`}><Eye size={17} />查看作品详情</Link><Link href={importHref(item)}><RotateCcw size={17} />导入到画布</Link><button type="button" onClick={() => void share(item)}><Link2 size={17} />分享作品</button><button type="button" onClick={() => void like(item.id)}><Heart size={17} />点赞 · {item.likes}</button>{(item.rating === "r17" || item.rating === "r18") && <button type="button" onClick={() => toggleReveal(item.id)}><EyeOff size={17} />重新隐藏内容</button>}</ImageCardMenu>}
+              {!isHidden && <ImageCardMenu label={`作品操作：${item.title}`}><Link href={`/gallery/${item.id}`}><Eye size={17} />查看作品详情</Link><button type="button" onClick={() => setImportItem(item)}><RotateCcw size={17} />导入到画布</button><button type="button" onClick={() => void share(item)}><Link2 size={17} />分享作品</button><button type="button" onClick={() => void like(item.id)}><Heart size={17} />点赞 · {item.likes}</button>{(item.rating === "r17" || item.rating === "r18") && <button type="button" onClick={() => toggleReveal(item.id)}><EyeOff size={17} />重新隐藏内容</button>}</ImageCardMenu>}
             </div>
             <div className="launcher-image-card-caption"><h2 title={item.title}>{item.title}</h2><p>{item.authorName || item.ownerName} · {ratingLabel(item.rating)} · ♥ {item.likes}</p><p>↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p></div>
           </article>
@@ -150,6 +148,7 @@ export default function GalleryPage() {
           onSessionExpired={(sessionMessage) => setExpired(sessionMessage)}
         />
       )}
+      {importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}
     </main>
   );
 }
