@@ -25,7 +25,7 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
 }
 function challengePath(email: string) {
   return path.join(
-    path.resolve(process.env.LFN_DATA_DIR || "data"),
+    path.resolve(/* turbopackIgnore: true */ process.env.LFN_DATA_DIR || "data"),
     "registration-email",
     `${createHash("sha256").update(email.toLowerCase()).digest("hex")}.json`,
   );
