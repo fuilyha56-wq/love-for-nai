@@ -3,6 +3,7 @@ import {
   externalJsonBody,
   imageRequestErrorBody,
   isNaiExternalModel,
+  normalizeExternalImageBody,
   proxyImageWithCredits,
   validateExternalMediumRequest,
 } from "@/lib/compat-api";
@@ -31,10 +32,11 @@ export async function POST(request: Request): Promise<Response> {
   if (contentType.includes("multipart/form-data")) {
     try {
       const form = await request.clone().formData();
-      const body: Record<string, unknown> = {};
+      let body: Record<string, unknown> = {};
       for (const [key, value] of form.entries()) {
         body[key] = value instanceof File ? await value.arrayBuffer() : value;
       }
+      body = normalizeExternalImageBody(body, request.headers, true);
       validateExternalMediumRequest(body, "edits");
       const generation = externalGeneration(body, "edits");
       if (!generation) return badRequest("model、size 和 n 必须是有效的图像编辑参数");
@@ -50,9 +52,13 @@ export async function POST(request: Request): Promise<Response> {
 
       const sanitized = new FormData();
       for (const [key, value] of form.entries()) {
-        if (key === "novelai_operation" || key === "n" || key === "n_samples")
+        if (key === "novelai_operation" || key === "n" || key === "n_samples" || key === "extra_params" || key === "parameters")
           continue;
         sanitized.append(key, value);
+      }
+      for (const [key, value] of Object.entries(body)) {
+        if (form.get(key) instanceof File || value === undefined) continue;
+        sanitized.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
       }
       sanitized.set("model", generation.model);
       sanitized.set("size", `${generation.width}x${generation.height}`);
@@ -81,6 +87,7 @@ export async function POST(request: Request): Promise<Response> {
   let body: Record<string, unknown>;
   try {
     body = (await request.clone().json()) as Record<string, unknown>;
+    body = normalizeExternalImageBody(body, request.headers, true);
     assertBodySize(request);
   } catch (error) {
     return badRequest(error instanceof Error ? error.message : "Request body must be valid JSON");

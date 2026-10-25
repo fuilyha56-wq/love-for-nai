@@ -14,6 +14,7 @@ export async function GET(request: Request) {
     items: items.map((item) => ({
       ...item,
       imageUrl: `/api/admin/gallery/${item.id}/image`,
+      thumbnailUrl: `/api/admin/gallery/${item.id}/image?variant=thumbnail`,
     })),
     total: items.length,
   });

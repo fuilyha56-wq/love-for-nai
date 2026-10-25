@@ -2,13 +2,18 @@ import { validRiskMutation } from "@/lib/risk-http";
 import { getSession } from "@/lib/session";
 import { rebindFreeGrant, riskAdmissionResponse, riskUserSnapshot } from "@/lib/light-risk";
 import { recordRiskAction } from "@/lib/risk-control";
+import { getRiskSettings } from "@/lib/risk-settings";
 export async function GET() {
   const session = await getSession(); if (!session) return Response.json({ message: "请先登录" }, { status: 401 });
+  const settings = await getRiskSettings(session.userId);
+  if (settings.values["grant.enabled"] !== true) return Response.json({ enabled: false }, { headers: { "Cache-Control": "private, no-store" } });
   const snapshot = await riskUserSnapshot(session.userId);
-  return Response.json({ grant: snapshot.grant, grade: snapshot.grade, restrictions: snapshot.restrictions.map(r => ({ id: r.id, reason: r.reason, expiresAt: r.expiresAt })) }, { headers: { "Cache-Control": "private, no-store" } });
+  return Response.json({ enabled: true, grant: snapshot.grant, grade: snapshot.grade, rebindPolicy: { mode: settings.values["grant.rebindMode"], maxRebinds: settings.values["grant.maxRebinds"], minRebindSeconds: settings.values["grant.minRebindSeconds"] }, restrictions: snapshot.restrictions.map(r => ({ id: r.id, reason: r.reason, expiresAt: r.expiresAt })) }, { headers: { "Cache-Control": "private, no-store" } });
 }
 export async function POST(request: Request) {
   const session = await getSession(); if (!session) return Response.json({ message: "请先登录" }, { status: 401 });
+  const settings = await getRiskSettings(session.userId);
+  if (settings.values["grant.enabled"] !== true) return new Response(null, { status: 404, headers: { "Cache-Control": "no-store" } });
   if (!validRiskMutation(request)) return Response.json({ message: "请从本站账号安全页确认换绑" }, { status: 403 });
   try {
     const grant = await rebindFreeGrant(session.userId, request, session.authenticatedAt || 0);

@@ -1,0 +1,29 @@
+@media (max-width: 839px) {
+.pricing-page > section { padding:16px 20px 24px; }
+.pricing-page .launcher-page-intro { margin-bottom:12px; }
+.pricing-page .launcher-page-intro + div { margin-top:8px; }
+.pricing-calculator { margin-top:16px; padding:16px; border-radius:8px; background:var(--panel); scroll-margin-top:100px; }
+.pricing-page h2 { font-family:var(--font-sans); font-size:18px; font-weight:650; line-height:1.5; }
+.pricing-calculator-content { display:grid; gap:16px; margin-top:16px; }
+.pricing-calculator-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-content:start; }
+.pricing-calculator-fields > label { min-width:0; font-size:13px; }
+.pricing-calculator-fields .field { width:100%; min-width:0; min-height:44px; }
+.pricing-calculator-content > div:last-child { min-width:0; padding:16px; border-radius:8px; }
+.pricing-calculator dl > div { flex-wrap:wrap; align-items:center; gap:6px 12px; }
+.pricing-calculator dl dd, .pricing-calculator dl b { margin-left:auto; text-align:right; overflow-wrap:anywhere; }
+.pricing-models { margin-top:24px; }
+.pricing-models article { min-width:0; border:0; border-radius:8px; padding:16px; box-shadow:none; }
+.pricing-models article h3 { white-space:normal; overflow-wrap:anywhere; }
+.pricing-models article [class*="text-[10px]"], .pricing-models article [class*="text-[11px]"] { font-size:12px; }
+.pricing-rules { margin-top:16px; padding:0 16px; border-radius:8px; background:var(--panel); }
+.pricing-rules > summary { display:flex; min-height:48px; align-items:center; cursor:pointer; font-size:14px; font-weight:650; }
+.pricing-rules > summary::after { content:"⌄"; margin-left:auto; color:var(--muted); }
+.pricing-rules[open] > summary::after { content:"⌃"; }
+.pricing-rules > section { margin-top:0; padding-bottom:16px; }
+.pricing-rules article { border-radius:8px; background:var(--surface); color:var(--ink); box-shadow:none; }
+.pricing-rules article :is(p,b,div) { color:inherit; }
+.pricing-rules article p { color:var(--muted); }
+@media (min-width:1100px) { .pricing-calculator-content { grid-template-columns:1.1fr .9fr; gap:24px; } }
+@media (max-width:839px) { .pricing-page > section { padding:12px 12px 24px; } .pricing-calculator { padding:12px; } .pricing-calculator-content > div:last-child { padding:12px; } }
+
+}

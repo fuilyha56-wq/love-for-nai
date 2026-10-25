@@ -38,6 +38,16 @@ describe("model-specific image assistant", () => {
     expect(gemini).toContain('"supportedAspectRatios"');
   });
 
+  it("adds explicit image-evaluation instructions in goal Agent mode", () => {
+    const prompt = buildAssistantModelPrompt(resolveAssistantImageTarget({ imageModel: "nai-v5-full" }), "agent rules", {
+      goalMode: true, accessMode: "full", goal: "keep the character and make the lighting dawn-like", goalIteration: 2,
+    });
+    expect(prompt).toContain("目标 Agent 模式");
+    expect(prompt).toContain("goalComplete 布尔值");
+    expect(prompt).toContain("完全访问模式");
+    expect(prompt).toContain("keep the character and make the lighting dawn-like");
+  });
+
   it("does not allow natural-language models to apply diffusion parameters or NAI character slots", () => {
     const input = parseTagSuggestion(JSON.stringify({
       prompt: 'An evening portrait with a sign that reads "你好".',
@@ -68,6 +78,12 @@ describe("model-specific image assistant", () => {
     expect(result.characters).toHaveLength(1);
     expect(result.negativePrompt).toBe("blurry");
     expect(result.parameters).toEqual({ width: 832, height: 1216, steps: 28, scale: 5, sampler: "k_euler", noiseSchedule: "native", seed: 123 });
+  });
+
+  it("parses a strict goal completion flag for iterative runs", () => {
+    expect(parseTagSuggestion('{"goalComplete":true}').goalComplete).toBe(true);
+    expect(parseTagSuggestion('{"goalComplete":false}').goalComplete).toBe(false);
+    expect(parseTagSuggestion('{"goalComplete":"yes"}').goalComplete).toBeUndefined();
   });
 
   it("rejects hallucinated NAI sampler/schedule names and out-of-range controls", () => {

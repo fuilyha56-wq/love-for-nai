@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 :is(.rgs-shell,.rgs-image-size,.rgs-menu):is([data-replica-variant="nai"],[data-replica-variant="nlw"]) {
   --rgs-surface:var(--panel); --rgs-control:var(--surface); --rgs-input:var(--paper);
   --rgs-line:var(--line); --rgs-text:var(--ink); --rgs-muted:var(--muted); --rgs-accent:var(--rose);
@@ -93,4 +94,6 @@
 .rgs-shell[data-replica-variant] .rgs-advanced-toggle svg { transition:transform 180ms ease; }
 @media (prefers-reduced-motion:reduce) {
   .rgs-shell[data-replica-variant] :is(.rgs-panel,.rgs-advanced-motion,.rgs-advanced-toggle svg) { animation:none; transition:none; }
+}
+
 }

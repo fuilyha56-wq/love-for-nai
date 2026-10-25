@@ -48,8 +48,9 @@ describe("图片预览比例与批次布局", () => {
     expect(html).toContain('src="/two.png"');
     expect(html).not.toContain("/_next/image");
     expect(html).toContain('aria-label="放大查看第 2 张图像"');
-    expect(html).toContain('download="lfn-2.png"');
-    for (const label of ["用于图生图", "用于局部重绘", "用于导演工具", "用作 Vibe 参考", "用于放大"]) expect(html).toContain(`第 2 张${label}`);
+    expect(html).toContain('aria-label="下载第 2 张图像"');
+    expect(html).toContain('aria-haspopup="menu"');
+    for (const label of ["用于图生图", "用于局部重绘", "用于导演工具", "用作 Vibe 参考", "用于 V5 超分"]) expect(html).toContain(`第 2 张${label}`);
     expect(html).toContain("832 × 1216");
     expect(html).toContain("12345");
   });

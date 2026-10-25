@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
+import { imagePricingStrength } from "@/lib/image-pricing";
 import { splitImageBatches, MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
 import { saveHistory } from "@/lib/history";
 import { watermarkImages } from "@/lib/image-watermark";
 import { startRequestAudit } from "@/lib/request-audit";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
-import { checkImageRateLimit, normalizeDimension, normalizeSamples, normalizeSteps, validateImageShape, assertImageModel } from "@/lib/image-request";
+import { checkImageRateLimit, normalizeDimension, normalizeSamples, normalizeSteps, validateImageShape, validateNaiGenerationCost, assertImageModel } from "@/lib/image-request";
 import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 import type { LfnSession } from "@/lib/session";
 import { safeProviderFetch } from "./http";
@@ -15,6 +16,7 @@ import { ProviderInputError, validateModelId } from "./validation";
 import { resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
 import { withModelConcurrencySlot } from "@/lib/model-concurrency";
 import { handleImageModelGeneration } from "./image-generation";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 
 const nativeOperations = new Set(["generate", "img2img", "inpainting", "edits", "outpainting", "vibe-transfer", "character-reference", "precise-reference"]);
 
@@ -36,7 +38,7 @@ export async function handlePersonalProviderGeneration(request: Request, session
       protocol: resolveProviderImageProtocol(provider.protocol, provider.baseUrl),
       paymentSource: "personal-key",
       rateChecked: true,
-      send: (upstream) => withModelConcurrencySlot(() => safeProviderFetch(provider.baseUrl, upstream.path, { method: "POST", headers: upstream.headers, body: upstream.body, timeoutMs: 180_000, signal: request.signal }), request.signal),
+      send: (upstream) => withModelConcurrencySlot(() => safeProviderFetch(provider.baseUrl, upstream.path, { method: "POST", headers: upstream.headers, body: upstream.body, timeoutMs: IMAGE_UPSTREAM_TIMEOUT_MS, signal: request.signal }), request.signal),
     });
   }
   let model: string;
@@ -51,6 +53,8 @@ export async function handlePersonalProviderGeneration(request: Request, session
     height = normalizeDimension(body.height, "height");
     steps = normalizeSteps(body.steps);
     validateImageShape(width, height);
+    const pricingOperation = typeof body.operation === "string" ? body.operation : "generate";
+    validateNaiGenerationCost(model, width, height, steps, imagePricingStrength(body, pricingOperation), pricingOperation);
   } catch (error) {
     return NextResponse.json({ message: error instanceof Error ? error.message : "图像参数无效" }, { status: 400 });
   }

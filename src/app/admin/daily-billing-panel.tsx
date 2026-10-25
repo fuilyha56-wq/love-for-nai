@@ -152,7 +152,8 @@ export default function DailyBillingPanel() {
                 type="number"
                 min={0}
                 step={0.001}
-                value={policy.v45AnlasCny}
+                value={0.02}
+                readOnly
                 className="field mt-1.5 w-full p-2.5"
                 onChange={(event) =>
                   setPolicy({
@@ -168,7 +169,8 @@ export default function DailyBillingPanel() {
                 type="number"
                 min={0}
                 step={0.001}
-                value={policy.v5AnlasCny}
+                value={0.025}
+                readOnly
                 className="field mt-1.5 w-full p-2.5"
                 onChange={(event) =>
                   setPolicy({
@@ -183,7 +185,7 @@ export default function DailyBillingPanel() {
             当前图包售价：{data?.affPerPackage} AFF ≈ ¥
             {packageCny.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}；计价面值固定为 1 AFF = ¥{cnyPerAff}，不随图包折扣变化。
             LFN 小图保留当前 AFF 阶梯：V4.5 基础 1 AFF、V5 High 基础 {V5_BASE_AFF_PER_IMAGE} AFF、Medium 基础 1 AFF。人民币基准价只计算相对首档的附加费；NewAPI 的独立小图价格不套用这里的 AFF 基础价。
-            超范围每 Anlas 分别为 {Number((policy.v45AnlasCny / cnyPerAff).toFixed(4))}/{Number((policy.v5AnlasCny / cnyPerAff).toFixed(4))} AFF。
+            普通 Anlas 为 ¥0.02；V5 保留 1.25 倍销售价 ¥0.025。官方消耗量按模型计算，销售倍率只应用一次。超范围每 Anlas 分别为 {Number((policy.v45AnlasCny / cnyPerAff).toFixed(4))}/{Number((policy.v5AnlasCny / cnyPerAff).toFixed(4))} AFF。
             日阶梯只影响 LFN AFF/图包。转交 NewAPI 后由 NewAPI 生成、记录请求并按其模型配置计费，不参与本站每日张数阶梯。
           </p>
           {(["v45", "v5"] as const).map((family) => (

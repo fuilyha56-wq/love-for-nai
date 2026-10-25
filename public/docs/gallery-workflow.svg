@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480" role="img" aria-labelledby="title desc">
+  <title id="title">从活动配置到图库周榜结算</title>
+  <desc id="desc">配置活动规则，投稿并通过审核，用户互动计数，按周榜指标结算奖励。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#fffaf5"/><stop offset="1" stop-color="#f4ece7"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#b53b52"/></marker>
+    <style>
+      .title{font:700 30px Arial,sans-serif;fill:#272b2a}.step{font:700 21px Arial,sans-serif;fill:#272b2a}.body{font:16px Arial,sans-serif;fill:#68716d}.num{font:700 17px Arial,sans-serif;fill:#fff}
+    </style>
+  </defs>
+  <rect width="1200" height="480" rx="28" fill="url(#bg)"/>
+  <text x="60" y="70" class="title">创作活动与图库：从规则到奖励</text>
+  <g fill="#fff" stroke="#ded5ce" stroke-width="2">
+    <rect x="60" y="145" width="230" height="230" rx="20"/>
+    <rect x="355" y="145" width="230" height="230" rx="20"/>
+    <rect x="650" y="145" width="230" height="230" rx="20"/>
+    <rect x="945" y="145" width="195" height="230" rx="20"/>
+  </g>
+  <g fill="#b53b52"><circle cx="95" cy="180" r="21"/><circle cx="390" cy="180" r="21"/><circle cx="685" cy="180" r="21"/><circle cx="980" cy="180" r="21"/></g>
+  <g class="num" text-anchor="middle"><text x="95" y="186">1</text><text x="390" y="186">2</text><text x="685" y="186">3</text><text x="980" y="186">4</text></g>
+  <g class="step"><text x="85" y="235">配置活动</text><text x="380" y="235">审核投稿</text><text x="675" y="235">互动计数</text><text x="970" y="235">周榜发奖</text></g>
+  <g class="body"><text x="85" y="275"><tspan x="85" dy="0">设置标签、分级、来源</tspan><tspan x="85" dy="27">奖励、预算与时间</tspan></text><text x="380" y="275"><tspan x="380" dy="0">符合规则的作品</tspan><tspan x="380" dy="27">审核通过后公开</tspan></text><text x="675" y="275"><tspan x="675" dy="0">点赞、下载或导入</tspan><tspan x="675" dy="27">进入对应周期统计</tspan></text><text x="970" y="275"><tspan x="970" dy="0">按选定指标排序</tspan><tspan x="970" dy="27">发放 AFF 奖励</tspan></text></g>
+  <g fill="none" stroke="#b53b52" stroke-width="4" marker-end="url(#arrow)"><path d="M300 260h44"/><path d="M595 260h44"/><path d="M890 260h44"/></g>
+  <text x="60" y="430" class="body">公开活动规则与奖励明细显示在创作者工作台；后台结算以完整 UTC 周为边界。</text>
+</svg>

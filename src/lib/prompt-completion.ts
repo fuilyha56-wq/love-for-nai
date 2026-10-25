@@ -1,6 +1,6 @@
 import { readTagWeight, splitPromptTags } from "./replica-prompt";
 
-export type PromptCompletion = { name: string; displayName?: string; categoryName?: string; postCount?: number; zh?: string; insertion?: string; local?: boolean; occurrences?: number };
+export type PromptCompletion = { name: string; displayName?: string; categoryName?: string; postCount?: number; zh?: string; insertion?: string; local?: boolean; occurrences?: number; source?: string; catalogKey?: string; description?: string; descriptionUrl?: string };
 
 let wordlistRequest: Promise<string[]> | null = null;
 /** Reuse the bundled NovelAI wordlist so basic suggestions work without the remote tag service. */

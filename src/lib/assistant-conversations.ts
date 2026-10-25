@@ -20,6 +20,8 @@ export type ConversationTurn = {
   createdAt: string;
   imageModel?: string;
   modelProtocol?: ImageProviderProtocol;
+  goalRunId?: string;
+  goalMode?: boolean;
   // 助手本轮对用户说的话（final.message），可选。
   message?: string;
   // 兼容旧记录：旧会话可能没有该字段。
@@ -89,6 +91,8 @@ function normalize(value: unknown): AssistantConversation {
         createdAt: typeof turn.createdAt === "string" ? turn.createdAt : new Date(0).toISOString(),
         imageModel: typeof turn.imageModel === "string" ? turn.imageModel : undefined,
         modelProtocol: isImageProviderProtocol(turn.modelProtocol) ? turn.modelProtocol : undefined,
+        goalRunId: typeof turn.goalRunId === "string" && /^[a-zA-Z0-9-]{1,100}$/.test(turn.goalRunId) ? turn.goalRunId : undefined,
+        goalMode: turn.goalMode === true,
         message: typeof turn.message === "string" ? turn.message : undefined,
         englishDescription: typeof turn.englishDescription === "string" ? turn.englishDescription : undefined,
         prompt: typeof turn.prompt === "string" ? turn.prompt : "",

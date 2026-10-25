@@ -5,7 +5,7 @@ import { getSession } from "@/lib/session";
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "请先登录" }, { status: 401 });
-  const items = (await listGalleryMine(session.userId)).map((item) => ({ ...item, imageUrl: `/api/gallery/${item.id}/image` }));
+  const items = (await listGalleryMine(session.userId)).map((item) => ({ ...item, imageUrl: `/api/gallery/${item.id}/image`, thumbnailUrl: `/api/gallery/${item.id}/image?variant=thumbnail` }));
   return NextResponse.json({ items });
 }
 

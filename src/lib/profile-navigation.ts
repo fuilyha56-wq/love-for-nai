@@ -2,6 +2,7 @@ export const PROFILE_SECTION_IDS = [
   "profile-rewards",
   "profile-redeem",
   "profile-info",
+  "account-security",
   "profile-security",
 ] as const;
 

@@ -44,7 +44,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       const userId = 930 + index;
       await expect(dailyImageBillingState(userId)).resolves.toMatchObject({ cnyPerAff: 0.005, packageCny: priceUsd / 200, affPerPackage });
       await seedAccount(userId, { balance: 300, packageBalance: 0, transactions: [] });
-      await expect(trySpendImageCredits(userId, generation, `fixed-cny-${index}`)).resolves.toMatchObject({ cost: 105, personalCost: 105, balance: 195, dailyQuote: { anlas: 20, costCny: 0.525 } });
+      await expect(trySpendImageCredits(userId, generation, `fixed-cny-${index}`)).resolves.toMatchObject({ cost: 155, personalCost: 155, balance: 145, dailyQuote: { anlas: 30, costCny: 0.775 } });
     }
   });
 
@@ -96,7 +96,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
       refundImageCredits(910, charge!, 0, { settlementId }),
     ]);
     await expect(affStatus(910)).resolves.toMatchObject({ balance: 500, packageBalance: 5 });
-    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 105 });
+    await expect(getImageSettlement(settlementId)).resolves.toMatchObject({ status: "refunded", chargedAmount: 0, refundedAmount: 155 });
   });
 
   it("图包 12 + 个人 5，档内 V5 只需 5 AFF：个人不动", async () => {
@@ -126,7 +126,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
   });
 
-  it("图包 1 + 个人 10，档外（steps29）V5 105 AFF 不足时整体回退", async () => {
+  it("图包 1 + 个人 10，档外（steps29）V5 155 AFF 不足时整体回退", async () => {
     await seedAccount(901, {
       balance: 10,
       packageBalance: 1,
@@ -151,7 +151,7 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
   });
 
-  it("图包 5 + 个人 240，档外（steps29）V5 105 AFF：混合扣 图包 5 + 个人 100", async () => {
+  it("图包 5 + 个人 240，档外（steps29）V5 155 AFF：混合扣 图包 5 + 个人 150", async () => {
     await seedAccount(903, {
       balance: 240,
       packageBalance: 5,
@@ -169,16 +169,16 @@ describe("图包与个人 AFF 混合扣费（两档计费口径）", () => {
     });
 
     expect(charge).toMatchObject({
-      cost: 105,
+      cost: 155,
       packageCost: 5,
-      personalCost: 100,
+      personalCost: 150,
       packageImages: 1,
-      balance: 140,
+      balance: 90,
       packageBalance: 0,
     });
   });
 
-  it("图包 1 + 个人 5，档外 105 AFF 不足时整体回退不动本地余额", async () => {
+  it("图包 1 + 个人 5，档外 155 AFF 不足时整体回退不动本地余额", async () => {
     await seedAccount(902, {
       balance: 5,
       packageBalance: 1,

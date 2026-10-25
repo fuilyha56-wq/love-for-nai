@@ -318,6 +318,9 @@ export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (e
   const selectedGrade =
     settings.levels.find((l) => l.id === gradeId) || settings.levels[0];
   const optionLabels: Record<string, string> = {
+    count: "固定次数",
+    cooldown: "按冷却时间",
+    hybrid: "混合模式",
     unavailable: "暂停免费额度并返回503",
     observe: "仅观察",
     "hmac-sha256": "HMAC-SHA256（带密钥）",

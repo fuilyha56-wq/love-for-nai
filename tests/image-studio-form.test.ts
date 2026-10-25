@@ -38,7 +38,7 @@ describe("ImageStudio 表单缓存", () => {
     });
     expect(parsed.operation).toBe(DEFAULT_IMAGE_STUDIO_FORM.operation);
     expect(parsed.width).toBe(832);
-    expect(parsed.height).toBe(1600);
+    expect(parsed.height).toBe(1920);
     expect(parsed.count).toBe(30);
     expect(parsed.steps).toBe(1);
     expect(parsed.characters[0]).toMatchObject({ centerX: 1, centerY: 0 });

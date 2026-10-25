@@ -5,6 +5,7 @@ import {
   normalizeSamples,
   normalizeSteps,
   validateMediumRequest,
+  validateNaiModelSize,
 } from "@/lib/image-request";
 import { externalGeneration, naiGenerationPayload } from "@/lib/compat-api";
 
@@ -12,7 +13,8 @@ describe("图像请求安全边界", () => {
   it("rejects invalid Medium settings before billing", () => {
     const body = { width: 512, height: 512, steps: 14, n: 1 };
     expect(() => validateMediumRequest("nai-v5-full-medium", body)).not.toThrow();
-    for (const override of [{ steps: 28 }, { n: 2 }, { width: 1088, height: 1024 }, { sampler: "k_euler" }, { negative_prompt: "custom" }, { reference_image: "data" }, { extra_params: { steps: 28 } }, { cfg_rescale: 0 }, { ucPreset: 1 }]) {
+    expect(() => validateMediumRequest("nai-v5-full-medium", { ...body, cfg_rescale: 0 })).not.toThrow();
+    for (const override of [{ steps: 28 }, { width: 2048, height: 2048 }, { sampler: "k_euler" }, { negative_prompt: "custom" }, { reference_image: "data" }, { extra_params: { steps: 28 } }, { cfg_rescale: 0.2 }, { ucPreset: 1 }]) {
       expect(() => validateMediumRequest("nai-v5-full-medium", { ...body, ...override })).toThrow();
       try {
         validateMediumRequest("nai-v5-full-medium", { ...body, ...override });
@@ -20,6 +22,7 @@ describe("图像请求安全边界", () => {
         expect(error).toMatchObject({ code: "lfn_medium_unsupported_parameter" });
       }
     }
+    expect(() => validateMediumRequest("nai-v5-full-medium", { width: 2048, height: 1536, steps: 14, n: 2 })).not.toThrow();
     expect(assertImageModel("nai-v5-full-medium")).toBe("nai-v5-full-medium");
     expect(() => assertImageModel("nai-v4.5-full-medium")).toThrow();
     expect(() => assertImageModel("nai-v5-curated-medium")).toThrow();
@@ -39,7 +42,8 @@ describe("图像请求安全边界", () => {
 
   it("限制尺寸、steps 和图像模型", () => {
     expect(normalizeDimension(832, "width")).toBe(832);
-    expect(() => normalizeDimension(1616, "width")).toThrow();
+    expect(normalizeDimension(2048, "width")).toBe(2048);
+    expect(() => validateNaiModelSize("nai-v5-full", 1616, 512)).toThrow();
     expect(() => normalizeSteps(51)).toThrow();
     expect(assertImageModel("nai-v5-full")).toBe("nai-v5-full");
     expect(() => assertImageModel("nai-chat")).toThrow();

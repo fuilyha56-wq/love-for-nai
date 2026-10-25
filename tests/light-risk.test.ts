@@ -14,6 +14,10 @@ beforeEach(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "lfn-light-risk-"));
   process.env.LFN_DATA_DIR = directory; process.env.LFN_TRUST_PROXY = "true"; process.env.LFN_RISK_HASH_SECRET = "test-risk-key-never-use-in-production";
   resetLightRisk(); resetRiskSettingsCache();
+  const settings = structuredClone(await getRiskSettings());
+  settings.values["grant.enabled"] = true;
+  settings.values["grant.unknownIp"] = "unavailable";
+  await publishRiskSettings(settings, settings.version, "test", "Enable daily grants exercised by this suite");
 });
 afterEach(async () => { vi.useRealTimers(); resetLightRisk(); resetRiskSettingsCache(); for (const key of ["LFN_DATA_DIR", "LFN_TRUST_PROXY", "LFN_RISK_HASH_SECRET"]) { if (original[key] === undefined) delete process.env[key]; else process.env[key] = original[key]; } await rm(directory, { recursive: true, force: true }); });
 const request = (ip = "203.0.113.8", cookie = "") => new Request("https://lfn.test/api/images/generate", { headers: { "x-real-ip": ip, ...(cookie ? { cookie } : {}) } });

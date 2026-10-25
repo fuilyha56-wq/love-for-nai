@@ -1,7 +1,6 @@
 import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { MAX_IMAGE_REQUEST_SAMPLES, splitImageBatches } from "@/lib/image-batches";
-import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import {
@@ -20,10 +19,11 @@ import {
   resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
-import { saveHistory } from "@/lib/history";
-import { naiNativeGenerationBody } from "@/lib/nai-native-request";
+import { reserveHistoryImageIds, saveHistory } from "@/lib/history";
+import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 import { gatewayLogStart } from "@/lib/gateway-log";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import { sseEvent, sseResponse } from "@/lib/sse";
@@ -72,8 +72,8 @@ const MAX_SAMPLES_PER_REQUEST = MAX_IMAGE_REQUEST_SAMPLES;
 const MAX_STREAM_SAMPLES = MAX_IMAGE_REQUEST_SAMPLES;
 const DATA_URL = /^data:image\/[a-zA-Z0-9.+-]+;base64,/;
 
-// NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 AFF。
-// 计费口径与上游实扣 Anlas 1:1，详见 docs/SUPER_RESOLUTION.md。
+// NAI V5 扩散超分（/ai/upscale）：输出固定 2x，按输入面积扣 1-4 Anlas（V5 销售价每 Anlas 为 5 AFF）。
+// 官方消耗与销售单价分开计算，详见 docs/SUPER_RESOLUTION.md。
 async function handleUpscale(
   request: Request,
   session: LfnSession,
@@ -176,7 +176,7 @@ async function handleUpscale(
       }),
       body: JSON.stringify(payload),
       cache: "no-store",
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
     }).catch((error: unknown) => {
       finishGatewayLog(0);
       throw error;
@@ -533,7 +533,7 @@ export async function POST(request: Request) {
         { stream: true, samples },
       );
       const abort = new AbortController();
-      const timeout = setTimeout(() => abort.abort(), 300_000);
+      const timeout = setTimeout(() => abort.abort(), IMAGE_UPSTREAM_TIMEOUT_MS);
       const finishGatewayLog = gatewayLogStart({
         source: "lfn",
         user: session.username,
@@ -639,10 +639,12 @@ export async function POST(request: Request) {
               } else if (creditCharge && settlementId) {
                 await updateImageSettlement(settlementId, { generatedSamples, status: "succeeded" });
               }
+              const historyIds = deferPatchHistory || body._lfnSkipServerHistory === true
+                ? [] : reserveHistoryImageIds(images);
               send("done", {
                 images,
                 image: images[0],
-                historyIds: [],
+                historyIds,
                   requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : null,
                 payment,
                 paymentSource,
@@ -659,6 +661,7 @@ export async function POST(request: Request) {
               });
               if (!deferPatchHistory) {
                 void saveHistory(session.userId, body, images, null, {
+                  imageIds: historyIds,
                   requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined,
                 }).catch((error) =>
                   console.error("[lfn] 生成完成后保存历史失败", error),
@@ -673,7 +676,7 @@ export async function POST(request: Request) {
               const fallbackBase = baseUrlOverride;
               if (fallbackBase && token) {
                 upstreamAttempted = true;
-                const payload = stripDataUrls({ ...body });
+                const payload = stripDataUrls(naiGatewayGenerationBody(body));
                 delete payload.operation;
                 delete payload.n;
                 delete payload.n_samples;
@@ -704,7 +707,7 @@ export async function POST(request: Request) {
                       }),
                       body: JSON.stringify(payload),
                       cache: "no-store",
-                      signal: AbortSignal.timeout(180_000),
+                      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
                     },
                   ).catch((error: unknown) => {
                     finishFallbackLog(0);
@@ -736,10 +739,12 @@ export async function POST(request: Request) {
                       totalSteps: steps,
                     }),
                   );
+                  const historyIds = deferPatchHistory || body._lfnSkipServerHistory === true
+                    ? [] : reserveHistoryImageIds(images);
                   send("done", {
                     images,
                     image: images[0],
-                    historyIds: [],
+                    historyIds,
                     requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : null,
                     payment,
                     paymentSource,
@@ -756,6 +761,7 @@ export async function POST(request: Request) {
                   });
                   if (!deferPatchHistory) {
                     void saveHistory(session.userId, body, images, result.usage ?? null, {
+                      imageIds: historyIds,
                       requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined,
                     }).catch((error) =>
                       console.error("[lfn] 缓冲回退后保存历史失败", error),
@@ -794,7 +800,7 @@ export async function POST(request: Request) {
         ? "/v1/images/suggest-tags"
         : "/v1/images/generations";
     const payload = nativeNaiModel
-      ? stripDataUrls({ ...body })
+      ? stripDataUrls(naiGatewayGenerationBody(body))
       : {
           model,
           prompt: typeof body.prompt === "string" ? body.prompt : "",
@@ -858,7 +864,7 @@ export async function POST(request: Request) {
               : payload.seed,
         } : { ...payload, n: batch }),
         cache: "no-store",
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
       }).catch((error: unknown) => {
         finishGatewayLog(0);
         throw error;
@@ -958,6 +964,7 @@ export async function POST(request: Request) {
       usage,
       vibe,
       historyIds: history.map((item) => item.id),
+      requestId: audit.requestId,
       payment,
       paymentSource,
       aff: creditCharge

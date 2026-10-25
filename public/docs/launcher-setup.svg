@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="610" viewBox="0 0 1200 610" role="img" aria-labelledby="title desc">
+<title id="title">NAI Launcher 第三方站点字段示意</title><desc id="desc">选择第三方站点，站点填 LfN 根地址，昵称填便于区分的名称，API Token 填 NewAPI 图像密钥本身。此图为说明示意，非实际截图。</desc>
+<rect width="1200" height="610" rx="22" fill="#faf8f4"/>
+<g font-family="Noto Sans SC,Microsoft YaHei,sans-serif" fill="#292d2c"><text x="48" y="63" font-size="28" font-weight="700">Aaalice NAI Launcher · 第三方站点接入 LfN</text><text x="48" y="98" font-size="16" fill="#68716f">字段示意，客户端布局与文案以当前发行版为准</text>
+<rect x="48" y="140" width="600" height="410" rx="18" fill="#fffefa" stroke="#d8d4ca"/>
+<rect x="72" y="165" width="140" height="38" rx="9" fill="#f4e6e8"/><text x="94" y="191" font-size="16" fill="#a83a4c" font-weight="600">第三方站点</text>
+<g font-size="14" fill="#68716f"><text x="76" y="239">第三方 API 站点</text><text x="76" y="337">昵称（用于本地识别）</text><text x="76" y="435">API Token</text></g>
+<g fill="#faf8f4" stroke="#d8d4ca"><rect x="72" y="252" width="552" height="52" rx="10"/><rect x="72" y="350" width="552" height="52" rx="10"/><rect x="72" y="448" width="552" height="52" rx="10"/></g>
+<g font-size="18"><text x="90" y="285">https://lfn.example</text><text x="90" y="383">LfN</text><text x="90" y="481">sk-…你的 NewAPI 图像密钥…</text></g>
+<g font-size="18" font-weight="700" fill="#a83a4c"><text x="704" y="269">1. 填站点根地址</text><text x="704" y="367">2. 填便于识别的昵称</text><text x="704" y="465">3. 只填密钥本身</text></g>
+<g font-size="15" fill="#68716f"><text x="704" y="298">客户端自行拼接 /user 与 /ai 路径</text><text x="704" y="396">昵称不是网页登录用户名</text><text x="704" y="494">保留 sk-，不要手动加 Bearer 前缀</text></g>
+<text x="48" y="582" font-size="15" fill="#68716f">连接后先测试一张小图；兼容余额为 LfN AFF 摘要，精确余额与账单请在本站查看。</text></g></svg>

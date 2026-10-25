@@ -27,12 +27,13 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return Response.json({ message: "Request body must be valid JSON" }, { status: 400 });
   }
-  const imageCount = Array.isArray(body.images)
-    ? body.images.filter((item) => typeof item === "string" && item).length
-    : typeof body.image === "string" && body.image
-      ? 1
-      : 0;
-  if (!imageCount)
+  if (Array.isArray(body.images)) {
+    if (body.images.length !== 1 || typeof body.images[0] !== "string" || !body.images[0])
+      return Response.json({ message: "Vibe 编码每次仅支持一张图片" }, { status: 400 });
+    if (!body.image) body.image = body.images[0];
+    delete body.images;
+  }
+  if (typeof body.image !== "string" || !body.image)
     return Response.json({ message: "image is required" }, { status: 400 });
 
   return proxyNaiNativeWithCredits(
@@ -51,7 +52,7 @@ export async function POST(request: Request): Promise<Response> {
         steps: 1,
         samples: 1,
         operation: "encode-vibe",
-        referenceImageCount: imageCount,
+        referenceImageCount: 1,
       },
     },
     "unsupported",

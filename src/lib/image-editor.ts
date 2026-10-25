@@ -80,6 +80,11 @@ export type PendingCandidate = {
   viewport: GenerationViewport;
   mask?: MaskData | Uint8Array | Uint8ClampedArray;
   prompt?: string;
+  historyLabel?: string;
+  editorHistoryNodeId?: string;
+  editorHistoryParentNodeId?: string;
+  editorHistoryBranchId?: string;
+  editorHistoryParentBranchId?: string;
   seed?: number | string | null;
   createdAt?: number;
 };

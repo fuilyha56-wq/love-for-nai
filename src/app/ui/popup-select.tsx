@@ -33,6 +33,7 @@ export function PopupSelect({
   disabled = false,
   className = "",
   triggerClassName = "",
+  menuClassName = "",
   id,
 }: {
   value: string;
@@ -45,6 +46,7 @@ export function PopupSelect({
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
+  menuClassName?: string;
   id?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -177,6 +179,7 @@ export function PopupSelect({
     onChange(option.value);
     setOpen(false);
     setQuery("");
+    rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
   }
 
   function resetActiveIndex() {
@@ -185,15 +188,23 @@ export function PopupSelect({
 
   function moveActive(direction: number) {
     if (!visible.length) return;
-    setActiveIndex((current) =>
-      (current + direction + visible.length) % visible.length,
-    );
+    setActiveIndex((current) => {
+      for (let step = 1; step <= visible.length; step++) {
+        const next = (current + direction * step + visible.length) % visible.length;
+        if (!visible[next].disabled) return next;
+      }
+      return current;
+    });
   }
 
   function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      setOpen(false);
+      setQuery("");
+      rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    } else if (event.key === "Tab") {
       setOpen(false);
       setQuery("");
       rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
@@ -238,11 +249,10 @@ export function PopupSelect({
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           if (!options.length) return;
           event.preventDefault();
-          const current = options.findIndex((option) => option.value === value);
-          const direction = event.key === "ArrowDown" ? 1 : -1;
-          select(
-            options[(current + direction + options.length) % options.length],
-          );
+          positionMenu();
+          setOpen(true);
+          setQuery("");
+          resetActiveIndex();
         }}
       >
         <span>{selected?.label || value || "请选择"}</span>
@@ -255,9 +265,10 @@ export function PopupSelect({
           <div
             id={listboxId}
             ref={menuRef}
-            className="popup-select-menu"
+            className={`popup-select-menu ${menuClassName}`}
             role="listbox"
             aria-label={ariaLabel}
+            aria-activedescendant={visible[activeIndex] ? `${listboxId}-option-${activeIndex}` : undefined}
             tabIndex={-1}
             style={menuStyle}
             onKeyDown={handleMenuKeyDown}
@@ -282,10 +293,12 @@ export function PopupSelect({
               {visible.length === 0 ? (
                 <p className="popup-select-empty">{emptyText}</p>
               ) : (
-                visible.map((option) => (
+                visible.map((option, index) => (
                   <button
                     type="button"
                     role="option"
+                    id={`${listboxId}-option-${index}`}
+                    tabIndex={-1}
                     aria-selected={option.value === value}
                     disabled={option.disabled}
                     className={`popup-select-option ${option.value === visible[activeIndex]?.value ? "is-active" : ""}`}

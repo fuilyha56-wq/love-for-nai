@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 html[data-theme="nai"] [data-studio-layout="nai"] {
   --paper: #13152c;
   --panel: #191b31;
@@ -1013,6 +1014,7 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-model-mode-persistent .na
 .workspace-result-actions { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 4px; padding: 8px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: rgba(0,0,0,.6); box-shadow: 0 2px 8px rgba(0,0,0,.18); }
 .workspace-result-actions button,
 .workspace-result-actions a,
+.workspace-result-actions .image-download-menu,
 .workspace-result-item > button:last-child {
   display: grid; width: 40px; height: 40px; place-items: center; border: 1px solid rgba(255,255,255,.2); border-radius: 50%; background: rgba(0,0,0,.56); color: #fff;
 }
@@ -1550,4 +1552,6 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-panel-layout-lfn > .panel
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
 }

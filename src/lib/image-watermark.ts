@@ -18,7 +18,11 @@ export type WatermarkPayload = {
   label: string;
   note?: string;
   parameters?: Record<string, unknown>;
+  metadataStripped?: true;
+  sourceSha256?: string;
 };
+
+export class WatermarkPreservationError extends Error {}
 
 export type WatermarkOptions = {
   imageId?: string;
@@ -85,6 +89,10 @@ function calculateImageHash(buffer: Buffer): string {
   return createHash("sha256").update(isPng(buffer) ? removePngTextChunk(buffer, "LFN-Watermark") : buffer).digest("hex");
 }
 
+export function hasEmbeddedWatermark(buffer: Buffer): boolean {
+  return isPng(buffer) && extractPngTextChunk(buffer, "LFN-Watermark") !== null;
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -139,23 +147,29 @@ export async function embedWatermark(
     note: settings.watermarkNote || undefined,
     parameters: options.parameters,
   };
-  const signer = createSign("RSA-SHA256");
-  signer.update(stableJson(payload));
-  const signature = signer.sign(keys.privateKey, "base64");
-  const watermark = Buffer.from(JSON.stringify({ payload, signature }), "utf8").toString("base64");
-  const watermarked = injectPngTextChunk(buffer, "LFN-Watermark", watermark);
+  const watermarked = signWatermark(buffer, payload, keys);
   return `data:${mime};base64,${watermarked.toString("base64")}`;
 }
 
-export async function verifyWatermark(imageDataUrl: string): Promise<{
+type WatermarkVerification = {
   valid: boolean;
   legacy?: boolean;
   payload?: WatermarkPayload;
   shaMatch?: boolean;
   error?: string;
-}> {
+};
+
+export async function verifyWatermark(imageDataUrl: string): Promise<WatermarkVerification> {
   try {
     const { buffer } = dataUrlParts(imageDataUrl);
+    return await verifyWatermarkBuffer(buffer);
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : "验证失败" };
+  }
+}
+
+async function verifyWatermarkBuffer(buffer: Buffer): Promise<WatermarkVerification> {
+  try {
     if (!isPng(buffer)) return { valid: false, error: "仅支持含 LFN 元数据的 PNG 图片" };
     const encoded = extractPngTextChunk(buffer, "LFN-Watermark");
     if (!encoded) return { valid: false, error: "未找到 Love-for-NAI 图片签名" };
@@ -174,6 +188,47 @@ export async function verifyWatermark(imageDataUrl: string): Promise<{
   } catch (error) {
     return { valid: false, error: error instanceof Error ? error.message : "验证失败" };
   }
+}
+
+/** Retain authenticated provenance, without retaining generation parameters or blessing modified inputs. */
+export async function preserveWatermarkAfterMetadataStrip(original: Buffer, cleaned: Buffer): Promise<Buffer> {
+  if (!isPng(original) || !isPng(cleaned) || !extractPngTextChunk(original, "LFN-Watermark")) return cleaned;
+  const verified = await verifyWatermarkBuffer(original);
+  if (!verified.valid || !verified.shaMatch || !verified.payload) {
+    throw new WatermarkPreservationError("原图的 LFN 水印无效或图片已被修改，无法保留有效溯源水印，请下载原图。");
+  }
+  const source = verified.payload;
+  const keys = await getKeyPair();
+  // Use an explicit allowlist: prompt/seed/reference data in the old signed
+  // parameters must not survive the user's metadata-removal request.
+  const payload: WatermarkPayload = {
+    schema: "lfn-watermark-v2",
+    keyId: keys.keyId,
+    imageId: source.imageId,
+    requestId: source.requestId,
+    requestFingerprint: source.requestFingerprint,
+    sha256: calculateImageHash(cleaned),
+    timestamp: source.timestamp,
+    userId: source.userId,
+    model: source.model,
+    domain: source.domain,
+    issuer: source.issuer,
+    label: source.label,
+    note: source.note,
+    metadataStripped: true,
+    sourceSha256: source.sourceSha256 || source.sha256,
+  };
+  // Preserving an existing signature is independent of whether signing new
+  // generations has since been disabled in settings.
+  return signWatermark(cleaned, payload, keys);
+}
+
+function signWatermark(buffer: Buffer, payload: WatermarkPayload, keys: KeyPair): Buffer {
+  const signer = createSign("RSA-SHA256");
+  signer.update(stableJson(payload));
+  const signature = signer.sign(keys.privateKey, "base64");
+  const watermark = Buffer.from(JSON.stringify({ payload, signature }), "utf8").toString("base64");
+  return injectPngTextChunk(buffer, "LFN-Watermark", watermark);
 }
 
 export async function getPublicKey(): Promise<string> {

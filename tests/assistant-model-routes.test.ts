@@ -8,9 +8,12 @@ const mocks = vi.hoisted(() => ({
   readConversation: vi.fn(),
   appendConversationTurn: vi.fn(),
   chatFetch: vi.fn(),
+  availableModels: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getSession: mocks.getSession }));
+vi.mock("@/lib/provider/newapi-models", async (original) => ({ ...await original<typeof import("@/lib/provider/newapi-models")>(), loadNewApiModels: mocks.availableModels }));
+vi.mock("@/lib/tag-catalog", () => ({ readCatalogTag: () => null }));
 vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
 vi.mock("@/lib/tag-agent", () => ({ runTagAgent: mocks.runTagAgent }));
 vi.mock("@/lib/outbound", () => ({ outboundFetch: mocks.outboundFetch }));
@@ -35,6 +38,7 @@ function postRequest(route: string, body: Record<string, unknown>) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getSession.mockResolvedValue({ userId: 12345 });
+  mocks.availableModels.mockResolvedValue([{ id: "text-chat", kind: "助手模型" }, { id: "vision-chat", kind: "助手模型" }]);
   mocks.getChatToken.mockResolvedValue("test-chat-token");
   mocks.readConversation.mockResolvedValue({ turns: [], tagPool: [] });
   mocks.appendConversationTurn.mockResolvedValue({ turns: [], tagPool: [] });
@@ -47,6 +51,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("image model context in assistant routes", () => {
   it("filters every known image family from assistant text models", async () => {
+    mocks.availableModels.mockImplementationOnce((await vi.importActual<typeof import("@/lib/provider/newapi-models")>("@/lib/provider/newapi-models")).loadNewApiModels);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [
       { id: "gpt-image-1" }, { id: "nano-banana-pro" }, { id: "gemini-3-pro-image-preview" },
       { id: "nai-v5-full" }, { id: "text-chat" }, { id: "gpt-4o" },
@@ -55,6 +60,23 @@ describe("image model context in assistant routes", () => {
     const response = await route.GET();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ models: ["gpt-4o", "text-chat"] });
+  });
+
+  it("refreshes the upstream list and excludes custom image channels", async () => {
+    mocks.availableModels.mockResolvedValueOnce([{ id: "old-chat", kind: "助手模型" }, { id: "custom-draw", kind: "图像模型" }, { id: "text-embedding-3", kind: "助手模型" }])
+      .mockResolvedValueOnce([{ id: "new-chat", kind: "助手模型" }]);
+    const route = await import("@/app/api/assistant/models/route");
+    const first = await route.GET();
+    expect(await first.json()).toEqual({ models: ["old-chat"] });
+    expect(first.headers.get("cache-control")).toBe("private, no-store");
+    expect(await (await route.GET()).json()).toEqual({ models: ["new-chat"] });
+  });
+
+  it("rejects a custom image channel before requesting a chat credential", async () => {
+    mocks.availableModels.mockResolvedValueOnce([{ id: "custom-draw", kind: "图像模型" }]);
+    const route = await import("@/app/api/assistant/tags/route");
+    expect((await route.POST(postRequest("tags", { model: "custom-draw", request: "white hair" }))).status).toBe(400);
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
   });
 
   it("does not validate or reject natural-language text as Danbooru tags", async () => {
@@ -114,6 +136,46 @@ describe("image model context in assistant routes", () => {
     expect(mocks.runTagAgent.mock.calls[0][3].localTags).toEqual(["cat", "window"]);
     expect(mocks.outboundFetch).not.toHaveBeenCalled();
     expect((await route.POST(postRequest("tags", { model: "vision-chat", request: "describe", localTags: "cat" }))).status).toBe(400);
+  });
+
+  it("isolates each goal run from old goals and ordinary conversations", async () => {
+    const route = await import("@/app/api/assistant/tags/route");
+    mocks.readConversation.mockResolvedValue({ turns: [
+      { request: "ordinary request", answer: "ordinary answer" },
+      { request: "old goal", answer: "old answer", goalMode: true, goalRunId: "previous" },
+      { request: "current goal planning", answer: "current answer", goalMode: true, goalRunId: "current" },
+    ], tagPool: [] });
+    await route.POST(postRequest("tags", { model: "vision-chat", request: "evaluate this result", goalMode: true, goal: "blue sky", goalRunId: "current", goalIteration: 1 }));
+    await vi.waitFor(() => expect(mocks.appendConversationTurn).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][5].history).toEqual([{ request: "current goal planning", answer: "current answer" }]);
+    expect(mocks.appendConversationTurn.mock.calls[0][1]).toMatchObject({ goalMode: true, goalRunId: "current" });
+
+    mocks.runTagAgent.mockClear();
+    await route.POST(postRequest("tags", { model: "vision-chat", request: "new goal planning", goalMode: true, goal: "blue sky", goalRunId: "brand-new" }));
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][5].history).toEqual([]);
+
+    mocks.runTagAgent.mockClear();
+    await route.POST(postRequest("tags", { model: "vision-chat", request: "ordinary request" }));
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][5].history).toEqual([{ request: "ordinary request", answer: "ordinary answer" }]);
+  });
+
+  it("returns a structured upstream block and never saves or applies a suggestion", async () => {
+    const { AssistantModelBlockedError } = await import("@/lib/assistant-model-error");
+    mocks.runTagAgent.mockRejectedValueOnce(new AssistantModelBlockedError("PROHIBITED_CONTENT"));
+    const route = await import("@/app/api/assistant/tags/route");
+    const response = await route.POST(postRequest("tags", { model: "vision-chat", request: "plan", goalMode: true, goal: "blue sky", goalRunId: "blocked-goal" }));
+    const { jobId } = await response.json();
+    let result: Record<string, unknown> = {};
+    await vi.waitFor(async () => {
+      result = await (await route.GET(new Request(`http://localhost/api/assistant/tags?job=${jobId}`))).json();
+      expect(result.status).toBe("error");
+    });
+    expect(result).toMatchObject({ error: { code: "UPSTREAM_CONTENT_BLOCKED", reason: "PROHIBITED_CONTENT", retryable: false }, message: expect.stringContaining("任务已暂停") });
+    expect(result.suggestion).toBeUndefined();
+    expect(mocks.appendConversationTurn).not.toHaveBeenCalled();
+    expect(mocks.outboundFetch).not.toHaveBeenCalled();
   });
 
   it.each(["gpt-image-1", "gemini-2.5-flash-image", "nano-banana", "nai-v5-full"])("rejects image model %s as the assistant's text LLM", async (model) => {

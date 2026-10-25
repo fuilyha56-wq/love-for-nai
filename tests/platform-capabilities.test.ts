@@ -56,6 +56,7 @@ describe("平台能力探测", () => {
       "gallery",
       "referrals",
       "platform",
+      "authentication", "services", "endpoints", "billing", "image-policy", "network", "gateway",
       "docs",
       "creator",
       "rewards",

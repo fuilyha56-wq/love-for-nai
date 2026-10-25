@@ -3,6 +3,7 @@ import { SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 import {
   createAnnouncementComment,
   listAnnouncementComments,
+  setAnnouncementCommentVote,
 } from "@/lib/announcement-comments";
 import { ensureSeed, getAnnouncement } from "@/lib/announcements";
 import {
@@ -11,6 +12,7 @@ import {
   InvalidJsonError,
 } from "@/lib/request";
 import { getSession } from "@/lib/session";
+import { createUserNotification } from "@/lib/notifications";
 
 const commentLimiter = new SlidingWindowRateLimiter({
   limit: 8,
@@ -38,12 +40,13 @@ export async function GET(
       { status: 429, headers: { "Retry-After": String(readRate.retryAfterSeconds) } },
     );
   const announcementId = (await params).id;
+  const session = await getSession();
   await ensureSeed();
   if (!(await getAnnouncement(announcementId)))
     return NextResponse.json({ message: "公告不存在" }, { status: 404 });
   return NextResponse.json({
-    items: await listAnnouncementComments(announcementId),
-  });
+    items: await listAnnouncementComments(announcementId, session?.userId),
+  }, { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=60", Vary: "Cookie" } });
 }
 
 export async function POST(
@@ -108,12 +111,27 @@ export async function POST(
   }
 
   try {
+    const parentId = optionalString(body.parentId) || null;
     const item = await createAnnouncementComment({
       announcementId,
       authorId: session.userId,
       authorName: session.displayName || session.username,
       content: optionalString(body.content) || "",
+      parentId,
     });
+    if (parentId) {
+      const parent = (await listAnnouncementComments(announcementId)).find((comment) => comment.id === parentId);
+      if (parent && parent.authorId !== session.userId) {
+        await createUserNotification({
+          userId: parent.authorId,
+          type: "announcement-reply",
+          title: `${session.displayName || session.username} 回复了你的评论`,
+          body: `${item.content.slice(0, 220)}${item.content.length > 220 ? "…" : ""}`,
+          href: `/announcements?announcement=${encodeURIComponent(announcementId)}&comment=${encodeURIComponent(item.id)}`,
+          dedupeKey: `announcement-reply:${item.id}`,
+        }).catch((error) => console.error("[lfn] 保存公告回复通知失败", error));
+      }
+    }
     return NextResponse.json({ item });
   } catch (error) {
     return NextResponse.json(
@@ -121,4 +139,32 @@ export async function POST(
       { status: 400 },
     );
   }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const session = await getSession();
+  if (!session) return NextResponse.json({ message: "请先登录" }, { status: 401 });
+  const body = await request.json().catch(() => null) as Record<string, unknown> | null;
+  if (!body) return NextResponse.json({ message: "请求体不是合法的 JSON" }, { status: 400 });
+  const announcementId = (await params).id;
+  const commentId = optionalString(body.commentId) || "";
+  if (!commentId) return NextResponse.json({ message: "缺少评论 id" }, { status: 400 });
+  if (body.action === "vote") {
+    const vote = body.vote === "up" || body.vote === "down" ? body.vote : body.vote === null ? null : undefined;
+    if (vote === undefined) return NextResponse.json({ message: "投票类型无效" }, { status: 400 });
+    const item = await setAnnouncementCommentVote(announcementId, commentId, session.userId, vote);
+    return item ? NextResponse.json({ item }) : NextResponse.json({ message: "评论不存在" }, { status: 404 });
+  }
+  if (body.action === "pin" && typeof body.pinned === "boolean") {
+    const { requireAdmin } = await import("@/lib/admin-auth");
+    const gate = await requireAdmin();
+    if ("error" in gate) return NextResponse.json({ message: gate.error }, { status: 403 });
+    const { setAnnouncementCommentPinned } = await import("@/lib/announcement-comments");
+    const item = await setAnnouncementCommentPinned(announcementId, commentId, body.pinned);
+    return item ? NextResponse.json({ item }) : NextResponse.json({ message: "评论不存在" }, { status: 404 });
+  }
+  return NextResponse.json({ message: "不支持的评论操作" }, { status: 400 });
 }

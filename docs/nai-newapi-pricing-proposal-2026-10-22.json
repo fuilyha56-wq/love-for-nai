@@ -1,0 +1,226 @@
+{
+  "applied": false,
+  "snapshotCapturedAt": "2026-10-22T10:43:01.530Z",
+  "quotaPerUnit": 500000,
+  "balanceUnitsPerCny": 200,
+  "cnyPerAff": 0.005,
+  "normalAnlasCny": 0.02,
+  "v5AnlasCny": 0.025,
+  "groups": {
+    "Draw": 1,
+    "Draw-Limit": 1,
+    "Draw-Limit-2": 0
+  },
+  "models": [
+    {
+      "model": "nai-v4.5-curated",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v4.5-curated-limit",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v4.5-full",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v4.5-full-limit",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v4.5-inpaint",
+      "publiclyListed": false,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v4.5-inpaint-limit",
+      "publiclyListed": false,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v5-curated",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留；High 动态 token 随 Gateway 官方公式修正"
+    },
+    {
+      "model": "nai-v5-curated-limit",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v5-full",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留；High 动态 token 随 Gateway 官方公式修正"
+    },
+    {
+      "model": "nai-v5-full-limit",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v5-full-medium",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 3.46153846
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 3.46153846
+      },
+      "change": "Medium 改为分档，保留单张小图的现有 quota，大图走官方 Anlas 动态计费"
+    },
+    {
+      "model": "nai-v5-inpaint",
+      "publiclyListed": false,
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "change": "配置保留；High 动态 token 随 Gateway 官方公式修正"
+    },
+    {
+      "model": "nai-v5-inpaint-limit",
+      "publiclyListed": false,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 6
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 6
+      },
+      "change": "配置保留"
+    },
+    {
+      "model": "nai-v5-inpaint-medium",
+      "publiclyListed": true,
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 3.46153846
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 3.46153846
+      },
+      "change": "Medium 改为分档，保留单张小图的现有 quota，大图走官方 Anlas 动态计费"
+    }
+  ]
+}

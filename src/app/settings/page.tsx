@@ -1,5 +1,8 @@
-import SettingsHub from "./settings-hub";
+import { ViewportPage } from "@/app/viewport-page";
+import DesktopPage from "./desktop-page";
+import MobilePage from "@/mobile/settings/page";
 
-export default function SettingsPage() {
-  return <SettingsHub />;
+
+export default function Page() {
+  return <ViewportPage desktop={<DesktopPage />} mobile={<MobilePage />} />;
 }

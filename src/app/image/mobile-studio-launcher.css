@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .mobile-studio-launcher { display: none; min-width: 0; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; background: var(--paper); color: var(--ink); }
 .mobile-studio-page { display: flex; min-width: 0; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
 .mobile-studio-workbar { position: relative; display: flex; min-height: 54px; align-items: center; justify-content: center; padding: 7px 64px; border-bottom: 1px solid var(--line); background: var(--panel); text-align: center; }
@@ -150,3 +151,5 @@
 }
 @media (max-width: 380px) { .mobile-studio-generate-scroll, .mobile-studio-history-scroll, .mobile-studio-more-scroll { padding-inline: 9px; } }
 @media (prefers-reduced-motion: reduce) { .mobile-studio-sheet-backdrop, .mobile-studio-sheet, .mobile-studio-generate-scroll > :is(.mobile-studio-preview-section, .mobile-studio-prompt-section, .mobile-studio-reference-panel) { animation: none; transition: none; } }
+
+}

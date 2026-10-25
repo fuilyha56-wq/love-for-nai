@@ -1,6 +1,11 @@
+import { getRuntimeSettings } from "@/lib/runtime-config";
 import { NextResponse } from "next/server";
 import { getPendingSession, resolvedPendingCookie } from "@/lib/session";
-import { callNewApi, establishSession } from "@/lib/login";
+import {
+  callNewApi,
+  establishSession,
+  newApiRateLimitResponse,
+} from "@/lib/login";
 import {
   invalidJsonResponse,
   optionalString,
@@ -8,6 +13,7 @@ import {
 } from "@/lib/request";
 
 export async function POST(request: Request) {
+  if (!(await getRuntimeSettings()).passwordLoginEnabled) return NextResponse.json({ message: "站点已关闭密码登录" }, { status: 403 });
   const pending = await getPendingSession();
   if (!pending)
     return NextResponse.json(
@@ -30,10 +36,15 @@ export async function POST(request: Request) {
     );
 
   try {
-    const { response, result } = await callNewApi("/api/user/login/2fa", {
-      flow_token: pending.flowToken,
-      code,
-    });
+    const { response, result } = await callNewApi(
+      "/api/user/login/2fa",
+      {
+        flow_token: pending.flowToken,
+        code,
+      },
+      request,
+    );
+    if (response.status === 429) return newApiRateLimitResponse(response);
     if (!result.success || !result.data) {
       // 上游单用户活跃登录会话数上限（默认 50）撞满时返回 409。
       if (response.status === 409)
@@ -50,7 +61,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const next = await establishSession(result, response, pending.remember === true);
+    const next = await establishSession(
+      result,
+      response,
+      pending.remember === true,
+    );
     const cookie = await resolvedPendingCookie();
     next.cookies.set(cookie.name, "", {
       ...cookie.options,

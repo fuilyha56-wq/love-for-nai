@@ -1,3 +1,4 @@
+import { NAI_MAX_DIMENSION } from "./nai-image-limits";
 import { resolveImageModelCapabilities } from "./image-model-capabilities";
 import { NAI_UPSCALE_MODEL_IDS, isNaiCatalogImageModel } from "./nai-model-catalog";
 
@@ -124,7 +125,7 @@ function numberValue(value: unknown, fallback: number, min: number, max: number,
   const normalized = integer ? Math.round(value) : value;
   return Math.min(max, Math.max(min, normalized));
 }
-function alignedDimension(value: unknown, fallback: number, max = 1600, multiple = 64): number {
+function alignedDimension(value: unknown, fallback: number, max = NAI_MAX_DIMENSION, multiple = 64): number {
   const normalized = numberValue(value, fallback, 64, max, true);
   return Math.max(64, Math.min(max, Math.round(normalized / multiple) * multiple));
 }
@@ -169,8 +170,8 @@ export function parseImageStudioForm(
     imageBackground: ["auto", "opaque", "transparent"].includes(String(record.imageBackground)) ? String(record.imageBackground) : "auto",
     prompt: stringValue(record.prompt, DEFAULT_IMAGE_STUDIO_FORM.prompt),
     negative: stringValue(record.negative, DEFAULT_IMAGE_STUDIO_FORM.negative),
-    width: alignedDimension(record.width, DEFAULT_IMAGE_STUDIO_FORM.width, caps.promptStyle === "natural" ? 3840 : 1600, caps.sizeConstraints?.multipleOf || 64),
-    height: alignedDimension(record.height, DEFAULT_IMAGE_STUDIO_FORM.height, caps.promptStyle === "natural" ? 3840 : 1600, caps.sizeConstraints?.multipleOf || 64),
+    width: alignedDimension(record.width, DEFAULT_IMAGE_STUDIO_FORM.width, caps.promptStyle === "natural" ? 3840 : NAI_MAX_DIMENSION, caps.sizeConstraints?.multipleOf || 64),
+    height: alignedDimension(record.height, DEFAULT_IMAGE_STUDIO_FORM.height, caps.promptStyle === "natural" ? 3840 : NAI_MAX_DIMENSION, caps.sizeConstraints?.multipleOf || 64),
     steps: numberValue(record.steps, 28, 1, 50, true),
     scale: numberValue(record.scale, 5, 0, 10),
     count: numberValue(record.count, 1, 1, 30, true),

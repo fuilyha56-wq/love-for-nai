@@ -5,9 +5,13 @@
  * 错误信息显示在弹窗内部，避免被浮层遮挡。
  */
 
-import { Check, ChevronDown, Send, X } from "lucide-react";
+import { Send, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { PopupSelect } from "@/app/ui/popup-select";
+import { LfnSwitch } from "@/app/ui/lfn-switch";
+import styles from "@/app/ui/discovery-controls.module.css";
+import { GalleryUploadField } from "@/app/ui/gallery-upload-field";
 import { readJson, SessionExpiredError } from "@/app/session-notice";
 
 type Rating = "general" | "r13" | "r17" | "r18";
@@ -42,37 +46,7 @@ export type GallerySubmitForm = {
 };
 
 function GallerySelect<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: GalleryOption<T>[]; onChange: (value: T) => void }) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((option) => option.value === value);
-
-  useEffect(() => {
-    function close(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function escape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", close);
-      document.removeEventListener("keydown", escape);
-    };
-  }, []);
-
-  return (
-    <div className="relative mt-2" ref={rootRef}>
-      <button type="button" className="gallery-select-trigger" aria-label={label} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((current) => !current)}>
-        <span>{selected?.label}</span><ChevronDown size={16} aria-hidden="true" className={open ? "rotate-180 transition-transform" : "transition-transform"} />
-      </button>
-      {open && <div className="gallery-select-menu" role="listbox" aria-label={label}>
-        {options.map((option) => <button type="button" role="option" aria-selected={option.value === value} className="gallery-select-option" key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
-          <Check size={15} className={option.value === value ? "text-[var(--rose)]" : "opacity-0"} /><span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
-        </button>)}
-      </div>}
-    </div>
-  );
+  return <div className={`mt-2 ${styles.select}`}><PopupSelect value={value} options={options} ariaLabel={label} onChange={(next) => onChange(next as T)} menuClassName={styles.menu} /></div>;
 }
 
 export function GallerySubmitDialog({
@@ -91,6 +65,18 @@ export function GallerySubmitDialog({
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState("");
   const hasHistory = Boolean(form.historyId?.trim());
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.focus({ preventScroll: true });
+    return () => {
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
+  }, []);
 
   async function publish() {
     const validationError = validateGallerySubmitForm(form);
@@ -162,17 +148,25 @@ export function GallerySubmitDialog({
   if (typeof document === "undefined") return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 grid place-items-center bg-[#202328]/45 p-4 backdrop-blur-[2px]">
-      <div role="dialog" aria-modal="true" aria-label="提交作品" className="max-h-[min(720px,calc(100dvh-32px))] w-full max-w-xl overflow-y-auto rounded-xl border border-[var(--line)] bg-[#fffefa] p-5 text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)] sm:p-6">
+    <div className="fixed inset-0 z-50 grid place-items-center bg-[#202328]/45 p-4 backdrop-blur-[2px]" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }} onKeyDown={(event) => {
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape") { event.preventDefault(); onClose(); }
+      if (event.key !== "Tab" || !dialogRef.current?.contains(event.target as Node)) return;
+      const fields = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled):not([type="hidden"]),[tabindex="0"]')].filter((field) => field.getClientRects().length > 0);
+      const first = fields[0], last = fields.at(-1);
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { event.preventDefault(); first?.focus(); }
+    }}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="提交作品" className="max-h-[min(720px,calc(100dvh-32px))] w-full max-w-xl overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)] sm:p-6">
         <div className="flex items-start justify-between gap-5">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">PUBLIC SQUARE</p>
             <h2 className="mt-1 font-[var(--font-display)] text-2xl font-semibold">提交作品</h2>
             <p className="mt-2 max-w-lg text-sm leading-6 text-[var(--muted)]">作品提交后会进入人工审核，审核通过才会公开到图片广场。请如实选择年龄评级，R18 作品在广场默认打码；上传图片必须包含可解析的 NAI 生成参数。</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="关闭" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--line)] bg-white text-[var(--muted)] hover:text-[var(--ink)]"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="关闭" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]"><X size={18} /></button>
         </div>
-        {error && <div className="mt-4 rounded border border-[#e4c991] bg-[#fff8e8] p-3 text-sm text-[#77531e]">{error}</div>}
+        {error && <div role="alert" className="mt-4 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--accent-text,var(--rose))]">{error}</div>}
         <div className="mt-6 space-y-5">
           <label className="block text-sm font-semibold">标题<input className="field mt-2 h-11 w-full px-4" value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} maxLength={80} /></label>
           <label className="block text-sm font-semibold">作者 / 画师<input className="field mt-2 h-11 w-full px-4" value={form.authorName} onChange={(event) => onChange({ ...form, authorName: event.target.value })} placeholder="请填写作品作者或画师署名" maxLength={80} required /><small className="mt-1 block font-normal text-[var(--muted)]">将公开显示在作品信息中；请为转载作品正确署名。</small></label>
@@ -180,11 +174,11 @@ export function GallerySubmitDialog({
             <div className="text-sm font-semibold">年龄评级<GallerySelect label="年龄评级" value={form.rating} onChange={(rating) => onChange({ ...form, rating })} options={[{ value: "general", label: "全年龄 · General", description: "适合所有年龄段" }, { value: "r13", label: "R13", description: "13 岁以下不宜，轻度敏感" }, { value: "r17", label: "R17", description: "敏感内容，广场默认打码" }, { value: "r18", label: "R18", description: "成人内容，广场默认打码" }]} /></div>
             <div className="text-sm font-semibold">图片来源<GallerySelect label="图片来源" value={form.source} onChange={(source) => onChange({ ...form, source, file: source === "lfn" ? undefined : form.file })} options={[...(hasHistory ? [{ value: "lfn" as const, label: "LFN · 历史图片", description: "从当前账号历史记录导入" }] : []), { value: "local" as const, label: "本地上传", description: "上传本地 NAI 图片" }, { value: "other" as const, label: "Other · 其他来源", description: "转载或外部 NAI 图片" }]} /></div>
           </div>
-          {form.source !== "lfn" && <label className="block text-sm font-semibold">上传含 NAI 参数的图片<span className="mt-2 flex min-h-12 cursor-pointer items-center rounded-md border border-dashed border-[var(--line)] bg-white px-4 text-sm font-normal text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"><input type="file" accept="image/png,image/jpeg" multiple className="w-full text-xs file:mr-3 file:rounded-full file:border-0 file:bg-[#f1eee7] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[var(--ink)]" onChange={(event) => { setError(""); const files = Array.from(event.target.files || []); onChange({ ...form, file: files[0], files }); }} required /></span><small className="mt-1 block font-normal text-[var(--muted)]">支持一次选择最多 20 张 PNG/JPEG，每张最大 20 MB，且必须包含 NAI 参数；提交后逐张进入审核。</small></label>}
+          {form.source !== "lfn" && <GalleryUploadField files={form.files?.length ? form.files : form.file ? [form.file] : []} onChange={(files) => { setError(""); onChange({ ...form, file: files[0], files }); }} />}
           <label className="block text-sm font-semibold">公开标签<span className="field mt-2 flex h-11 items-center px-4"><input className="w-full bg-transparent outline-none" value={form.tags} onChange={(event) => onChange({ ...form, tags: event.target.value })} placeholder="例如：azure lane, blue hair, night" /></span><small className="mt-1 block font-normal text-[var(--muted)]">使用英文逗号分隔标签。</small></label>
-          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-[var(--line)] bg-[#f7f5ef] p-3 text-sm"><input className="mt-0.5 accent-[var(--rose)]" type="checkbox" checked={form.exposeParameters} onChange={(event) => onChange({ ...form, exposeParameters: event.target.checked })} /><span><b>公开正面与负面提示词及详细生成参数</b><small className="mt-1 block font-normal leading-5 text-[var(--muted)]">关闭后，其他用户只能查看图片和公开标签。</small></span></label>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3"><LfnSwitch checked={form.exposeParameters} onChange={(exposeParameters) => onChange({ ...form, exposeParameters })} label="公开提示词与生成参数" /><p className="mt-2 text-xs font-normal leading-5 text-[var(--muted)]">关闭后，其他用户只能查看图片和公开标签。</p></div>
         </div>
-        <div className="mt-6 flex justify-end gap-3 border-t border-[var(--line)] pt-5"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-white px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "直接发布"}</button></div>
+        <div className="mt-6 flex justify-end gap-3 border-t border-[var(--line)] pt-5"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-[var(--surface)] px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "提交审核"}</button></div>
       </div>
     </div>, document.body
   );

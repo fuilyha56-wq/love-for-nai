@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import sharp from "sharp";
+import { stripImageMetadata } from "@/lib/image-processing";
+import { invalidateCachedJsonFile, readCachedJsonFile } from "@/lib/server-json-cache";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
@@ -45,8 +46,14 @@ export type GalleryItem = {
   imageMetadataStripped?: boolean;
   createdAt: string;
   likes: number;
+  /** Counted after a download action succeeds; older records default to 0. */
+  downloads?: number;
+  /** Counted when a work is explicitly imported or selected as a reference. */
+  uses?: number;
   likedBy: number[];
   weeklyLikes?: Record<string, number>;
+  weeklyDownloads?: Record<string, number>;
+  weeklyUses?: Record<string, number>;
   rewardedWeek?: string;
   /** New submissions require moderation; legacy records default to approved. */
   status: GalleryStatus;
@@ -73,6 +80,11 @@ function normalizeStatus(value: unknown): GalleryStatus {
 
 function normalizeItem(item: Partial<GalleryItem>): GalleryItem {
   const createdAt = typeof item.createdAt === "string" ? item.createdAt : new Date(0).toISOString();
+  const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  const weeklyCounts = (value: unknown): Record<string, number> =>
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.entries(value).filter(([week, amount]) => /^\d{4}-\d{2}-\d{2}$/.test(week) && typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 0))
+      : {};
   return {
     ...(item as GalleryItem),
     rating: normalizeRating(item.rating),
@@ -81,15 +93,20 @@ function normalizeItem(item: Partial<GalleryItem>): GalleryItem {
     tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : [],
     likedBy: Array.isArray(item.likedBy) ? item.likedBy.filter((id): id is number => typeof id === "number") : [],
     likes: typeof item.likes === "number" ? item.likes : 0,
+    downloads: count(item.downloads),
+    uses: count(item.uses),
+    weeklyLikes: weeklyCounts(item.weeklyLikes),
+    weeklyDownloads: weeklyCounts(item.weeklyDownloads),
+    weeklyUses: weeklyCounts(item.weeklyUses),
     parameters: item.parameters && typeof item.parameters === "object" ? item.parameters : {},
   };
 }
 
-async function readStore(): Promise<GalleryStore> {
-  try {
-    const value = JSON.parse(await readFile(storePath(), "utf8")) as GalleryStore;
-    return { items: (Array.isArray(value.items) ? value.items : []).map((item) => normalizeItem(item)) };
-  } catch { return { items: [] }; }
+async function readStore(readOnly = false): Promise<GalleryStore> {
+  try { return await readCachedJsonFile(storePath(), (raw) => {
+    const value = raw as GalleryStore;
+    return { items: (Array.isArray(value?.items) ? value.items : []).map((item) => normalizeItem(item)) };
+  }, { clone: !readOnly }); } catch { return { items: [] }; }
 }
 async function writeStore(store: GalleryStore): Promise<void> {
   await mkdir(root(), { recursive: true });
@@ -97,6 +114,7 @@ async function writeStore(store: GalleryStore): Promise<void> {
   const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(store, null, 2), "utf8");
   await rename(temp, target);
+  invalidateCachedJsonFile(target);
 }
 export function galleryWeekKey(date = new Date()): string {
   const monday = new Date(date);
@@ -130,20 +148,6 @@ export function assertNaiImage(buffer: Buffer, fileName: string): { extension: s
   if (!metadata.isNai)
     throw new Error("图片中未检测到 NovelAI 生成特征，只能上传 NAI 生成的图片");
   return { extension: isJpeg || extension === ".jpg" || extension === ".jpeg" ? "jpg" : "png", parameters: metadata.parameters };
-}
-
-async function stripImageMetadata(buffer: Buffer, fileName: string): Promise<{ data: Buffer; extension: string }> {
-  const originalExtension = path.extname(fileName).toLowerCase();
-  const format = originalExtension === ".jpg" || originalExtension === ".jpeg"
-    ? "jpeg"
-    : originalExtension === ".webp" ? "webp" : "png";
-  const image = sharp(buffer).rotate();
-  const data = format === "jpeg"
-    ? await image.jpeg({ quality: 95 }).toBuffer()
-    : format === "webp"
-      ? await image.webp({ quality: 95 }).toBuffer()
-      : await image.png({ compressionLevel: 9 }).toBuffer();
-  return { data, extension: format === "jpeg" ? "jpg" : format };
 }
 
 export async function publishFromHistory(
@@ -202,11 +206,11 @@ export function publicGalleryItem(item: GalleryItem): GalleryItem {
 }
 
 function ownerGalleryItem(item: GalleryItem): GalleryItem {
-  return { ...item, likedBy: [], weeklyLikes: undefined, ...(Object.keys(item.parameters).length ? {} : { prompt: "", negativePrompt: "" }) };
+  return { ...item, tags: [...item.tags], parameters: structuredClone(item.parameters), likedBy: [], weeklyLikes: undefined, ...(Object.keys(item.parameters).length ? {} : { prompt: "", negativePrompt: "" }) };
 }
 
 export async function listGallery(): Promise<GalleryItem[]> {
-  return (await readStore()).items.filter((item) => item.status === "approved").map((item) => ({
+  return (await readStore(true)).items.filter((item) => item.status === "approved").map((item) => ({
     id: item.id,
     ownerId: item.ownerId,
     ownerName: item.ownerName,
@@ -214,7 +218,7 @@ export async function listGallery(): Promise<GalleryItem[]> {
     title: item.title,
     rating: item.rating,
     source: item.source,
-    tags: item.tags,
+    tags: [...item.tags],
     prompt: "",
     negativePrompt: "",
     parameters: {},
@@ -222,23 +226,99 @@ export async function listGallery(): Promise<GalleryItem[]> {
     imageMetadataStripped: item.imageMetadataStripped,
     createdAt: item.createdAt,
     likes: item.likes,
+    downloads: item.downloads || 0,
+    uses: item.uses || 0,
     likedBy: [],
     status: item.status,
     submittedAt: item.submittedAt,
   }));
 }
 
+export type GallerySort = "newest" | "likes" | "downloads" | "uses";
+export type GalleryQuery = {
+  q?: string;
+  tags?: string[];
+  rating?: string;
+  sort?: GallerySort;
+  page?: number;
+  pageSize?: number;
+};
+export type GalleryQueryResult = {
+  items: GalleryItem[];
+  tags: string[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+};
+
+/** Public, paginated discovery query. Search never considers private prompts or metadata. */
+export async function queryGallery(query: GalleryQuery = {}): Promise<GalleryQueryResult> {
+  const all = await listGallery();
+  const search = (query.q || "").trim().toLocaleLowerCase();
+  const selectedTags = (query.tags || []).map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean);
+  const rating = query.rating && ["general", "r13", "r17", "r18"].includes(query.rating) ? query.rating : "all";
+  const tagFrequency = new Map<string, number>();
+  for (const item of all) for (const tag of item.tags) {
+    const normalized = tag.trim();
+    if (normalized) tagFrequency.set(normalized, (tagFrequency.get(normalized) || 0) + 1);
+  }
+  const tags = [...tagFrequency.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 200)
+    .map(([tag]) => tag);
+  const filtered = all.filter((item) => {
+    if (rating !== "all" && item.rating !== rating) return false;
+    const itemTags = item.tags.map((tag) => tag.toLocaleLowerCase());
+    if (selectedTags.some((tag) => !itemTags.includes(tag))) return false;
+    if (!search) return true;
+    const searchable = [item.title, item.authorName, item.ownerName, ...item.tags].join(" ").toLocaleLowerCase();
+    return search.split(/\s+/).every((part) => searchable.includes(part));
+  });
+  const sort = query.sort && ["likes", "downloads", "uses"].includes(query.sort) ? query.sort : "newest";
+  const metric = (item: GalleryItem) => sort === "likes" ? item.likes : sort === "downloads" ? item.downloads || 0 : item.uses || 0;
+  filtered.sort((a, b) => sort === "newest"
+    ? b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)
+    : metric(b) - metric(a) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  const pageSize = Number.isSafeInteger(query.pageSize) ? Math.min(100, Math.max(1, Number(query.pageSize))) : 24;
+  const total = filtered.length;
+  const pageCount = Math.ceil(total / pageSize);
+  const page = Math.min(Math.max(1, Number.isSafeInteger(query.page) ? Number(query.page) : 1), Math.max(1, pageCount));
+  return { items: filtered.slice((page - 1) * pageSize, page * pageSize), tags, total, page, pageSize, pageCount };
+}
+
+export async function recordGalleryMetric(id: string, kind: "download" | "use"): Promise<{ downloads?: number; uses?: number } | null> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find((entry) => entry.id === id && entry.status === "approved");
+    if (!item) return null;
+    const week = galleryWeekKey();
+    if (kind === "download") {
+      item.downloads = (item.downloads || 0) + 1;
+      item.weeklyDownloads ||= {};
+      item.weeklyDownloads[week] = (item.weeklyDownloads[week] || 0) + 1;
+      await writeStore(store);
+      return { downloads: item.downloads };
+    }
+    item.uses = (item.uses || 0) + 1;
+    item.weeklyUses ||= {};
+    item.weeklyUses[week] = (item.weeklyUses[week] || 0) + 1;
+    await writeStore(store);
+    return { uses: item.uses };
+  });
+}
+
 export async function countGallery(): Promise<number> {
-  return (await readStore()).items.length;
+  return (await readStore(true)).items.length;
 }
 
 export async function listGalleryAdmin(status?: GalleryStatus | "all"): Promise<GalleryItem[]> {
-  const items = (await readStore()).items;
-  return status && status !== "all" ? items.filter((item) => item.status === status) : items;
+  const items = (await readStore(true)).items;
+  return (status && status !== "all" ? items.filter((item) => item.status === status) : items).map((item) => structuredClone(item));
 }
 
 export async function listGalleryMine(ownerId: number): Promise<GalleryItem[]> {
-  return (await readStore()).items.filter((item) => item.ownerId === ownerId).map(ownerGalleryItem);
+  return (await readStore(true)).items.filter((item) => item.ownerId === ownerId).map(ownerGalleryItem);
 }
 
 export async function updateGalleryItem(
@@ -290,7 +370,8 @@ export async function deleteGalleryItem(id: string): Promise<boolean> {
   });
 }
 export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
-  return (await readStore()).items.find((item) => item.id === id) || null;
+  const item = (await readStore(true)).items.find((entry) => entry.id === id);
+  return item ? structuredClone(item) : null;
 }
 
 export async function resubmitGalleryItem(ownerId: number, id: string, note?: string): Promise<GalleryItem> {

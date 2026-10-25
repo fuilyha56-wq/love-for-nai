@@ -24,7 +24,7 @@ async function put(value){const r=await fetch(base+'/api/option/',{method:'PUT',
 (async()=>{
  const original=await options(), expressions=JSON.parse(original[optionKey]), modes=JSON.parse(original['billing_setting.billing_mode']);
  const policy=JSON.parse(fs.readFileSync(path.join(root,'daily-billing/policy.json'),'utf8'));
- const exchange=Number(policy.displayUsdPerCny||200), smallCny=0.04, smallBalance=Number((smallCny*exchange).toFixed(8));
+ const exchange=Number(policy.displayUsdPerCny||200), smallCny=0.025, smallBalance=Number((smallCny*exchange).toFixed(8));
  const next={...expressions}, plan=[];
  for(const model of targets){
   if(modes[model]!=='tiered_expr')throw Error('Unexpected V5 billing mode');
@@ -33,7 +33,7 @@ async function put(value){const r=await fetch(base+'/api/option/',{method:'PUT',
   if(!found)throw Error('Cannot derive the V4.5 dynamic coefficient');
   const dynamic=Number(found[1])*1.25, raw=smallBalance*1000000;
   if(!Number.isSafeInteger(dynamic)||!Number.isSafeInteger(raw))throw Error('Invalid price conversion');
-  next[model]=`p < 100 ? tier("limit", p * 0 + c * 0 + ${raw}) : tier("full", p * ${dynamic} + c * 0)`;
+  next[model]=`p == 25 ? tier("limit", p * 0 + c * 0 + ${raw}) : tier("full", p * ${dynamic} + c * ${raw})`;
   plan.push({model,before:expressions[model],after:next[model],smallCny,smallBalance,dynamicCoefficient:dynamic});
  }
  const output={applied:false,exchange,plan};

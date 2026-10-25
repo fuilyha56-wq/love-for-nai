@@ -1,9 +1,11 @@
+import { getRuntimeSettings } from "@/lib/runtime-config";
 import { NextResponse } from "next/server";
 import { encodePendingSession, resolvedPendingCookie } from "@/lib/session";
 import {
   callNewApi,
   establishLocalSession,
   establishSession,
+  newApiRateLimitResponse,
   requiresTwoFactor,
 } from "@/lib/login";
 import { authenticateLocalUser } from "@/lib/local-users";
@@ -15,6 +17,7 @@ import {
 } from "@/lib/request";
 
 export async function POST(request: Request) {
+  if (!(await getRuntimeSettings()).passwordLoginEnabled) return NextResponse.json({ message: "站点已关闭密码登录" }, { status: 403 });
   let raw: Record<string, unknown>;
   try {
     raw = await parseJsonBody<Record<string, unknown>>(request);
@@ -34,13 +37,21 @@ export async function POST(request: Request) {
     if ((await resolvedAuthProviderId()) === "local") {
       const user = await authenticateLocalUser(username, password);
       if (!user)
-        return NextResponse.json({ message: "用户名或密码错误" }, { status: 401 });
+        return NextResponse.json(
+          { message: "用户名或密码错误" },
+          { status: 401 },
+        );
       return establishLocalSession(user, remember);
     }
-    const { response, result } = await callNewApi("/api/user/login", {
-      username,
-      password,
-    });
+    const { response, result } = await callNewApi(
+      "/api/user/login",
+      {
+        username,
+        password,
+      },
+      request,
+    );
+    if (response.status === 429) return newApiRateLimitResponse(response);
     if (!result.success || !result.data) {
       // 上游 NewAPI 对单用户活跃登录会话数有上限（默认 50），
       // 撞满时登录返回 409，message 只有 "Conflict"。

@@ -1,6 +1,7 @@
 "use client";
 
 import { WorkspaceNav } from "@/app/workspace-nav";
+import CachedImage from "@/app/cached-image";
 import {
   GallerySubmitDialog,
   type GallerySubmitForm,
@@ -25,6 +26,7 @@ type Submission = {
   reviewNote?: string;
   submittedAt: string;
   imageUrl: string;
+  thumbnailUrl?: string;
 };
 const statusLabels = {
   pending: "待审核",
@@ -234,8 +236,8 @@ export default function StudioPage({
                   key={item.id}
                   className="flex flex-wrap items-center gap-3 rounded border border-[var(--line)] px-3 py-3"
                 >
-                  <img
-                    src={item.imageUrl}
+                  <CachedImage
+                    src={item.thumbnailUrl || `${item.imageUrl}?variant=thumbnail`}
                     alt=""
                     className="h-14 w-14 rounded object-cover"
                   />

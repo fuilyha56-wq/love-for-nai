@@ -1,0 +1,200 @@
+{
+  "capturedAt": "2026-10-22T10:43:01.530Z",
+  "options": {
+    "billing_setting.billing_expr": {
+      "nai-v4.5-curated": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "nai-v4.5-full": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "nai-v4.5-inpaint": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "nai-v5-curated": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+      "nai-v5-full": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+      "nai-v5-inpaint": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)"
+    },
+    "billing_setting.billing_mode": {
+      "nai-v4.5-curated": "tiered_expr",
+      "nai-v4.5-full": "tiered_expr",
+      "nai-v4.5-inpaint": "tiered_expr",
+      "nai-v5-curated": "tiered_expr",
+      "nai-v5-full": "tiered_expr",
+      "nai-v5-inpaint": "tiered_expr"
+    },
+    "ModelPrice": {
+      "nai-v4.5-curated": 200,
+      "nai-v4.5-curated-limit": 0,
+      "nai-v4.5-full": 200,
+      "nai-v4.5-full-limit": 0,
+      "nai-v4.5-inpaint": 200,
+      "nai-v4.5-inpaint-limit": 0,
+      "nai-v5-curated": 200,
+      "nai-v5-curated-limit": 8,
+      "nai-v5-full": 200,
+      "nai-v5-full-limit": 8,
+      "nai-v5-full-medium": 3.46153846,
+      "nai-v5-inpaint": 200,
+      "nai-v5-inpaint-limit": 6,
+      "nai-v5-inpaint-medium": 3.46153846
+    },
+    "ModelRatio": {},
+    "CompletionRatio": {},
+    "GroupRatio": {
+      "default": 1,
+      "Draw-Limit": 1,
+      "Draw": 1,
+      "Draw-Limit-2": 0
+    },
+    "GroupGroupRatio": {},
+    "QuotaPerUnit": 500000,
+    "DisplayTokenStatEnabled": true,
+    "USDExchangeRate": 7.3
+  },
+  "statusPricing": {
+    "display_in_currency": true,
+    "quota_display_type": "USD",
+    "quota_per_unit": 500000,
+    "usd_exchange_rate": 7.3
+  },
+  "dailyPolicy": {
+    "enabled": true,
+    "strictApiBilling": false,
+    "displayUsdPerCny": 200,
+    "v45AnlasCny": 0.02,
+    "v5AnlasCny": 0.025,
+    "v45": [
+      {
+        "afterImages": 0,
+        "baseCny": 0,
+        "anlasMultiplier": 1,
+        "totalMultiplier": 1
+      }
+    ],
+    "v5": [
+      {
+        "afterImages": 0,
+        "baseCny": 0.04,
+        "anlasMultiplier": 1,
+        "totalMultiplier": 1
+      },
+      {
+        "afterImages": 75,
+        "baseCny": 0.04,
+        "anlasMultiplier": 1.1,
+        "totalMultiplier": 1.1
+      },
+      {
+        "afterImages": 125,
+        "baseCny": 0.04,
+        "anlasMultiplier": 1.15,
+        "totalMultiplier": 1.15
+      },
+      {
+        "afterImages": 200,
+        "baseCny": 0.04,
+        "anlasMultiplier": 1.2,
+        "totalMultiplier": 1.2
+      }
+    ]
+  },
+  "modelCatalog": [
+    {
+      "model_name": "nai-v4.5-full-limit",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 0
+    },
+    {
+      "model_name": "nai-v5-inpaint-medium",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 3.46153846
+    },
+    {
+      "model_name": "nai-v5-curated",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 200,
+      "billing_mode": "tiered_expr",
+      "billing_expr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)"
+    },
+    {
+      "model_name": "nai-v4.5-curated-limit",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 0
+    },
+    {
+      "model_name": "nai-v4.5-full",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 200,
+      "billing_mode": "tiered_expr",
+      "billing_expr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)"
+    },
+    {
+      "model_name": "nai-v4.5-curated",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 200,
+      "billing_mode": "tiered_expr",
+      "billing_expr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)"
+    },
+    {
+      "model_name": "nai-v5-full",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 200,
+      "billing_mode": "tiered_expr",
+      "billing_expr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)"
+    },
+    {
+      "model_name": "nai-v5-full-medium",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 3.46153846
+    },
+    {
+      "model_name": "nai-v5-full-limit",
+      "enable_groups": [
+        "Draw",
+        "Draw-Limit",
+        "Draw-Limit-2"
+      ],
+      "quota_type": 1,
+      "model_price": 8
+    },
+    {
+      "model_name": "nai-v5-curated-limit",
+      "enable_groups": [
+        "Draw-Limit",
+        "Draw-Limit-2",
+        "Draw"
+      ],
+      "quota_type": 1,
+      "model_price": 8
+    }
+  ]
+}

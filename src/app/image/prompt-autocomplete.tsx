@@ -123,11 +123,14 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
       onContextMenu={onContextMenu} placeholder={placeholder} className={className} />
     {showSuggestions && createPortal(<div data-replica-menu id={listId} style={position} className="tag-suggest-panel replica-completion-panel" role="listbox" aria-label={related ? "本地共现标签" : "标签联想"}>
       <p className="tag-suggest-head">{related ? "本次历史 / 我的词库共现" : "标签建议 · ↑↓ 选择 · Enter / Tab 插入"}</p>
-      <div className="tag-suggest-list">{suggestions.map((hit, index) => <button type="button" id={listId + "-" + index} key={hit.name} role="option" aria-selected={index === active}
+      <div className="tag-suggest-list">{suggestions.map((hit, index) => <button type="button" id={listId + "-" + index} key={hit.catalogKey || hit.name} role="option" aria-selected={index === active} title={hit.description || hit.zh || hit.name}
         onPointerDown={(event) => { event.preventDefault(); acceptTag(hit); }} onMouseEnter={() => setActive(index)} className={"tag-suggest-item" + (index === active ? " is-active" : "")}>
-        <span className="tag-suggest-name">{hit.displayName || hit.name}{hit.zh && <span className="tag-suggest-zh">{hit.zh}</span>}</span>
-        <span className="tag-suggest-meta">{hit.categoryName || "标签"}{hit.occurrences != null ? ` · ${hit.occurrences} 条记录` : hit.postCount != null ? ` · ${hit.postCount.toLocaleString("zh-CN")}` : ""}</span>
+        <span className="tag-suggest-name">{hit.displayName || hit.name}{hit.zh && <span className="tag-suggest-zh">{hit.zh}</span>}{hit.description && <span className="block line-clamp-2 text-[10px] font-normal leading-4 text-[var(--muted)]">{hit.description}</span>}</span>
+        <span className="tag-suggest-meta">{hit.categoryName || "标签"}{hit.source === "danbooru" ? " · Danbooru" : ""}{hit.occurrences != null ? ` · ${hit.occurrences} 条记录` : hit.postCount != null && hit.source !== "quicktagcloud" ? ` · ${hit.postCount.toLocaleString("zh-CN")}` : ""}</span>
       </button>)}</div>
+      {suggestions[active]?.catalogKey && <a className="block border-t border-[var(--line)] px-3 py-2 text-[11px] text-[var(--rose)]"
+        href={`/tags?key=${encodeURIComponent(suggestions[active].catalogKey!)}`} target="_blank" rel="noreferrer"
+        onMouseDown={(event) => event.preventDefault()}>查看当前标签的完整介绍与原始记录 ↗</a>}
     </div>, document.body)}
   </div>;
 }

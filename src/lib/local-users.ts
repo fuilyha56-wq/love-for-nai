@@ -15,6 +15,13 @@ export type LocalUser = {
   createdAt: string;
 };
 
+const creationState = globalThis as typeof globalThis & { __lfnUserCreationLock?: Promise<unknown> };
+function withCreationLock<T>(task: () => Promise<T>): Promise<T> {
+  const current = (creationState.__lfnUserCreationLock || Promise.resolve()).then(task, task);
+  creationState.__lfnUserCreationLock = current.catch(() => undefined);
+  return current;
+}
+
 type UserStore = { nextId: number; users: LocalUser[] };
 
 const storeRoot = () =>
@@ -132,31 +139,35 @@ export async function createLocalUser(input: {
   displayName?: string;
   email?: string;
 }): Promise<LocalUser> {
-  const username = input.username.trim();
-  if (!/^[a-zA-Z0-9_\-.]{3,32}$/.test(username))
-    throw new Error("用户名需为 3–32 位字母、数字或 _-.");
-  if (input.password.length < 6) throw new Error("密码至少 6 位");
-  const store = await readStore();
-  if (store.users.some((user) => user.username.toLowerCase() === username.toLowerCase()))
-    throw new Error("用户名已被占用");
-  const bootstrapAdmin =
-    process.env.LFN_LOCAL_ADMIN_USERNAME?.trim().toLowerCase() === username.toLowerCase() ||
-    store.users.length === 0;
-  const user: LocalUser = {
-    id: store.nextId,
-    username,
-    displayName: input.displayName?.trim() || username,
-    email: input.email?.trim() || "",
-    passwordHash: hashPassword(input.password),
-    role: bootstrapAdmin ? 10 : 1,
-    status: 1,
-    group: await runtimeRegisterGroup().catch(() => "default"),
-    createdAt: new Date().toISOString(),
-  };
-  store.nextId += 1;
-  store.users.push(user);
-  await writeStore(store);
-  return user;
+  return withCreationLock(async () => {
+    const username = input.username.trim();
+    if (!/^[a-zA-Z0-9_\-.]{3,32}$/.test(username))
+      throw new Error("用户名需为 3–32 位字母、数字或 _-.");
+    if (input.password.length < 6) throw new Error("密码至少 6 位");
+    const store = await readStore();
+    if (store.users.some((user) => user.username.toLowerCase() === username.toLowerCase()))
+      throw new Error("用户名已被占用");
+    const email = input.email?.trim().toLowerCase() || "";
+    if (email && store.users.some((user) => user.email.toLowerCase() === email)) throw new Error("邮箱已被占用");
+    const bootstrapAdmin =
+      process.env.LFN_LOCAL_ADMIN_USERNAME?.trim().toLowerCase() === username.toLowerCase() ||
+      store.users.length === 0;
+    const user: LocalUser = {
+      id: store.nextId,
+      username,
+      displayName: input.displayName?.trim() || username,
+      email,
+      passwordHash: hashPassword(input.password),
+      role: bootstrapAdmin ? 10 : 1,
+      status: 1,
+      group: await runtimeRegisterGroup().catch(() => "default"),
+      createdAt: new Date().toISOString(),
+    };
+    store.nextId += 1;
+    store.users.push(user);
+    await writeStore(store);
+    return user;
+  });
 }
 
 export async function updateLocalUser(

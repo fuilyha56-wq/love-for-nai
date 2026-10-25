@@ -7,8 +7,13 @@ import { copyTextToClipboard } from "@/lib/client-clipboard";
 
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
-import { readImageOperationResponse } from "@/lib/image-operation-response";
+import { imageHistoryReferences, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
+import { isAssistantChatModel } from "@/lib/assistant-models";
+import { AssistantModelPicker } from "./assistant-model-picker";
+import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
+import { ImageDownloadMenu } from "@/app/image-download-menu";
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
 import { generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
 import { parseImageHistoryMetadata, saveEditorComposite } from "@/lib/editor-composite-history";
 import type { GenerationParameters } from "@/lib/history";
@@ -28,7 +33,6 @@ import {
   ChevronRight,
   Code2,
   ExternalLink,
-  Download,
   Eraser,
   Eye,
   FileUp,
@@ -53,7 +57,6 @@ import {
   Search,
   Scan,
   RotateCcw,
-  Ruler,
   Save,
   ShieldCheck,
   SlidersHorizontal,
@@ -94,6 +97,7 @@ import { NaiBalanceMeter } from "./nai-balance-meter";
 import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverseTagger } from "./replica-controls";
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
 import { NaturalImageSettings } from "./natural-image-settings";
+import { naiImageSizeError, naiDimensionLimit, naiMaxSamples, isNaiLimitModel, NAI_MAX_DIMENSION } from "@/lib/nai-image-limits";
 import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageSize, normalizeImageModelSize, productModeProtocol, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProductMode, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, type ModelPolicy } from "@/lib/model-policy";
 import { NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
@@ -104,6 +108,7 @@ import { ReplicaRightDock } from "./replica-right-dock";
 import { ReplicaHistory, type ReplicaHistoryItem } from "./replica-history";
 import { ReplicaNavigation, ReplicaGenerationFooter } from "./replica-shell";
 import { MobileStudioLauncher, type MobileStudioSheet } from "./mobile-studio-launcher";
+import { NotificationBell } from "@/app/notifications/notification-bell";
 import { GalleryPicker } from "./gallery-picker";
 import {
   clearEditorPromptHandoff,
@@ -145,10 +150,11 @@ import {
 } from "@/lib/image-editor";
 import {
   createEditorDraft,
-  deleteEditorDraft,
   loadEditorDraft,
   saveEditorDraft,
 } from "@/lib/image-editor-store";
+import { clearPersistentStudioSource, editorHistoryOperation, loadEditorHistoryNode, loadPersistentStudioSource, savePersistentStudioSource, type EditorHistoryReference } from "@/lib/image-editor-history";
+import { recordStudioImageEdit } from "@/lib/image-editor-record";
 import {
   dataUrlToBlob,
   findLocalImageHistory,
@@ -187,10 +193,10 @@ import {
   estimateNewApiCost,
   imageCreditCost,
   imagePricingStrength,
+  officialNaiAnlasCost,
   splitImageCreditCost,
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
-  upscaleAnlasCost,
   upscaleBillingModel,
   type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
@@ -241,8 +247,9 @@ type Operation =
   | "director-colorize"
   | "director-emotion"
   | "suggest-tags";
-type Upload = { data: string; name: string };
-type SessionResult = ReplicaHistoryItem & {
+type Upload = { data: string; name: string } & EditorHistoryReference;
+type GatewayImageCapacity = { total: number; v5: number; v45: number; anlas: number; v5_and_anlas: number; concurrency: number };
+type SessionResult = ReplicaHistoryItem & EditorHistoryReference & {
   id: string;
   image: string;
   prompt: string;
@@ -283,6 +290,7 @@ type AssistantSuggestion = {
   imageModel?: string;
   modelProtocol?: ImageProviderProtocol;
   promptStyle?: "tags" | "natural";
+  goalComplete?: boolean;
   message?: string;
   englishDescription?: string;
   prompt: string;
@@ -304,6 +312,8 @@ type AssistantSuggestion = {
   };
 };
 type AgentStep = { tool: string; query: string; ok: boolean; summary?: string };
+type GoalAgentRun = { id: string; goal: string; accessMode: "approval" | "full"; completedGenerations: number; status: "running" | "complete" | "stopped" | "limit" | "needs-attention" };
+const MAX_GOAL_AGENT_GENERATIONS = 5;
 
 // 持久化对话：历史轮次（新→旧）与跨轮次累积的标签池。
 type ConversationTurnUi = {
@@ -327,9 +337,15 @@ type ConversationUi = {
 
 // 检索过程里展示用的工具中文名。
 const agentToolLabels: Record<string, string> = {
-  search_danbooru_tags: "检索 Danbooru",
-  verify_danbooru_tag: "校验标签",
-  read_danbooru_wiki: "读取词条",
+  search_tag_catalog: "检索本地标签库",
+  read_tag_catalog: "读取本地完整介绍",
+  tag_catalog_status: "核对标签库",
+  search_danbooru_tags: "在线检索 Danbooru",
+  verify_danbooru_tag: "在线校验 Danbooru",
+  read_danbooru_wiki: "在线读取 Danbooru 词条",
+  list_quicktagcloud_codexes: "在线读取 QuickTagCloud 目录",
+  search_quicktagcloud_tags: "在线检索 QuickTagCloud",
+  read_quicktagcloud_entry: "在线读取 QuickTagCloud 词条",
   web_search: "概念检索",
 };
 
@@ -447,9 +463,6 @@ const acceptedUploadTypes = new Set([
   "image/webp",
 ]);
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
-const ASSISTANT_POLL_INTERVAL_MS = 2_000;
-const ASSISTANT_MAX_POLLS = 60;
-const ASSISTANT_TIMEOUT_MS = 2 * 60 * 1_000;
 const ASSISTANT_MESSAGE_MAX = 500;
 const SOURCE_REFRESH_TTL_MS = 5 * 60 * 1_000;
 const POLICY_REFRESH_TTL_MS = 5 * 60 * 1_000;
@@ -490,17 +503,15 @@ export function validateGenerationParameters({
 }: GenerationValidationInput): string | null {
   const natural = imageModel && resolveImageModelCapabilities(imageModel, imageProtocol).promptStyle === "natural";
   if (natural && (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 3840 || height > 3840)) return "输出宽高必须是 64–3840 之间的整数。";
-  if (!natural && (
-    !Number.isInteger(width) ||
-    !Number.isInteger(height) ||
-    width < 64 ||
-    height < 64 ||
-    width > 1600 ||
-    height > 1600 ||
-    width % 64 !== 0 ||
-    height % 64 !== 0
-  ))
-    return "宽高必须是 64–1600 之间的整数，并且是 64 的倍数。";
+  if (!natural) {
+    const sizeError = naiImageSizeError(imageModel || "nai-v5-full", width, height);
+    if (sizeError) return sizeError;
+    if (isNaiLimitModel(imageModel || "") && steps > 28) return "Limit 模型最多支持 28 步。";
+  }
+  if (!natural && generationModes.has(operation) && officialNaiAnlasCost({
+    model: imageModel || "nai-v5-full", width, height, steps, samples: 1, operation,
+    strength: operation === "img2img" ? strength : undefined,
+  }) > 140) return "这些设置的单张生成费超过 140 Anlas，请降低分辨率或步数。";
   if (!natural && (!Number.isInteger(steps) || steps < 1 || steps > 50))
     return "采样步数必须是 1–50 之间的整数。";
   if (!natural && (!Number.isFinite(scale) || scale < 0 || scale > 10))
@@ -635,8 +646,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 生成张数提交方式：分批次（每个请求 n=1）或一次性（单请求 n 张）。
   const [batchMode, setBatchMode] = useState<"once" | "sequential">("sequential");
   const [batchProgress, setBatchProgress] = useState("");
+  const [gatewayImageCapacity, setGatewayImageCapacity] = useState<GatewayImageCapacity | null>(null);
+  const [gatewayImageCapacityChecked, setGatewayImageCapacityChecked] = useState(false);
   const [generationConfirmation, setGenerationConfirmation] = useState<string | null>(null);
   const generationInFlight = useRef(false);
+  const galleryUseRecorded = useRef(new Set<string>());
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [schedule, setSchedule] = useState("native");
   // 0 表示关闭重缩放；非 0 会被 NovelAI 部分模型拒绝，因此默认不启用。
@@ -649,7 +663,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [negative, setNegative] = useState(defaultNegative);
   const [effectivePrompts, setEffectivePrompts] = useState({ prompt: defaultPrompt, negative: defaultNegative });
-  const [source, setSource] = useState<Upload | null>(null);
+  const [source, setSourceState] = useState<Upload | null>(null);
+  const [redrawHistoryError, setRedrawHistoryError] = useState("");
+  const sourceRevisionRef = useRef(0);
+  const sourcePersistenceTaskRef = useRef<Promise<void>>(Promise.resolve());
   const [mask, setMask] = useState<Upload | null>(null);
   const [charactersEnabled, setCharactersEnabled] = useState(false);
   // AI 自动定位（Aaalice aiChoice）：开启时不发坐标（use_coords=false），
@@ -669,6 +686,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [ucType, setUcType] = useState<Exclude<UcPresetType, "custom"> | "custom">("heavy");
   const [customQuality, setCustomQuality] = useState("");
   const [customUc, setCustomUc] = useState("");
+  const [promptPreferencesReady, setPromptPreferencesReady] = useState(false);
   // 全屏拖放遮罩：dragenter/dragleave 计数，离开窗口才收起。
   const [dropActive, setDropActive] = useState(false);
   // 底部生成参数组折叠状态（采样步数/相关性/种子/采样器）。
@@ -684,6 +702,34 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     null,
   );
   const [notice, setNotice] = useState("");
+  const setSource = useCallback((next: Upload | null) => {
+    const revision = sourceRevisionRef.current + 1;
+    sourceRevisionRef.current = revision;
+    setSourceState(next);
+    sourcePersistenceTaskRef.current = sourcePersistenceTaskRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (revision !== sourceRevisionRef.current) return;
+        if (next) await savePersistentStudioSource(next);
+        else await clearPersistentStudioSource();
+      })
+      .catch((error) => {
+        if (revision === sourceRevisionRef.current)
+          setNotice(`${error instanceof Error ? error.message : "无法持久化工作台源图"}；刷新后可能需要重新导入。`);
+      });
+  }, []);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("editorResult") || params.has("galleryId") || params.has("historyId")) return;
+    const revision = sourceRevisionRef.current;
+    let active = true;
+    void loadPersistentStudioSource()
+      .then((saved) => {
+        if (active && saved && sourceRevisionRef.current === revision) setSourceState(saved);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
   const [mobileSheet, setMobileSheet] = useState<MobileStudioSheet | null>(null);
@@ -728,9 +774,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
   const [assistantModel, setAssistantModel] = useState("");
   const assistantModelsLoading = useRef(false);
-  const assistantModelsLoaded = useRef(false);
+  const [assistantModelsPending, setAssistantModelsPending] = useState(false);
+  const [assistantModelsError, setAssistantModelsError] = useState("");
   const [agentInput, setAgentInput] = useState("");
+  const [assistantMode, setAssistantMode] = useState<"tags" | "goal">("tags");
+  const [autonomyMode, setAutonomyMode] = useState<"approval" | "full">("approval");
+  const [goalRun, setGoalRun] = useState<GoalAgentRun | null>(null);
+  const goalRunRef = useRef<GoalAgentRun | null>(null);
+  const goalReviewImageRef = useRef<string | null>(null);
+  const autonomousGenerationRef = useRef(false);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [assistantTaskError, setAssistantTaskError] = useState("");
   // 随需求发给视觉模型的参考图（data URL）。
   const [agentImage, setAgentImage] = useState<string | null>(null);
   const [agentImageZoom, setAgentImageZoom] = useState(false);
@@ -891,21 +945,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const mediumEffort = isNaiMediumModel(model);
   const highEffortSettings = useRef<{ model: string; steps: number; sampler: string; cfgRescale: number; width: number; height: number; count: number } | null>(null);
   useEffect(() => {
-    if (!mediumEffort) return;
+    if (modelCapabilities.family !== "nai") return;
     let active = true;
     void Promise.resolve().then(() => {
       if (!active) return;
       const size = normalizeImageModelSize(model, width, height, imageProtocol);
       setWidth(size.width);
       setHeight(size.height);
-      setCount(1);
-      setSteps(14);
-      setSampler("k_euler_ancestral");
-      setCfgRescale(0);
+      if (isNaiLimitModel(model)) setSteps((value) => Math.min(value, 28));
+      if (mediumEffort) {
+        setSteps(14); setSampler("k_euler_ancestral"); setCfgRescale(0);
+      }
       if (!resolveImageModelCapabilities(model, imageProtocol).operations.includes(operation)) setOperation("generate");
     });
     return () => { active = false; };
-  }, [mediumEffort, model, imageProtocol, operation, width, height, count]);
+  }, [mediumEffort, model, imageProtocol, operation, width, height, modelCapabilities.family]);
   useEffect(() => {
     if (!modePickerOpen) return;
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -1117,14 +1171,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     if (caps.seed) setSeed(parameters.seed == null || parameters.seed === 0 ? "" : String(parameters.seed));
   }
 
-  function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> = {}, requestIds: string[] = []) {
+  async function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> & EditorHistoryReference = {}, requestIds: string[] = []) {
     if (!nextImages.length || sourceOperation === "suggest-tags") return;
     const now = Date.now();
     const results: SessionResult[] = nextImages.map((image, index) => ({
         id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
         image,
-        historyId: historyIds[index],
-        requestId: requestIds[index],
+        historyId: historyIds[index] || undefined,
+        requestId: requestIds[index] || undefined,
         prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
         negative: composedPromptLayout ? effectivePrompts.negative : negative,
         seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
@@ -1145,6 +1199,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         try {
           await saveLocalImageHistory({
             id: item.id,
+            remoteId: item.historyId,
             requestId: item.requestId,
             createdAt: item.createdAt,
             image: await dataUrlToBlob(item.image),
@@ -1158,6 +1213,27 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         }
       }));
     }
+    const editOperation = editorHistoryOperation(sourceOperation);
+    if (editOperation && !settings.editorDraftId) {
+      const failures = await Promise.all(results.map(async (item) => {
+        try {
+          const reference = await recordStudioImageEdit({
+            image: item.image, sourceImage: source?.data, name: source?.name,
+            editorDraftId: source?.editorDraftId, editorNodeId: source?.editorNodeId, editorBranchId: source?.editorBranchId,
+            operation: editOperation, prompt: item.prompt, negative: item.negative,
+            generation: { model: item.model, providerId: item.providerId, imageProtocol: item.imageProtocol, quality: item.quality, imageSize: item.imageSize, background: item.background, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, strength },
+            recordId: item.id, createdAt: item.createdAt,
+          });
+          setSessionHistory((current) => current.map((saved) => saved.id === item.id ? { ...saved, ...reference } : saved));
+          return "";
+        } catch (error) {
+          return `图像已完成，但重绘历史保存失败：${error instanceof Error ? error.message : "浏览器存储不可用"}。请先下载结果。`;
+        }
+      }));
+      setRedrawHistoryError(failures.find(Boolean) || "");
+    }
+    if (goalRunRef.current?.status === "running")
+      goalReviewImageRef.current = results.at(-1)?.image || null;
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
@@ -1171,6 +1247,17 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
     if (!image) { setNotice("请先导入或生成一张图片。"); return; }
     try {
+      if (source?.editorDraftId && image === source.data) {
+        if (source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId)) {
+          router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: source.editorNodeId, branchId: source.editorBranchId || "", mode }).toString()}`);
+          return;
+        }
+        const savedDraft = await loadEditorDraft(source.editorDraftId).catch(() => null);
+        if (savedDraft) {
+          router.push(`/image/editor?draftId=${encodeURIComponent(source.editorDraftId)}&mode=${mode}`);
+          return;
+        }
+      }
       const decoded = await loadImageElement(image);
       const canvas = document.createElement("canvas");
       canvas.width = decoded.naturalWidth;
@@ -1195,6 +1282,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       const draftId = `editor-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
       syncEditorPromptToStudioForm(draftId, prompt, negative);
       await saveEditorDraft(createEditorDraft(draftId, mode, editorDocument));
+      if (source && image === source.data) {
+        setSource({ ...source, editorDraftId: draftId, editorNodeId: undefined, editorBranchId: undefined });
+        await sourcePersistenceTaskRef.current;
+      }
       router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${mode}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "无法打开图像编辑器");
@@ -1206,7 +1297,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice("当前模型不支持这个操作，请先选择支持图像编辑的模型。");
       return;
     }
-    setSource({ data: image, name: "工作区图片.png" });
+    const saved = sessionHistory.find((item) => item.image === image);
+    setSource({ data: image, name: "工作区图片.png", editorDraftId: saved?.editorDraftId, editorNodeId: saved?.editorNodeId, editorBranchId: saved?.editorBranchId });
     setMask(null);
     setUpscaleSource(null);
     if (nextOperation === "inpainting" || nextOperation === "edits") {
@@ -1384,7 +1476,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       } catch (error) {
         historyError = error instanceof Error ? error.message : "历史保存失败";
       }
-      addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting");
+      await addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting");
       setNotice(historyError
         ? `精确重绘已完成，但${historyError}。完整图片已保留在工作台，请及时下载。`
         : imageHistoryMode === "none"
@@ -1399,6 +1491,33 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setGenerating(false);
     }
   }
+  const refreshAssistantModels = useCallback(async (signal: AbortSignal) => {
+    if (assistantModelsLoading.current) return;
+    assistantModelsLoading.current = true;
+    setAssistantModelsPending(true);
+    try {
+      const response = await fetch("/api/assistant/models", { cache: "no-store", signal });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.message || "无法读取助手模型");
+      if (signal.aborted) return;
+      const options: SelectOption[] = (Array.isArray(result.models) ? result.models : [])
+        .filter((id: unknown): id is string => typeof id === "string" && isAssistantChatModel(id))
+        .map((id: string) => ({ value: id, label: id }));
+      setAssistantModels(options);
+      setAssistantModelsError("");
+      setAssistantModel((current) => {
+        let preferred = current;
+        try { preferred ||= window.localStorage.getItem("lfn-agent-model") || ""; } catch { /* storage can be unavailable */ }
+        return options.some((option) => option.value === preferred) ? preferred : (options[0]?.value || "");
+      });
+    } catch (error) {
+      if (!signal.aborted) setAssistantModelsError(error instanceof Error ? error.message : "无法读取助手模型");
+    } finally {
+      assistantModelsLoading.current = false;
+      setAssistantModelsPending(false);
+    }
+  }, []);
+
   function openAssistantPanel() {
     if (customWorkspace && !customLayout.visibleModules.agent) {
       setNotice("标签助手模块已关闭，可在布局设置中启用。");
@@ -1409,24 +1528,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     } else {
       setReplicaAssistantOpenRequest(value => value + 1);
     }
-    if (signedIn && !assistantModelsLoaded.current && !assistantModelsLoading.current) {
-      assistantModelsLoading.current = true;
-      void fetch("/api/assistant/models", { cache: "no-store" })
-        .then(async (response) => {
-          const result = await response.json();
-          if (!response.ok) throw new Error(result.message);
-          const options = (result.models || []).map((item: string) => ({ value: item, label: item }));
-          setAssistantModels(options);
-          setAssistantModel((current) => {
-            const saved = window.localStorage.getItem("lfn-agent-model");
-            const preferred = current || saved;
-            return options.some((option: SelectOption) => option.value === preferred) ? preferred : (options[0]?.value || "");
-          });
-          assistantModelsLoaded.current = true;
-        })
-        .catch((error) => setNotice(error instanceof Error ? error.message : "无法读取助手模型"))
-        .finally(() => { assistantModelsLoading.current = false; });
-    }
+    if (signedIn) void refreshAssistantModels(new AbortController().signal);
   }
 
   // Clipboard actions also work with a caret and without an authenticated AI session.
@@ -1676,25 +1778,30 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   // 左侧功能导航栏展开/折叠记忆。
   useEffect(() => {
-    if (window.localStorage.getItem("lfn-nav-rail-expanded") === "1")
-      void Promise.resolve().then(() => setNavRailExpanded(true));
-    if (window.localStorage.getItem("lfn-prompt-tag-mode") === "1")
-      void Promise.resolve().then(() => setPromptTagMode(true));
-    const savedQuality = window.localStorage.getItem("lfn-quality-tier");
-    if (savedQuality) void Promise.resolve().then(() => setQualityTier(savedQuality as QualityTier));
-    const savedUc = window.localStorage.getItem("lfn-uc-type");
-    if (savedUc) void Promise.resolve().then(() => setUcType(savedUc as typeof ucType));
-    const savedCustomQuality = window.localStorage.getItem("lfn-quality-custom");
-    if (savedCustomQuality) void Promise.resolve().then(() => setCustomQuality(savedCustomQuality));
-    const savedCustomUc = window.localStorage.getItem("lfn-uc-custom");
-    if (savedCustomUc) void Promise.resolve().then(() => setCustomUc(savedCustomUc));
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      if (window.localStorage.getItem("lfn-nav-rail-expanded") === "1") setNavRailExpanded(true);
+      if (window.localStorage.getItem("lfn-prompt-tag-mode") === "1") setPromptTagMode(true);
+      const savedQuality = window.localStorage.getItem("lfn-quality-tier");
+      if (savedQuality) setQualityTier(savedQuality as QualityTier);
+      const savedUc = window.localStorage.getItem("lfn-uc-type");
+      if (savedUc) setUcType(savedUc as typeof ucType);
+      const savedCustomQuality = window.localStorage.getItem("lfn-quality-custom");
+      if (savedCustomQuality) setCustomQuality(savedCustomQuality);
+      const savedCustomUc = window.localStorage.getItem("lfn-uc-custom");
+      if (savedCustomUc) setCustomUc(savedCustomUc);
+      setPromptPreferencesReady(true);
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
+    if (!promptPreferencesReady) return;
     window.localStorage.setItem("lfn-prompt-tag-mode", promptTagMode ? "1" : "0");
     window.localStorage.setItem("lfn-quality-tier", qualityTier);
     window.localStorage.setItem("lfn-uc-type", ucType);
-  }, [promptTagMode, qualityTier, ucType]);
+  }, [promptTagMode, qualityTier, ucType, promptPreferencesReady]);
 
   async function rollRandomPrompt() {
     if (randomPromptLoading) return;
@@ -1864,6 +1971,27 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
   const signedIn = authenticated && sessionValid;
+  const activeGatewayCapacity = providerId === "newapi" ? gatewayImageCapacity : null;
+  const batchConcurrency = Math.max(1, activeGatewayCapacity?.concurrency || 2);
+  useEffect(() => {
+    if (!signedIn || providerId !== "newapi") return;
+    const controller = new AbortController();
+    const refreshCapacity = async () => {
+      try {
+        const response = await fetch("/api/image-capacity", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("Gateway 并发状态不可用");
+        const result = await response.json() as { available?: boolean; capacity?: GatewayImageCapacity };
+        if (!controller.signal.aborted) setGatewayImageCapacity(result.available && result.capacity ? result.capacity : null);
+      } catch {
+        if (!controller.signal.aborted) setGatewayImageCapacity(null);
+      } finally {
+        if (!controller.signal.aborted) setGatewayImageCapacityChecked(true);
+      }
+    };
+    void refreshCapacity();
+    const timer = window.setInterval(() => void refreshCapacity(), 15_000);
+    return () => { controller.abort(); window.clearInterval(timer); };
+  }, [providerId, signedIn]);
 
   // Navigation and refresh preserve the login. Idle upstream sessions are
   // revoked by the server's activity based cleanup; explicit logout stays below.
@@ -1947,6 +2075,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 模型来源实时读取：每次都直接请求上游（no-store），并在窗口聚焦和每 60 秒刷新，
   // 不依赖本地存档；上游新增/下架模型后无需手动刷新页面。
   const refreshSources = useCallback(async (signal: AbortSignal) => {
+    void refreshAssistantModels(signal);
     const [modelsResult, providersResult, novelAiResult] = await Promise.allSettled([
       fetch("/api/models", { cache: "no-store", signal }).then(async (response) => {
         const data = await response.json();
@@ -1979,7 +2108,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setCustomProviders(Array.isArray(providersResult.value.items) ? providersResult.value.items : []);
     if (novelAiResult.status === "fulfilled")
       setNovelAiConnected(Boolean(novelAiResult.value.account?.connected));
-  }, []);
+  }, [refreshAssistantModels]);
 
   useEffect(() => {
     if (!signedIn) return;
@@ -2036,7 +2165,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   useEffect(() => {
     if (!assistantModel) return;
-    window.localStorage.setItem("lfn-agent-model", assistantModel);
+    try { window.localStorage.setItem("lfn-agent-model", assistantModel); } catch { /* model selection still works without local storage */ }
   }, [assistantModel]);
 
   useEffect(() => {
@@ -2058,8 +2187,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       if (["auto", "opaque", "transparent"].includes(params.get("background") || "")) setImageBackground(params.get("background")!);
       const reusedNatural = reusedModel && resolveImageModelCapabilities(reusedModel, (reusedProtocol || "auto") as ImageProviderProtocol).promptStyle === "natural";
       const numericValues = [
-        ["width", setWidth, 64, reusedNatural ? 3840 : 1600],
-        ["height", setHeight, 64, reusedNatural ? 3840 : 1600],
+        ["width", setWidth, 64, reusedNatural ? 3840 : NAI_MAX_DIMENSION],
+        ["height", setHeight, 64, reusedNatural ? 3840 : NAI_MAX_DIMENSION],
         ["steps", setSteps, 1, 50],
         ["scale", setScale, 0, 10],
         ["n", setCount, 1, 6],
@@ -2095,7 +2224,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const params = new URLSearchParams(window.location.search);
     const resultId = params.get("editorResult");
     const editorHistory = params.get("editorHistory") || "";
-    if (!resultId || !/^editor-[a-z0-9-]+$/i.test(resultId)) return;
+    if (!resultId || !/^[a-z0-9][a-z0-9._-]{0,250}$/i.test(resultId)) return;
     let active = true;
     void loadEditorDraft(resultId)
       .then(async (resultDraft) => {
@@ -2105,11 +2234,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         setNegative(resultDraft.document.negativePrompt || "");
         restoreGenerationParameters({ operation: "inpainting", ...resultDraft.document.generation, prompt: resultDraft.document.prompt, negative_prompt: resultDraft.document.negativePrompt });
         applyImageAsSource(result, "inpainting");
+        const reference = { editorDraftId: resultId, editorNodeId: params.get("editorNodeId") || resultDraft.historyNodeId, editorBranchId: params.get("editorBranchId") || resultDraft.historyBranchId };
+        setSource({ data: result, name: "编辑器结果.png", ...reference });
         setImages([result]);
-        addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting", {
+        await addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting", {
+          ...reference,
           ...resultDraft.document.generation, prompt: resultDraft.document.prompt || "", negative: resultDraft.document.negativePrompt || "", width: resultDraft.document.image.width, height: resultDraft.document.image.height,
         });
-        await deleteEditorDraft(resultId);
         window.history.replaceState(null, "", "/image");
       })
       .catch((error) => {
@@ -2138,9 +2269,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         if (local) blob = local.image;
       }
       if (!blob) {
-        const response = await fetch(endpoint, { cache: "no-store" });
-        if (!response.ok) throw new Error("无法读取要导入的图片");
-        blob = await response.blob();
+        blob = await fetchCachedImageBlob(endpoint);
       }
       if (active) {
         const importedDataUrl = await blobToDataUrl(blob);
@@ -2153,6 +2282,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         } else {
           setSource(null);
           setOperation("generate");
+        }
+        if (galleryId && !galleryUseRecorded.current.has(galleryId)) {
+          galleryUseRecorded.current.add(galleryId);
+          void fetch(`/api/gallery/${encodeURIComponent(galleryId)}/use`, { method: "POST" }).catch(() => undefined);
         }
         if (historyId && !local?.parameters) {
           const metadataResponse = await fetch(`/api/history/${encodeURIComponent(historyId)}`, { cache: "no-store" });
@@ -2320,13 +2453,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function inputImagesForAgent(): string[] {
-    const selected = sessionHistory.slice(0, agentImage ? 3 : 4).map((item) => item.image);
-    return agentImage ? [...selected, agentImage] : selected;
+    return agentImage ? [agentImage] : [];
   }
-  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string }) {
+  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalRunId?: string }) {
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
-      return false;
+      return null;
     }
     assistantAbortRef.current?.abort("cancel");
     const controller = new AbortController();
@@ -2336,10 +2468,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     assistantAbortRef.current = controller;
     const timeoutId = window.setTimeout(
       () => controller.abort("timeout"),
-      ASSISTANT_TIMEOUT_MS,
+      ASSISTANT_CLIENT_TIMEOUT_MS,
     );
     assistantTimeoutRef.current = timeoutId;
     setAssistantLoading(true);
+    setAssistantTaskError("");
     setAssistantSuggestion(null);
     setAgentSteps([]);
     try {
@@ -2356,7 +2489,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           request,
           currentPrompt: prompt,
           currentNegativePrompt: negative,
-          images: options?.image ? [options.image] : inputImagesForAgent(),
+          images: options?.images ?? (options?.image ? [options.image] : inputImagesForAgent()),
+          ...(options?.goalMode ? { goalMode: true, accessMode: options.accessMode || "approval", goal: options.goal || "", goalIteration: options.goalIteration || 0, goalRunId: options.goalRunId } : {}),
           image: undefined,
         }),
         signal: controller.signal,
@@ -2372,7 +2506,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           { cache: "no-store", signal: controller.signal },
         );
         const progress = await poll.json();
-        if (controller.signal.aborted || assistantAbortRef.current !== controller) return false;
+        if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
         if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
         if (Array.isArray(progress.steps) && progress.steps.length)
           setAgentSteps(progress.steps);
@@ -2380,14 +2514,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setAssistantSuggestion(progress.suggestion);
           // 本轮已落盘，刷新历史与标签池。
           void refreshConversation();
-          return true;
+          return progress.suggestion as AssistantSuggestion;
         }
         if (progress.status === "error")
           throw new Error(progress.message || "智能助手调用失败");
       }
-      throw new Error("助手任务轮询已达到 60 次上限，任务仍可能在后台运行，请重试。");
+      throw new Error("助手任务已超过等待时限，请稍后查看对话记录或重试。");
     } catch (error) {
-      if (assistantAbortRef.current !== controller) return false;
+      if (assistantAbortRef.current !== controller) return null;
       if (controller.signal.aborted) {
         setNotice(
           controller.signal.reason === "timeout"
@@ -2395,9 +2529,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             : "已取消助手任务。",
         );
       } else {
-        setNotice(error instanceof Error ? error.message : "智能助手调用失败");
+        const message = error instanceof Error ? error.message : "智能助手调用失败";
+        setAssistantTaskError(message);
+        setNotice(message);
       }
-      return false;
+      return null;
     } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       if (assistantTimeoutRef.current === timeoutId) {
@@ -2415,7 +2551,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   async function runAgent() {
     const input = agentInput.trim();
     if (!input) {
-      setNotice("请描述画面，或输入要查询的标签关键词。");
+      setNotice(assistantMode === "goal" ? "请描述你希望最终图像达到的目标。" : "请描述画面，或输入要查询的标签关键词。");
+      return;
+    }
+    if (assistantMode === "goal") {
+      await startGoalAgent(input);
       return;
     }
     setTagResults([]);
@@ -2524,12 +2664,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const suggestedSize = naturalImageModel && (parameters.width || parameters.height) ? normalizeImageModelSize(model, parameters.width || width, parameters.height || height, imageProtocol) : null;
     const targetSize = suggestedSize ? [suggestedSize.width, suggestedSize.height] : modelCapabilities.sizes.length ? nearestImageSize(parameters.width || width, parameters.height || height, modelCapabilities.sizes).split("x").map(Number) : null;
     if (targetSize) { setWidth(targetSize[0]); setHeight(targetSize[1]); }
-    if (!targetSize && parameters.width && parameters.width >= 64 && parameters.width <= 1600)
+    if (!targetSize && parameters.width && parameters.width >= 64 && parameters.width <= NAI_MAX_DIMENSION)
       setWidth(parameters.width);
     if (
       !targetSize && parameters.height &&
       parameters.height >= 64 &&
-      parameters.height <= 1600
+      parameters.height <= NAI_MAX_DIMENSION
     )
       setHeight(parameters.height);
     if (modelCapabilities.sampling && parameters.steps && parameters.steps >= 1 && parameters.steps <= 50)
@@ -2559,16 +2699,21 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // 不用 window.confirm——部分内置浏览器会静默吞掉确认框导致无法应用。
   function applyAllSuggestions() {
     if (!assistantSuggestion) return;
-    if (assistantSuggestion.imageModel && (assistantSuggestion.imageModel !== model || assistantSuggestion.modelProtocol !== imageProtocol)) { setNotice("这份建议对应先前的图像模型，请使用当前模型重新生成建议。"); return; }
+    applySuggestionValues(assistantSuggestion);
+  }
+
+  function applySuggestionValues(suggestion: AssistantSuggestion, clearPreview = true) {
+    if (suggestion.imageModel && (suggestion.imageModel !== model || suggestion.modelProtocol !== imageProtocol)) { setNotice("这份建议对应先前的图像模型，请使用当前模型重新生成建议。"); return; }
     if (naturalImageModel) {
-      setPrompt(assistantSuggestion.prompt);
-      setNegative(assistantSuggestion.negativePrompt || "");
-      applySuggestedParameters(assistantSuggestion.parameters);
-      setAssistantSuggestion(null); setNotice("已应用当前图像模型的场景描述建议。"); return;
+      setPrompt(suggestion.prompt);
+      setNegative(suggestion.negativePrompt || "");
+      applySuggestedParameters(suggestion.parameters);
+      if (clearPreview) setAssistantSuggestion(null);
+      setNotice(clearPreview ? "已应用当前图像模型的场景描述建议。" : "Agent 已应用场景描述和参数，准备生成下一轮。"); return;
     }
-    const tagNames = assistantSuggestion.tags.map((tag) => tag.name);
+    const tagNames = suggestion.tags.map((tag) => tag.name);
     setPrompt((value) => {
-      const base = (assistantSuggestion.prompt || value).trim();
+      const base = (suggestion.prompt || value).trim();
       const present = new Set(
         base
           .split(",")
@@ -2582,11 +2727,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         ? `${base}${base ? ", " : ""}${missing.join(", ")}`
         : base;
     });
-    if (assistantSuggestion.negativePrompt)
-      setNegative(assistantSuggestion.negativePrompt);
-    applySuggestedParameters(assistantSuggestion.parameters);
+    if (suggestion.negativePrompt)
+      setNegative(suggestion.negativePrompt);
+    applySuggestedParameters(suggestion.parameters);
     // 多角色建议：切换到文生图并启用多角色，填入各角色提示词与坐标。
-    const suggestedCharacters = assistantSuggestion.characters ?? [];
+    const suggestedCharacters = suggestion.characters ?? [];
     if (suggestedCharacters.length) {
       setOperation("generate");
       setCharactersEnabled(true);
@@ -2600,12 +2745,101 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         })),
       );
     }
-    setAssistantSuggestion(null);
-    setNotice(
+    if (clearPreview) setAssistantSuggestion(null);
+    setNotice(!clearPreview ? "Agent 已应用提示词与生成参数，准备生成下一轮。" :
       suggestedCharacters.length
         ? `已应用建议，并填充 ${suggestedCharacters.length} 个角色提示词。`
         : "已应用助手的全部建议。",
     );
+  }
+
+  function updateGoalRun(next: GoalAgentRun | null) {
+    goalRunRef.current = next;
+    setGoalRun(next);
+  }
+
+  function stopGoalAgent() {
+    if (goalRunRef.current) updateGoalRun({ ...goalRunRef.current, status: "stopped" });
+    goalReviewImageRef.current = null;
+    assistantAbortRef.current?.abort("cancel");
+    setNotice("已停止目标 Agent。当前正在生成的图片会照常完成，不会触发下一轮。");
+  }
+
+  async function startGoalAgent(goal: string) {
+    if (!signedIn || !assistantModel) {
+      setNotice("目标 Agent 需要登录并选择可用的 NewAPI 文本模型。");
+      return;
+    }
+    const current: GoalAgentRun = { id: createBrowserRequestId(), goal, accessMode: autonomyMode, completedGenerations: 0, status: "running" };
+    updateGoalRun(current);
+    if (current.accessMode === "full") setCount(1);
+    const referenceImage = agentImage || (source && ["img2img", "inpainting", "edits", "outpainting", "character-reference", "precise-reference", "vibe-transfer"].includes(operation) ? source.data : undefined);
+    const suggestion = await askTagAssistant("请根据用户目标和当前工作台配置，提出第一轮最有效的提示词与参数建议。此时尚无本次目标的生成结果。", {
+      goalMode: true, accessMode: current.accessMode, goal, goalIteration: 0, goalRunId: current.id,
+      images: referenceImage ? [referenceImage] : [],
+    });
+    const active = goalRunRef.current;
+    if (!active || active.id !== current.id || active.status !== "running") return;
+    if (!suggestion) { updateGoalRun({ ...current, status: "needs-attention" }); return; }
+    if (current.accessMode === "full") {
+      applySuggestionValues(suggestion, false);
+      setCount(1);
+      triggerGoalGeneration();
+    }
+  }
+
+  async function reviewGoalResult(image: string) {
+    const current = goalRunRef.current;
+    if (!current || current.status !== "running") return;
+    const completedGenerations = current.completedGenerations + 1;
+    const reviewedRun = { ...current, completedGenerations };
+    updateGoalRun(reviewedRun);
+    const suggestion = await askTagAssistant(
+      `请检查刚生成的结果是否符合目标；若未满足，给出下一轮最小有效修改。当前已完成 ${completedGenerations} 轮生成。`,
+      { goalMode: true, accessMode: current.accessMode, goal: current.goal, goalIteration: completedGenerations, goalRunId: current.id, images: [image] },
+    );
+    const active = goalRunRef.current;
+    if (!active || active.id !== current.id || active.status !== "running") return;
+    if (!suggestion) { updateGoalRun({ ...reviewedRun, status: "needs-attention" }); return; }
+    if (suggestion.goalComplete) {
+      updateGoalRun({ ...reviewedRun, status: "complete" });
+      setNotice("Agent 评估本轮图像已达到目标。");
+      return;
+    }
+    if (current.accessMode === "approval") {
+      setNotice(`Agent 已评估第 ${completedGenerations} 轮结果并提出下一步建议；请自行选择是否应用。`);
+      return;
+    }
+    if (completedGenerations >= MAX_GOAL_AGENT_GENERATIONS) {
+      updateGoalRun({ ...reviewedRun, status: "limit" });
+      setNotice(`已达到完全访问模式的 ${MAX_GOAL_AGENT_GENERATIONS} 轮上限，保留最后一份建议供你检查。`);
+      return;
+    }
+    applySuggestionValues(suggestion, false);
+    setCount(1);
+    triggerGoalGeneration();
+  }
+
+  function triggerGoalGeneration() {
+    window.setTimeout(() => {
+      const current = goalRunRef.current;
+      if (!current || current.status !== "running" || current.accessMode !== "full") return;
+      const button = [...document.querySelectorAll<HTMLButtonElement>("[data-studio-generate]")]
+        .find((candidate) => candidate.offsetParent !== null && !candidate.disabled);
+      if (!button) {
+        updateGoalRun({ ...current, status: "needs-attention" });
+        setNotice("Agent 已整理好建议，但当前生成按钮不可用；请检查模型、源图和工作台参数。");
+        return;
+      }
+      autonomousGenerationRef.current = true;
+      button.click();
+    }, 100);
+  }
+
+  function handleStudioGenerationClick() {
+    const autonomous = autonomousGenerationRef.current;
+    autonomousGenerationRef.current = false;
+    void runOperation(undefined, autonomous);
   }
 
   // 提示词工具条（借鉴 Aaalice）：随机、清空、文本/Tag 模式切换。
@@ -2942,7 +3176,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <WheelNumberInput
               ariaLabel="采样步数"
               min={mediumEffort ? 14 : 1}
-              max={mediumEffort ? 14 : 50}
+              max={mediumEffort ? 14 : isNaiLimitModel(model) ? 28 : 50}
               step={1}
               value={steps}
               setValue={setSteps}
@@ -2985,7 +3219,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             value={steps}
             setValue={setSteps}
             min={mediumEffort ? 14 : 1}
-            max={mediumEffort ? 14 : 50}
+            max={mediumEffort ? 14 : isNaiLimitModel(model) ? 28 : 50}
             step={1}
           />
           <NumericSlider
@@ -3054,8 +3288,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     setModel(next);
     const caps = resolveImageModelCapabilities(next, imageProtocol);
     if (!caps.operations.includes(operation)) setOperation("generate");
-    if (caps.sizes.length) {
-      const [nextWidth, nextHeight] = nearestImageSize(width, height, caps.sizes).split("x").map(Number);
+    if (caps.sizes.length || caps.sizeConstraints) {
+      const { width: nextWidth, height: nextHeight } = normalizeImageModelSize(next, width, height, imageProtocol);
       setWidth(nextWidth);
       setHeight(nextHeight);
     }
@@ -3338,18 +3572,18 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
         <div data-layout-module="image" style={customModuleStyle("image")}>
           {layoutModuleTools("image")}
-          {customWorkspace ? <ReplicaImageSize variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : naiLayout ? (
+          {customWorkspace ? <ReplicaImageSize model={model} variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : naiLayout ? (
             <PanelSection title="图像设置" icon={<Images size={16} />}>
-              <NaiImageSettings width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+              <NaiImageSettings model={model} width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
             </PanelSection>
           ) : (
-          <Control label="自定义分辨率 · 64–1600">
+          <Control label="自定义分辨率 · 64 对齐，按面积限制">
           <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
             <NumberField
               value={width}
               setValue={setWidth}
               min={64}
-              max={1600}
+              max={naiDimensionLimit(height, model)}
               step={64}
             />
             {naiLayout ? (
@@ -3372,7 +3606,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               value={height}
               setValue={setHeight}
               min={64}
-              max={1600}
+              max={naiDimensionLimit(width, model)}
               step={64}
             />
           </div>
@@ -3454,7 +3688,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  每次独立提交 1 张、最多 2 路并发，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
+                  每次独立提交 1 张、最多 {batchConcurrency} 路并发{activeGatewayCapacity ? ` · Gateway 启用 ${activeGatewayCapacity.total} 个账号（V5 ${activeGatewayCapacity.v5}、V4.5 ${activeGatewayCapacity.v45}、允许 Anlas ${activeGatewayCapacity.anlas}）` : providerId === "newapi" && !gatewayImageCapacityChecked ? " · 正在读取 Gateway 实时账号能力" : providerId === "newapi" ? " · Gateway 状态暂不可用，暂按 2 路执行" : ""}，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
@@ -3555,12 +3789,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <button
               type="button"
               className="flex h-10 w-full items-center justify-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={!source}
-              onClick={() => setMaskEditorOpen(true)}
+              title="打开全部重绘、无限画布和超分作品的独立历史页面"
+              onClick={() => router.push("/image/editor/history")}
             >
-              <Brush size={15} />
-              旧版蒙版编辑器
+              <History size={15} />
+              重绘历史记录
             </button>
+            {redrawHistoryError && <p className="text-xs text-[var(--rose)]" role="status">{redrawHistoryError}</p>}
             <UploadField
               label={mask ? "蒙版已绘制，也可重新上传" : "或上传蒙版图片"}
               value={mask}
@@ -3582,7 +3817,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
               V5 扩散超分：输出固定为源图的 2 倍，仅接受 PNG。
               {upscaleSource
-                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，优先消耗 ${upscaleAnlasCost(upscaleSource.width, upscaleSource.height)} AFF；图包和个人 AFF 不足时使用站内余额。`
+                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，优先消耗 ${imageCreditCost({ model: upscaleBillingModel(upscaleModel), operation: "upscale", width: upscaleSource.width, height: upscaleSource.height, steps: 1, samples: 1 })} AFF；图包和个人 AFF 不足时使用站内余额。`
                 : "请先上传源图以确认费用档位。"}
               {upscaleSource &&
                 upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS && (
@@ -3674,7 +3909,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </>
   );
 
-  async function runOperation(approvedConfirmation?: string) {
+  async function runOperation(approvedConfirmation?: string, allowAutonomousCost = false) {
     if (generationInFlight.current) return;
     if (!model) {
       setNotice("请先选择当前接口可用的图像模型。");
@@ -3731,8 +3966,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       return;
     }
     // 一次性提交走单请求，网关侧单请求上限 8 张；更多张数请逐张提交。
-    if (batchMode === "once" && outputCount > modelCapabilities.maxBatch) {
-      setNotice(`当前模型一次性提交最多 ${modelCapabilities.maxBatch} 张；更多张数请改用分批次。`);
+    if (batchMode === "once" && outputCount > (naturalImageModel ? modelCapabilities.maxBatch : naiMaxSamples(width, height, model))) {
+      setNotice(`当前模型一次性提交最多 ${naturalImageModel ? modelCapabilities.maxBatch : naiMaxSamples(width, height, model)} 张；更多张数请改用分批次。`);
       return;
     }
     if (localCreditNotice) { setNotice(localCreditNotice); return; }
@@ -3757,7 +3992,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice("暂时无法读取 NewAPI 实际价格，请稍后再试，避免意外扣费。");
       return;
     }
-    if (multiImage || (requestLeavesLimit && !canUseAffEstimate)) {
+    if (!allowAutonomousCost && (multiImage || (requestLeavesLimit && !canUseAffEstimate))) {
       const payment = providerId !== "newapi"
         ? "费用以所选 API 的账单为准"
         : canUseAffEstimate
@@ -3933,7 +4168,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       let partialMessage = "";
       if (sequential) {
         const BATCH_CHUNK = studioBatchSize(batchMode);
-        const BATCH_PARALLEL = 2;
+        const BATCH_PARALLEL = Math.max(1, batchConcurrency);
         const chunkSizes = splitImageBatches(count, BATCH_CHUNK);
         let chunkOffset = 0;
         const chunkStarts = chunkSizes.map((size) => {
@@ -3990,15 +4225,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               throw new Error(result.message || "操作失败");
             chunkImages = result.images || (result.image ? [result.image] : []);
             if (result.payment === "newapi") usedNewApi = true;
-            chunkHistoryIds = Array.isArray(result.historyIds)
-              ? result.historyIds.filter((item: unknown): item is string => typeof item === "string")
-              : [];
+            chunkHistoryIds = imageHistoryReferences(chunkImages, result.historyIds).historyIds;
+            chunkRequestId = result.requestId;
             if (result.partial)
               partialMessage = result.message || "部分批次生成失败。";
           }
           chunkImagesByIndex[chunkIndex] = chunkImages;
-          chunkHistoryByIndex[chunkIndex] = chunkHistoryIds;
-          chunkRequestIdsByIndex[chunkIndex] = chunkRequestId ? chunkImages.map(() => chunkRequestId as string) : [];
+          const references = imageHistoryReferences(chunkImages, chunkHistoryIds, chunkRequestId);
+          chunkHistoryByIndex[chunkIndex] = references.historyIds;
+          chunkRequestIdsByIndex[chunkIndex] = references.requestIds;
           collected.splice(0, collected.length, ...chunkImagesByIndex.flat());
           collectedHistoryIds.splice(0, collectedHistoryIds.length, ...chunkHistoryByIndex.flat());
           for (let index = 0; index < size; index += 1)
@@ -4040,7 +4275,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             `分批生成完成 ${collected.length}/${count} 张${lastError ? `：${lastError}` : ""}。`,
           );
         }
-        addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat());
+        await addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat());
       } else {
         const response = await fetch("/api/images/operate", {
           method: "POST",
@@ -4071,7 +4306,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           setImages(batchImages);
           setSelectedImageIndex(0);
           setPreviewDrafts([]);
-          addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : []);
+          await addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : []);
         } else {
           const result = await readImageOperationResponse(response);
           if (!response.ok && !result.images)
@@ -4092,14 +4327,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           }
           const newImages: string[] =
             result.images || (result.image ? [result.image] : []);
+          const references = imageHistoryReferences(newImages, result.historyIds, result.requestId);
           setImages(newImages);
           setSelectedImageIndex(0);
-          addSessionResults(
+          await addSessionResults(
             newImages,
-            Array.isArray(result.historyIds)
-              ? result.historyIds.filter((item: unknown): item is string => typeof item === "string")
-              : [],
+            references.historyIds,
             operation,
+            {},
+            references.requestIds,
           );
           if (result.payment === "newapi") usedNewApi = true;
           if (result.partial)
@@ -4130,6 +4366,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setBatchProgress("");
       setStreamProgress("");
       setGenerating(false);
+      const goalImage = goalReviewImageRef.current;
+      goalReviewImageRef.current = null;
+      if (goalImage && goalRunRef.current?.status === "running")
+        window.setTimeout(() => void reviewGoalResult(goalImage), 0);
     }
   }
 
@@ -4137,7 +4377,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     operation === "generate" && charactersEnabled
       ? characters.filter((character) => character.prompt.trim()).length
       : 0;
-  // 超分费用按源图真实尺寸（1-4 AFF 档位）；其余操作按生成尺寸估算。
+  // 超分费用按源图真实尺寸（1-4 Anlas 档位，V5 每 Anlas 为 5 AFF）；其余操作按生成尺寸估算。
   // 管理员配置了固定 AFF 单价的模型优先按固定价 × 张数。
   const upscaleDims = operation === "upscale" ? upscaleSource : null;
   const affFixedCost =
@@ -4145,7 +4385,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       ? ((modelPricing as unknown as { affFixedCost: number }).affFixedCost)
       : null;
   const affGeneration = {
-          model,
+          model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model,
           operation,
           width: upscaleDims ? upscaleDims.width : width,
           height: upscaleDims ? upscaleDims.height : height,
@@ -4282,20 +4522,29 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               )}
             </div>
             <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              {naturalImageModel ? `助手按 ${model || "当前图像模型"} 的能力整理场景描述、参考图修改和排除要求。` : "模型会检索 Danbooru 与相关概念，并整理、校验生成标签。"}
+              {naturalImageModel ? `助手按 ${model || "当前图像模型"} 的能力整理场景描述、参考图修改和排除要求。` : "助手可自主选择本地标签库、在线 Danbooru 或在线 QuickTagCloud，查阅词条并整理标签；可在需求中指定来源。"}
               {signedIn && " 多轮对话共享上下文，已校验标签会持续保留。"}
             </p>
-            {signedIn && assistantModels.length > 0 && (
-              <div className="mt-3">
-                <PopupSelect
-                  value={assistantModel}
-                  options={assistantModels}
-                  onChange={setAssistantModel}
-                  ariaLabel="智能助手模型"
-                  searchable
-                />
+            <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg border border-[var(--line)] bg-white p-1" role="group" aria-label="标签助手模式">
+              <button type="button" aria-pressed={assistantMode === "tags"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAssistantMode("tags")} className={`rounded-md px-2 py-2 text-[11px] font-semibold transition ${assistantMode === "tags" ? "bg-[var(--rose)] text-white" : "text-[var(--muted)] hover:bg-[var(--paper)]"}`}>标签助手</button>
+              <button type="button" aria-pressed={assistantMode === "goal"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAssistantMode("goal")} className={`rounded-md px-2 py-2 text-[11px] font-semibold transition ${assistantMode === "goal" ? "bg-[var(--rose)] text-white" : "text-[var(--muted)] hover:bg-[var(--paper)]"}`}>目标 Agent</button>
+            </div>
+            {assistantMode === "goal" && <>
+              <div className="mt-2 grid grid-cols-2 gap-1" role="group" aria-label="Agent 执行权限">
+                <button type="button" aria-pressed={autonomyMode === "approval"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("approval")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "approval" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>请求批准（默认）</button>
+                <button type="button" aria-pressed={autonomyMode === "full"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("full")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "full" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>完全访问</button>
               </div>
+              <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">{autonomyMode === "approval" ? "每轮生成后 Agent 会评估并提出调整；提示词、标签与参数都由你决定是否应用。" : `LLM 会自动应用调整并继续生成，最多 ${MAX_GOAL_AGENT_GENERATIONS} 轮，每轮 1 张；生成费用由当前账号承担。`}</p>
+            </>}
+            {goalRun && <div className="mt-2 rounded border border-[var(--line)] bg-white p-2.5 text-[10px] leading-4">
+              <div className="flex items-center justify-between gap-2"><b>目标 Agent · 已生成 {goalRun.completedGenerations} 轮</b>{goalRun.status === "running" ? <button type="button" onClick={stopGoalAgent} className="font-semibold text-[var(--rose)]">停止</button> : <button type="button" onClick={() => updateGoalRun(null)} className="font-semibold text-[var(--muted)]">清除</button>}</div>
+              <p className="mt-1 text-[var(--muted)]">{goalRun.status === "running" ? goalRun.accessMode === "full" ? "Agent 正在迭代，生成后的图片会自动送回模型评估。" : "等待建议或下一张结果；所有改动都需要你手动应用。" : goalRun.status === "complete" ? "Agent 判断图像已达到目标。" : goalRun.status === "limit" ? "已达到完全访问轮数上限，最后建议仍可手动应用。" : goalRun.status === "stopped" ? "Agent 已停止。" : "Agent 暂停，请检查当前设置或重新发起目标。"}</p>
+            </div>}
+            {signedIn && (
+              <AssistantModelPicker value={assistantModel} options={assistantModels} onChange={setAssistantModel} pending={assistantModelsPending}
+                error={assistantModelsError} disabled={assistantLoading} onRefresh={() => void refreshAssistantModels(new AbortController().signal)} />
             )}
+            {assistantTaskError && <p role="alert" className="mt-2 rounded border border-[#e2c38c] bg-[#fff8e8] p-2.5 text-[11px] leading-5 text-[#86551c]">{assistantTaskError}</p>}
             {conversationOpen && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
               <div className="mt-3 space-y-3">
                 {!!conversation.tagPool.length && (
@@ -4389,7 +4638,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   event.preventDefault();
                   void handleAgentImageFile(file);
                 }}
-                placeholder="白发　或　雨夜里的白发少女…（可粘贴/上传图片让助手识图）"
+                placeholder={assistantMode === "goal" ? "描述最终想要的图像，例如：保留人物和构图，把雨夜逐步调整成清晨薄雾，直到光线和色彩符合预期…" : "白发　或　雨夜里的白发少女…（可粘贴/上传图片让助手识图）"}
                 aria-label="标签助手输入"
               />
               <div className="flex items-center gap-2">
@@ -4444,7 +4693,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <div className="flex items-center gap-2">
               <button
                 type="submit"
-                disabled={tagSearching || assistantLoading}
+                disabled={tagSearching || assistantLoading || goalRun?.status === "running"}
                 className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
               >
                 <Search size={15} />
@@ -4452,7 +4701,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   ? "检索中…"
                   : assistantLoading
                     ? "模型分析中…"
-                    : "让助手处理"}
+                    : assistantMode === "goal" ? autonomyMode === "full" ? "开始自动迭代" : "请求目标建议" : "让助手处理"}
               </button>
               {assistantLoading && (
                 <button
@@ -4536,6 +4785,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               {assistantSuggestion && (!assistantSuggestion.imageModel || (assistantSuggestion.imageModel === model && assistantSuggestion.modelProtocol === imageProtocol)) && (
                 <div className="assistant-preview">
                   <b>建议差异预览</b>
+                  {assistantMode === "goal" && assistantSuggestion.goalComplete === true && <p className="mt-2 rounded bg-emerald-50 px-2 py-1.5 text-[10px] font-semibold text-emerald-800">Agent 判断当前图片已达到目标。</p>}
+                  {assistantMode === "goal" && assistantSuggestion.goalComplete === false && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">Agent 判断仍需调整；完全访问模式会自动应用并继续生成。</p>}
                   {assistantSuggestion.message && (
                     <div className="assistant-speech">
                       <Sparkles size={13} className="mt-0.5 shrink-0 text-[var(--rose)]" />
@@ -4729,7 +4980,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       )}
       <div className="nai-generation-action">
         <button
-          onClick={() => void runOperation()}
+          data-studio-generate
+          onClick={handleStudioGenerationClick}
           disabled={generating || layoutEditorOpen || !model}
           title={
             providerId !== "newapi"
@@ -4754,7 +5006,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 ? `生成 ${count} 张图像`
                 : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
-          {!generating && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
+          {!generating && operation !== "suggest-tags" && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
             <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "按当前 NewAPI 配置预估，实际以账单为准"}>
               {canUseAffEstimate
                 ? `${estimatedAffCost} AFF`
@@ -4873,7 +5125,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     {characterControls}
   </div>;
   const mobileLegacySize = <div className="mobile-legacy-sheet-section">
-    <ReplicaImageSize variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+    <ReplicaImageSize model={model} variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
   </div>;
   const mobileLegacyParameters = <div className="mobile-legacy-sheet-section">
     <div className="mobile-legacy-sheet-heading"><SlidersHorizontal size={17} /><b>生成参数</b></div>
@@ -4881,7 +5133,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   </div>;
   const mobilePromptContent = <div className="mobile-prompt-panel">
     {replicaLayout ? mobileControlsFor("prompt") : mobileLegacyPrompt}
-    {replicaLayout ? <ReplicaImageSize variant={replicaVariant} width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : mobileLegacySize}
+    {replicaLayout ? <ReplicaImageSize model={model} variant={replicaVariant} width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : mobileLegacySize}
     {replicaLayout ? <ReplicaGenerationSettings mobileInline variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
       setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
@@ -4932,6 +5184,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <NotificationBell />
             <a
               title="源代码与 AGPL-3.0"
               href="https://github.com/fuilyha56-wq/love-for-nai"
@@ -5314,7 +5567,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "img2img")} aria-label="将主图用于图生图" title="用于图生图"><ImagePlus size={15} /></button>
                     <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "inpainting")} aria-label="将主图用于局部重绘" title="用于局部重绘"><Brush size={15} /></button>
                     <button type="button" onClick={() => applyImageAsSource(displayedImages[0], "director-lineart")} aria-label="将主图用于导演工具" title="用于导演工具"><WandSparkles size={15} /></button>
-                    <a href={displayedImages[0]} download="lfn-1.png" title="下载主图"><Download size={15} /></a>
+                    <ImageDownloadMenu src={displayedImages[0]} filename="lfn-1" className="workspace-result-download" title="下载主图" />
                   </div>}
                 </div>
                 {displayedImages.length > 1 && <div className="workspace-result-list">
@@ -5425,7 +5678,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 </div>
               )}
               <button
-                onClick={() => void runOperation()}
+                data-studio-generate
+                onClick={handleStudioGenerationClick}
                 disabled={generating || !model}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
               >
@@ -6609,9 +6863,7 @@ function Lightbox({
           <span>
             {index + 1} / {images.length}
           </span>
-          <a href={images[index]} download={`lfn-${index + 1}.png`} title="下载">
-            <Download size={16} />
-          </a>
+          <ImageDownloadMenu src={images[index]} filename={`lfn-${index + 1}`} className="lightbox-download" title="下载图片" />
           <button type="button" onClick={onClose} aria-label="关闭预览">
             <X size={16} />
           </button>

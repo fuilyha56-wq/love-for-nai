@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inpaintModelFor } from "@/lib/inpaint-model";
+import { filterTiledUpscaleModelOptions, inpaintModelFor } from "@/lib/inpaint-model";
 
 describe("重绘使用对应图像模型的正确模型名", () => {
   it.each(["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gemini-2.5-flash-image", "gemini-3-pro-image-preview", "nano-banana", "nano_banana_pro", "dall-e-2"])("编辑模型 %s 保留原模型 ID", model => { expect(inpaintModelFor(model)).toBe(model); });
@@ -21,5 +21,34 @@ describe("重绘使用对应图像模型的正确模型名", () => {
   it("不支持的 NAI 系列和毛绒组合继续返回空值", () => {
     expect(inpaintModelFor("nai-v4-curated")).toBeNull();
     expect(inpaintModelFor("nai-v5-furry-full")).toBeNull();
+  });
+});
+
+describe("分块超分只列出当前来源的图生图模型", () => {
+  const enabledPolicy = { enableV5Models: true, enableV45Models: true };
+
+  it("保留可编辑模型并排除只支持文生图的模型", () => {
+    const options = filterTiledUpscaleModelOptions([
+      { value: "nai-v4.5-curated", label: "V4.5 Curated" },
+      { value: "nai-v5-full-limit", label: "V5 Full Limit" },
+      { value: "gpt-image-1.5", label: "GPT Image" },
+      { value: "dall-e-3", label: "DALL·E 3" },
+    ], "nai-v5-full-medium", "auto", enabledPolicy);
+
+    expect(options.map(({ value }) => value)).toEqual([
+      "nai-v5-full-medium",
+      "nai-v4.5-curated",
+      "nai-v5-full-limit",
+      "gpt-image-1.5",
+    ]);
+  });
+
+  it("尊重已关闭的模型系列策略", () => {
+    const options = filterTiledUpscaleModelOptions([
+      { value: "nai-v4.5-curated", label: "V4.5 Curated" },
+      { value: "nai-v5-full", label: "V5 Full" },
+    ], "nai-v5-full", "auto", { enableV5Models: false, enableV45Models: true });
+
+    expect(options.map(({ value }) => value)).toEqual(["nai-v4.5-curated"]);
   });
 });

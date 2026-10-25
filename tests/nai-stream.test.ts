@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { encode } from "@msgpack/msgpack";
-import { naiNativeGenerationBody } from "@/lib/nai-native-request";
+import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { parseNaiStreamMessage, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { consumeImageStream, sseEvent } from "@/lib/sse";
 
@@ -16,6 +16,15 @@ function framed(message: Record<string, unknown>): Uint8Array {
 }
 
 describe("NAI native stream protocol", () => {
+  it("buffers composed prompts without enabling a second gateway quality suffix", () => {
+    const prompt = "scene, very aesthetic, masterpiece, no text";
+    const source = { model: "nai-v5-full", prompt, negative_prompt: "", qualityToggle: false, ucPreset: 3 };
+    const buffered = naiGatewayGenerationBody(source);
+    expect(buffered).toEqual({ ...source, quality_tags: "" });
+    expect(source).not.toHaveProperty("quality_tags");
+    expect(naiNativeGenerationBody(buffered)).toMatchObject({ input: prompt, parameters: { qualityToggle: false, ucPreset: 3, negative_prompt: "" } });
+    expect(naiGatewayGenerationBody({ qualityToggle: true })).not.toHaveProperty("quality_tags");
+  });
   it("finishes client image consumption on done without waiting for EOF or cancellation", async () => {
     const cancel = vi.fn(() => new Promise<void>(() => {}));
     const response = new Response(new ReadableStream<Uint8Array>({
@@ -29,8 +38,21 @@ describe("NAI native stream protocol", () => {
     const onComplete = vi.fn();
     await expect(consumeImageStream(response, { expected: 1, onPreview, onProgress: vi.fn(), onComplete })).resolves.toEqual(["final"]);
     expect(onPreview).toHaveBeenLastCalledWith(["final"]);
-    expect(onComplete).toHaveBeenCalledWith([], "request-1");
+    expect(onComplete).toHaveBeenCalledWith([""], "request-1");
     expect(cancel).toHaveBeenCalledOnce();
+  });
+  it("keeps the server's reserved image IDs in sample order", async () => {
+    const response = new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sseEvent("done", {
+          images: ["first", "second"], historyIds: ["first-history", "second-history"], requestId: "batch-request",
+        })));
+        controller.close();
+      },
+    }));
+    const onComplete = vi.fn();
+    await expect(consumeImageStream(response, { expected: 2, onPreview: vi.fn(), onProgress: vi.fn(), onComplete })).resolves.toEqual(["first", "second"]);
+    expect(onComplete).toHaveBeenCalledWith(["first-history", "second-history"], "batch-request");
   });
   it.each([0, 1, 2, 3])("preserves explicit quality disabling and valid UC preset %i", (ucPreset) => {
     const body = naiNativeGenerationBody({
@@ -39,6 +61,26 @@ describe("NAI native stream protocol", () => {
     });
     expect(body.input).toBe("1girl, custom quality");
     expect(body.parameters).toMatchObject({ qualityToggle: false, ucPreset, negative_prompt: "custom uc" });
+  });
+
+  it("passes character-reference images to NAI native reference fields", () => {
+    const request = naiNativeGenerationBody({
+      operation: "character-reference",
+      model: "nai-v5-full",
+      prompt: "A girl standing in a garden",
+      characters: [{
+        reference_image: "data:image/png;base64,QUJD",
+        prompt: "white hair, blue coat",
+        reference_strength: 0.72,
+        reference_information_extracted: 0.9,
+      }],
+    });
+    expect(request.parameters).toMatchObject({
+      reference_image_multiple: ["QUJD"],
+      reference_strength_multiple: [0.72],
+      reference_information_extracted_multiple: [0.9],
+    });
+    expect(request.parameters).not.toHaveProperty("characterPrompts");
   });
 
   it("keeps legacy quality and UC defaults when flags are omitted", () => {

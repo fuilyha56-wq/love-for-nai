@@ -1,10 +1,9 @@
-import { getSession } from "@/lib/session";
-import EditorClient from "./editor";
-
+import { ViewportPage } from "@/app/viewport-page";
+import DesktopPage from "./desktop-page";
+import MobilePage from "@/mobile/image/editor/page";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function ImageEditorPage() {
-  const session = await getSession();
-  return <EditorClient authenticated={Boolean(session)} />;
+export default function Page() {
+  return <ViewportPage desktop={<DesktopPage />} mobile={<MobilePage />} />;
 }

@@ -16,5 +16,5 @@ export async function GET(
       ...publicGalleryItem(item),
       imageUrl: `/api/gallery/${item.id}/image`,
     },
-  });
+  }, { headers: { "Cache-Control": item.status === "approved" ? "public, max-age=30, stale-while-revalidate=120" : "private, no-store", Vary: "Cookie" } });
 }

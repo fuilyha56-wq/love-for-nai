@@ -1,0 +1,73 @@
+@media (max-width: 839px) {
+/* Shared LFN controls: native HTML semantics, with LFN rendering throughout. */
+input[type="checkbox"], input[type="radio"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; flex: 0 0 18px; margin: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); vertical-align: middle; cursor: pointer; transition: background .15s, border-color .15s; }
+input[type="checkbox"]:checked { border-color: var(--rose); background: var(--rose) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='m4 9 3 3 7-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/18px; }
+input[type="radio"] { border-radius: 50%; }
+input[type="radio"]:checked { border-color: var(--rose); background: radial-gradient(circle, var(--rose) 0 4px, var(--panel) 5px); }
+input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible { outline: 2px solid var(--rose); outline-offset: 3px; }
+input:disabled, button:disabled { cursor: not-allowed; }
+input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+input::-webkit-inner-spin-button, input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+input::-ms-reveal, input::-ms-clear, input[type="search"]::-webkit-search-cancel-button { display: none; }
+summary { list-style: none; cursor: pointer; }
+summary::-webkit-details-marker { display: none; }
+input[type="checkbox"]:disabled, input[type="radio"]:disabled, .lfn-switch:disabled, .popup-select-trigger:disabled { opacity: .45; }
+input[type="range"] { appearance: none; -webkit-appearance: none; height: 6px; border-radius: 999px; background: var(--line); }
+input[type="range"]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--rose); border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--rose); }
+input[type="range"]::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: var(--rose); border: 2px solid var(--panel); }
+input[type="file"]::file-selector-button { border: 0; border-radius: 6px; background: var(--rose); color: white; padding: 8px 12px; font: inherit; cursor: pointer; margin-right: 10px; }
+.popup-select-menu { box-sizing: border-box; }
+.popup-select-options { position: relative; flex: 1 1 auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.popup-select-option { min-height: 44px; flex-shrink: 0; }
+.popup-select-option:disabled { opacity: .45; background: transparent; color: var(--muted); }
+.lfn-select { display: inline-flex; min-width: 0; padding: 0 !important; background: transparent !important; border: 0 !important; }
+.lfn-select > .popup-select { width: 100%; min-width: 0; }
+.lfn-select .popup-select-trigger { height: 100%; min-height: 44px; font-size: inherit; }
+.lfn-date-input { display: flex; gap: 6px; min-width: 0; align-items: center; padding: 0 !important; border: 0 !important; background: transparent !important; }
+.lfn-date-input .date-range-picker { min-width: 0; flex: 1; }
+.lfn-date-input .date-range-trigger { min-width: 0; width: 100%; min-height: 44px; font-size: 13px; }
+.lfn-time-input { width: 72px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; background: var(--panel); color: var(--ink); font-size: 13px; }
+.lfn-date-clear { color: var(--muted); padding: 8px; }
+.lfn-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); font-size: 12px; font-weight: 600; }
+.lfn-button:hover { border-color: var(--rose); }
+.lfn-button.is-primary { background: var(--rose); border-color: var(--rose); color: white; }
+.lfn-button.is-danger { color: #b83248; border-color: #e8b7bf; }
+.lfn-switch { display: inline-flex; min-height: 36px; align-items: center; gap: 9px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-muted); color: var(--muted); font-size: 12px; font-weight: 600; text-align: left; }
+.lfn-switch.is-on { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); border-color: color-mix(in srgb, var(--rose) 40%, var(--line)); color: var(--ink); }
+.lfn-switch-track { width: 30px; height: 18px; border-radius: 999px; padding: 2px; background: var(--line); flex-shrink: 0; }
+.lfn-switch-track > span { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--panel); box-shadow: 0 1px 2px rgb(0 0 0 / .16); transition: transform .15s; }
+.lfn-switch.is-on .lfn-switch-track { background: var(--rose); }
+.lfn-switch.is-on .lfn-switch-track > span { transform: translateX(12px); }
+.lfn-switch:focus-visible { outline: 2px solid var(--rose); outline-offset: 3px; }
+.lfn-dialog-backdrop { position: fixed; left:0; right:0; top:var(--lfn-viewport-top,0px); height:var(--lfn-viewport-height,100dvh); z-index: 60000; display: grid; place-items: center; padding: 24px; background: rgb(25 25 30 / .45); }
+.lfn-dialog { width: min(440px, 100%); max-height: calc(var(--lfn-viewport-height,100dvh) - 48px); overflow: auto; padding: 20px; border: 0; border-radius: 24px; background: var(--panel); color: var(--ink); box-shadow: 0 16px 48px rgb(0 0 0 / .2); }
+.lfn-dialog header { display: flex; min-height:64px; align-items: center; justify-content: space-between; gap: 12px; margin:-20px -20px 0; padding:8px 16px; background:var(--surface-muted); font-weight: 700; }
+.lfn-dialog header button { display:grid; width:44px; height:44px; place-items:center; }
+.lfn-dialog :is(input,.lfn-button) { min-height:44px; }
+.lfn-dialog p { margin: 16px 0; font-size: 14px; line-height: 1.7; }
+.lfn-dialog input { width: 100%; padding: 10px; }
+.lfn-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+@media (pointer: coarse) { .popup-select-option { min-height: 44px; } .lfn-button { min-height: 44px; } }
+.settings-primary-button, .settings-secondary-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:44px; padding:8px 14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); font-size:13px; font-weight:600; transition:border-color .15s,opacity .15s; }
+.settings-secondary-button:hover:not(:disabled) { border-color:var(--rose); color:var(--accent-text); }
+.settings-primary-button { border-color:var(--rose); background:var(--rose); color:white; }
+.settings-primary-button:disabled, .settings-secondary-button:disabled { cursor:not-allowed; opacity:.5; }
+.lfn-color-trigger { min-height:44px; }
+.lfn-color-trigger > span { width:20px; height:20px; flex-shrink:0; border:1px solid var(--line); border-radius:6px; }
+.lfn-color-dialog > header { display:flex; min-height:64px; flex:0 0 auto; align-items:center; justify-content:space-between; padding:8px 16px; border-bottom:1px solid var(--line); }
+.lfn-color-dialog > header h2 { font-size:16px; font-weight:650; }
+.lfn-color-dialog > header button { width:44px; height:44px; font-size:24px; }
+.lfn-color-content { min-height:0; overflow:auto; padding:16px; }
+.lfn-color-preview { height:64px; border:1px solid var(--line); border-radius:8px; }
+.lfn-color-swatches { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin:12px 0; }
+.lfn-color-swatches button { display:grid; min-height:44px; place-items:center; border-radius:8px; background:var(--surface); }
+.lfn-color-swatches button[aria-pressed="true"] { outline:2px solid var(--rose); outline-offset:-2px; }
+.lfn-color-swatches span { width:24px; height:24px; border-radius:50%; }
+.lfn-color-channel { display:flex; min-height:44px; align-items:center; gap:12px; font-size:13px; }
+.lfn-color-channel input { min-width:0; flex:1; height:44px; background:linear-gradient(var(--line),var(--line)) center / 100% 6px no-repeat; }
+.lfn-color-channel output { width:32px; text-align:right; }
+.lfn-color-hex { display:grid; gap:8px; margin-top:12px; font-size:13px; }
+.lfn-color-hex .field { min-height:44px; padding:8px 12px; }
+.lfn-color-dialog > footer { display:flex; flex:0 0 auto; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line); }
+
+}

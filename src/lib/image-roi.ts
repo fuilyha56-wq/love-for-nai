@@ -1,3 +1,4 @@
+import { NAI_MAX_DIMENSION, NAI_MAX_PIXELS } from "./nai-image-limits";
 /**
  * Geometry helpers for rectangular image ROIs.
  *
@@ -7,8 +8,8 @@
 
 export const ROI_ALIGNMENT = 64;
 export const ROI_MIN_DIMENSION = 64;
-export const ROI_MAX_DIMENSION = 1600;
-export const ROI_MAX_PIXELS = 2_560_000;
+export const ROI_MAX_DIMENSION = NAI_MAX_DIMENSION;
+export const ROI_MAX_PIXELS = NAI_MAX_PIXELS;
 
 export type Point = { x: number; y: number };
 export type Rect = { x: number; y: number; width: number; height: number };

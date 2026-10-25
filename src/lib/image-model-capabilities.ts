@@ -1,4 +1,5 @@
 import { isNaiMediumModel } from "./nai-native-request";
+import { isNaiLimitModel, naiMaxPixels, NAI_IMAGE_MULTIPLE } from "./nai-image-limits";
 
 /** Shared by the studio, assistant and server adapters. Endpoint selection is explicit for gateways. */
 export type ImageProviderProtocol = "auto" | "openai-images" | "gemini" | "openai-chat-images";
@@ -34,7 +35,12 @@ export function isImageProviderProtocol(value: unknown): value is ImageProviderP
 }
 
 export function isKnownImageModel(model: string): boolean {
-  return /^(?:nai-(?!chat$)|gpt-image|chatgpt-image|dall-e|flux(?:\.|-|$)|stable-diffusion|sdxl|imagen|ideogram|recraft|midjourney|seedream|sd3(?:\.|-|$)|nano[-_ ]?banana)/i.test(model) || /^gemini-.*(?:image|imagen)/i.test(model);
+  const value = model.trim();
+  const prefix = value.match(/^(?:\[[^\]]{1,40}\]\s*)+/)?.[0] || "";
+  const normalized = value.slice(prefix.length);
+  return /(?:image|图像|绘图|图片|draw)/i.test(prefix) ||
+    /^(?:nai-(?!chat$)|gpt-image|chatgpt-image|dall-e|flux(?:\.|-|$)|stable-diffusion|sdxl|imagen|ideogram|recraft|midjourney|seedream|sd3(?:\.|-|$)|nano[-_ ]?banana|microsoft\/mai-image)/i.test(normalized) ||
+    /^gemini-.*(?:image|imagen)/i.test(normalized);
 }
 
 function isNanoBananaModel(model: string): boolean {
@@ -90,8 +96,8 @@ export function resolveImageModelCapabilities(model: string, protocol: ImageProv
     aspectRatios: gemini ? GEMINI_RATIOS : [],
     qualityOptions: gpt && transport === "openai-images" ? ["auto", "low", "medium", "high", ...(/^gpt-image-2\.5(?:[.-]|$)/i.test(model) ? ["xhigh", "max"] : [])] : [],
     imageSizes: gemini && transport === "gemini" ? geminiHighResolution ? ["1K", "2K", "4K", ...(/(?:3\.1.*flash|banana-2)/i.test(model) ? ["512"] : [])] : ["1K"] : [],
-    sizeConstraints: medium ? { multipleOf: 64, minPixels: 4096, maxPixels: 1_048_576, maxEdge: 1600, maxAspectRatio: 25 } : flexibleGpt ? { multipleOf: 16, minPixels: 655_360, maxPixels: 8_294_400, maxEdge: 3840, maxAspectRatio: 3 } : null,
-    maxBatch: medium ? 1 : nai ? 8 : gemini || /^dall-e-3$/i.test(model) || transport === "openai-chat-images" ? 1 : 8,
+    sizeConstraints: nai ? { multipleOf: NAI_IMAGE_MULTIPLE, minPixels: 4096, maxPixels: naiMaxPixels(model), maxEdge: naiMaxPixels(model) / 64, maxAspectRatio: naiMaxPixels(model) / 4096 } : flexibleGpt ? { multipleOf: 16, minPixels: 655_360, maxPixels: 8_294_400, maxEdge: 3840, maxAspectRatio: 3 } : null,
+    maxBatch: isNaiLimitModel(model) ? 1 : nai ? 8 : gemini || /^dall-e-3$/i.test(model) || transport === "openai-chat-images" ? 1 : 8,
   };
 }
 

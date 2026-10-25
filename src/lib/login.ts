@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { encodeSession, keepLoginTtlMs, resolvedSessionCookie } from "@/lib/session";
+import {
+  encodeSession,
+  keepLoginTtlMs,
+  resolvedSessionCookie,
+} from "@/lib/session";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolveTrustedClientIp } from "@/lib/risk-ip";
 import type { LocalUser } from "@/lib/local-users";
 
 export type NewApiUser = {
@@ -27,15 +32,79 @@ export type NewApiLoginResponse = {
 export async function callNewApi(
   path: string,
   body: unknown,
+  request?: Request,
 ): Promise<{ response: Response; result: NewApiLoginResponse }> {
-  const response = await fetch(`${await resolvedNewApiBaseUrl()}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
-  });
-  return { response, result: (await response.json()) as NewApiLoginResponse };
+  const headers = new Headers({ "Content-Type": "application/json" });
+  if (request) {
+    try {
+      const clientIp = (await resolveTrustedClientIp(request)).ip;
+      if (clientIp) headers.set("X-Forwarded-For", clientIp);
+    } catch {
+      // Keep authentication available if proxy metadata cannot be resolved.
+    }
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(`${await resolvedNewApiBaseUrl()}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    const cause =
+      error instanceof Error
+        ? (error as Error & { cause?: unknown }).cause
+        : undefined;
+    const code =
+      cause &&
+      typeof cause === "object" &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : undefined;
+    console.error("[auth] NewAPI request failed", {
+      path,
+      errorName: error instanceof Error ? error.name : "UnknownError",
+      code,
+    });
+    throw error;
+  }
+
+  try {
+    const payload: unknown = await response.json();
+    if (payload && typeof payload === "object")
+      return { response, result: payload as NewApiLoginResponse };
+  } catch {
+    // NewAPI's rate limiter can return an empty 429 body. Preserve the HTTP
+    // status so the route can return a retryable rate-limit response.
+  }
+  return {
+    response,
+    result: {
+      success: false,
+      message:
+        response.status === 429
+          ? "账号服务暂时限制了登录请求，请稍后重试"
+          : undefined,
+    },
+  };
+}
+
+export function newApiRateLimitResponse(response: Response): NextResponse {
+  const retryAfter = response.headers.get("Retry-After")?.trim();
+  return NextResponse.json(
+    { message: "账号服务暂时限制了登录请求，请稍后重试" },
+    {
+      status: 429,
+      headers: {
+        "Retry-After":
+          retryAfter && /^\d{1,5}$/.test(retryAfter) ? retryAfter : "60",
+      },
+    },
+  );
 }
 
 export function upstreamCookieOf(response: Response): string {
@@ -48,9 +117,9 @@ export function requiresTwoFactor(result: NewApiLoginResponse): boolean {
   const user = data.user ?? data;
   return Boolean(
     data.require_2fa ||
-      data.two_fa_required ||
-      user.require_2fa ||
-      user.two_fa_required,
+    data.two_fa_required ||
+    user.require_2fa ||
+    user.two_fa_required,
   );
 }
 

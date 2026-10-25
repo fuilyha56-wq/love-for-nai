@@ -1,55 +1,20 @@
-# 图像余额预估（2026-09-21）
+# 图像计费（2026-10-23，已上线）
 
-LFN 的 NewAPI 余额和价格统一以美元显示。下列标准是目标计价口径；工作台实际预估读取 NewAPI 的模型表达式与用户分组倍率，避免远端配置不同时低报费用。本次变更不修改远端计费配置，也不修改 AFF / 图包扣费。
+最新统一价格、p/c 公式和整数 quota 见[已上线对齐报表](nai-parity-pricing-2026-10-23.md)，[部署记录](nai-parity-release-2026-10-23.md)。NewAPI 与 LFN 每日首档相同，NewAPI 不接入每日阶梯，LFN 原阶梯保留。
 
-## 标准
+2026-10-22 的历史修改前后价格、Gateway 公式、NewAPI 表达式与整数 quota 见 [最新审核对比报表](nai-pricing-comparison-2026-10-22.md)，[完整 CSV](nai-pricing-comparison-2026-10-22.csv)。用户确认后已于 2026-10-22 23:13 统一上线，见[部署记录](nai-pricing-release-2026-10-22.md)。
 
-- 500,000 quota = $1。
-- 动态档：1 计费积分（gateway 计算后的 Anlas）= 50 usage token = $0.03 = 15,000 quota。
-- V5 限制档：$0.06 = 30,000 quota；V4.5 限制档：免费。
-- 完整版 V4.5 / V5 满足 gateway 的限制条件时同样走限制档。`-limit` 模型超界会拒绝请求，不应解释为可以加价生成。
-- AFF 是独立的创作额度，不能把 AFF 限制档费用当成 Anlas。
+2026-10-23 的全模式核查及新增修正见[逐模式前后对照](nai-mode-pricing-comparison-2026-10-23.md)。该轮已随对齐计费版本发布，包含图生图缺省强度、兼容编辑/批量、缓存参考图和 1 Anlas 工具的 NewAPI 分支修复。
 
-## Gateway 核对
+- 1 AFF = ¥0.005。
+- 普通 Anlas 售价 ¥0.02，即 4 AFF；V5 保留 1.25 倍销售价 ¥0.025，即 5 AFF。
+- 官方 Anlas 先按各模型计算。V5 High 为基础费用乘 1.5 后向上取整；销售倍率不混入官方 Anlas。
+- 小图固定费与每日阶梯保留：V4.5 1 AFF、V5 High 5 AFF、Medium 1 AFF。
+- 首档大图总费用：基础 AFF + 官方动态 Anlas × 对应 AFF 单价。
+- gateway 动态 usage = 官方 Anlas × 50 token。V5 固定档 25、Medium 固定档 18 是特殊标记，不是 Anlas。
+- NewAPI 动态售价由其表达式和分组控制；LFN 从实时配置估价。若每人民币对应 S 个站内余额单位，普通动态系数为 400×S，V5 为 500×S。上线时必须与新 gateway 同步切换，保留既有固定档和分组。
+- 普通 NAI 画布总面积最多 3,145,728，Limit 最多 1,048,576；宽高均为 64 的倍数。
+- 基础费、Anlas 附加费和每日阶梯逐项计算，跨阶梯批量逐张计价并保留退款明细。
+- 已只读核对线上阶梯：V4.5 只有首档；V5 从第 76 / 126 / 201 张起调整，同时保留动态倍率与总费倍率。Medium 在 NewAPI 已改为保留小图价、大图按 Anlas 的分档表达式。
 
-本机 `G:/novelai-gateway/src/proxy/openai.py` 的 `_calc_anlas_cost`、`_anlas_to_tokens`、`_in_opus_free_envelope`、`_billing_prompt_tokens` 为核对依据。
-
-动态档单张基础积分为：
-
-```text
-pixels = max(width × height, 65536)
-perSample = ceil(2.951823174884865e-6 × pixels
-                 + 5.753298233447344e-7 × pixels × steps)
-```
-
-图生图强度小于 1 时应用 `max(ceil(perSample × strength), 2)`，然后应用 uncond_scale、张数和参考图附加费。未编码 vibe 每张加 2，超过 4 张的部分每张再加 2；精准参考每张参考图、每个样本加 5。V5 gateway 对最后的生成积分乘 2，随后每积分转为 50 token。Director 工具使用自己的固定积分，不按画布面积估算。
-
-限制档需单请求单张、最多 28 步、面积不超过 1024²、非 priority、无精准参考、无未编码 vibe。纯角色提示词不等于参考图片，不应单独触发动态档。上游非生成操作不适用该限制档。
-
-工作台默认分批并发，每批最多 4 张；一次性模式每请求最多 8 张。发送和预估共用批次规则。1024²、28 步的 V5 生成 3 张会进入动态档，按目标 $0.03/积分口径为 $3.60；分批生成 5 张拆为 4 + 1，目标口径为 $4.86，一次性 5 张则为 $6.00。界面显示的实际预估以当前 NewAPI 配置为准。价格页计算器按单请求计算。超分在当前工作台仅允许 AFF，不展示 NewAPI 付款预估。
-
-## NewAPI 核对与配置对照
-
-[NewAPI 表达式结算源码](https://github.com/QuantumNous/new-api/blob/main/pkg/billingexpr/settle.go) 的 v1 公式是 `quota = expression / 1000000 × QuotaPerUnit × groupRatio`；因此美元单价为 `expression / 1000000 × groupRatio`，不能再除以 200 转成人民币。
-
-[图片中继源码](https://github.com/QuantumNous/new-api/blob/main/relay/image_handler.go) 会把零 prompt token 钳位成 1。已核对的本地 gateway 限制档标记是 V4.5 的 0 与 V5 的 8；这是特殊标记，不是 Anlas。不要用它计算积分。
-
-在该 gateway 的 V5 = 8 标记和分组倍率 1 下，与上述目标标准匹配的 v1 配置应为：
-
-```text
-V5:   p < 100 ? tier("limit", p * 7500) : tier("full", p * 600)
-V4.5: p < 100 ? tier("limit", p * 0)    : tier("full", p * 600)
-```
-
-按次 `-limit` 的 ModelPrice 分别为 0.06 / 0。以上是配置对照，未自动写入线上。现有 gateway 文档记录过旧价格，部署时需要以实际运行版本和 NewAPI 配置为准；本地未进行真实付费生成或生产账单核验。
-
-## 回归样例
-
-| 请求 | 计费积分 | token | 标准美元 | quota |
-| --- | ---: | ---: | ---: | ---: |
-| V5，1024²，28 步，1 张 | 固定档 | 特殊标记 | 0.06 | 30,000 |
-| V4.5，同上 | 固定档 | 特殊标记 | 0 | 0 |
-| V4.5，1024²，29 步，1 张 | 21 | 1,050 | 0.63 | 315,000 |
-| V5，1024²，29 步，1 张 | 42 | 2,100 | 1.26 | 630,000 |
-
-对应自动检查在 `tests/image-pricing-points.test.ts` 与 `tests/public-catalog.test.ts`。
+90 Anlas 的 V5 High：90×5=450 动态 AFF，加基础 5 AFF，共 455 AFF=¥2.275（每日首档）。360 AFF 仅是未加 V5 销售倍率的普通单价换算基数。

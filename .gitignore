@@ -98,3 +98,10 @@ __pycache__/
 /FOLLOWUP-*.md
 /IMPLEMENTATION-*.md
 /IP-GEO-MODE-CLIPBOARD-*.md
+
+# Local build contexts, test caches and private moderation exports.
+/.tmp*/
+/newapi-ban-review-*.csv
+/newapi-unbanned-*.csv
+# Research screenshots include a personal account balance; retain locally only.
+/docs/assets/nai-pricing-2026-10-22/*.jpg

@@ -1,7 +1,9 @@
 "use client";
 
-import Image from "next/image";
-import { AlertCircle, Check, ImageOff, Loader2, RefreshCw, Search } from "lucide-react";
+import Image from "@/app/cached-image";
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import { AlertCircle, Check, ImageOff, Loader2, RefreshCw } from "lucide-react";
+import { LfnSearchField } from "@/app/ui/lfn-search-field";
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import styles from "./gallery-picker.module.css";
 
@@ -10,6 +12,7 @@ export type GalleryPickerItem = {
   id: string;
   title: string;
   imageUrl: string;
+  thumbnailUrl?: string;
   rating?: string;
   authorName?: string;
   ownerName?: string;
@@ -49,6 +52,7 @@ function parseItems(value: unknown): GalleryPickerItem[] {
     id: item.id,
     title: item.title,
     imageUrl: item.imageUrl,
+    thumbnailUrl: typeof item.thumbnailUrl === "string" ? item.thumbnailUrl : undefined,
     rating: typeof item.rating === "string" ? item.rating : undefined,
     authorName: typeof item.authorName === "string" ? item.authorName : undefined,
     ownerName: typeof item.ownerName === "string" ? item.ownerName : undefined,
@@ -73,9 +77,7 @@ async function readGalleryResponse(response: Response): Promise<GalleryPickerIte
 }
 
 async function imageUrlToDataUrl(url: string): Promise<string> {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error("图片读取失败，请稍后重试");
-  const blob = await response.blob();
+  const blob = await fetchCachedImageBlob(url);
   if (!blob.type.startsWith("image/")) throw new Error("图库返回的不是图片");
   const bytes = new Uint8Array(await blob.arrayBuffer());
   let binary = "";
@@ -145,12 +147,14 @@ export function GalleryPicker({
     setSelectedId(item.id);
     setSelectError("");
     if (!returnDataUrl) {
+      if (endpoint === "/api/gallery") void fetch(`/api/gallery/${encodeURIComponent(item.id)}/use`, { method: "POST" }).catch(() => undefined);
       onSelect(item.imageUrl, item);
       return;
     }
     setSelectingId(item.id);
     try {
       const dataUrl = await imageUrlToDataUrl(item.imageUrl);
+      if (endpoint === "/api/gallery") void fetch(`/api/gallery/${encodeURIComponent(item.id)}/use`, { method: "POST" }).catch(() => undefined);
       onSelect(dataUrl, item, dataUrl);
     } catch (error) {
       setSelectError(error instanceof Error ? error.message : "图片读取失败，请稍后重试");
@@ -180,18 +184,7 @@ export function GalleryPicker({
         </button>
       </div>
 
-      <label className={styles.search}>
-        <Search size={16} aria-hidden="true" />
-        <span className="sr-only">搜索公开图库</span>
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索标题、作者或标签"
-          aria-label="搜索公开图库"
-          spellCheck={false}
-        />
-      </label>
+      <LfnSearchField label="搜索公开图库" value={query} onChange={setQuery} placeholder="搜索标题、作者或标签" />
 
       {selectError && <p className={styles.alert} role="alert"><AlertCircle size={15} aria-hidden="true" />{selectError}</p>}
       <p className={styles.status} role="status" aria-live="polite">
@@ -236,7 +229,7 @@ export function GalleryPicker({
                 >
                   <span className={styles.media}>
                     <Image
-                      src={item.imageUrl}
+                      src={item.thumbnailUrl || `${item.imageUrl}?variant=thumbnail`}
                       alt=""
                       fill
                       unoptimized

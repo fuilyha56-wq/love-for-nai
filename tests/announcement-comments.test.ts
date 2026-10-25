@@ -73,6 +73,23 @@ describe("公告评论库", () => {
     expect(await deleteAnnouncementComment("announcement-1", first.id)).toBe(false);
     expect(await listAnnouncementComments("announcement-2")).toEqual([second]);
   });
+
+  it("支持楼中楼回复、用户投票、管理员置顶以及删除整条回复树", async () => {
+    const {
+      createAnnouncementComment, deleteAnnouncementCommentTree, listAnnouncementComments,
+      setAnnouncementCommentPinned, setAnnouncementCommentVote,
+    } = await import("@/lib/announcement-comments");
+    const parent = await createAnnouncementComment({ announcementId: "thread", authorId: 1, authorName: "甲", content: "主评论" });
+    const reply = await createAnnouncementComment({ announcementId: "thread", authorId: 2, authorName: "乙", content: "回复", parentId: parent.id });
+    const nested = await createAnnouncementComment({ announcementId: "thread", authorId: 3, authorName: "丙", content: "继续回复", parentId: reply.id });
+    expect(await setAnnouncementCommentVote("thread", parent.id, 4, "up")).toMatchObject({ likes: 1, myVote: "up" });
+    expect(await setAnnouncementCommentVote("thread", parent.id, 4, "down")).toMatchObject({ likes: 0, dislikes: 1, myVote: "down" });
+    expect(await setAnnouncementCommentVote("thread", parent.id, 4, null)).toMatchObject({ dislikes: 0, myVote: null });
+    expect(await setAnnouncementCommentPinned("thread", reply.id, true)).toMatchObject({ pinned: true });
+    expect((await listAnnouncementComments("thread"))[0].id).toBe(reply.id);
+    expect(await deleteAnnouncementCommentTree("thread", reply.id)).toEqual(expect.arrayContaining([reply.id, nested.id]));
+    expect((await listAnnouncementComments("thread")).map((item) => item.id)).toEqual([parent.id]);
+  });
 });
 
 describe("公告评论 API", () => {
@@ -104,6 +121,20 @@ describe("公告评论 API", () => {
     });
   });
 
+  it("回复他人公告评论后会为被回复用户创建可跳转的消息", async () => {
+    const { getSession } = await import("@/lib/session");
+    const { COMMUNITY_FEEDBACK_ANNOUNCEMENT } = await import("@/lib/announcements");
+    const { createAnnouncementComment } = await import("@/lib/announcement-comments");
+    const { listUserNotifications } = await import("@/lib/notifications");
+    const parent = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 21, authorName: "原作者", content: "请看这个建议" });
+    vi.mocked(getSession).mockResolvedValue({ userId: 22, username: "reply", displayName: "回复者", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
+    const { POST } = await import("@/app/api/announcements/[id]/comments/route");
+    const response = await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify({ content: "收到，谢谢", parentId: parent.id }) }), { params: Promise.resolve({ id: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id }) });
+    expect(response.status).toBe(200);
+    const notifications = await listUserNotifications(21);
+    expect(notifications).toMatchObject({ unreadCount: 1, items: [{ type: "announcement-reply", title: "回复者 回复了你的评论", href: expect.stringContaining("comment=") }] });
+  });
+
   it("管理员可以删除评论", async () => {
     const { requireAdmin } = await import("@/lib/admin-auth");
     vi.mocked(requireAdmin).mockResolvedValue({
@@ -130,6 +161,34 @@ describe("公告评论 API", () => {
     });
     expect(response.status).toBe(200);
     expect(await listAnnouncementComments(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)).toEqual([]);
+  });
+
+  it("用户只能删除自己的评论，保留子回复并清理对应通知", async () => {
+    const { getSession } = await import("@/lib/session");
+    const { requireAdmin } = await import("@/lib/admin-auth");
+    const { COMMUNITY_FEEDBACK_ANNOUNCEMENT } = await import("@/lib/announcements");
+    const { createAnnouncementComment, listAnnouncementComments } = await import("@/lib/announcement-comments");
+    const { createUserNotification, listUserNotifications } = await import("@/lib/notifications");
+    const parent = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 21, authorName: "原作者", content: "主评论" });
+    const ownReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "Lycoris", content: "重复回复", parentId: parent.id });
+    const nestedReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 23, authorName: "其他用户", content: "后续回复", parentId: ownReply.id });
+    await createUserNotification({ userId: 21, type: "announcement-reply", title: "有人回复你", body: ownReply.content, href: `/announcements?comment=${ownReply.id}`, dedupeKey: `announcement-reply:${ownReply.id}` });
+    vi.mocked(getSession).mockResolvedValue({ userId: 22, username: "reply", displayName: "Lycoris", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
+    vi.mocked(requireAdmin).mockResolvedValue({ error: "仅管理员可用" });
+    const { DELETE } = await import("@/app/api/announcements/[id]/comments/[commentId]/route");
+    const params = Promise.resolve({ id: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, commentId: ownReply.id });
+    const response = await DELETE(new Request("http://localhost", { method: "DELETE" }), { params });
+    expect(response.status).toBe(200);
+    expect(await listAnnouncementComments(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: parent.id, parentId: null }),
+      expect.objectContaining({ id: nestedReply.id, parentId: parent.id }),
+    ]));
+    expect(await listUserNotifications(21)).toMatchObject({ items: [], unreadCount: 0 });
+
+    const protectedReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "Lycoris", content: "仍属于作者的评论", parentId: parent.id });
+    vi.mocked(getSession).mockResolvedValue({ userId: 24, username: "other", displayName: "其他用户", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
+    const forbidden = await DELETE(new Request("http://localhost", { method: "DELETE" }), { params: Promise.resolve({ id: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, commentId: protectedReply.id }) });
+    expect(forbidden.status).toBe(403);
   });
 
   it("删除公告时级联清理其全部评论", async () => {

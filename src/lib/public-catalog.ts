@@ -15,6 +15,7 @@ export type PublicModelPricing = {
   liveType: "per_request" | "per_token" | "tiered" | "unknown";
   liveUsdPerRequest?: number;
   liveUsdPerUsageToken?: number;
+  liveBaseUsdPerImage?: number;
   liveGroupName?: string;
   liveGroupRatio?: number;
   privatePointReference: {
@@ -140,10 +141,11 @@ function livePricing(
       liveType: "tiered",
       liveUsdPerRequest: snapshot.inEnvelopeUsd,
       liveUsdPerUsageToken: snapshot.outOfEnvelopeBalancePerUsageToken,
+      ...(snapshot.outOfEnvelopeBaseBalancePerImage ? { liveBaseUsdPerImage: snapshot.outOfEnvelopeBaseBalancePerImage } : {}),
       liveGroupName: groupName,
       liveGroupRatio: ratio,
       privatePointReference: null,
-      note: `NewAPI 公开分档价格：档内按张结算，档外按网关 usage token 结算；${baseNote}实际扣费以账号账单为准。`,
+      note: `NewAPI 公开分档价格：档内按张结算，档外按网关 usage token 结算${snapshot.outOfEnvelopeBaseBalancePerImage ? "并加生图基础费；独立工具不加生图基础费" : ""}；${baseNote}实际扣费以账号账单为准。`,
     };
   }
 

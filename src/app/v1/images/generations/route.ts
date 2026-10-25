@@ -5,6 +5,7 @@ import {
   imageOperationFromBody,
   imageReferenceCountFromBody,
   isNaiExternalModel,
+  normalizeExternalImageBody,
   proxyImageWithCredits,
   validateExternalMediumRequest,
 } from "@/lib/compat-api";
@@ -26,6 +27,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     assertBodySize(request);
     body = (await request.clone().json()) as Record<string, unknown>;
+    body = normalizeExternalImageBody(body, request.headers);
   } catch (error) {
     return withExternalCors(Response.json(
       { error: { message: error instanceof Error ? error.message : "Request body must be valid JSON" } },

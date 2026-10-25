@@ -9,6 +9,11 @@ async function imageUrl(color: string, width = 64, height = 64): Promise<string>
 const generation = { model: "gpt-image-1.5", operation: "generate", prompt: "A blue teapot", width: 832, height: 1216, steps: 99, seed: 42, sampler: "k_euler" };
 
 describe("多模型图像请求适配", () => {
+  it("NAI 关闭质量词时同时禁用兼容网关的独立后缀，保留手写提示词和空 UC", async () => {
+    const prompt = "a quiet landscape";
+    const request = await buildImageTransportRequest({ model: "nai-v5-full", prompt, negative_prompt: "", qualityToggle: false, ucPreset: 3, width: 832, height: 1216, steps: 28 }, "fixture");
+    expect(JSON.parse(request.body as string)).toMatchObject({ prompt, negative_prompt: "", qualityToggle: false, quality_tags: "", ucPreset: 3 });
+  });
   it("GPT generation 使用 JSON，不发送 response_format 和 NAI 扩散参数", async () => {
     const request = await buildImageTransportRequest({ ...generation, negative_prompt: "watermark", quality: "high", background: "transparent" }, "secret", "auto", 2);
     expect(request.path).toBe("/v1/images/generations");

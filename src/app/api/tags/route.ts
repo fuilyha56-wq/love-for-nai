@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { outboundFetch } from "@/lib/outbound";
 import { SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 import { tagZh } from "@/lib/tag-translations";
+import { readCatalogTag, searchTagCatalog, tagCatalogStatus } from "@/lib/tag-catalog";
 
 type DanbooruTag = {
   name: string;
@@ -121,6 +122,13 @@ async function matchByWords(keyword: string): Promise<TagHit[]> {
 }
 
 export async function GET(request: NextRequest) {
+  if (request.nextUrl.searchParams.get("status") === "1") return NextResponse.json(tagCatalogStatus(), { headers: { "Cache-Control": "no-store" } });
+  const catalogKey = request.nextUrl.searchParams.get("key");
+  if (catalogKey) {
+    if (catalogKey.length > 512) return NextResponse.json({ message: "标签标识过长" }, { status: 400 });
+    const item = readCatalogTag(catalogKey);
+    return NextResponse.json(item ? { item } : { message: "未找到标签" }, { status: item ? 200 : 404, headers: { "Cache-Control": "no-store" } });
+  }
   const rawQuery = request.nextUrl.searchParams.get("q")?.trim() || "";
   if (rawQuery.length < 2 || rawQuery.length > 80)
     return NextResponse.json(
@@ -149,6 +157,8 @@ export async function GET(request: NextRequest) {
   const normalized = (chineseTerms[rawQuery] || rawQuery)
     .toLowerCase()
     .replaceAll(" ", "_");
+  const catalog = searchTagCatalog(normalized, 10);
+  if (catalog?.length) return NextResponse.json({ query: rawQuery, normalizedQuery: normalized, tags: catalog, source: "catalog" }, { headers: { "Cache-Control": "no-store" } });
   const cached = cache.get(normalized);
   if (cached && cached.expiresAt > now) return NextResponse.json(cached.data);
 

@@ -26,6 +26,8 @@ SERVER_CONNECTION_GUIDE.md
 .venv
 scripts/.tmp
 .tmp
+.tmp-build
+.tmp-vitest
 tests
 *.log
 *.zip

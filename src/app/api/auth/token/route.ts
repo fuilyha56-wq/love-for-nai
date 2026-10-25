@@ -1,6 +1,8 @@
+import { resolvedAuthProviderId } from "@/lib/platform";
+import { getRuntimeSettings } from "@/lib/runtime-config";
 import { NextResponse } from "next/server";
 import { encodeSession, keepLoginTtlMs, resolvedSessionCookie } from "@/lib/session";
-import { newApiBaseUrl } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 import {
   invalidJsonResponse,
   optionalString,
@@ -19,6 +21,8 @@ type SelfResponse = {
 };
 
 export async function POST(request: Request) {
+  if (!(await getRuntimeSettings()).tokenLoginEnabled) return NextResponse.json({ message: "站点已关闭令牌登录" }, { status: 403 });
+  if ((await resolvedAuthProviderId()) === "local") return NextResponse.json({ message: "本地账号不支持令牌登录" }, { status: 403 });
   let raw: Record<string, unknown>;
   try {
     raw = await parseJsonBody<Record<string, unknown>>(request);
@@ -34,7 +38,7 @@ export async function POST(request: Request) {
 
   try {
     // 系统访问令牌可直接鉴权并反查用户，因此不需要用户名。
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
       headers: { Authorization: token },
       cache: "no-store",
       signal: AbortSignal.timeout(20_000),

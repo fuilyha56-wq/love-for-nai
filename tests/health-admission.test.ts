@@ -16,6 +16,10 @@ beforeEach(async () => {
   vi.stubEnv("LFN_RISK_HASH_SECRET", "health-test-key");
   vi.stubEnv("LFN_SESSION_SECRET", "");
   resetRiskSettingsCache(); resetRuntimeConfigCache();
+  const settings = structuredClone(await getRiskSettings());
+  settings.values["grant.enabled"] = true;
+  settings.values["grant.unknownIp"] = "unavailable";
+  await publishRiskSettings(settings, settings.version, "test", "Enable the grant policy exercised by this suite");
 });
 afterEach(async () => {
   resetRiskSettingsCache(); resetRuntimeConfigCache(); vi.unstubAllEnvs();

@@ -9,6 +9,7 @@ import { handleImageModelGeneration } from "./image-generation";
 import { userCanGenerateWithNewApiModel } from "./newapi-models";
 import { validateModelId } from "./validation";
 import { checkImageRateLimit } from "@/lib/image-request";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 
 /** Non-NAI models use the account's actual upstream protocol and never spend NAI AFF packages. */
 export async function handleNewApiImageModelGeneration(request: Request, session: LfnSession, body: Record<string, unknown>, saveToHistory = true): Promise<NextResponse> {
@@ -32,7 +33,7 @@ export async function handleNewApiImageModelGeneration(request: Request, session
       send: async (upstream) => {
         const finishLog = gatewayLogStart({ source: "lfn", user: session.username, endpoint: upstream.path, op: typeof body.operation === "string" ? body.operation : "generate", model, samples: 1 });
         try {
-          const response = await fetchWithModelConcurrency(`${baseUrl}${upstream.path}`, { method: "POST", headers: upstream.headers, body: upstream.body, cache: "no-store", signal: AbortSignal.any([request.signal, AbortSignal.timeout(180_000)]) });
+          const response = await fetchWithModelConcurrency(`${baseUrl}${upstream.path}`, { method: "POST", headers: upstream.headers, body: upstream.body, cache: "no-store", signal: AbortSignal.any([request.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]) });
           finishLog(response.status);
           return response;
         } catch (error) { finishLog(0); throw error; }

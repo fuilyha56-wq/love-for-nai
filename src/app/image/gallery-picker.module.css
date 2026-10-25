@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .picker {
   --picker-line: var(--line, #d8d4ca);
   --picker-ink: var(--ink, #292d2c);
@@ -300,4 +301,6 @@
     width: 2rem;
     padding: 0;
   }
+}
+
 }

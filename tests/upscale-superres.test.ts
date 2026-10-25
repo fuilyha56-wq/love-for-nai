@@ -93,7 +93,7 @@ describe("affCost 的 upscale 分支", () => {
         samples: 1,
         operation: "upscale",
       }),
-    ).toBe(1);
+    ).toBe(5);
     expect(
       affCost({
         model: "nai-diffusion-5-full",
@@ -103,7 +103,7 @@ describe("affCost 的 upscale 分支", () => {
         samples: 1,
         operation: "upscale",
       }),
-    ).toBe(2);
+    ).toBe(10);
     expect(
       affCost({
         model: "nai-diffusion-5-curated",
@@ -113,7 +113,7 @@ describe("affCost 的 upscale 分支", () => {
         samples: 1,
         operation: "upscale",
       }),
-    ).toBe(4);
+    ).toBe(20);
   });
 
   it("超分尺寸超限时抛错", () => {

@@ -9,6 +9,7 @@ import {
   deleteCreatorRewardCampaign,
   restoreCreatorRewardCampaign,
   creatorRewardStore,
+  type CreatorWeeklyMetric,
 } from "@/lib/creator-rewards";
 
 export async function GET(request: Request) {
@@ -44,14 +45,28 @@ export async function POST(request: Request) {
       if (body.weeklyRewards !== undefined && (!Array.isArray(body.weeklyRewards) || body.weeklyRewards.length < 1 || body.weeklyRewards.length > 20 || body.weeklyRewards.some((value) => typeof value !== "number")))
         throw new Error("周榜奖励必须填写 1 到 20 个整数");
       if (body.allowedRatings !== undefined && (!Array.isArray(body.allowedRatings) || body.allowedRatings.some((value) => !["general", "r13", "r17", "r18"].includes(String(value))))) throw new Error("作品评级配置无效");
+      if (body.allowedSources !== undefined && (!Array.isArray(body.allowedSources) || body.allowedSources.some((value) => !["other", "lfn", "local"].includes(String(value))))) throw new Error("作品来源配置无效");
+      for (const key of ["requiredTags", "excludedTags"] as const) {
+        if (body[key] !== undefined && (!Array.isArray(body[key]) || body[key].some((value) => typeof value !== "string"))) throw new Error("活动标签配置必须是字符串数组");
+      }
+      if (body.weeklyMetric !== undefined && !["likes", "downloads", "uses"].includes(String(body.weeklyMetric))) throw new Error("周榜指标配置无效");
+      for (const key of ["oneWinnerPerUser", "publicVisible", "featured"] as const) {
+        if (body[key] !== undefined && typeof body[key] !== "boolean") throw new Error(`${key} 必须是布尔值`);
+      }
       const campaign = await upsertCreatorRewardCampaign({
         id: optionalString(body.id), name: optionalString(body.name), enabled: body.enabled === undefined ? undefined : body.enabled,
         startsAt: optionalString(body.startsAt), endsAt: optionalString(body.endsAt), submissionReward: optionalNumber(body.submissionReward),
         weeklyRewards: Array.isArray(body.weeklyRewards) ? body.weeklyRewards.filter((value): value is number => typeof value === "number") as [number, number, number] : undefined,
         budget: optionalNumber(body.budget),
         summary: optionalString(body.summary), description: optionalString(body.description), rules: optionalString(body.rules), coverUrl: optionalString(body.coverUrl), requiredTag: optionalString(body.requiredTag),
+        requiredTags: body.requiredTags as string[] | undefined, excludedTags: body.excludedTags as string[] | undefined,
         allowedRatings: body.allowedRatings as ("general" | "r13" | "r17" | "r18")[] | undefined,
-        minWeeklyLikes: optionalNumber(body.minWeeklyLikes), submissionLimitPerUser: optionalNumber(body.submissionLimitPerUser), priority: optionalNumber(body.priority),
+        allowedSources: body.allowedSources as ("other" | "lfn" | "local")[] | undefined,
+        weeklyMetric: optionalString(body.weeklyMetric) as CreatorWeeklyMetric | undefined,
+        minWeeklyLikes: optionalNumber(body.minWeeklyLikes), minWeeklyMetric: optionalNumber(body.minWeeklyMetric),
+        submissionLimitPerUser: optionalNumber(body.submissionLimitPerUser), submissionRewardLimit: optionalNumber(body.submissionRewardLimit),
+        oneWinnerPerUser: body.oneWinnerPerUser as boolean | undefined, publicVisible: body.publicVisible as boolean | undefined, featured: body.featured as boolean | undefined,
+        priority: optionalNumber(body.priority),
       });
       return NextResponse.json({ campaign });
     }

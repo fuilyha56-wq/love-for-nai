@@ -35,6 +35,9 @@ export type EditorDraft = {
   mode: EditorDraftMode;
   document: EditorDocument;
   workspace?: EditorWorkspaceState;
+  historyNodeId?: string;
+  historyBranchId?: string;
+  historyTileScale?: 2 | 3 | 4 | 5 | 6;
   review?: ReviewSession;
   createdAt: number;
   updatedAt: number;

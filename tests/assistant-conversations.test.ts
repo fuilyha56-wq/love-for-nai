@@ -46,6 +46,13 @@ describe("助手对话存储", () => {
     expect(await readConversation(1)).toEqual({ turns: [], tagPool: [] });
   });
 
+  it("保存目标会话标识供后续轮次隔离上下文", async () => {
+    const { appendConversationTurn, readConversation } = await import("@/lib/assistant-conversations");
+    await appendConversationTurn(1, turn({ goalMode: true, goalRunId: "goal-run-1" }));
+    const conversation = await readConversation(1);
+    expect(conversation.turns[0]).toMatchObject({ goalMode: true, goalRunId: "goal-run-1" });
+  });
+
   it("追加轮次并把标签并入去重的标签池", async () => {
     const { appendConversationTurn, readConversation } = await import(
       "@/lib/assistant-conversations"

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 
 function isSafeHref(value: string): boolean {
   const href = value.trim();
@@ -8,6 +9,17 @@ function isSafeHref(value: string): boolean {
   try {
     const protocol = new URL(href).protocol;
     return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+function isSafeImageSrc(value: string): boolean {
+  const src = value.trim();
+  if (src.startsWith("/") && !src.startsWith("//")) return true;
+  try {
+    const protocol = new URL(src).protocol;
+    return protocol === "http:" || protocol === "https:";
   } catch {
     return false;
   }
@@ -24,7 +36,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
       nodes.push(
         <code
           key={`${keyPrefix}-code-${index}`}
-          className="rounded bg-[#f1eee7] px-1.5 py-0.5 font-mono text-[0.85em]"
+          className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 font-mono text-[0.85em]"
         >
           {segment.slice(1, -1)}
         </code>,
@@ -51,7 +63,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
               href={link[2]}
               target="_blank"
               rel="noreferrer"
-              className="text-[var(--rose)] underline underline-offset-2"
+              className="text-[var(--accent-text,var(--rose))] underline underline-offset-2"
             >
               {link[1]}
             </a>,
@@ -67,6 +79,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
 
 type Block =
   | { kind: "heading"; level: number; text: string }
+  | { kind: "image"; alt: string; src: string }
   | { kind: "paragraph"; text: string }
   | { kind: "code"; lines: string[] }
   | { kind: "list"; ordered: boolean; items: string[] }
@@ -93,6 +106,12 @@ function parseBlocks(markdown: string): Block[] {
       }
       index += 1; // 跳过收尾围栏。
       blocks.push({ kind: "code", lines: code });
+      continue;
+    }
+    const image = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (image && isSafeImageSrc(image[2])) {
+      blocks.push({ kind: "image", alt: image[1], src: image[2] });
+      index += 1;
       continue;
     }
     const heading = line.match(/^(#{1,4})\s+(.*)$/);
@@ -153,7 +172,7 @@ function parseBlocks(markdown: string): Block[] {
 export function MarkdownView({ content }: { content: string }) {
   const blocks = parseBlocks(content);
   return (
-    <div className="space-y-3 text-sm leading-6 text-[var(--ink)]">
+    <div className="space-y-3 text-sm leading-6 text-[var(--ink)] [overflow-wrap:anywhere]">
       {blocks.map((block, index) => {
         const key = `b-${index}`;
         switch (block.kind) {
@@ -173,6 +192,20 @@ export function MarkdownView({ content }: { content: string }) {
               <p key={key} className="whitespace-pre-wrap">
                 {renderInline(block.text, key)}
               </p>
+            );
+          case "image":
+            return (
+              <figure key={key} className="space-y-2">
+                <Image
+                  src={block.src}
+                  alt={block.alt}
+                  width={1200}
+                  height={720}
+                  unoptimized
+                  className="h-auto max-h-[70vh] w-full rounded-lg border border-[var(--line)] object-contain"
+                />
+                {block.alt && <figcaption className="text-center text-xs text-[var(--muted)]">{block.alt}</figcaption>}
+              </figure>
             );
           case "code":
             return (

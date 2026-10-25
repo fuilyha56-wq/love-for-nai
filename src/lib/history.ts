@@ -4,9 +4,10 @@ import path from "node:path";
 import type { ImageProviderProtocol } from "./image-model-capabilities";
 import {
   deleteRemoteHistoryImage,
+  getRemoteHistoryImage,
   putRemoteHistoryImage,
 } from "@/lib/remote-history";
-import { embedWatermark } from "@/lib/image-watermark";
+import { embedWatermark, verifyWatermark } from "@/lib/image-watermark";
 
 export type GenerationParameters = {
   [key: string]: unknown;
@@ -116,15 +117,103 @@ function generateFingerprint(userId: number, timestamp: string, parameters: Gene
   return createHash("sha256").update(payload).digest("hex").slice(0, 16);
 }
 
+function isIntermediateHistoryItem(item: HistoryItem): boolean {
+  const parameters = item.parameters as Record<string, unknown>;
+  if (
+    parameters._lfnHistoryVisibility === "intermediate" ||
+    parameters._lfnEditorIntermediate === true ||
+    parameters.editor_composite === true
+  ) return true;
+  const operation = String(parameters.operation || "");
+  if (operation === "editor-tile" || operation === "editor-patch") return true;
+  return typeof parameters.prompt === "string" &&
+    parameters.prompt.includes("continue details naturally across the crop edges");
+}
+
+async function historyImageHash(userId: number, item: HistoryItem): Promise<string | null> {
+  if (item.imageSha256 && /^[a-f\d]{64}$/i.test(item.imageSha256)) return item.imageSha256.toLowerCase();
+  let data: Buffer | null = null;
+  if (item.remote) {
+    data = (await getRemoteHistoryImage(userId, item.imagePath))?.data || null;
+  } else {
+    data = await readFile(path.join(userDirectory(userId), item.imagePath)).catch(() => null);
+  }
+  if (!data) return null;
+  if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
+    try {
+      const verified = await verifyWatermark(`data:image/png;base64,${data.toString("base64")}`);
+      if (verified.valid && verified.payload?.sha256) return verified.payload.sha256.toLowerCase();
+    } catch { /* fall back to the stored bytes when metadata cannot be verified */ }
+  }
+  return createHash("sha256").update(data).digest("hex");
+}
+
+/** Repair old duplicate and intermediate rows when a user next opens image history. */
+async function repairHistory(userId: number): Promise<HistoryItem[]> {
+  const items = await readIndex(userId);
+  const keep = new Set(items.map((item) => item.id));
+  const requestGroups = new Map<string, HistoryItem[]>();
+  for (const item of items) {
+    if (isIntermediateHistoryItem(item)) {
+      keep.delete(item.id);
+      continue;
+    }
+    if (!item.requestId) continue;
+    const group = requestGroups.get(item.requestId) || [];
+    group.push(item);
+    requestGroups.set(item.requestId, group);
+  }
+  for (const group of requestGroups.values()) {
+    if (group.length < 2) continue;
+    const seen = new Set<string>();
+    // Index order is newest first. Keep the first copy users already encounter.
+    const hashes = new Array<string | null>(group.length);
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(4, group.length) }, async () => {
+      while (cursor < group.length) {
+        const index = cursor++;
+        hashes[index] = await historyImageHash(userId, group[index]);
+      }
+    }));
+    for (const [index, item] of group.entries()) {
+      const hash = hashes[index];
+      if (!hash) continue;
+      if (seen.has(hash)) keep.delete(item.id);
+      else seen.add(hash);
+    }
+  }
+  if (keep.size === items.length) return items;
+  const retained = items.filter((item) => keep.has(item.id));
+  const retainedPaths = new Set(retained.map((item) => item.imagePath));
+  await writeIndex(userId, retained);
+  for (const item of items) {
+    if (keep.has(item.id) || retainedPaths.has(item.imagePath)) continue;
+    if (item.remote) await deleteRemoteHistoryImage(userId, item.imagePath);
+    else await unlink(path.join(userDirectory(userId), item.imagePath)).catch(() => undefined);
+  }
+  return retained;
+}
+
 const LOCAL_HISTORY_LIMIT = 40;
 const REMOTE_HISTORY_LIMIT = 60;
 
 export type SaveHistoryOptions = {
+  imageIds?: string[];
   requestId?: string;
   requestFingerprint?: string;
   skipWatermark?: boolean;
   watermarkStatus?: HistoryItem["watermarkStatus"];
 };
+
+/** Reserve browser-visible IDs before background persistence starts. */
+export function reserveHistoryImageIds(images: string[]): string[] {
+  const ids = new Map<string, string>();
+  return images.map((image) => {
+    const id = ids.get(image) || randomUUID();
+    ids.set(image, id);
+    return id;
+  });
+}
 
 export async function saveHistory(
   userId: number,
@@ -145,13 +234,29 @@ export async function saveHistory(
   return withUserLock(userId, async () => {
     await mkdir(userDirectory(userId), { recursive: true });
     const created: HistoryItem[] = [];
-    for (const image of images) {
+    const returned: HistoryItem[] = [];
+    const seenRequestImages = new Map<string, HistoryItem>();
+    if (effectiveOptions.requestId) {
+      const previous = (await readIndex(userId)).filter((item) => item.requestId === effectiveOptions.requestId);
+      for (const item of previous) {
+        const hash = await historyImageHash(userId, item);
+        if (hash && !seenRequestImages.has(hash)) seenRequestImages.set(hash, item);
+      }
+    }
+    for (const [imageIndex, image] of images.entries()) {
       const match = image.match(
         /^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/,
       );
       if (!match) continue;
+      const sourceBytes = Buffer.from(match[2], "base64");
+      const imageSha256 = createHash("sha256").update(sourceBytes).digest("hex");
+      const known = effectiveOptions.requestId ? seenRequestImages.get(imageSha256) : undefined;
+      if (known) {
+        returned.push(known);
+        continue;
+      }
       const extension = match[1] === "jpeg" ? "jpg" : match[1];
-      const id = randomUUID();
+      const id = effectiveOptions.imageIds?.[imageIndex] || randomUUID();
       const fileName = `${id}.${extension}`;
       const timestamp = new Date().toISOString();
       const parameters = safeParameters(body);
@@ -188,8 +293,12 @@ export async function saveHistory(
         fingerprint,
         requestId: effectiveOptions.requestId,
         requestFingerprint: effectiveOptions.requestFingerprint || fingerprint,
+        imageSha256,
         watermarkStatus,
       });
+      const item = created[created.length - 1];
+      returned.push(item);
+      if (effectiveOptions.requestId) seenRequestImages.set(imageSha256, item);
     }
     const merged = [...created, ...(await readIndex(userId))];
     let unsavedSeen = 0;
@@ -242,12 +351,12 @@ export async function saveHistory(
     // 本地索引：保留 + 新转远程的条目，顺序保持最新在前。
     const remoteIndex = toRemote.map((item) => item);
     await writeIndex(userId, [...retained, ...remoteIndex]);
-    return created;
+    return returned;
   });
 }
 
 export async function listHistory(userId: number) {
-  return readIndex(userId);
+  return withUserLock(userId, () => repairHistory(userId));
 }
 
 export async function findHistory(userId: number, id: string) {
@@ -256,6 +365,24 @@ export async function findHistory(userId: number, id: string) {
 
 export async function findHistoryByRequestId(userId: number, requestId: string) {
   return (await readIndex(userId)).find((item) => item.requestId === requestId) || null;
+}
+
+/** Match exact unsigned response bytes to this user's authenticated server original. */
+export async function findWatermarkedHistorySource(userId: number, sourceSha256: string): Promise<Buffer | null> {
+  const item = (await readIndex(userId)).find((entry) =>
+    entry.watermarkStatus === "embedded" && entry.imageSha256 === sourceSha256);
+  if (!item) return null;
+  try {
+    const data = item.remote
+      ? (await getRemoteHistoryImage(userId, item.imagePath))?.data
+      : await readFile(historyImagePath(userId, item.imagePath));
+    if (!data) return null;
+    const proof = await verifyWatermark(`data:image/png;base64,${data.toString("base64")}`);
+    // The index alone is insufficient: authenticate the stored image and its
+    // binding to the supplied bytes before using its provenance.
+    return proof.valid && proof.shaMatch && proof.payload?.sha256 === sourceSha256 && proof.payload.userId === userId
+      ? data : null;
+  } catch { return null; }
 }
 
 export async function deleteHistory(userId: number, id: string) {
@@ -274,6 +401,29 @@ export async function deleteHistory(userId: number, id: string) {
     }
     await writeIndex(userId, remaining);
     return true;
+  });
+}
+
+export async function deleteHistories(userId: number, ids: string[]) {
+  const uniqueIds = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0))];
+  if (!uniqueIds.length) return 0;
+  return withUserLock(userId, async () => {
+    const items = await readIndex(userId);
+    const selected = items.filter((entry) => uniqueIds.includes(entry.id));
+    if (!selected.length) return 0;
+    const selectedIds = new Set(selected.map((entry) => entry.id));
+    const remaining = items.filter((entry) => !selectedIds.has(entry.id));
+    const retainedPaths = new Set(remaining.map((entry) => `${entry.remote ? "remote" : "local"}:${entry.imagePath}`));
+    const removedPaths = new Set<string>();
+    for (const item of selected) {
+      const key = `${item.remote ? "remote" : "local"}:${item.imagePath}`;
+      if (retainedPaths.has(key) || removedPaths.has(key)) continue;
+      removedPaths.add(key);
+      if (item.remote) await deleteRemoteHistoryImage(userId, item.imagePath);
+      else await unlink(path.join(userDirectory(userId), item.imagePath)).catch(() => undefined);
+    }
+    await writeIndex(userId, remaining);
+    return selected.length;
   });
 }
 

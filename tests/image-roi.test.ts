@@ -53,7 +53,7 @@ describe("image ROI geometry", () => {
   });
 
   it("reports all applicable request-limit violations", () => {
-    const result = validateRoi({ x: -1, y: 0, width: 32, height: 2000 }, {
+    const result = validateRoi({ x: -1, y: 0, width: 32, height: 50000 }, {
       width: 832,
       height: 1216,
     }, { requireAligned: true });
@@ -61,10 +61,10 @@ describe("image ROI geometry", () => {
     expect(result.errors).toEqual(expect.arrayContaining([
       "ROI 宽高必须是 64 的倍数",
       "ROI 宽高不能小于 64",
-      "ROI 宽高不能超过 1600",
+      "ROI 宽高不能超过 49152",
       "ROI 必须位于图像范围内",
     ]));
-    expect(validateRoi({ x: 0, y: 0, width: 1600, height: 1600 }, undefined, {
+    expect(validateRoi({ x: 0, y: 0, width: 2048, height: 1536 }, undefined, {
       requireAligned: true,
     })).toMatchObject({ valid: true, area: ROI_MAX_PIXELS });
     expect(validateRoi({ x: 0, y: 0, width: 1600, height: 1536 }, undefined, {

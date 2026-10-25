@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   MAX_GALLERY_IMAGE_BYTES,
-  listGallery,
+  queryGallery,
   publishFromHistory,
   publishLocalImage,
   assertGalleryRating,
@@ -9,8 +9,28 @@ import {
 } from "@/lib/gallery";
 import { getSession } from "@/lib/session";
 
-export async function GET() {
-  return NextResponse.json({ items: (await listGallery()).map((item) => ({ ...item, imageUrl: `/api/gallery/${item.id}/image` })) });
+export async function GET(request: Request) {
+  const query = new URL(request.url).searchParams;
+  const tags = [...query.getAll("tag"), ...(query.get("tags") || "").split(",")]
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  const numberParam = (value: string | null) => value && /^\d+$/.test(value) ? Number(value) : undefined;
+  const result = await queryGallery({
+    q: query.get("q") || "",
+    tags,
+    rating: query.get("rating") || "all",
+    sort: query.get("sort") as "newest" | "likes" | "downloads" | "uses" | null || "newest",
+    page: numberParam(query.get("page")),
+    pageSize: numberParam(query.get("pageSize") || query.get("limit")),
+  });
+  return NextResponse.json(
+    {
+      ...result,
+      items: result.items.map((item) => ({ ...item, imageUrl: `/api/gallery/${item.id}/image`, thumbnailUrl: `/api/gallery/${item.id}/image?variant=thumbnail` })),
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 export async function POST(request: Request) {
   const session = await getSession();

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" role="img" aria-labelledby="title desc">
+<title id="title">LfN 接口与鉴权选择</title><desc id="desc">图像 API Key 用于原生和 OpenAI 图像接口；登录 Cookie 用于钱包、签到、历史和投稿。两种凭据不可互换。</desc>
+<defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8" fill="none" stroke="#a83a4c" stroke-width="1.5"/></marker></defs>
+<rect width="1200" height="560" rx="22" fill="#faf8f4"/>
+<g font-family="Noto Sans SC,Microsoft YaHei,sans-serif" fill="#292d2c">
+<text x="48" y="62" font-size="28" font-weight="700">LfN · 选对入口和凭据</text><text x="48" y="96" font-size="16" fill="#68716f">以你的站点根地址为起点，按用途选择 API</text>
+<g fill="#fffefa" stroke="#d8d4ca"><rect x="48" y="145" width="300" height="132" rx="14"/><rect x="450" y="145" width="300" height="132" rx="14"/><rect x="852" y="145" width="300" height="132" rx="14"/><rect x="48" y="343" width="300" height="132" rx="14"/><rect x="450" y="343" width="300" height="132" rx="14"/><rect x="852" y="343" width="300" height="132" rx="14"/></g>
+<g font-size="20" font-weight="700"><text x="72" y="185">外部图像工具</text><text x="474" y="185">NewAPI 图像 API Key</text><text x="876" y="185">/ai · /v1</text><text x="72" y="383">站内与会话工具</text><text x="474" y="383">正常登录后的 Cookie</text><text x="876" y="383">/api 站内功能</text></g>
+<g font-size="15" fill="#68716f"><text x="72" y="220">NAI Launcher / curl / Python</text><text x="72" y="247">无需浏览器保持登录</text><text x="474" y="220">Authorization: Bearer sk-…</text><text x="474" y="247">按密钥所属用户校验与结算</text><text x="876" y="220">模型目录、生成、编辑与工具</text><text x="876" y="247">JSON / ZIP / MessagePack</text><text x="72" y="418">LfN 网页 / 自用 HTTP 会话</text><text x="72" y="445">按站点策略完成两步验证</text><text x="474" y="418">会话受有效期与账号权限约束</text><text x="474" y="445">不能用图像 API Key 替代</text><text x="876" y="418">钱包、签到、历史、投稿、故事</text><text x="876" y="445">后台另需管理员会话</text></g>
+<text x="48" y="524" font-size="15" fill="#a83a4c">公开文档与公开广场可直接阅读；API Key 免网页登录出图 ≠ 匿名签到</text>
+</g><g stroke="#a83a4c" stroke-width="2" marker-end="url(#arrow)"><path d="M365 211H430"/><path d="M767 211H832"/><path d="M365 409H430"/><path d="M767 409H832"/></g></svg>

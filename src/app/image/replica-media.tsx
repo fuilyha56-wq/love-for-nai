@@ -1,9 +1,10 @@
 "use client";
 
 import Image from "next/image";
-import { Brush, Dice5, Download, ImageIcon, ImagePlus, Maximize2, Ruler, Sparkles, WandSparkles } from "lucide-react";
+import { Brush, Dice5, ImageIcon, ImagePlus, Maximize2, Ruler, Sparkles, WandSparkles } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import "./replica-media.css";
+import { ImageDownloadMenu } from "@/app/image-download-menu";
 
 export type ReplicaMediaProps = {
   variant: "nai" | "nlw";
@@ -114,12 +115,12 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
           />
         </button>
         <div className="replica-media-actions" role="group" aria-label={`第 ${index + 1} 张图像操作`}>
-          <a href={image} download={`lfn-${index + 1}.png`} aria-label={`下载第 ${index + 1} 张图像`} title="保存图像"><Download size={16} /></a>
+          <ImageDownloadMenu src={image} filename={`lfn-${index + 1}`} className="replica-download-menu" title={`下载第 ${index + 1} 张图像`} />
           <button type="button" title="用于图生图" aria-label={`第 ${index + 1} 张用于图生图`} onClick={() => onUse(image, "img2img")}><ImagePlus size={16} /></button>
           <button type="button" title="用于局部重绘" aria-label={`第 ${index + 1} 张用于局部重绘`} onClick={() => onUse(image, "inpainting")}><Brush size={16} /></button>
           <button type="button" title="用于导演工具" aria-label={`第 ${index + 1} 张用于导演工具`} onClick={() => onUse(image, "director-lineart")}><WandSparkles size={16} /></button>
           <button type="button" title="用作 Vibe 参考" aria-label={`第 ${index + 1} 张用作 Vibe 参考`} onClick={() => onUse(image, "vibe-transfer")}><Sparkles size={16} /></button>
-          <button type="button" title="放大图像" aria-label={`第 ${index + 1} 张用于放大`} onClick={() => onUse(image, "upscale")}><Maximize2 size={16} /></button>
+          <button type="button" className="replica-media-upscale" title="V5 扩散超分" aria-label={`第 ${index + 1} 张用于 V5 超分`} onClick={() => onUse(image, "upscale")}><Maximize2 size={16} /><span>V5 超分</span></button>
         </div>
       </div>
     );

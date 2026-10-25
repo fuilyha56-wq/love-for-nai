@@ -1,5 +1,7 @@
 "use client";
 import { LfnColorPicker } from "@/app/ui/lfn-color-picker";
+import CachedImage from "@/app/cached-image";
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
 
 import {
   Check,
@@ -96,6 +98,7 @@ type HistoryImage = {
   id: string;
   createdAt: string;
   imageUrl: string;
+  thumbnailUrl?: string;
   parameters: Record<string, string | number>;
 };
 
@@ -105,9 +108,7 @@ async function importHistoryBackground(
   onProgress: (text: string) => void,
 ): Promise<Blob> {
   onProgress("正在读取历史图片…");
-  const response = await fetch(item.imageUrl, { cache: "no-store" });
-  if (!response.ok) throw new Error("历史图片读取失败，请重新登录后重试");
-  const blob = await response.blob();
+  const blob = await fetchCachedImageBlob(item.imageUrl);
   if (!blob.type.startsWith("image/")) throw new Error("历史记录不是有效的图片");
   onProgress("正在压缩并保存…");
   return compressImage(new File([blob], "history.png", { type: blob.type }));
@@ -187,9 +188,8 @@ function HistoryPickerDialog({
                   aria-pressed={picked === item.id}
                 >
                   <span className="block aspect-[4/5] bg-[#ebe9e2]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={item.imageUrl}
+                    <CachedImage
+                      src={item.thumbnailUrl || `${item.imageUrl}?variant=thumbnail`}
                       alt={item.parameters.prompt ? String(item.parameters.prompt).slice(0, 40) : "历史生成图片"}
                       className="h-full w-full object-cover"
                       loading="lazy"

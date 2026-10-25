@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { ArrowLeftRight, ChevronDown, ChevronRight, ChevronUp, RotateCcw, RectangleHorizontal, RectangleVertical, Square, Sprout } from "lucide-react";
 import { commitNumberDraft, quantizeStepValue, useWheelStep } from "@/app/ui/wheel-number";
 import { useAnimatedDisclosure } from "@/app/ui/use-animated-disclosure";
+import { naiDimensionLimit, naiMaxPixels, isNaiLimitModel } from "@/lib/nai-image-limits";
+import { normalizeImageModelSize } from "@/lib/image-model-capabilities";
 import { isNaiMediumModel } from "@/lib/nai-native-request";
 import "./replica-generation-settings.css";
 
@@ -256,7 +258,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
         {variant === "nlw" && <div className="rgs-model-controls">{providerControls}{modelControls}</div>}
         {props.naturalSettings || <>{variant === "nlw" && !medium && <label className="rgs-field"><span className="rgs-label">采样器</span>
           <ReplicaSelect variant={variant} label="采样器" value={sampler} choices={REPLICA_SAMPLERS} onChange={setSampler} /></label>}
-        <SliderField label="步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : 50} step={1} />
+        <SliderField label="步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : isNaiLimitModel(model) ? 28 : 50} step={1} />
         <SliderField label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} />
         {variant === "nai" && <div className="rgs-paired-fields">
           <label className="rgs-field"><span className="rgs-label">种子</span><div className="rgs-seed-row">
@@ -275,7 +277,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
         </div></div></>}
         {variant === "nlw" && <div className="rgs-output-settings">
           <label className="rgs-field"><span className="rgs-label">图像数量</span>
-            <NumberEntry label="生成张数" value={medium ? 1 : count} onChange={setCount} min={1} max={medium ? 1 : 30} step={1} /></label>
+            <NumberEntry label="生成张数" value={count} onChange={setCount} min={1} max={30} step={1} /></label>
           <label className="rgs-field"><span className="rgs-label">提交方式</span>
             <ReplicaSelect variant={variant} label="提交方式" value={batchMode} onChange={(value) => setBatchMode(value as "once" | "sequential")}
               choices={[{ value: "once", label: "一次性" }, { value: "sequential", label: "分批次" }]} /></label>
@@ -287,7 +289,7 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
 
   return <div ref={root} className={`rgs-shell${open ? " is-open" : ""}`} data-replica-variant={variant}>
     {variant === "nai" && !props.naturalSettings ? <div className="rgs-summary">
-      <label><small>步数</small><NumberEntry label="采样步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : 50} step={1} /></label>
+      <label><small>步数</small><NumberEntry label="采样步数" value={medium ? 14 : steps} onChange={setSteps} min={medium ? 14 : 1} max={medium ? 14 : isNaiLimitModel(model) ? 28 : 50} step={1} /></label>
       <label><small>指导</small><NumberEntry label="提示引导" value={scale} onChange={setScale} min={0} max={10} step={0.1} /></label>
       <span><small>种子</small><b title={seed || "随机种子"}>{seed || <Sprout size={16} aria-label="随机种子" />}</b></span>
       <span className="rgs-summary-sampler"><small>采样器</small><b>{samplerLabel}</b></span>
@@ -306,6 +308,9 @@ export function ReplicaGenerationSettings(props: ReplicaGenerationSettingsProps)
 }
 
 const sizePresets = [
+  { value: "maximum-portrait", label: "最大画布 - 竖屏 (1536×2048)", width: 1536, height: 2048 },
+  { value: "maximum-landscape", label: "最大画布 - 横屏 (2048×1536)", width: 2048, height: 1536 },
+  { value: "maximum-square", label: "最大画布 - 方形 (1728×1728)", width: 1728, height: 1728 },
   { value: "small-portrait", label: "小图 - 竖屏 (512×768)", width: 512, height: 768 },
   { value: "small-landscape", label: "小图 - 横屏 (768×512)", width: 768, height: 512 },
   { value: "small-square", label: "小图 - 方形 (640×640)", width: 640, height: 640 },
@@ -330,31 +335,32 @@ export function replicaSizePreset(width: number, height: number, variant: Varian
 }
 
 export type ReplicaImageSizeProps = {
+  model?: string;
   variant: Variant; width: number; height: number; count: number;
   setWidth: (value: number) => void; setHeight: (value: number) => void; setCount: (value: number) => void;
 };
 
-export function ReplicaImageSize({ variant, width, height, count, setWidth, setHeight, setCount }: ReplicaImageSizeProps) {
+export function ReplicaImageSize({ model = "nai-v5-full", variant, width, height, count, setWidth, setHeight, setCount }: ReplicaImageSizeProps) {
   const [customCount, setCustomCount] = useState(false);
-  const choices = variant === "nai" ? sizePresets : nlwSizePresets;
+  const choices = (variant === "nai" ? sizePresets : [...nlwSizePresets, ...sizePresets.filter((item) => item.value.startsWith("maximum-"))]).filter((item) => item.width * item.height <= naiMaxPixels(model));
   const preset = replicaSizePreset(width, height, variant);
   const sizeClass = preset.split("-")[0];
   const orientation = width === height ? "square" : width > height ? "landscape" : "portrait";
   function applySize(value: string) {
     const next = choices.find((item) => item.value === value);
-    if (next) { setWidth(next.width); setHeight(next.height); }
+    if (next) { const size = normalizeImageModelSize(model, next.width, next.height); setWidth(size.width); setHeight(size.height); }
   }
   return <section className="rgs-image-size" data-replica-variant={variant}>
     {variant === "nai" ? <>
       <h3>图像设置</h3>
       <div className="rgs-resolution-heading"><b>分辨率</b><div className="rgs-dimensions">
-        <NumberEntry label="图片宽度" value={width} onChange={setWidth} min={64} max={1600} step={64} />
+        <NumberEntry label="图片宽度" value={width} onChange={setWidth} min={64} max={naiDimensionLimit(height, model)} step={64} />
         <button type="button" aria-label="交换宽高" title="交换宽高" onClick={() => { setWidth(height); setHeight(width); }}>×</button>
-        <NumberEntry label="图片高度" value={height} onChange={setHeight} min={64} max={1600} step={64} />
+        <NumberEntry label="图片高度" value={height} onChange={setHeight} min={64} max={naiDimensionLimit(width, model)} step={64} />
       </div></div>
       <div className="rgs-size-options">
         <ReplicaSelect variant={variant} label="分辨率预设" value={sizeClass} onChange={(value) => applySize(`${value}-${orientation}`)}
-          choices={[{ value: "small", label: "小图" }, { value: "normal", label: "普通" }, { value: "large", label: "大图" }, ...(sizeClass === "custom" ? [{ value: "custom", label: "自定义" }] : [])]} />
+          choices={[{ value: "small", label: "小图" }, { value: "normal", label: "普通" }, ...(!isNaiLimitModel(model) ? [{ value: "large", label: "大图" }] : []), ...(!isNaiLimitModel(model) ? [{ value: "maximum", label: "最大画布" }] : []), ...(sizeClass === "custom" ? [{ value: "custom", label: "自定义" }] : [])]} />
         <div className="rgs-segmented rgs-orientations" role="group" aria-label="画面方向">
           {([["landscape", "横图", RectangleHorizontal], ["portrait", "竖图", RectangleVertical], ["square", "方图", Square]] as const)
             .map(([value, label, Icon]) => <button type="button" key={value} aria-label={label} title={label} aria-pressed={orientation === value}
@@ -371,9 +377,9 @@ export function ReplicaImageSize({ variant, width, height, count, setWidth, setH
       <h3>图像尺寸</h3>
       <ReplicaSelect variant={variant} label="分辨率预设" value={preset} choices={[...choices, { value: "custom", label: `自定义 (${width}×${height})` }]} onChange={applySize} />
       <div className="rgs-nlw-dimensions"><label><small>宽度</small>
-        <NumberEntry label="图片宽度" value={width} onChange={setWidth} min={64} max={1600} step={64} /></label>
+        <NumberEntry label="图片宽度" value={width} onChange={setWidth} min={64} max={naiDimensionLimit(height, model)} step={64} /></label>
         <span aria-hidden="true">×</span><label><small>高度</small>
-          <NumberEntry label="图片高度" value={height} onChange={setHeight} min={64} max={1600} step={64} /></label>
+          <NumberEntry label="图片高度" value={height} onChange={setHeight} min={64} max={naiDimensionLimit(width, model)} step={64} /></label>
         <button type="button" aria-label="交换宽高" title="交换宽高" onClick={() => { setWidth(height); setHeight(width); }}><ArrowLeftRight size={20} /></button>
       </div>
     </>}

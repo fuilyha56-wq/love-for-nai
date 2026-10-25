@@ -1,4 +1,6 @@
 import { outboundFetch } from "@/lib/outbound";
+import { readCatalogTag, searchTagCatalog, tagCatalogStatus } from "@/lib/tag-catalog";
+import { runQuickTagCloudTool } from "@/lib/quicktagcloud";
 
 export type ToolResult = { ok: boolean; data: unknown };
 
@@ -52,8 +54,8 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
         postCount: item.post_count ?? 0,
       }));
     if (!tags.length)
-      return { ok: true, data: { query: keyword, tags: [], note: "无匹配标签" } };
-    return { ok: true, data: { query: keyword, tags } };
+      return { ok: true, data: { query: keyword, tags: [], source: "danbooru_online", note: "无匹配标签" } };
+    return { ok: true, data: { query: keyword, tags, source: "danbooru_online" } };
   } catch (error) {
     return {
       ok: false,
@@ -71,11 +73,12 @@ async function verifyDanbooruTag(name: string): Promise<ToolResult> {
       new URLSearchParams({ "search[name]": normalized, limit: "1" }),
     )) as DanbooruTag[];
     if (!tag || tag.name !== normalized)
-      return { ok: true, data: { name: normalized, exists: false } };
+      return { ok: true, data: { name: normalized, exists: false, source: "danbooru_online" } };
     return {
       ok: true,
       data: {
         name: tag.name,
+        source: "danbooru_online",
         exists: true,
         category: categoryNames[tag.category] || "其他",
         postCount: tag.post_count,
@@ -98,14 +101,15 @@ async function readDanbooruWiki(title: string): Promise<ToolResult> {
       new URLSearchParams({ "search[title]": normalized, limit: "1" }),
     )) as WikiPage[];
     const page = pages[0];
-    if (!page) return { ok: true, data: { title: normalized, found: false } };
+    if (!page) return { ok: true, data: { title: normalized, found: false, source: "danbooru_online" } };
     return {
       ok: true,
       data: {
         title: page.title,
+        source: "danbooru_online",
         found: true,
-        otherNames: page.other_names?.slice(0, 8) ?? [],
-        body: (page.body || "").slice(0, 900),
+        otherNames: page.other_names ?? [],
+        body: page.body || "",
       },
     };
   } catch (error) {
@@ -176,7 +180,33 @@ export function summarizeToolResult(name: string, data: unknown): string {
     unknown
   >;
   const count = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+  if (typeof data === "string") return data;
+  if (typeof payload.message === "string") return payload.message;
   switch (name) {
+    case "list_quicktagcloud_codexes":
+      return `在线目录 ${count(payload.codexes)} 个 · ${String(payload.release || "")}`;
+    case "search_quicktagcloud_tags":
+      return `在线匹配 ${Number(payload.total || 0)} 条，展示 ${count(payload.entries)} 条 · ${String(payload.codexId || "")}`;
+    case "read_quicktagcloud_entry":
+      return payload.found ? `在线完整词条 · ${String(payload.codexId)} / ${String(payload.entryId)}` : "在线未找到词条";
+    case "search_tag_catalog": {
+      if (Array.isArray(payload.queries)) {
+        return payload.queries
+          .map((entry) => {
+            const query = entry && typeof entry === "object" ? entry as Record<string, unknown> : {};
+            return `${String(query.query || "关键词")} ${count(query.tags)} 条`;
+          })
+          .join("；");
+      }
+      return `标签库匹配 ${count(payload.tags)} 条`;
+    }
+    case "read_tag_catalog": {
+      if (Array.isArray(payload.tags))
+        return `读取完整介绍 ${count(payload.tags)} 条${Array.isArray(payload.missing) && payload.missing.length ? `，${payload.missing.length} 条无独立词条` : ""}`;
+      return payload.name ? `完整介绍：${String(payload.displayName || payload.name)}` : "未找到词条";
+    }
+    case "tag_catalog_status":
+      return payload.complete ? "标签库已完成同步" : "标签库正在同步";
     case "search_danbooru_tags": {
       const total = count(payload.tags);
       return total
@@ -201,9 +231,15 @@ export function summarizeToolResult(name: string, data: unknown): string {
 /** 返回给文本协议 agent 的可调用工具说明。 */
 export function toolCatalog(): string {
   return [
-    "- search_danbooru_tags: 参数 {query: string}。按英文关键词检索 Danbooru 标签，返回标签名、分类和图片数。",
-    "- verify_danbooru_tag: 参数 {name: string}。精确校验一个 Danbooru 标签是否存在。",
-    "- read_danbooru_wiki: 参数 {title: string}。读取 Danbooru 词条说明和别名，用于确认含义。",
+    "- search_tag_catalog: 参数 {query: string, source?: 'danbooru'|'quicktagcloud'} 或 {queries: string[], source?: 'danbooru'|'quicktagcloud'}。检索本地完整数据库，可指定来源；queries 一次最多 8 项，每项最多 6 条。返回候选摘要和 catalogKey，不会自动附上整套组合提示词；选中后再 read_tag_catalog 读取。精确独立标签优先，组合提示词须核对与任务的相关性。",
+    "- read_tag_catalog: 参数 {key: string} 或 {keys: string[]}。按 catalogKey 或标签名读取完整介绍、来源、原始记录和全部词条；keys 一次最多 6 个。需要解释多个标签时必须一次批量读取。原站没有介绍时明确返回 missing，不得编造为官方定义。",
+    "- tag_catalog_status: 参数 {}。查看各数据源版本、抓取完整性和条目数量。",
+    "- search_danbooru_tags: 参数 {query: string}。实时联网检索 Danbooru，返回标签名、分类和图片数，不替换为本地查询。",
+    "- verify_danbooru_tag: 参数 {name: string}。实时联网精确校验 Danbooru 标签。",
+    "- read_danbooru_wiki: 参数 {title: string}。实时联网读取 Danbooru 词条说明和别名。",
+    "- list_quicktagcloud_codexes: 参数 {}。联网读取 QuickTagCloud 当前发布版本和目录（2 分钟缓存），供选择 codexId。",
+    "- search_quicktagcloud_tags: 参数 {codexId: string, query: string}。联网搜索所选 QuickTagCloud 目录的全部词条，返回候选标题、路径、entryId、匹配词及原站链接，最多展示 12 条；不附上未选中的组合提示词。",
+    "- read_quicktagcloud_entry: 参数 {codexId: string, entryId: string}。读取已选在线 QuickTagCloud 词条的完整原始内容、提示词和来源；发布文件按原站清单校验。",
     "- web_search: 参数 {query: string}。检索 Wikipedia 概念结果，用于把中文或小众概念转换为英文检索词。",
   ].join("\n");
 }
@@ -215,6 +251,62 @@ export async function runTool(
   const text = (key: string) =>
     typeof args[key] === "string" ? (args[key] as string) : "";
   switch (name) {
+    case "list_quicktagcloud_codexes":
+    case "search_quicktagcloud_tags":
+    case "read_quicktagcloud_entry":
+      return runQuickTagCloudTool(name, args);
+    case "search_tag_catalog": {
+      if (args.source !== undefined && args.source !== "danbooru" && args.source !== "quicktagcloud")
+        return { ok: false, data: "本地来源必须是 danbooru 或 quicktagcloud" };
+      const source = args.source as "danbooru" | "quicktagcloud" | undefined;
+      const search = (query: string) => {
+        const normalized = query.trim().toLowerCase().replaceAll(" ", "_");
+        const precise = source ? [] : searchTagCatalog(query, 6, "danbooru") || [];
+        const tags = precise.some((tag) => tag.name === normalized)
+          ? precise : searchTagCatalog(query, 6, source) || [];
+        return tags.map((tag) => tag.source === "quicktagcloud" ? {
+          catalogKey: tag.catalogKey, source: tag.source, displayName: tag.displayName,
+          categoryName: tag.categoryName, matchedQuery: query, hasPrompt: Boolean(tag.insertion),
+          hasDescription: tag.hasDescription, descriptionUrl: tag.descriptionUrl,
+        } : tag);
+      };
+      const queries = Array.isArray(args.queries)
+        ? [...new Set(args.queries.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 8)
+        : [];
+      if (queries.length) {
+        return {
+          ok: true,
+          data: {
+            source: "local_catalog",
+            catalogSource: source || "all",
+            queries: queries.map((query) => ({ query, tags: search(query) })),
+            status: tagCatalogStatus(),
+          },
+        };
+      }
+      return { ok: true, data: { source: "local_catalog", catalogSource: source || "all", tags: search(text("query")), status: tagCatalogStatus() } };
+    }
+    case "read_tag_catalog": {
+      const keys = Array.isArray(args.keys)
+        ? [...new Set(args.keys.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean))].slice(0, 6)
+        : [];
+      if (keys.length) {
+        const found = keys.flatMap((key) => {
+          const item = readCatalogTag(key);
+          return item ? [item] : [];
+        });
+        const foundKeys = new Set(found.flatMap((item) => [String(item.catalogKey), String(item.name)]));
+        const missing = keys.filter((key) => {
+          const normalized = key.toLowerCase().replaceAll(" ", "_");
+          return !foundKeys.has(key) && !foundKeys.has(normalized);
+        });
+        return { ok: found.length > 0, data: { tags: found, missing } };
+      }
+      const item = readCatalogTag(text("key") || text("name"));
+      return { ok: Boolean(item), data: item || { found: false } };
+    }
+    case "tag_catalog_status":
+      return { ok: true, data: tagCatalogStatus() };
     case "search_danbooru_tags":
       return searchDanbooruTags(text("query"));
     case "verify_danbooru_tag":

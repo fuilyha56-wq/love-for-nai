@@ -8,6 +8,8 @@ import {
   type NaiModelFamily,
 } from "@/lib/model-policy";
 
+import { DEFAULT_AUTH_POLICY, type AuthPolicy } from "@/lib/auth-policy";
+
 export type AuthProviderId = "newapi" | "local";
 
 // 模型计费覆盖：auto = 内置公式（面积/步数），fixed = 固定 AFF/张（0 = 免费）。
@@ -15,8 +17,14 @@ export type ModelBillingMode = "auto" | "fixed";
 export type ModelBillingEntry = { mode: ModelBillingMode; fixedCost: number };
 export type ModelBillingMap = Record<string, ModelBillingEntry>;
 
-export type RuntimeSettings = {
+export type RuntimeSettings = AuthPolicy & {
   authProvider: AuthProviderId;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUser: string;
+  smtpPassword: string;
+  smtpFrom: string;
+  smtpSecure: boolean;
   newApiBaseUrl: string;
   newApiAdminToken: string;
   newApiAdminUserId: string;
@@ -67,6 +75,7 @@ export const LFN_MODEL_GROUP = "ikun" as const;
 export const LFN_REGISTER_GROUP = "default" as const;
 
 const SECRET_KEYS = new Set([
+  "smtpPassword",
   "newApiAdminToken",
   "affGatewayToken",
   "naiApiToken",
@@ -76,6 +85,8 @@ const SECRET_KEYS = new Set([
 ]);
 
 const EMPTY_SETTINGS: RuntimeSettings = {
+  ...DEFAULT_AUTH_POLICY,
+  smtpHost: "", smtpPort: 587, smtpUser: "", smtpPassword: "", smtpFrom: "", smtpSecure: false,
   authProvider: "newapi",
   newApiBaseUrl: "",
   newApiAdminToken: "",
@@ -132,6 +143,13 @@ function envSettings(): RuntimeSettings {
   const quota = Number(process.env.QUOTA_PER_UNIT || 500000);
   const auth = process.env.LFN_AUTH_PROVIDER?.trim().toLowerCase();
   return {
+    ...DEFAULT_AUTH_POLICY,
+    smtpHost: process.env.LFN_SMTP_HOST?.trim() || "",
+    smtpPort: Number(process.env.LFN_SMTP_PORT || 587),
+    smtpUser: process.env.LFN_SMTP_USER?.trim() || "",
+    smtpPassword: process.env.LFN_SMTP_PASSWORD || "",
+    smtpFrom: process.env.LFN_SMTP_FROM?.trim() || "",
+    smtpSecure: process.env.LFN_SMTP_SECURE === "true",
     authProvider: auth === "local" ? "local" : "newapi",
     newApiBaseUrl: process.env.NEWAPI_BASE_URL?.trim() || "",
     newApiAdminToken: process.env.LFN_ADMIN_TOKEN?.trim() || "",
@@ -336,7 +354,8 @@ async function writeStore(store: RuntimeConfigStore): Promise<void> {
 }
 
 export async function getRuntimeSettings(): Promise<RuntimeSettings> {
-  return (await readStore()).settings;
+  // Hot reload can keep an older shared cache that predates new auth fields.
+  return { ...DEFAULT_AUTH_POLICY, ...(await readStore()).settings };
 }
 
 export async function getRuntimeEndpoints(): Promise<EndpointConfig[]> {
@@ -360,7 +379,12 @@ export async function updateRuntimeSettings(
       if (typeof value === "string" && isMaskedSecret(value))
         delete cleaned[key as keyof RuntimeSettings];
     }
-    store.settings = mergeSettings({ ...store.settings, ...cleaned });
+    for (const key of Object.keys(cleaned) as Array<keyof RuntimeSettings>) {
+      if (cleaned[key] === undefined) delete cleaned[key];
+    }
+    const next = mergeSettings({ ...store.settings, ...cleaned });
+    if (next.emailDomainRestrictionEnabled && !next.allowedEmailDomains.trim()) throw new Error("启用域名限制时至少填写一个邮箱域名");
+    store.settings = next;
     await writeStore(store);
     return store.settings;
   });

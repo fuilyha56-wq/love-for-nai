@@ -13,6 +13,8 @@ export type ImagePricingGeneration = {
   maxSamplesPerRequest?: number;
   operation?: string;
   referenceImageCount?: number;
+  vibeReferenceImageCount?: number;
+  preciseReferenceImageCount?: number;
   referenceMode?: "precise" | "vibe";
   encodedVibeCount?: number;
   characterPromptCount?: number;
@@ -35,6 +37,7 @@ export type ModelPricingSnapshot = {
   outOfEnvelopeUsdPerMillion?: number;
   inEnvelopeBalancePerImage?: number;
   outOfEnvelopeBalancePerUsageToken?: number;
+  outOfEnvelopeBaseBalancePerImage?: number;
 };
 
 export type RawModelPricing = {
@@ -46,14 +49,12 @@ export type RawModelPricing = {
 };
 
 export type ParsedTieredExpr =
-  | { kind: "two_tier"; limitCoeff: number; fullCoeff: number; limitFixedRaw?: number }
-  | { kind: "base"; coeff: number };
+  | { kind: "two_tier"; limitCoeff: number; fullCoeff: number; limitFixedRaw?: number; fullCompletionCoeff?: number }
+  | { kind: "base"; coeff: number; completionCoeff?: number };
 
 export type PublicPointVersion = "V5" | "V4.5/旧版";
 
 export const TOKENS_PER_POINT = 50;
-export const USD_PER_POINT = 0.03;
-export const V5_LIMIT_USD = 0.06;
 export const DEFAULT_QUOTA_PER_USD = 500_000;
 
 export function roundBillingAmount(value: number): number {
@@ -74,17 +75,46 @@ export function isHalfStepAmount(value: number): boolean {
   return Number.isFinite(value) && Math.abs(value * 2 - Math.round(value * 2)) <= 1e-9;
 }
 
+function pricingReferenceCounts(generation: ImagePricingGeneration) {
+  const precise = generation.operation === "precise-reference" || generation.referenceMode === "precise";
+  const legacy = Math.max(0, Math.floor(generation.referenceImageCount ?? 0));
+  return {
+    vibe: Math.max(0, Math.floor(generation.vibeReferenceImageCount ?? (precise ? 0 : legacy))),
+    precise: Math.max(0, Math.floor(generation.preciseReferenceImageCount ?? (precise ? legacy : 0))),
+  };
+}
+
 export function officialNaiAnlasCost(generation: ImagePricingGeneration, opusEligible = false): number {
+  const operation = generation.operation ?? "generate";
+  const samples = Math.max(1, Math.floor(generation.samples));
+  const references = Math.max(0, Math.floor(generation.referenceImageCount ?? 0));
+  const referenceCounts = pricingReferenceCounts(generation);
+  if (operation === "upscale") return upscaleAnlasCost(generation.width, generation.height) * samples;
+  if (operation === "encode-vibe") return 2 * Math.max(1, references);
+  const tool = operation.replace(/^director-/, "");
+  if (tool in DIRECTOR_COSTS) return DIRECTOR_COSTS[tool] * samples;
   const pixels = Math.max(generation.width * generation.height, 65_536);
   const medium = isNaiMediumModel(generation.model);
   const steps = medium ? 14 : generation.steps;
   const stepFactor = medium ? 1 / 1.06521739 : 1;
   const base = Math.ceil(2.951823174884865e-6 * pixels + 5.753298233447344e-7 * pixels * steps * stepFactor);
   const v5 = modelPointVersion(generation.model) === "V5";
-  const perSample = Math.max(2, Math.ceil(base * (v5 ? 1.5 : 1) * (generation.strength ?? 1)));
-  const free = opusEligible && generation.steps <= 28 && pixels <= 1_048_576 ? 1 : 0;
-  return perSample * Math.max(0, generation.samples - free);
+  const strength = ["img2img", "inpainting", "infill", "edits", "outpainting"].includes(operation)
+    ? generation.strength ?? (operation === "img2img" ? 0.7 : 1)
+    : 1;
+  const perSample = Math.ceil(Math.max(2, Math.ceil(base * (v5 ? 1.5 : 1) * strength)) * (generation.uncondScale ?? 1));
+  const free = opusEligible && steps <= 28 && pixels <= 1_048_576 && generation.serviceTier !== "priority" ? 1 : 0;
+  let total = perSample * Math.max(0, samples - free);
+  total += 5 * referenceCounts.precise * samples;
+  total += 2 * Math.max(0, referenceCounts.vibe - (generation.encodedVibeCount ?? 0)) + 2 * Math.max(0, referenceCounts.vibe - 4);
+  return total;
 }
+
+export const CNY_PER_ANLAS = 0.02;
+export const CNY_PER_AFF = 0.005;
+export const AFF_PER_ANLAS = CNY_PER_ANLAS / CNY_PER_AFF;
+export const V5_ANLAS_SALES_MULTIPLIER = 1.25;
+export const NAI_MAX_ANLAS_PER_IMAGE = 140;
 
 export const MEDIUM_ANLAS_RATIO = 18 / 26;
 export const MEDIUM_AFF_PER_IMAGE = Math.max(1, Math.round(2 * MEDIUM_ANLAS_RATIO));
@@ -142,12 +172,14 @@ export function tokensToPoints(tokens: number): number {
 }
 
 export function modelPointVersion(model: string): PublicPointVersion | null {
+  model = model.toLowerCase();
   if (!model.startsWith("nai-") || model === "nai-chat") return null;
   return /nai-v5|diffusion-5/.test(model) ? "V5" : "V4.5/旧版";
 }
 
-export function pointPriceUsd(model: string): number | null {
-  return modelPointVersion(model) ? USD_PER_POINT : null;
+export function pointPriceCny(model: string): number | null {
+  const version = modelPointVersion(model);
+  return version ? CNY_PER_ANLAS * (version === "V5" ? V5_ANLAS_SALES_MULTIPLIER : 1) : null;
 }
 
 export function quotaPerUsd(
@@ -164,8 +196,7 @@ export function usesLimitPricing(generation: ImagePricingGeneration): boolean {
   );
 }
 
-// Mirrors gateway _calc_anlas_cost; AFF is an independent wallet and must not
-// supply the limit-tier Anlas estimate. V5's gateway sales multiplier is 2.
+// Official Anlas and the fixed-envelope usage markers are separate units.
 export function estimatePoints(generation: ImagePricingGeneration): number {
   if (generation.sequential && generation.samples > 1)
     return (
@@ -177,46 +208,7 @@ export function estimatePoints(generation: ImagePricingGeneration): number {
 }
 
 export function gatewayAnlasCost(generation: ImagePricingGeneration): number {
-  const operation = generation.operation ?? "generate";
-  const samples = Math.max(1, Math.floor(generation.samples));
-  const references = Math.max(0, Math.floor(generation.referenceImageCount ?? 0));
-  if (operation === "upscale")
-    return upscaleAnlasCost(generation.width, generation.height) * samples;
-  if (operation === "encode-vibe") return 2 * Math.max(1, references);
-  const tool = operation.replace(/^director-/, "");
-  if (tool in DIRECTOR_COSTS) return DIRECTOR_COSTS[tool] * samples;
-
-  const pixels = Math.max(generation.width * generation.height, 65_536);
-  const strength = generation.strength ?? (operation === "img2img" ? 0.7 : 1);
-  const medium = isNaiMediumModel(generation.model);
-  const steps = medium ? 14 : generation.steps;
-  const stepFactor = medium ? 1 / 1.06521739 : 1;
-  let perSample = Math.ceil(
-    2.951823174884865e-6 * pixels +
-      5.753298233447344e-7 * pixels * steps * stepFactor,
-  );
-  if (medium) {
-    perSample = Math.max(2, Math.ceil(perSample * 1.5 * (generation.strength ?? 1)));
-    const freeSamples = generation.model.toLowerCase().includes("-limit") &&
-      pixels <= 1_048_576 && steps === 14 ? 1 : 0;
-    return perSample * Math.max(0, samples - freeSamples);
-  }
-  if (strength < 1)
-    perSample = Math.max(Math.ceil(perSample * strength), 2);
-  perSample = Math.ceil(perSample * (generation.uncondScale ?? 1));
-  const isOpus = generation.model.toLowerCase().includes("-limit");
-  const freeSamples = isOpus && steps <= 28 && pixels <= 1_048_576 ? 1 : 0;
-  let total = perSample * Math.max(0, samples - freeSamples);
-  if (references > 0) {
-    if (operation === "precise-reference" || generation.referenceMode === "precise") {
-      total += 5 * references * samples;
-    } else {
-      const billable = Math.max(0, references - (generation.encodedVibeCount ?? 0));
-      total += 2 * billable + 2 * Math.max(0, billable - 4);
-    }
-  }
-  if (/nai-v5|diffusion-5/.test(generation.model.toLowerCase())) total *= 2;
-  return Math.max(0, Math.floor(total));
+  return officialNaiAnlasCost(generation, /-limit(?:-|$)/i.test(generation.model));
 }
 
 export function estimateTokens(generation: ImagePricingGeneration): number {
@@ -253,12 +245,14 @@ export function parseTieredExpr(expr: unknown): ParsedTieredExpr | null {
   );
   if (limitCoeff != null && fullCoeff != null) {
     const limitFixedRaw = coeffFromMatch(source.match(/tier\(\s*["']limit["']\s*,\s*p\s*\*\s*0\s*\+\s*c\s*\*\s*0\s*\+\s*(\d+)\s*\)/i));
-    return { kind: "two_tier", limitCoeff, fullCoeff, ...(limitFixedRaw != null ? { limitFixedRaw } : {}) };
+    const fullCompletionCoeff = coeffFromMatch(source.match(/tier\(\s*["']full["']\s*,\s*p\s*\*\s*\d+\s*\+\s*c\s*\*\s*(\d+)/i));
+    return { kind: "two_tier", limitCoeff, fullCoeff, ...(limitFixedRaw != null ? { limitFixedRaw } : {}), ...(fullCompletionCoeff ? { fullCompletionCoeff } : {}) };
   }
   const baseCoeff = coeffFromMatch(
     source.match(/tier\(\s*["']base["']\s*,\s*p\s*\*\s*(\d+)/i),
   );
-  return baseCoeff != null ? { kind: "base", coeff: baseCoeff } : null;
+  const completionCoeff = coeffFromMatch(source.match(/tier\(\s*["']base["']\s*,\s*p\s*\*\s*\d+\s*\+\s*c\s*\*\s*(\d+)/i));
+  return baseCoeff != null ? { kind: "base", coeff: baseCoeff, ...(completionCoeff ? { completionCoeff } : {}) } : null;
 }
 
 export function envelopeUsageTokens(model: string): number {
@@ -307,6 +301,7 @@ export function snapshotFromRawPricing(
     outOfEnvelopeUsdPerMillion: outPerTokenUsd * 1_000_000,
     inEnvelopeBalancePerImage: inEnvelopeUsd,
     outOfEnvelopeBalancePerUsageToken: outPerTokenUsd,
+    outOfEnvelopeBaseBalancePerImage: ((parsed.kind === "two_tier" ? parsed.fullCompletionCoeff ?? 0 : parsed.completionCoeff ?? 0) * ratio) / 1_000_000,
   };
 }
 
@@ -337,15 +332,18 @@ export function upscaleAnlasCost(width: number, height: number): number {
 
 export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
   const operation = generation.operation ?? "generate";
-  const referenceCount = generation.referenceImageCount ?? 0;
+  const references = pricingReferenceCounts(generation);
+  const referenceCount = references.vibe;
   return (
-    ["generate", "img2img", "inpainting", "edits", "outpainting", "vibe-transfer", "character-reference"].includes(operation) &&
+    ["generate", "img2img", "inpainting", "infill", "edits", "outpainting", "vibe-transfer", "character-reference"].includes(operation) &&
     operation !== "precise-reference" &&
     generation.referenceMode !== "precise" &&
+    references.precise === 0 &&
     generation.samples === 1 &&
     generation.steps >= 1 &&
     generation.steps <= 28 &&
     generation.width * generation.height <= 1024 * 1024 &&
+    referenceCount <= 4 &&
     (referenceCount === 0 ||
       (generation.encodedVibeCount ?? 0) >= referenceCount) &&
     generation.serviceTier !== "priority" &&
@@ -354,81 +352,24 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
 }
 
 export function affCost(generation: ImagePricingGeneration): number {
-  const operation = generation.operation ?? "generate";
-  if (generation.sequential && generation.samples > 1) {
-    let total = 0;
-    for (let index = 0; index < generation.samples; index += 1)
-      total += affCost({ ...generation, samples: 1, sequential: false });
-    return total;
-  }
-  if (operation === "encode-vibe") {
-    const count = Math.max(
-      1,
-      generation.referenceImageCount ?? generation.samples ?? 1,
-    );
-    return 2 * count;
-  }
-  if (operation === "annotate") {
-    const samples =
-      Number.isSafeInteger(generation.samples) && generation.samples > 0
-        ? generation.samples
-        : 1;
-    return Math.max(1, samples);
-  }
-  if (operation === "upscale") {
-    // V5 扩散超分：按输入面积 1-4 档，与 NAI 实扣 Anlas 1:1。
-    const samples =
-      Number.isSafeInteger(generation.samples) && generation.samples > 0
-        ? generation.samples
-        : 1;
-    return upscaleAnlasCost(generation.width, generation.height) * samples;
-  }
-  if (
-    !Number.isSafeInteger(generation.samples) ||
-    generation.samples < 1 ||
-    !Number.isSafeInteger(generation.width) ||
-    generation.width < 1 ||
-    !Number.isSafeInteger(generation.height) ||
-    generation.height < 1 ||
-    !Number.isSafeInteger(generation.steps) ||
-    generation.steps < 1
-  )
+  const samples = generation.samples;
+  if (!Number.isSafeInteger(samples) || samples < 1 ||
+      !Number.isSafeInteger(generation.width) || generation.width < 1 ||
+      !Number.isSafeInteger(generation.height) || generation.height < 1 ||
+      !Number.isSafeInteger(generation.steps) || generation.steps < 1)
     throw new Error("图像计费参数无效");
-  const model = generation.model.toLowerCase();
-  const directorCost = DIRECTOR_COSTS[operation.replace(/^director-/, "")];
-  if (directorCost != null) return directorCost * generation.samples;
-  if (isNaiMediumModel(model)) return MEDIUM_AFF_PER_IMAGE * generation.samples;
-  if (isInFreeEnvelope(generation)) {
-    if (modelPointVersion(model) === "V5") return V5_BASE_AFF_PER_IMAGE * generation.samples;
-    return generation.samples;
-  }
-
-  const pixels = Math.max(generation.width * generation.height, 65_536);
-  const strength = generation.strength ?? (operation === "img2img" ? 0.7 : 1);
-  let perSample = Math.ceil(
-    2.951823174884865e-6 * pixels +
-      5.753298233447344e-7 * pixels * generation.steps,
-  );
-  if (strength < 1)
-    perSample = Math.max(Math.ceil(perSample * strength), 2);
-  perSample = Math.ceil(perSample * (generation.uncondScale ?? 1));
-  let total = perSample * generation.samples;
-  const referenceCount = generation.referenceImageCount ?? 0;
-  if (referenceCount > 0) {
-    if (generation.operation === "precise-reference" || generation.referenceMode === "precise")
-      total += 5 * referenceCount * generation.samples;
-    else {
-      const billableCount = Math.max(
-        0,
-        referenceCount - (generation.encodedVibeCount ?? 0),
-      );
-      total += 2 * billableCount + 2 * Math.max(0, billableCount - 4);
-    }
-  }
-  const v5 = modelPointVersion(model) === "V5";
-  total *= v5 ? 1.25 : 1;
-  total += (v5 ? V5_BASE_AFF_PER_IMAGE : 1) * generation.samples;
-  return Math.max(1, Math.round(total * 10_000) / 10_000);
+  if (generation.sequential && samples > 1)
+    return affCost({ ...generation, samples: 1, sequential: false }) * samples;
+  const operation = generation.operation ?? "generate";
+  if (operation === "annotate") return samples;
+  const standalone = operation === "upscale" || operation === "encode-vibe" ||
+    operation.replace(/^director-/, "") in DIRECTOR_COSTS;
+  const affPerAnlas = AFF_PER_ANLAS * (modelPointVersion(generation.model) === "V5" ? V5_ANLAS_SALES_MULTIPLIER : 1);
+  if (standalone) return officialNaiAnlasCost(generation) * affPerAnlas;
+  const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE :
+    modelPointVersion(generation.model) === "V5" ? V5_BASE_AFF_PER_IMAGE : 1;
+  const anlas = isInFreeEnvelope(generation) ? 0 : officialNaiAnlasCost(generation);
+  return Math.round((baseAff * samples + anlas * affPerAnlas) * 10_000) / 10_000;
 }
 
 // Estimate the NewAPI balance charge from the effective model/group pricing.
@@ -472,7 +413,8 @@ export function estimateNewApiCost(
         ? pricing.inEnvelopeUsd
         : pricing.outOfEnvelopeBalancePerUsageToken;
       if (price == null || !Number.isFinite(price) || price < 0) return null;
-      return Number((inEnvelope ? price : usageTokens * price).toFixed(8));
+      const generationSamples = ["generate", "img2img", "inpainting", "infill", "edits", "outpainting", "vibe-transfer", "character-reference", "precise-reference"].includes(generation.operation ?? "generate") ? generation.samples : 0;
+      return Number((inEnvelope ? price : usageTokens * price + generationSamples * (pricing.outOfEnvelopeBaseBalancePerImage ?? 0)).toFixed(8));
     }
     if (pricing.billingMode === "tiered_expr") return null;
     if (pricing.quotaType === 1) {

@@ -1,3 +1,4 @@
+import { DEFAULT_AUTH_POLICY, normalizeEmailDomains } from "@/lib/auth-policy";
 import type { EndpointConfig } from "@/lib/adapters/types";
 import { optionalNumber, optionalString } from "@/lib/request";
 import type { RuntimeSettings } from "@/lib/runtime-config";
@@ -13,6 +14,19 @@ function optionalBoolean(value: unknown): boolean | undefined {
 }
 
 export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial<RuntimeSettings> {
+  const authPatch: Partial<RuntimeSettings> = {};
+  for (const key of Object.keys(DEFAULT_AUTH_POLICY) as Array<keyof typeof DEFAULT_AUTH_POLICY>) {
+    if (raw[key] === undefined) continue;
+    if (key === "allowedEmailDomains") {
+      if (typeof raw[key] !== "string") throw new Error("邮箱域名列表必须是文本");
+      authPatch.allowedEmailDomains = normalizeEmailDomains(raw[key]);
+    } else {
+      if (typeof raw[key] !== "boolean") throw new Error("注册与登录开关必须是布尔值");
+      authPatch[key] = raw[key];
+    }
+  }
+  const smtpPort = optionalNumber(raw.smtpPort);
+  if (smtpPort !== undefined && (!Number.isInteger(smtpPort) || smtpPort < 1 || smtpPort > 65535)) throw new Error("SMTP 端口必须为 1–65535");
   const authProvider = optionalString(raw.authProvider);
   if (authProvider && authProvider !== "newapi" && authProvider !== "local")
     throw new Error("账号提供者只能是 newapi 或 local");
@@ -31,6 +45,10 @@ export function parseRuntimeSettingsPatch(raw: Record<string, unknown>): Partial
     if (value !== undefined && (!Number.isFinite(value) || value < 0 || value > 100_000))
       throw new Error(`${label}需为 0–100000 之间的数字`);
   return {
+    ...authPatch,
+    smtpHost: optionalString(raw.smtpHost), smtpPort,
+    smtpUser: optionalString(raw.smtpUser), smtpPassword: optionalString(raw.smtpPassword),
+    smtpFrom: optionalString(raw.smtpFrom), smtpSecure: optionalBoolean(raw.smtpSecure),
     authProvider: authProvider as RuntimeSettings["authProvider"] | undefined,
     newApiBaseUrl: optionalString(raw.newApiBaseUrl),
     newApiAdminToken: optionalString(raw.newApiAdminToken),

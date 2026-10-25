@@ -4,11 +4,10 @@ import "@fontsource/noto-sans-sc/600.css";
 import "@fontsource/noto-sans-sc/700.css";
 import "./globals.css";
 import "./lfn-controls.css";
-import { LfnDialogHost } from "./ui/lfn-dialog";
-import { AppearanceProvider } from "./appearance";
+import "@/mobile/lfn-controls.css";
 import { createAppearancePrepaintScript } from "@/lib/appearance-store";
-import { LayoutAnnouncements } from "./layout-announcements";
-import { OnboardingGuide } from "./onboarding-guide";
+import { createAppearancePrepaintScript as createMobilePrepaintScript } from "@/mobile/lib/appearance-store";
+import { ViewportRoot } from "./viewport-root";
 
 export const metadata: Metadata = {
   title: "Love for NAI",
@@ -24,7 +23,7 @@ export const viewport: Viewport = {
 
 // 首帧前应用本地外观，避免刷新时先闪默认主题。解析规则由 appearance-store 统一生成，
 // Provider 在恢复本地偏好后会再次应用规范化结果；背景图在 IndexedDB，仍由 Provider 异步恢复。
-const APPEARANCE_PREPAINT = createAppearancePrepaintScript();
+const APPEARANCE_PREPAINT = `(function(){var mobile=window.matchMedia("(max-width: 839px)").matches;document.documentElement.dataset.clientViewport=mobile?"mobile":"desktop";if(mobile){try{for(var key of ["lfn-onboarding-v1","lfn-guide-launcher-visible"]){var mobileKey=key.replace("lfn-","lfn-mobile-");var oldValue=localStorage.getItem(key);if(localStorage.getItem(mobileKey)===null&&oldValue!==null)localStorage.setItem(mobileKey,oldValue);}if(!localStorage.getItem("lfn-mobile-ui-preferences-v1")){var old=localStorage.getItem("lfn-ui-preferences-v1");if(old){var prefs=JSON.parse(old);prefs.workspaceLayout="nlw";prefs.backgroundEnabled=false;localStorage.setItem("lfn-mobile-ui-preferences-v1",JSON.stringify(prefs));}}}catch{}${createMobilePrepaintScript()}}else{${createAppearancePrepaintScript()}}})();`;
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
@@ -33,12 +32,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="zh-CN" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_PREPAINT }} />
-        <AppearanceProvider>
+        <ViewportRoot>
           {children}
-          <LfnDialogHost />
-          <LayoutAnnouncements />
-          <OnboardingGuide />
-        </AppearanceProvider>
+        </ViewportRoot>
       </body>
     </html>
   );

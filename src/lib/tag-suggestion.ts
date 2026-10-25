@@ -5,6 +5,8 @@ export type SuggestedCharacter = {
 };
 
 export type TagSuggestion = {
+  /** Returned only in Agent/goal mode after evaluating an image result. */
+  goalComplete?: boolean;
   // 助手想对用户说的自然语言（≤500 字），缺省表示本轮没有留言。
   message?: string;
   // 1–3 句英文自然语言描述；不包含 artist/画师信息。
@@ -111,6 +113,7 @@ export function parseTagSuggestion(content: string): TagSuggestion {
   const rawSeed = finiteNumber(rawParameters.seed);
 
   return {
+    ...(typeof raw.goalComplete === "boolean" ? { goalComplete: raw.goalComplete } : {}),
     message: limitedString(raw.message, 500).trim() || undefined,
     englishDescription:
       parseEnglishDescription(raw.englishDescription),

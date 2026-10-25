@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { validateApiKey } from "./validation";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 
 const NAI_ORIGIN = "https://image.novelai.net";
 
@@ -57,7 +58,7 @@ export async function generateNovelaiImage(key: string, body: Record<string, unk
     body: JSON.stringify(body),
     cache: "no-store",
     redirect: "error",
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`NovelAI 生图失败（${response.status}）`);
   if ((response.headers.get("content-type") || "").includes("application/json")) {

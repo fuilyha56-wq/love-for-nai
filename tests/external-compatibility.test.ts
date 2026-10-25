@@ -39,7 +39,7 @@ describe("外部图片 API 兼容边界", () => {
 
   it("区分 Vibe、角色参考与编辑端点的参考图计数", () => {
     expect(imageReferenceCountFromBody({ reference_images: ["a", "b"] }, "vibe-transfer")).toBe(2);
-    expect(imageReferenceCountFromBody({ characters: [{}, {}, {}] }, "character-reference")).toBe(3);
+    expect(imageReferenceCountFromBody({ characters: [{}, { reference_image: "a" }, {}] }, "character-reference")).toBe(1);
     expect(imageReferenceCountFromBody({ image: "source" }, "edits")).toBe(0);
   });
 
@@ -53,7 +53,7 @@ describe("外部图片 API 兼容边界", () => {
       },
     });
     expect(generation).toMatchObject({ operation: "precise-reference", referenceMode: "precise", referenceImageCount: 1 });
-    expect(affCost(generation!)).toBe(36.25);
+    expect(affCost(generation!)).toBe(180);
   });
 
   it("缓存 Vibe 不重复编码，已编码引用仍可使用本地档内价", () => {
@@ -74,20 +74,20 @@ describe("外部图片 API 兼容边界", () => {
     const inpaint = externalGeneration(body, "inpainting");
     const img2img = externalGeneration(body, "img2img");
     expect(inpaint?.strength).toBe(1);
-    expect(affCost(inpaint!)).toBe(30);
-    expect(affCost(img2img!)).toBe(7.5);
+    expect(affCost(inpaint!)).toBe(155);
+    expect(affCost(img2img!)).toBe(20);
     const preciseInpaint = externalGeneration({ ...body, director_reference_images: ["reference"] }, "inpainting");
-    expect(affCost(preciseInpaint!)).toBe(36.25);
+    expect(affCost(preciseInpaint!)).toBe(180);
   });
 
   it("嵌套图生图缺省强度为 0.7，原生 infill 使用自己的强度", () => {
     const body = { model: "nai-diffusion-5-full", parameters: { width: 832, height: 1216, steps: 29, n_samples: 1 } };
     const img2img = externalGeneration({ ...body, action: "img2img" });
     expect(img2img).toMatchObject({ operation: "img2img", strength: 0.7 });
-    expect(affCost(img2img!)).toBe(22.5);
+    expect(affCost(img2img!)).toBe(110);
     const infill = externalGeneration({ ...body, action: "infill", parameters: { ...body.parameters, strength: 0.1, inpaintImg2ImgStrength: 0.5 } });
     expect(infill).toMatchObject({ operation: "inpainting", strength: 0.5 });
-    expect(affCost(infill!)).toBe(17.5);
+    expect(affCost(infill!)).toBe(80);
   });
 
   it("为浏览器图片客户端提供预检响应", () => {

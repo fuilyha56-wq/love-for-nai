@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .account-page-header { background: var(--panel) !important; }
 .account-status-notice { border: 1px solid color-mix(in srgb, #d9a441 42%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #fff3cf 72%, var(--panel)); padding: 12px; color: #77531e; font-size: 13px; line-height: 1.5; }
 .account-muted-error { margin-top: 12px; color: #77531e; font-size: 12px; }
@@ -30,4 +31,6 @@
 @media (max-width: 360px) {
   .account-identity-card, .account-wallet-card, .account-next-steps { padding: 14px !important; }
   .account-identity-card .feature-link { min-width: 0; padding-inline: 8px; font-size: 11px; }
+}
+
 }

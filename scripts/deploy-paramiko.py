@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Deploy a locally built LFN image through credentials in the project's .rsh.py.
 Keeps the previous compose/image and automatically rolls back failed health checks.
-Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge] [--sync-anlas-pricing]
+Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge] [--sync-anlas-pricing] [--prepare-only]
 """
 import gzip
 import ast
 import hashlib
 import json
+import os
 import re
 import shlex
 import shutil
@@ -14,9 +15,11 @@ import subprocess
 import sys
 import time
 import stat
+import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+UPLOAD_ATTEMPTS = 32
 
 
 def load_ssh_config():
@@ -57,6 +60,64 @@ def run_remote(client, command, timeout=600, quiet=False):
     if status:
         raise RuntimeError(f'Remote operation failed ({status}): {err[-1500:]}')
     return out.strip()
+
+
+def upload_file_confirmed(sftp, local_path, remote_path, progress, offset=0):
+    """Pipeline a resumable SFTP upload; the caller verifies its remote SHA-256."""
+    total = Path(local_path).stat().st_size
+    if not 0 <= offset <= total:
+        raise ValueError('Invalid upload offset')
+    sent = offset
+    with Path(local_path).open('rb') as source:
+        source.seek(offset)
+        mode = 'wb' if sent == 0 else 'r+b'
+        with sftp.open(remote_path, mode, bufsize=0) as destination:
+            if sent:
+                destination.seek(sent)
+            destination.set_pipelined(True)
+            while True:
+                batch = source.read(1024 * 1024)
+                if not batch:
+                    break
+                for block_offset in range(0, len(batch), 32768):
+                    block = batch[block_offset:block_offset + 32768]
+                    destination.write(block)
+                    sent += len(block)
+                    progress(sent, total)
+    return sent
+
+
+def archive_matches_image(archive, image_id):
+    """Reusing an interrupted export is safe only for the exact local image."""
+    config_matches = False
+    with tarfile.open(archive, 'r|gz') as source:
+        for member in source:
+            if member.name == 'index.json':
+                manifests = json.load(source.extractfile(member)).get('manifests', [])
+                if len(manifests) == 1 and manifests[0].get('digest') == image_id:
+                    return True
+            if member.name == 'manifest.json':
+                manifests = json.load(source.extractfile(member))
+                config_matches = len(manifests) == 1 and Path(manifests[0]['Config']).name.removesuffix('.json') == image_id.removeprefix('sha256:')
+    return config_matches
+
+
+def verified_upload_offset(client, sftp, local_path, remote_path):
+    try:
+        size = sftp.stat(remote_path).st_size
+    except FileNotFoundError:
+        return 0
+    if not 0 < size <= Path(local_path).stat().st_size:
+        return 0
+    digest = hashlib.sha256()
+    remaining = size
+    with Path(local_path).open('rb') as source:
+        while remaining:
+            block = source.read(min(1024 * 1024, remaining))
+            digest.update(block)
+            remaining -= len(block)
+    remote_digest = run_remote(client, f'head -c {size} {shlex.quote(remote_path)} | sha256sum', quiet=True).split()[0]
+    return size if remote_digest == digest.hexdigest() else 0
 
 
 def health(client, image):
@@ -157,8 +218,10 @@ def sync_edge_request_host(client, tag):
 
 
 def main():
-    if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing'} for arg in sys.argv[2:]):
-        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing]')
+    if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing', '--resume-upload', '--prepare-only'} for arg in sys.argv[2:]):
+        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing] [--resume-upload] [--prepare-only]')
+    if '--prepare-only' in sys.argv and any(arg in sys.argv for arg in ('--trusted-edge', '--sync-anlas-pricing')):
+        raise SystemExit('Preparing an image cannot migrate live configuration')
     trusted_edge = '--trusted-edge' in sys.argv
     tag = sys.argv[1]
     image = f'love-for-nai:{tag}'
@@ -166,12 +229,17 @@ def main():
     temporary.mkdir(exist_ok=True)
     archive = temporary / f'love-for-nai-{tag}.tar'
     compressed = archive.with_suffix('.tar.gz')
-    print(f'Exporting locally built image {image}', flush=True)
-    subprocess.run(['docker', 'image', 'inspect', image], check=True, stdout=subprocess.DEVNULL)
-    subprocess.run(['docker', 'save', '-o', str(archive), image], check=True)
-    with archive.open('rb') as source, gzip.open(compressed, 'wb', compresslevel=3) as destination:
-        shutil.copyfileobj(source, destination, 1024 * 1024)
-    archive.unlink()
+    image_id = subprocess.check_output(['docker', 'image', 'inspect', '--format', '{{.Id}}', image], text=True).strip()
+    if '--resume-upload' in sys.argv and compressed.exists():
+        if not archive_matches_image(compressed, image_id):
+            raise RuntimeError('Interrupted archive does not match the exact current local image')
+        print(f'Reusing verified export for {image}', flush=True)
+    else:
+        print(f'Exporting locally built image {image}', flush=True)
+        subprocess.run(['docker', 'save', '-o', str(archive), image], check=True)
+        with archive.open('rb') as source, gzip.open(compressed, 'wb', compresslevel=3) as destination:
+            shutil.copyfileobj(source, destination, 1024 * 1024)
+        archive.unlink()
     with compressed.open('rb') as source:
         checksum = hashlib.file_digest(source, 'sha256').hexdigest()
     print(f'Archive: {compressed.stat().st_size / 1048576:.1f} MiB', flush=True)
@@ -185,11 +253,16 @@ def main():
     switched = False
     loaded = False
     try:
-        service = run_remote(client, "docker inspect -f '{{index .Config.Labels \"com.docker.compose.service\"}}' love-for-nai", quiet=True)
+        # Read compose metadata from inspect JSON to avoid nested shell/Go-template quoting over SSH.
+        container = json.loads(run_remote(client, 'docker inspect love-for-nai', quiet=True))[0]
+        labels = container.get('Config', {}).get('Labels') or {}
+        previous = container.get('Config', {}).get('Image') or container.get('Image', '')
+        expected_image = os.environ.get('LFN_DEPLOY_EXPECTED_IMAGE', '').strip()
+        if expected_image and previous != expected_image:
+            raise RuntimeError('The running LFN image changed before deployment; rebuild against the current release')
+        service = labels.get('com.docker.compose.service', '')
         if not re.fullmatch(r'[A-Za-z0-9_.-]+', service):
             raise RuntimeError('Cannot identify the existing LFN compose service')
-        previous = run_remote(client, "docker inspect -f '{{.Config.Image}}' love-for-nai", quiet=True)
-        container = json.loads(run_remote(client, 'docker inspect love-for-nai', quiet=True))[0]
         environment = dict(item.split('=', 1) for item in container['Config']['Env'] if '=' in item)
         if trusted_edge or environment.get('LFN_TRUST_PROXY') == 'true':
             bindings = container['HostConfig'].get('PortBindings') or {}
@@ -198,7 +271,7 @@ def main():
             edge_config = run_remote(client, 'docker exec lfn-edge nginx -T 2>/dev/null', quiet=True)
             if 'proxy_set_header X-Real-IP $remote_addr;' not in edge_config:
                 raise RuntimeError('The edge must overwrite X-Real-IP')
-        deploy_dir = run_remote(client, "docker inspect -f '{{index .Config.Labels \"com.docker.compose.project.working_dir\"}}' love-for-nai", quiet=True)
+        deploy_dir = labels.get('com.docker.compose.project.working_dir', '')
         if not deploy_dir.startswith('/') or '\n' in deploy_dir or '..' in deploy_dir.split('/'):
             raise RuntimeError('Cannot identify the existing compose working directory')
         compose = deploy_dir.rstrip('/') + '/compose.prod.yml'
@@ -246,7 +319,23 @@ def main():
                 if time.monotonic() - last_progress[0] >= 20 or sent == total:
                     print(f'Upload {sent / max(total, 1):.0%} ({sent / 1048576:.1f} MiB)', flush=True)
                     last_progress[0] = time.monotonic()
-            sftp.put(str(compressed), remote_archive, callback=progress)
+            import paramiko
+            for attempt in range(UPLOAD_ATTEMPTS):
+                try:
+                    offset = verified_upload_offset(client, sftp, compressed, remote_archive)
+                    if offset:
+                        print(f'Resuming verified upload at {offset / 1048576:.1f} MiB', flush=True)
+                    upload_file_confirmed(sftp, compressed, remote_archive, progress, offset)
+                    break
+                except (EOFError, OSError, paramiko.SSHException) as error:
+                    if attempt + 1 == UPLOAD_ATTEMPTS:
+                        raise
+                    print(f'Upload connection interrupted ({type(error).__name__}); retry {attempt + 1}/{UPLOAD_ATTEMPTS}, verifying the uploaded prefix...', flush=True)
+                    sftp.close()
+                    client.close()
+                    client = connect()
+                    transport = client.get_transport()
+                    sftp = client.open_sftp()
             sftp.chmod(remote_archive, 0o600)
             remote_checksum = run_remote(client, f'sha256sum {shlex.quote(remote_archive)}', quiet=True).split()[0]
             if remote_checksum != checksum:
@@ -255,6 +344,22 @@ def main():
             print('Loading transferred image on server...', flush=True)
             run_remote(client, f'docker load -i {shlex.quote(remote_archive)}', timeout=900)
             loaded = True
+            if '--prepare-only' in sys.argv:
+                print(f'PREPARED={image}\nUNCHANGED={previous}', flush=True)
+                return
+            # Long transfers can outlive SSH session limits. Use a fresh session
+            # for the short configuration switch and subsequent health checks.
+            sftp.close()
+            client.close()
+            client = connect()
+            transport = client.get_transport()
+            sftp = client.open_sftp()
+            current_container = json.loads(run_remote(client, 'docker inspect love-for-nai', quiet=True))[0]
+            if current_container.get('Id') != container.get('Id'):
+                raise RuntimeError('Another deployment changed the LFN container while the image was transferring')
+            with sftp.open(compose, 'r') as source:
+                if source.read().decode('utf-8') != original:
+                    raise RuntimeError('The compose configuration changed while the image was transferring')
             run_remote(client, f'cp -p {shlex.quote(compose)} {shlex.quote(backup)}')
             staged = compose + '.release-tmp'
             with sftp.open(staged, 'w') as destination:
@@ -281,6 +386,9 @@ def main():
     except Exception:
         if switched:
             print('Health/deploy failed; restoring previous compose and container...', flush=True)
+            client.close()
+            client = connect()
+            transport = client.get_transport()
             run_remote(client, f'cp -p {shlex.quote(backup)} {shlex.quote(compose)}')
             run_remote(client, up, timeout=180)
             print(f'ROLLED_BACK={previous}', flush=True)

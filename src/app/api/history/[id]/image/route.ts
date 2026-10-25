@@ -3,9 +3,10 @@ import { NextResponse } from "next/server";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { getSession } from "@/lib/session";
+import { createImageThumbnail } from "@/lib/image-processing";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
@@ -19,6 +20,16 @@ export async function GET(
     "Content-Type": contentType,
     "Cache-Control": "private, max-age=3600",
   };
+  const thumbnail = new URL(request.url).searchParams.get("variant") === "thumbnail";
+  const send = async (data: Buffer) => {
+    if (!thumbnail) return new NextResponse(new Uint8Array(data), { headers });
+    const resized = await createImageThumbnail(data);
+    return new NextResponse(new Uint8Array(resized), { headers: {
+      "Content-Type": "image/webp",
+      "Cache-Control": "private, max-age=86400",
+      "Vary": "Cookie",
+    } });
+  };
   // 远程层的图片从二级存储拉取；本地层直接读磁盘。
   if (item.remote) {
     const remote = await getRemoteHistoryImage(
@@ -26,13 +37,13 @@ export async function GET(
       item.imagePath,
     );
     if (!remote) return new NextResponse(null, { status: 404 });
-    return new NextResponse(new Uint8Array(remote.data), { headers });
+    try { return await send(remote.data); } catch { return new NextResponse(null, { status: 415 }); }
   }
   try {
     const data = await readFile(
       historyImagePath(session.userId, item.imagePath),
     );
-    return new NextResponse(data, { headers });
+    return await send(data);
   } catch {
     return new NextResponse(null, { status: 404 });
   }

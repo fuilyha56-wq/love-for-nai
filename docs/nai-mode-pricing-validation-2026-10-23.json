@@ -1,0 +1,25 @@
+{
+  "status": "prepared_awaiting_price_review",
+  "applied": false,
+  "localImage": "love-for-nai:nai-modes-20261023-r1",
+  "localImageId": "sha256:5c53274f29f9d8710fc9948776d95b53a97e4f3f69584b7a7dccb7ba14828432",
+  "lfnTestsPassed": 146,
+  "newApiExpressionTestsPassed": 9,
+  "gatewayTestsPassed": 174,
+  "gatewaySubtestsPassed": 58,
+  "compiledQuoteCasesPassed": 17,
+  "productionBuildPassed": true,
+  "typescriptPassed": true,
+  "csvMatchesCompiledQuotes": true,
+  "paidGenerations": 0,
+  "recoveredRootFiles": 52,
+  "onlineUnchanged": {
+    "containerIdsUnchanged": true,
+    "image": "love-for-nai:nai-official-20261022-r1",
+    "newApiExpressionsUnchanged": true,
+    "dailyPolicyUnchanged": true,
+    "gatewaySourceUnchanged": true,
+    "paidGenerations": 0,
+    "applied": false
+  }
+}

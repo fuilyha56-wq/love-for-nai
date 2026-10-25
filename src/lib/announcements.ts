@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { invalidateCachedJsonFile, readCachedJsonFile } from "@/lib/server-json-cache";
 
 export type Announcement = {
   id: string;
@@ -25,15 +26,17 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
   return current;
 }
 
-async function readStore(): Promise<Store> {
+async function readStore(readOnly = false): Promise<Store> {
   try {
-    const value = JSON.parse(await readFile(storePath(), "utf8")) as Store;
-    return {
-      items: Array.isArray(value.items) ? value.items : [],
-      removedIds: Array.isArray(value.removedIds)
-        ? value.removedIds.filter((id): id is string => typeof id === "string")
-        : [],
-    };
+    return await readCachedJsonFile(storePath(), (raw) => {
+      const value = raw as Store;
+      return {
+        items: Array.isArray(value?.items) ? value.items : [],
+        removedIds: Array.isArray(value?.removedIds)
+          ? value.removedIds.filter((id): id is string => typeof id === "string")
+          : [],
+      };
+    }, { clone: !readOnly });
   } catch {
     return { items: [] };
   }
@@ -45,6 +48,7 @@ async function writeStore(store: Store): Promise<void> {
   const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(store, null, 2), "utf8");
   await rename(temp, target);
+  invalidateCachedJsonFile(target);
 }
 
 // 首次部署时的使用教程公告；后续由管理员在管理界面维护。
@@ -162,21 +166,22 @@ export async function ensureSeed(): Promise<void> {
 
 export async function countAnnouncements(): Promise<number> {
   await ensureSeed();
-  return (await readStore()).items.length;
+  return (await readStore(true)).items.length;
 }
 
 export async function listAnnouncements(): Promise<Announcement[]> {
   await ensureSeed();
-  const store = await readStore();
+  const store = await readStore(true);
   return [...store.items].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
     return b.createdAt.localeCompare(a.createdAt);
-  });
+  }).map((item) => ({ ...item }));
 }
 
 export async function getAnnouncement(id: string): Promise<Announcement | null> {
-  const store = await readStore();
-  return store.items.find((item) => item.id === id) ?? null;
+  const store = await readStore(true);
+  const item = store.items.find((entry) => entry.id === id);
+  return item ? { ...item } : null;
 }
 
 export async function createAnnouncement(

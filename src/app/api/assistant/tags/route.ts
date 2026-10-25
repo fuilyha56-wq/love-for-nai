@@ -2,7 +2,9 @@ import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getChatToken } from "@/lib/newapi";
-import { isKnownImageModel } from "@/lib/image-model-capabilities";
+import { readCatalogTag } from "@/lib/tag-catalog";
+import { isAssistantChatModel, assistantModelIds } from "@/lib/assistant-models";
+import { loadNewApiModels } from "@/lib/provider/newapi-models";
 import {
   adaptAssistantSuggestion,
   assistantHistoryMatchesTarget,
@@ -15,6 +17,8 @@ import { outboundFetch } from "@/lib/outbound";
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { runTagAgent } from "@/lib/tag-agent";
+import { AssistantModelBlockedError } from "@/lib/assistant-model-error";
+import { ASSISTANT_JOB_TIMEOUT_MS } from "@/lib/assistant-timing";
 import { parseTagSuggestion } from "@/lib/tag-suggestion";
 import {
   createAssistantJob,
@@ -46,6 +50,11 @@ type AssistantPayload = {
   historyIds?: unknown;
   // data URL 图片数组，最多 4 张。
   images?: unknown;
+  goalMode?: unknown;
+  accessMode?: unknown;
+  goal?: unknown;
+  goalIteration?: unknown;
+  goalRunId?: unknown;
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
 
@@ -146,6 +155,8 @@ async function readHistoryImages(
 async function validateTag(name: string): Promise<ValidationResult> {
   const normalized = normalizeTag(name);
   if (!normalized) return { status: "rejected" };
+  const local = readCatalogTag(normalized);
+  if (local && (local.source === "danbooru" || local.name === normalized)) return { status: "valid", tag: { name: local.name, displayName: local.displayName, categoryName: local.categoryName, postCount: local.postCount } };
   const params = new URLSearchParams({
     "search[name]": normalized,
     limit: "1",
@@ -209,20 +220,25 @@ async function runJob(
   images: string[],
   target: AssistantImageTarget,
 ) {
+  const jobSignal = AbortSignal.timeout(ASSISTANT_JOB_TIMEOUT_MS);
   try {
     // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
     const conversation = await readConversation(userId);
     const history = conversation.turns
       .filter((turn) => assistantHistoryMatchesTarget(turn, target))
+      .filter((turn) => context.goalMode
+        ? Boolean(context.goalRunId) && turn.goalRunId === context.goalRunId
+        : !turn.goalMode && !turn.goalRunId)
       .slice(-MODEL_HISTORY_TURNS)
       .map((turn) => ({ request: turn.request, answer: turn.answer }));
-    const { content } = await runTagAgent(key, model, request, context, 8, {
+    const { content } = await runTagAgent(key, model, request, context, 6, {
       // 每步实时写入 job，客户端轮询立即能看到检索轨迹。
       onStep: (step) => {
         job.steps.push(step);
       },
       images,
       history,
+      signal: jobSignal,
     });
     const suggestion = adaptAssistantSuggestion(parseTagSuggestion(content), target);
     const candidates = target.capabilities.promptStyle === "tags" ? [...new Set(suggestion.tags)] : [];
@@ -248,6 +264,7 @@ async function runJob(
         negativePrompt: suggestion.negativePrompt,
         parameters: suggestion.parameters,
         ...(suggestion.characters ? { characters: suggestion.characters } : {}),
+        ...(typeof suggestion.goalComplete === "boolean" ? { goalComplete: suggestion.goalComplete } : {}),
         tags: validTags,
       },
       rejectedTags: results
@@ -276,6 +293,7 @@ async function runJob(
         imageModel: target.imageModel,
         modelProtocol: target.modelProtocol,
         createdAt: new Date().toISOString(),
+        ...(context.goalMode ? { goalMode: true, ...(context.goalRunId ? { goalRunId: context.goalRunId } : {}) } : {}),
         ...(suggestion.message ? { message: suggestion.message } : {}),
         ...(suggestion.englishDescription
           ? { englishDescription: suggestion.englishDescription }
@@ -293,8 +311,10 @@ async function runJob(
       // 持久化失败静默处理。
     }
   } catch (error) {
-    job.message =
-      error instanceof Error ? error.message : "智能标签助手调用失败";
+    if (error instanceof AssistantModelBlockedError) job.error = error.info;
+    job.message = jobSignal.aborted
+      ? "助手处理超过时限，请减少标签数量后重试。"
+      : error instanceof Error ? error.message : "智能标签助手调用失败";
     job.status = "error";
   }
 }
@@ -312,7 +332,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  if (typeof body.model !== "string" || isKnownImageModel(body.model))
+  if (typeof body.model !== "string" || !isAssistantChatModel(body.model))
     return NextResponse.json(
       { message: "请选择一个文本对话模型" },
       { status: 400 },
@@ -335,6 +355,16 @@ export async function POST(request: Request) {
       { message: "请输入不超过 1000 字的创作需求" },
       { status: 400 },
     );
+  if (body.goalMode !== undefined && typeof body.goalMode !== "boolean")
+    return NextResponse.json({ message: "goalMode 必须是布尔值" }, { status: 400 });
+  if (body.goalRunId !== undefined && (typeof body.goalRunId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(body.goalRunId)))
+    return NextResponse.json({ message: "目标会话 ID 无效" }, { status: 400 });
+  if (body.accessMode !== undefined && body.accessMode !== "approval" && body.accessMode !== "full")
+    return NextResponse.json({ message: "Agent 权限模式无效" }, { status: 400 });
+  if (body.goalMode === true && (typeof body.goal !== "string" || !body.goal.trim() || body.goal.length > 1000))
+    return NextResponse.json({ message: "目标 Agent 需要不超过 1000 字的明确目标" }, { status: 400 });
+  if (body.goalIteration !== undefined && (typeof body.goalIteration !== "number" || !Number.isInteger(body.goalIteration) || body.goalIteration < 0 || body.goalIteration > 5))
+    return NextResponse.json({ message: "Agent 轮次超出范围" }, { status: 400 });
   if (body.localTags !== undefined && (
     !Array.isArray(body.localTags) || body.localTags.length > 256 ||
     body.localTags.some((tag) => typeof tag !== "string" || tag.length > 120)
@@ -411,6 +441,7 @@ export async function POST(request: Request) {
         { message: "图片总大小不能超过 24MB" },
         { status: 400 },
       );
+    if (!assistantModelIds(await loadNewApiModels(session)).includes(body.model)) return NextResponse.json({ message: "该模型不是当前 NewAPI 账号可用的对话模型，请刷新模型列表" }, { status: 400 });
     const key = await getChatToken(session, body.model);
     const job = createAssistantJob(session.userId);
     void runJob(
@@ -425,6 +456,13 @@ export async function POST(request: Request) {
         imageModel: target.imageModel,
         modelProtocol: target.modelProtocol,
         operation: target.operation,
+        ...(body.goalMode === true ? {
+          goalMode: true,
+          accessMode: body.accessMode === "full" ? "full" as const : "approval" as const,
+          goal: String(body.goal),
+          goalIteration: typeof body.goalIteration === "number" ? body.goalIteration : 0,
+          ...(typeof body.goalRunId === "string" ? { goalRunId: body.goalRunId } : {}),
+        } : {}),
         ...(Array.isArray(body.localTags) ? { localTags: body.localTags as string[] } : {}),
       },
       images,
@@ -469,7 +507,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ status: "running", steps: job.steps });
   if (job.status === "error")
     return NextResponse.json(
-      { status: "error", message: job.message, steps: job.steps },
+      { status: "error", message: job.message, error: job.error, steps: job.steps },
       { status: 200 },
     );
   return NextResponse.json({ status: "done", steps: job.steps, ...job.result });

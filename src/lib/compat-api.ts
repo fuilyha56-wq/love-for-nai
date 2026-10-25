@@ -43,6 +43,7 @@ import {
   normalizeSamples,
   normalizeSteps,
   validateImageShape,
+  validateNaiGenerationCost,
   validateReferenceCount,
   validateMediumRequest,
 } from "@/lib/image-request";
@@ -57,10 +58,13 @@ import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from 
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { recordIpEvidence } from "@/lib/risk-ip";
 import { isNaiMediumModel, naiUsageModel } from "@/lib/nai-native-request";
-import { imagePricingStrength } from "@/lib/image-pricing";
+import { imagePricingStrength, isInFreeEnvelope, upscaleAnlasCost } from "@/lib/image-pricing";
+import { isNaiLimitModel } from "@/lib/nai-image-limits";
 import { observeNativeImageCompletion } from "@/lib/nai-stream-completion";
 import { roundAffAmount } from "@/lib/daily-image-pricing";
 import { dailyImagePolicy } from "@/lib/daily-image-billing";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
+import { pngDimensions } from "@/lib/png-dims";
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -205,7 +209,7 @@ export async function proxyNewApi(
           ? await request.arrayBuffer()
           : body,
       cache: "no-store",
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
     });
     if (imageUserId != null && upstream.ok) {
       let model = "external-image";
@@ -550,7 +554,7 @@ export async function proxyImageWithCredits(
             headers: managedHeaders,
             body: imageRequest.body,
             cache: "no-store",
-            signal: AbortSignal.timeout(180_000),
+            signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
           },
         ).catch((error: unknown) => {
           finishManagedLog(0);
@@ -597,17 +601,19 @@ export async function proxyImageWithCredits(
           operation,
         };
         
-        // 解析原始请求体获取 prompt 等参数
-        if (imageRequest.body && typeof imageRequest.body === "string") {
-          try {
-            const bodyJson = JSON.parse(imageRequest.body) as JsonRecord;
-            adapterRequest.prompt = String(bodyJson.prompt || bodyJson.input || "");
-            adapterRequest.negativePrompt = bodyJson.negative_prompt as string | undefined;
-            adapterRequest.seed = bodyJson.seed as number | undefined;
-          } catch {
-            // 无法解析 body，使用默认值
-          }
+        // Preserve the same effective parameters that were quoted, including
+        // inpaint strength, references and input images on configured adapters.
+        let bodyJson: JsonRecord = {};
+        if (typeof imageRequest.body === "string") bodyJson = JSON.parse(imageRequest.body) as JsonRecord;
+        else if (imageRequest.body instanceof FormData) {
+          for (const [key, value] of imageRequest.body.entries())
+            bodyJson[key] = value instanceof File ? Buffer.from(await value.arrayBuffer()).toString("base64") : value;
+          bodyJson = normalizeExternalImageBody(bodyJson, new Headers(), pathname.endsWith("/edits"));
         }
+        adapterRequest.prompt = String(bodyJson.prompt || bodyJson.input || "");
+        adapterRequest.negativePrompt = bodyJson.negative_prompt as string | undefined;
+        adapterRequest.seed = bodyJson.seed as number | undefined;
+        adapterRequest.extra = bodyJson;
 
         const result = await imageAdapter.generate(adapterRequest);
 
@@ -641,7 +647,7 @@ export async function proxyImageWithCredits(
         headers,
         body: imageRequest.body,
         cache: "no-store",
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
       }).catch((error: unknown) => {
         finishUpstreamLog(0);
         throw error;
@@ -713,6 +719,7 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   // OpenAI fallback must return final base64 images. A native "msgpack"
   // stream flag is not an OpenAI boolean stream flag.
   delete rest.stream;
+  validateNaiGenerationCost(model, width, height, steps, imagePricingStrength(rest, operation ?? action), operation ?? action);
   validateMediumRequest(model, { ...rest, width, height, n: samples, steps }, operation ?? action);
   return {
     ...rest,
@@ -998,7 +1005,7 @@ export async function proxyNaiNativeWithCredits(
             headers: managedHeaders,
             body: target.body,
             cache: "no-store",
-            signal: AbortSignal.timeout(180_000),
+            signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
           },
         ).catch((error: unknown) => {
           finishManagedLog(0);
@@ -1043,7 +1050,7 @@ export async function proxyNaiNativeWithCredits(
       headers,
       body: imageRequest.body,
       cache: "no-store",
-      signal: AbortSignal.timeout(180_000),
+      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
     }).catch((error: unknown) => {
       finishNativeLog(0);
       throw error;
@@ -1057,6 +1064,17 @@ export async function proxyNaiNativeWithCredits(
       return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
     }
     const upstreamContentType = (upstream.headers.get("content-type") || "").toLowerCase();
+    if (pathname === "/ai/encode-vibe") {
+      // Encoding returns a reusable embedding, not an image/ZIP. Do not run
+      // image-envelope validation (which would refund a successful encoding).
+      if (!(await upstream.clone().arrayBuffer()).byteLength)
+        throw new Error("原生上游没有返回 Vibe 编码");
+      if (settlementId) await updateImageSettlement(settlementId, { generatedSamples: 1, status: "succeeded" });
+      if (audit.record.settlement) audit.record.settlement.status = "succeeded";
+      audit.record.billing = { ...audit.record.billing, lfnChargedAff: charge.cost };
+      settled = true;
+      return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge), generatedSamples: 1 });
+    }
     const expectedNativeResponse = pathname.endsWith("-stream")
       ? /(?:msgpack|octet-stream|zip|json)/.test(upstreamContentType)
       : /(?:zip|json|octet-stream|image\/)/.test(upstreamContentType);
@@ -1196,16 +1214,16 @@ export function imageOperationFromBody(body: JsonRecord, fallback = "generate"):
 
 function referenceValues(body: JsonRecord, operation: string): unknown[] {
   if (operation === "precise-reference") {
-    const references = body.references ?? body.director_reference_images ?? body.director_reference_images_cached;
-    return Array.isArray(references) ? references : [];
+    const references = [body.references, body.director_reference_images].find((value) => Array.isArray(value) && value.length);
+    return [...(Array.isArray(references) ? references : []), ...(Array.isArray(body.director_reference_images_cached) ? body.director_reference_images_cached : [])];
   }
   if (operation === "character-reference") {
     if (Array.isArray(body.characters))
-      return body.characters.map((character) => isRecord(character) ? character.reference_image : undefined);
+      return [...body.characters.flatMap((character) => isRecord(character) && typeof character.reference_image === "string" && character.reference_image ? [character.reference_image] : []), ...(Array.isArray(body.reference_image_multiple_cached) ? body.reference_image_multiple_cached : [])];
   }
-  const references = body.reference_image_multiple ?? body.reference_images ?? body.reference_image_multiple_cached ?? body.vibe;
-  if (Array.isArray(references)) return references;
-  return typeof body.reference_image === "string" && body.reference_image ? [body.reference_image] : [];
+  const references = [body.reference_image_multiple, body.reference_images, body.vibe].find((value) => Array.isArray(value) && value.length);
+  const cached = Array.isArray(body.reference_image_multiple_cached) ? body.reference_image_multiple_cached : [];
+  return [...(Array.isArray(references) ? references : typeof body.reference_image === "string" && body.reference_image ? [body.reference_image] : []), ...cached];
 }
 
 export function imageReferenceCountFromBody(body: JsonRecord, operation: string): number {
@@ -1320,41 +1338,122 @@ function parseSize(value: unknown): { width: number; height: number } | null {
     : null;
 }
 
+// Resolve the Gateway's compatibility overrides before both quoting and forwarding.
+// In particular, multipart fields are strings and fallback requests retain headers.
+export function normalizeExternalImageBody(body: JsonRecord, headers: Headers, edits = false): JsonRecord {
+  if (!isNaiExternalModel(String(modelAlias(body.model) ?? ""))) return body;
+  const effective = { ...body, ...(isRecord(body.parameters) ? body.parameters : {}) };
+  const reserved = new Set([
+    "model", "prompt", "input", "action", "response_format", "size", "n", "user",
+    "quality_tags", "revised_prompt", "operation", "novelai_operation", "service_tier",
+    "extra_params", "references", "characters", "reference_image", "reference_images",
+    "reference_strength", "reference_information_extracted", "image", "mask", "stream", "image_format",
+  ]);
+  let bodyExtra = body.extra_params;
+  if (typeof bodyExtra === "string") {
+    try { bodyExtra = JSON.parse(bodyExtra); }
+    catch { throw new ImageRequestValidationError("extra_params 必须是 JSON 对象"); }
+  }
+  const headerExtra = headers.get("x-novelai-extra-params");
+  let parsedHeader: unknown;
+  if (headerExtra) {
+    try { parsedHeader = JSON.parse(headerExtra); }
+    catch { throw new ImageRequestValidationError("X-NovelAI-Extra-Params 必须是 JSON 对象"); }
+  }
+  for (const extra of [bodyExtra, parsedHeader]) {
+    if (extra === undefined || extra === null) continue;
+    if (!isRecord(extra)) throw new ImageRequestValidationError("extra_params 必须是对象");
+    if (Object.keys(extra).some(key => reserved.has(key)))
+      throw new ImageRequestValidationError("extra_params 不允许覆盖网关协议字段");
+    Object.assign(effective, extra);
+    if (extra.n_samples !== undefined) effective.n = extra.n_samples;
+  }
+  delete effective.extra_params;
+  delete effective.parameters;
+  if (!edits) {
+    for (const [header, key] of [["x-sampler", "sampler"], ["x-noise-schedule", "noise_schedule"], ["x-negative-prompt", "negative_prompt"], ["x-service-tier", "service_tier"]]) {
+      const value = headers.get(header);
+      if (value !== null) effective[key] = value;
+    }
+    for (const [header, key] of [["x-steps", "steps"], ["x-seed", "seed"], ["x-n-samples", "n_samples"], ["x-scale", "scale"]]) {
+      const value = headers.get(header);
+      if (value === null) continue;
+      const number = parseFiniteNumber(value);
+      if (number === undefined || (key !== "scale" && !Number.isInteger(number)))
+        throw new ImageRequestValidationError(`${header} 必须是有效数字`);
+      effective[key] = number;
+      if (key === "n_samples") effective.n = number;
+    }
+    const operation = headers.get("x-novelai-operation")?.trim().toLowerCase();
+    if (operation) {
+      if (typeof effective.novelai_operation === "string" && effective.novelai_operation.trim() && effective.novelai_operation.trim().toLowerCase() !== operation)
+        throw new ImageRequestValidationError("X-NovelAI-Operation 与 novelai_operation 冲突");
+      effective.novelai_operation = operation;
+    }
+  }
+  for (const key of ["strength", "inpaintImg2ImgStrength", "uncond_scale", "cfg_rescale", "params_version", "ucPreset", "tag_hint_uc_preset"]) {
+    if (effective[key] === undefined) continue;
+    const value = parseFiniteNumber(effective[key]);
+    if (value === undefined) throw new ImageRequestValidationError(`${key} 必须是有效数字`);
+    effective[key] = value;
+  }
+  for (const key of ["sm", "sm_dyn"]) {
+    if (effective[key] === "false") effective[key] = false;
+    if (effective[key] === "true") effective[key] = true;
+  }
+  return effective;
+}
+
 export function externalGeneration(
   body: JsonRecord,
   operation = imageOperationFromBody(body),
 ): AffGeneration | null {
   const parameters = isRecord(body.parameters) ? body.parameters : {};
-  body = { ...body, ...parameters, ...(isRecord(body.extra_params) ? body.extra_params : {}) };
+  body = { ...body, ...parameters, ...(!isRecord(body.parameters) && isRecord(body.extra_params) ? body.extra_params : {}) };
+  for (const key of ["strength", "inpaintImg2ImgStrength", "uncond_scale"]) {
+    if (body[key] === undefined) continue;
+    const value = parseFiniteNumber(body[key]);
+    if (value === undefined || value < 0) return null;
+    body[key] = value;
+  }
   const preciseReferences = referenceValues(body, "precise-reference");
-  const references = preciseReferences.length ? preciseReferences : referenceValues(body, operation);
-  const size = parseSize(body.size);
+  const vibeReferences = referenceValues(body, operation === "precise-reference" ? "generate" : operation);
+  const references = preciseReferences.length ? preciseReferences : vibeReferences;
+  const size = operation === "upscale"
+    ? (typeof body.image === "string" ? pngDimensions(body.image) : null)
+    : parseSize(body.size);
+  if (operation === "upscale" && !size) return null;
   let width: number;
   let height: number;
   let samples: number;
   let steps: number;
   let model: string;
   try {
-    const rawWidth = parsePositiveInteger(body.width) ?? size?.width;
-    const rawHeight = parsePositiveInteger(body.height) ?? size?.height;
-    width = normalizeDimension(rawWidth, "width");
-    height = normalizeDimension(rawHeight, "height");
+    const rawWidth = operation === "upscale" ? size?.width : parsePositiveInteger(body.width) ?? size?.width;
+    const rawHeight = operation === "upscale" ? size?.height : parsePositiveInteger(body.height) ?? size?.height;
+    width = operation === "upscale" ? size!.width : normalizeDimension(rawWidth, "width");
+    height = operation === "upscale" ? size!.height : normalizeDimension(rawHeight, "height");
     validateImageShape(width, height);
+    if (operation === "upscale") upscaleAnlasCost(width, height);
     samples = normalizeSamples(body);
+    if ((operation === "upscale" || operation.startsWith("director-")) && samples !== 1) return null;
     const requestedModel = modelAlias(body.model);
     if (typeof requestedModel !== "string" || !/^[^\u0000-\u001f\u007f]{1,160}$/.test(requestedModel.trim()))
       throw new ImageRequestValidationError("模型名称无效");
     model = isNaiExternalModel(requestedModel)
       ? assertImageModel(requestedModel)
       : requestedModel.trim();
-    steps = normalizeSteps(body.steps, isNaiMediumModel(model) ? 14 : 28);
-    validateReferenceCount(references.length);
-    if (isNaiExternalModel(model)) validateMediumRequest(model, body, operation);
+    steps = operation === "upscale" ? 1 : normalizeSteps(body.steps, isNaiMediumModel(model) ? 14 : 28);
+    validateReferenceCount(preciseReferences.length + vibeReferences.length);
+    if (isNaiExternalModel(model)) {
+      if (operation !== "upscale") validateNaiGenerationCost(model, width, height, steps, imagePricingStrength(body, operation), operation);
+      validateMediumRequest(model, body, operation);
+    }
   } catch (error) {
     if (error instanceof ImageRequestValidationError) return null;
     return null;
   }
-  return {
+  const generation: AffGeneration = {
     model,
     width,
     height,
@@ -1364,9 +1463,11 @@ export function externalGeneration(
     uncondScale: typeof body.uncond_scale === "number" ? body.uncond_scale : undefined,
     operation,
     referenceImageCount: references.length,
+    vibeReferenceImageCount: vibeReferences.length,
+    preciseReferenceImageCount: preciseReferences.length,
     referenceMode: preciseReferences.length ? "precise" : "vibe",
-    encodedVibeCount: preciseReferences.length ? 0 : references.filter((reference) =>
-      isEncodedVibe(isRecord(reference) ? reference.data ?? reference.reference_image : reference),
+    encodedVibeCount: vibeReferences.filter((reference) =>
+      (isRecord(reference) && !reference.data && typeof reference.cache_secret_key === "string" && Boolean(reference.cache_secret_key)) || isEncodedVibe(isRecord(reference) ? reference.data ?? reference.reference_image : reference),
     ).length,
     hasInputImage: Boolean(body.image),
     serviceTier: typeof body.service_tier === "string" ? body.service_tier : undefined,
@@ -1374,6 +1475,8 @@ export function externalGeneration(
       ? body.characterPrompts.length
       : 0,
   };
+  if (isNaiLimitModel(model) && !isInFreeEnvelope(generation)) return null;
+  return generation;
 }
 
 export function externalJsonBody(body: JsonRecord): BodyInit {

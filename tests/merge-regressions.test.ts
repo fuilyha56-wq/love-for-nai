@@ -20,8 +20,8 @@ describe("merged studio request/pricing contract", () => {
     ["sequential", 3, [1, 1, 1], 19.5],
     ["sequential", 4, [1, 1, 1, 1], 26],
     ["sequential", 5, [1, 1, 1, 1, 1], 32.5],
-    ["once", 4, [4], 2080],
-    ["once", 5, [5], 2600],
+    ["once", 4, [4], 1560],
+    ["once", 5, [5], 1950],
     ["sequential", 30, Array(30).fill(1), 195],
   ] as const)("%s with %s images matches actual request chunks", (mode, samples, chunks, usd) => {
     const size = studioBatchSize(mode);

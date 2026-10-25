@@ -1,3 +1,4 @@
+import { NAI_MAX_DIMENSION, NAI_MAX_PIXELS } from "./nai-image-limits";
 // NAI 图片参数 → 工作台状态的纯映射（客户端安全，无 server-only 依赖）。
 // 别名表与 src/lib/compat-api.ts 的 novelAiModelAliases 保持一致方向：NAI 原名 → LFN id。
 
@@ -35,10 +36,10 @@ const studioSchedules = new Set([
   "polyexponential",
 ]);
 
-// 工作台提交校验要求宽高为 64 的倍数，服务端上限 1600×1600（≤2,560,000 像素）。
+// 官网画布按 64 对齐，总面积最多 3,145,728 像素。
 const DIMENSION_MIN = 64;
-const DIMENSION_MAX = 1600;
-const MAX_PIXELS = 2_560_000;
+const DIMENSION_MAX = NAI_MAX_DIMENSION;
+const MAX_PIXELS = NAI_MAX_PIXELS;
 
 function roundTo64(value: number): number {
   return Math.min(DIMENSION_MAX, Math.max(DIMENSION_MIN, Math.round(value / 64) * 64));
@@ -54,10 +55,10 @@ function clampDimension(value: number): number | undefined {
 function fitPixelCap(width: number, height: number): { width: number; height: number } {
   if (width * height <= MAX_PIXELS) return { width, height };
   const factor = Math.sqrt(MAX_PIXELS / (width * height));
-  return {
-    width: roundTo64(width * factor),
-    height: roundTo64(height * factor),
-  };
+  let w = roundTo64(width * factor);
+  let h = roundTo64(height * factor);
+  while (w * h > MAX_PIXELS) { if (w >= h) w -= 64; else h -= 64; }
+  return { width: w, height: h };
 }
 
 function finiteNumber(value: unknown): number | undefined {

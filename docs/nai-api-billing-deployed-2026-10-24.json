@@ -1,0 +1,167 @@
+{
+  "ok": true,
+  "deployedAt": "2026-10-23T18:13:18.105347+00:00",
+  "image": "love-for-nai:nai-api-coverage-20261024-r1",
+  "imageId": "sha256:6948a92fdd6a78ca4b8f19e27260a5ae9e6bb3d23e411cecfefacd7e652e491b",
+  "containerId": "ba1d86af227d3f05a5d1b4a6212d6ba933cd5801b85f76e87aea0fcca83b4e2b",
+  "startedAt": "2026-10-23T18:12:30.306010057Z",
+  "testFiles": 9,
+  "testsPassed": 164,
+  "realWalletApiTests": 47,
+  "compiledApiCases": 11,
+  "pricingUnchanged": true,
+  "dailyPolicyPreserved": true,
+  "gatewayUnchanged": true,
+  "changedSourceFiles": {
+    "src/app/ai/encode-vibe/route.ts": {
+      "before": "355ef8e50cb92af9fdba3ef22cad07ae9a32c86d9296dc3d76bd61217ffd7122",
+      "after": "ee36510cd41d6f9db82c030049aa15e1484335b8ec24ec5aefaec4f6e5c20eb6"
+    },
+    "src/app/v1/images/edits/route.ts": {
+      "before": "0e9d48c7446fcb6addd0cff458c1c6a260b32902f5883ef855cbea6bd449c4bc",
+      "after": "c358f4f10e14d7dfe4ab371c3ead1e31f95f0e02b86759f6105474135223fb6c"
+    },
+    "src/app/v1/images/generations/route.ts": {
+      "before": "9b5ff5fd8d69a94e5384eb50984d569618492a644a358643edabaa0ef516cfbb",
+      "after": "ead901929ff8869b5004ff8f4d2ff65766ca6feb0cd4f2fc411e994e2d6b111d"
+    },
+    "src/lib/compat-api.ts": {
+      "before": "f27fc4c4e76f2b7a9882890b889d89cb11fd1663fc49d47a33134fb2f8daaeb0",
+      "after": "7b80b3cc8bcf20ed90511a2d45a2178b2c9c6aeaaf9074e9d8f63c633b2445a4"
+    }
+  },
+  "liveVerification": {
+    "ok": true,
+    "appliedPrices": 14,
+    "dailyPolicyPreserved": true,
+    "newApiDailyTiers": false,
+    "groupRatiosPreserved": true,
+    "handlerPriceChecks": [
+      {
+        "label": "high-small",
+        "model": "nai-v5-full",
+        "p": 25,
+        "c": 1,
+        "expectedAff": 5,
+        "quota": 2500000,
+        "cny": 0.025
+      },
+      {
+        "label": "v45-small",
+        "model": "nai-v4.5-full",
+        "p": 0,
+        "c": 1,
+        "expectedAff": 1,
+        "quota": 500000,
+        "cny": 0.005
+      },
+      {
+        "label": "medium-small",
+        "model": "nai-v5-full-medium",
+        "p": 18,
+        "c": 1,
+        "expectedAff": 1,
+        "quota": 500000,
+        "cny": 0.005
+      },
+      {
+        "label": "high-large",
+        "model": "nai-v5-full",
+        "p": 4500,
+        "c": 1,
+        "expectedAff": 455,
+        "quota": 227500000,
+        "cny": 2.275
+      },
+      {
+        "label": "high-batch",
+        "model": "nai-v5-full",
+        "p": 9000,
+        "c": 2,
+        "expectedAff": 910,
+        "quota": 455000000,
+        "cny": 4.55
+      },
+      {
+        "label": "img2img",
+        "model": "nai-v5-full",
+        "p": 3150,
+        "c": 1,
+        "expectedAff": 320,
+        "quota": 160000000,
+        "cny": 1.6
+      },
+      {
+        "label": "edits",
+        "model": "nai-v5-full",
+        "p": 2500,
+        "c": 1,
+        "expectedAff": 255,
+        "quota": 127500000,
+        "cny": 1.275
+      },
+      {
+        "label": "upscale",
+        "model": "nai-v5-full",
+        "p": 50,
+        "c": 0,
+        "expectedAff": 5,
+        "quota": 2500000,
+        "cny": 0.025
+      }
+    ],
+    "publicHighPrice": {
+      "billingMode": "live",
+      "liveType": "tiered",
+      "liveUsdPerRequest": 5,
+      "liveUsdPerUsageToken": 0.1,
+      "liveBaseUsdPerImage": 5,
+      "liveGroupName": "Draw",
+      "liveGroupRatio": 1,
+      "privatePointReference": null,
+      "note": "NewAPI 公开分档价格：档内按张结算，档外按网关 usage token 结算并加生图基础费；独立工具不加生图基础费；按公开 Draw 分组倍率换算。实际扣费以账号账单为准。"
+    },
+    "health": {
+      "status": "ok",
+      "service": "love-for-nai",
+      "version": "0.1.0",
+      "capabilities": {
+        "auth": {
+          "provider": "newapi",
+          "label": "NewAPI 账号",
+          "login": true,
+          "register": true,
+          "groups": true,
+          "keys": true
+        },
+        "image": {
+          "provider": "gateway",
+          "label": "NovelAI Gateway",
+          "enabled": true
+        },
+        "wallet": {
+          "upstreamBalance": true,
+          "credits": true,
+          "packages": true,
+          "usageLogs": true
+        },
+        "admin": {
+          "users": true,
+          "announcements": true,
+          "credits": true,
+          "platform": true
+        },
+        "labels": {
+          "upstreamBalance": "NewAPI 余额",
+          "credits": "AFF",
+          "packages": "图包额度"
+        }
+      },
+      "readiness": {
+        "freeImageAdmission": "ready"
+      }
+    },
+    "paidGenerations": 0
+  },
+  "paidGenerations": 0
+}

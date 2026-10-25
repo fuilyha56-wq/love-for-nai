@@ -16,6 +16,23 @@ describe("summarizeToolResult", () => {
     ).toBe("关键词为空");
   });
 
+  it("summarizes batched catalog searches and complete-entry reads", () => {
+    expect(
+      summarizeToolResult("search_tag_catalog", {
+        queries: [
+          { query: "white hair", tags: [{}, {}] },
+          { query: "red eyes", tags: [{}] },
+        ],
+      }),
+    ).toBe("white hair 2 条；red eyes 1 条");
+    expect(
+      summarizeToolResult("read_tag_catalog", {
+        tags: [{}, {}],
+        missing: ["unknown"],
+      }),
+    ).toBe("读取完整介绍 2 条，1 条无独立词条");
+  });
+
   it("summarizes verification, wiki and web search", () => {
     expect(
       summarizeToolResult("verify_danbooru_tag", {

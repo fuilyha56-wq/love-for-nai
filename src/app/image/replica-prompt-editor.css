@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) {
@@ -269,4 +270,6 @@
   :is(.replica-prompt,.replica-prompt-dialog,.replica-prompt-overlay):is([data-variant="nai"],[data-variant="nlw"]) * {scroll-behavior:auto}
   .replica-completion-panel,.replica-prompt-overlay,.replica-prompt-dialog {animation:none}
   .replica-prompt-resize-mark>span {transition:none!important}
+}
+
 }

@@ -1,8 +1,8 @@
-import { affCost, MEDIUM_AFF_PER_IMAGE, V5_BASE_AFF_PER_IMAGE, type ImagePricingGeneration } from "./image-pricing";
+import { AFF_PER_ANLAS, CNY_PER_ANLAS, V5_ANLAS_SALES_MULTIPLIER, affCost, MEDIUM_AFF_PER_IMAGE, V5_BASE_AFF_PER_IMAGE, type ImagePricingGeneration } from "./image-pricing";
 import { isNaiMediumModel, naiUsageModel } from "./nai-native-request";
 
 export type DailyImageFamily = "v45" | "v5";
-export const CNY_PER_AFF = 0.005;
+export { CNY_PER_AFF } from "./image-pricing";
 export type DailyPriceTier = {
   afterImages: number;
   baseCny: number;
@@ -44,8 +44,8 @@ export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
   enabled: true,
   strictApiBilling: false,
   displayUsdPerCny: 200,
-  v45AnlasCny: 0.02,
-  v5AnlasCny: 0.025,
+  v45AnlasCny: CNY_PER_ANLAS,
+  v5AnlasCny: CNY_PER_ANLAS * V5_ANLAS_SALES_MULTIPLIER,
   v45: [
     { afterImages: 0, baseCny: 0, anlasMultiplier: 1, totalMultiplier: 1 },
     {
@@ -141,7 +141,7 @@ export function quoteDailyImage(
   const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE : family === "v5" ? V5_BASE_AFF_PER_IMAGE : 1;
   const baselineAff = affCost(generation) / generation.samples;
   const anlasAff = Math.max(0, baselineAff - baseAff);
-  const anlas = anlasAff * generation.samples / (family === "v5" ? 1.25 : 1);
+  const anlas = anlasAff * generation.samples / (AFF_PER_ANLAS * (family === "v5" ? V5_ANLAS_SALES_MULTIPLIER : 1));
   const anlasPerSample = anlas / generation.samples;
   const anlasCny = family === "v45" ? policy.v45AnlasCny : policy.v5AnlasCny;
   const affCosts = Array.from({ length: generation.samples }, (_, index) => {

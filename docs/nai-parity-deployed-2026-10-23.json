@@ -1,0 +1,351 @@
+{
+  "image": "love-for-nai:nai-parity-20261023-r1",
+  "approved": true,
+  "applied": true,
+  "startedAt": "20261023013643",
+  "backupDirectory": "/home/ikun/love-for-nai-deploy/.release-backups/nai-parity-20261023-r1-20261023013643",
+  "previousLfnImage": "love-for-nai:nai-official-20261022-r1",
+  "gatewayFiles": [
+    {
+      "name": "openai.py",
+      "beforeSha256": "2ef00632d206a4f5ba3036caf46bfe1baafc35ffdae6d018ae59c5b0734bcfaf",
+      "afterSha256": "5b8906569ab181c131220ef6cac1a6966ca48ab24e416df54599f8e43ad648b6"
+    },
+    {
+      "name": "app.py",
+      "beforeSha256": "85e023845ae0ef1ceca32388738617015e403e46afc5645361fdca35a2c51135",
+      "afterSha256": "aaf42faac3e2b43c1c151cc37c7e3c6817df7914f06c0e335aedf76eea6168ca"
+    }
+  ],
+  "newApiBackupName": "newapi-nai-parity-20261023-1792690625243.json",
+  "dailyTiersPreserved": true,
+  "maintenanceRemoved": true,
+  "completedAt": "20261023013720",
+  "timezone": "Asia/Shanghai",
+  "lfnTestsPassed": 174,
+  "gatewayTestsPassed": 175,
+  "gatewaySubtestsPassed": 58,
+  "enginePreviewPrices": 14,
+  "compiledQuoteCases": 17,
+  "handlerPriceCases": 8,
+  "newApiDailyTiers": false,
+  "groupRatiosPreserved": true,
+  "paidGenerations": 0,
+  "models": [
+    {
+      "model": "nai-v4.5-curated",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p <= 1 ? tier(\"limit\", p * 0 + c * 0 + 1000000) : tier(\"full\", p * 80000 + c * 1000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v4.5-curated-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 1
+      }
+    },
+    {
+      "model": "nai-v4.5-full",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p <= 1 ? tier(\"limit\", p * 0 + c * 0 + 1000000) : tier(\"full\", p * 80000 + c * 1000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v4.5-full-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 1
+      }
+    },
+    {
+      "model": "nai-v4.5-inpaint",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p <= 1 ? tier(\"limit\", p * 0 + c * 0 + 1000000) : tier(\"full\", p * 80000 + c * 1000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v4.5-inpaint-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 0
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 1
+      }
+    },
+    {
+      "model": "nai-v5-curated",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p == 25 ? tier(\"limit\", p * 0 + c * 0 + 5000000) : tier(\"full\", p * 100000 + c * 5000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v5-curated-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 5
+      }
+    },
+    {
+      "model": "nai-v5-full",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p == 25 ? tier(\"limit\", p * 0 + c * 0 + 5000000) : tier(\"full\", p * 100000 + c * 5000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v5-full-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 8
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 5
+      }
+    },
+    {
+      "model": "nai-v5-full-medium",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 3.46153846
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p == 18 ? tier(\"limit\", p * 0 + c * 0 + 1000000) : tier(\"full\", p * 100000 + c * 1000000)",
+        "modelPrice": 3.46153846
+      }
+    },
+    {
+      "model": "nai-v5-inpaint",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 200
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p == 25 ? tier(\"limit\", p * 0 + c * 0 + 5000000) : tier(\"full\", p * 100000 + c * 5000000)",
+        "modelPrice": 200
+      }
+    },
+    {
+      "model": "nai-v5-inpaint-limit",
+      "before": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 6
+      },
+      "proposed": {
+        "billingMode": "ratio",
+        "billingExpr": null,
+        "modelPrice": 5
+      }
+    },
+    {
+      "model": "nai-v5-inpaint-medium",
+      "before": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+        "modelPrice": 3.46153846
+      },
+      "proposed": {
+        "billingMode": "tiered_expr",
+        "billingExpr": "p == 18 ? tier(\"limit\", p * 0 + c * 0 + 1000000) : tier(\"full\", p * 100000 + c * 1000000)",
+        "modelPrice": 3.46153846
+      }
+    }
+  ],
+  "verification": {
+    "ok": true,
+    "appliedPrices": 14,
+    "dailyPolicyPreserved": true,
+    "newApiDailyTiers": false,
+    "groupRatiosPreserved": true,
+    "handlerPriceChecks": [
+      {
+        "label": "high-small",
+        "model": "nai-v5-full",
+        "p": 25,
+        "c": 1,
+        "expectedAff": 5,
+        "quota": 2500000,
+        "cny": 0.025
+      },
+      {
+        "label": "v45-small",
+        "model": "nai-v4.5-full",
+        "p": 0,
+        "c": 1,
+        "expectedAff": 1,
+        "quota": 500000,
+        "cny": 0.005
+      },
+      {
+        "label": "medium-small",
+        "model": "nai-v5-full-medium",
+        "p": 18,
+        "c": 1,
+        "expectedAff": 1,
+        "quota": 500000,
+        "cny": 0.005
+      },
+      {
+        "label": "high-large",
+        "model": "nai-v5-full",
+        "p": 4500,
+        "c": 1,
+        "expectedAff": 455,
+        "quota": 227500000,
+        "cny": 2.275
+      },
+      {
+        "label": "high-batch",
+        "model": "nai-v5-full",
+        "p": 9000,
+        "c": 2,
+        "expectedAff": 910,
+        "quota": 455000000,
+        "cny": 4.55
+      },
+      {
+        "label": "img2img",
+        "model": "nai-v5-full",
+        "p": 3150,
+        "c": 1,
+        "expectedAff": 320,
+        "quota": 160000000,
+        "cny": 1.6
+      },
+      {
+        "label": "edits",
+        "model": "nai-v5-full",
+        "p": 2500,
+        "c": 1,
+        "expectedAff": 255,
+        "quota": 127500000,
+        "cny": 1.275
+      },
+      {
+        "label": "upscale",
+        "model": "nai-v5-full",
+        "p": 50,
+        "c": 0,
+        "expectedAff": 5,
+        "quota": 2500000,
+        "cny": 0.025
+      }
+    ],
+    "publicHighPrice": {
+      "billingMode": "live",
+      "liveType": "tiered",
+      "liveUsdPerRequest": 5,
+      "liveUsdPerUsageToken": 0.1,
+      "liveBaseUsdPerImage": 5,
+      "liveGroupName": "Draw",
+      "liveGroupRatio": 1,
+      "privatePointReference": null,
+      "note": "NewAPI 公开分档价格：档内按张结算，档外按网关 usage token 结算并加生图基础费；独立工具不加生图基础费；按公开 Draw 分组倍率换算。实际扣费以账号账单为准。"
+    },
+    "health": {
+      "status": "ok",
+      "service": "love-for-nai",
+      "version": "0.1.0",
+      "capabilities": {
+        "auth": {
+          "provider": "newapi",
+          "label": "NewAPI 账号",
+          "login": true,
+          "register": true,
+          "groups": true,
+          "keys": true
+        },
+        "image": {
+          "provider": "gateway",
+          "label": "NovelAI Gateway",
+          "enabled": true
+        },
+        "wallet": {
+          "upstreamBalance": true,
+          "credits": true,
+          "packages": true,
+          "usageLogs": true
+        },
+        "admin": {
+          "users": true,
+          "announcements": true,
+          "credits": true,
+          "platform": true
+        },
+        "labels": {
+          "upstreamBalance": "NewAPI 余额",
+          "credits": "AFF",
+          "packages": "图包额度"
+        }
+      },
+      "readiness": {
+        "freeImageAdmission": "ready"
+      }
+    },
+    "paidGenerations": 0
+  }
+}

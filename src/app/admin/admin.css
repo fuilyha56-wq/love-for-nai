@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .admin-shell {
   background:
     radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--rose) 7%, transparent), transparent 28rem),
@@ -5,7 +6,7 @@
 }
 .admin-header { box-shadow: 0 1px 0 color-mix(in srgb, var(--line) 70%, transparent), 0 10px 30px rgb(32 35 40 / 3%); }
 .admin-brand-mark { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--rose); color: #fff; box-shadow: 0 5px 16px color-mix(in srgb, var(--rose) 28%, transparent); }
-.admin-sidebar { position: sticky; top: 20px; height: fit-content; box-shadow: 0 8px 28px rgb(32 35 40 / 4%); }
+.admin-sidebar { position: sticky; top: 20px; height: fit-content; max-height: calc(100dvh - 40px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; box-shadow: 0 8px 28px rgb(32 35 40 / 4%); }
 .admin-nav-item { gap: 0; transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) ease; }
 .admin-nav-item:hover { background: color-mix(in srgb, var(--rose) 8%, var(--panel)); color: var(--rose); transform: translateX(2px); }
 .admin-nav-item.is-active { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); box-shadow: inset 3px 0 var(--rose); }
@@ -74,3 +75,5 @@
 @media (max-width: 640px) { .admin-card-header, .admin-dialog-header { padding: 15px; } .admin-card-body, .admin-dialog-body { padding: 15px; } .admin-toolbar { align-items: stretch; } .admin-toolbar > * { max-width: 100%; } }
 html[data-theme="night"] .admin-shell { background: radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--rose) 12%, transparent), transparent 28rem), var(--paper); }
 @media (prefers-reduced-motion: reduce) { .admin-button, .admin-nav-item, .admin-button-spinner { animation: none; transition: none; } }
+
+}

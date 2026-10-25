@@ -3,9 +3,9 @@ import { fitViewport, normalizeEditorOutputSize, viewportImage } from "@/app/ima
 import { createEditorDocument, createRgbaImage, type EditorDocument } from "@/lib/image-editor";
 
 describe("编辑器根据图像模型准备一致的输出和蒙版", () => {
-  it("NAI 保留 64 网格和 1600 边长限制", () => {
+  it("NAI 保留 64 网格并按三百万像素限制画布", () => {
     expect(normalizeEditorOutputSize("nai-v5-inpaint", 832, 1217)).toEqual({ width: 832, height: 1216 });
-    expect(normalizeEditorOutputSize("nai-v5-inpaint", 3840, 2160)).toEqual({ width: 1600, height: 1600 });
+    expect(normalizeEditorOutputSize("nai-v5-inpaint", 3840, 2160)).toEqual({ width: 2304, height: 1344 });
     expect(normalizeEditorOutputSize("nai-v5-inpaint", 1, 1)).toEqual({ width: 64, height: 64 });
   });
 
@@ -45,12 +45,12 @@ describe("编辑器根据图像模型准备一致的输出和蒙版", () => {
     expect(prepared.mask.every(value => value === 0)).toBe(true);
   });
 
-  it("自然语言模型取景使用完整源图片；NAI 沿用原有 1600 取景行为", () => {
+  it("取景保留完整源图片，输出由各模型面积约束归一化", () => {
     const document: EditorDocument = { version: 1, revision: 0, image: { width: 4096, height: 3072, data: new Uint8ClampedArray() }, worldRect: { x: 100, y: 200, width: 4096, height: 3072 }, generation: { model: "gpt-image-2" } };
     expect(fitViewport(document, 3840, 2160)).toEqual({ x: 100, y: 584, width: 4096, height: 2304 });
     const legacy = fitViewport({ ...document, generation: { model: "nai-v5-inpaint" } }, 832, 1216);
-    expect(legacy.width).toBeLessThanOrEqual(1600);
-    expect(legacy.height).toBe(1600);
+    expect(legacy.width).toBe(2102);
+    expect(legacy.height).toBe(3072);
     expect(fitViewport({ ...document, image: { width: 1, height: 1, data: new Uint8ClampedArray() } }, 3840, 2160).height).toBe(1);
   });
 });

@@ -1,0 +1,236 @@
+{
+  "applied": true,
+  "approved": true,
+  "deployedAt": "2026-10-22T23:13:50+08:00",
+  "lfnImage": "love-for-nai:nai-official-20261022-r1",
+  "previousLfnImage": "love-for-nai:watermark-preserve-20261021-r10",
+  "backupsPreserved": true,
+  "dailyTiersPreserved": true,
+  "maintenanceRemoved": true,
+  "currency": {
+    "cnyPerAff": 0.005,
+    "cnyPerAnlas": 0.02,
+    "v5CnyPerAnlas": 0.025,
+    "balanceUnitsPerCny": 200,
+    "quotaPerUnit": 500000
+  },
+  "newApiModels": [
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v4.5-curated"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 0,
+      "model": "nai-v4.5-curated-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v4.5-full"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 0,
+      "model": "nai-v4.5-full-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0) : tier(\"full\", p * 80000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v4.5-inpaint"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 0,
+      "model": "nai-v4.5-inpaint-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v5-curated"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 8,
+      "model": "nai-v5-curated-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v5-full"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 8,
+      "model": "nai-v5-full-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+      "modelPrice": 3.46153846,
+      "model": "nai-v5-full-medium"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 8000000) : tier(\"full\", p * 100000 + c * 0)",
+      "modelPrice": 200,
+      "model": "nai-v5-inpaint"
+    },
+    {
+      "billingMode": "ratio",
+      "billingExpr": null,
+      "modelPrice": 6,
+      "model": "nai-v5-inpaint-limit"
+    },
+    {
+      "billingMode": "tiered_expr",
+      "billingExpr": "p < 100 ? tier(\"limit\", p * 0 + c * 0 + 3461538) : tier(\"full\", p * 100000 + c * 0)",
+      "modelPrice": 3.46153846,
+      "model": "nai-v5-inpaint-medium"
+    }
+  ],
+  "lfnVerification": {
+    "ok": true,
+    "compiledQuotes": [
+      {
+        "model": "nai-v4.5-full",
+        "width": 1024,
+        "height": 1024,
+        "steps": 28,
+        "aff": 1,
+        "cny": 0.005,
+        "dynamicAnlas": 0
+      },
+      {
+        "model": "nai-v5-full",
+        "width": 1024,
+        "height": 1024,
+        "steps": 23,
+        "aff": 5,
+        "cny": 0.025,
+        "dynamicAnlas": 0
+      },
+      {
+        "model": "nai-v5-full-medium",
+        "width": 1024,
+        "height": 1024,
+        "steps": 14,
+        "aff": 1,
+        "cny": 0.005,
+        "dynamicAnlas": 0
+      },
+      {
+        "model": "nai-v5-full",
+        "width": 1024,
+        "height": 1536,
+        "steps": 28,
+        "aff": 230,
+        "cny": 1.15,
+        "dynamicAnlas": 45
+      },
+      {
+        "model": "nai-v4.5-full",
+        "width": 2048,
+        "height": 1536,
+        "steps": 28,
+        "aff": 241,
+        "cny": 1.205,
+        "dynamicAnlas": 60
+      },
+      {
+        "model": "nai-v5-full",
+        "width": 2048,
+        "height": 1536,
+        "steps": 28,
+        "aff": 455,
+        "cny": 2.275,
+        "dynamicAnlas": 90
+      },
+      {
+        "model": "nai-v5-full",
+        "width": 4096,
+        "height": 768,
+        "steps": 23,
+        "aff": 390,
+        "cny": 1.95,
+        "dynamicAnlas": 77
+      },
+      {
+        "model": "nai-v5-full-medium",
+        "width": 2048,
+        "height": 1536,
+        "steps": 14,
+        "aff": 256,
+        "cny": 1.28,
+        "dynamicAnlas": 51
+      }
+    ],
+    "tierAff": [
+      455,
+      550,
+      600.875,
+      654
+    ],
+    "livePolicy": true
+  },
+  "gatewayVerification": {
+    "ok": true,
+    "quotes": [
+      {
+        "model": "nai-diffusion-5-full",
+        "width": 2048,
+        "height": 1536,
+        "steps": 28,
+        "anlas": 90,
+        "tokens": 4500
+      },
+      {
+        "model": "nai-diffusion-4-5-full",
+        "width": 2048,
+        "height": 1536,
+        "steps": 28,
+        "anlas": 60,
+        "tokens": 3000
+      },
+      {
+        "model": "nai-diffusion-5-full-medium",
+        "width": 2048,
+        "height": 1536,
+        "steps": 14,
+        "anlas": 51,
+        "tokens": 2550
+      },
+      {
+        "model": "nai-diffusion-5-full",
+        "width": 4096,
+        "height": 768,
+        "steps": 23,
+        "anlas": 77,
+        "tokens": 3850
+      },
+      {
+        "model": "nai-diffusion-5-full",
+        "width": 2048,
+        "height": 1536,
+        "steps": 46,
+        "anlas": 140,
+        "tokens": 7000
+      }
+    ],
+    "costLimitAndModelLimitRejected": true,
+    "liveHttpAreaRejected": true
+  },
+  "health": "ok",
+  "paidGenerationPerformed": false
+}

@@ -1,5 +1,26 @@
 import { resolveImageModelCapabilities, type ImageProviderProtocol } from "./image-model-capabilities";
 import { isNaiMediumModel } from "./nai-native-request";
+import { filterNaiModelOptions, isNaiModelEnabledForPolicy, type ModelPolicy } from "./model-policy";
+
+export type ImageModelOption = { value: string; label: string };
+
+/** Only offer models that support image-to-image, while honoring the live model policy. */
+export function filterTiledUpscaleModelOptions(
+  options: readonly ImageModelOption[],
+  currentModel: string,
+  protocol: ImageProviderProtocol | undefined,
+  policy: ModelPolicy,
+): ImageModelOption[] {
+  const supported = filterNaiModelOptions(options, policy)
+    .filter(({ value }) => resolveImageModelCapabilities(value, protocol).operations.includes("img2img"));
+  if (
+    currentModel &&
+    isNaiModelEnabledForPolicy(currentModel, policy) &&
+    resolveImageModelCapabilities(currentModel, protocol).operations.includes("img2img") &&
+    !supported.some(({ value }) => value === currentModel)
+  ) supported.unshift({ value: currentModel, label: currentModel });
+  return supported;
+}
 
 /** Keep the source family and limit tier when entering either image editor. */
 export function inpaintModelFor(model: string, protocol?: ImageProviderProtocol): string | null {

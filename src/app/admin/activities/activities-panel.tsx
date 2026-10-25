@@ -75,9 +75,18 @@ export default function ActivitiesPanel() {
       weeklyRewards: [500, 300, 100],
       budget: 0,
       minWeeklyLikes: 1,
+      minWeeklyMetric: 1,
+      weeklyMetric: "likes",
       submissionLimitPerUser: 0,
+      submissionRewardLimit: 0,
       priority: 1,
       allowedRatings: ["general", "r13", "r17", "r18"],
+      allowedSources: ["other", "lfn", "local"],
+      requiredTags: [],
+      excludedTags: [],
+      oneWinnerPerUser: false,
+      publicVisible: true,
+      featured: false,
       ...source,
       ...(source
         ? {
@@ -129,7 +138,9 @@ export default function ActivitiesPanel() {
       | "budget"
       | "submissionReward"
       | "submissionLimitPerUser"
+      | "submissionRewardLimit"
       | "minWeeklyLikes"
+      | "minWeeklyMetric"
       | "priority",
   ) {
     return (
@@ -140,7 +151,7 @@ export default function ActivitiesPanel() {
           min={0}
           step={1}
           className="field mt-1.5 w-full p-2.5"
-          value={draft?.[key] ?? 0}
+          value={key === "minWeeklyMetric" ? draft?.minWeeklyMetric ?? draft?.minWeeklyLikes ?? 1 : draft?.[key] ?? 0}
           onChange={(event) => edit({ [key]: Number(event.target.value) })}
         />
       </label>
@@ -439,14 +450,24 @@ export default function ActivitiesPanel() {
                     </label>
                     {numberField("活动优先级", "priority")}
                     <label className="text-xs font-semibold">
-                      作品必须包含的标签
+                      必须包含的全部标签（逗号分隔）
                       <input
                         className="field mt-1.5 w-full p-2.5"
-                        placeholder="留空不限制"
-                        value={draft.requiredTag || ""}
-                        onChange={(event) =>
-                          edit({ requiredTag: event.target.value })
-                        }
+                        placeholder="留空不限制，例如：blue, portrait"
+                        value={(draft.requiredTags?.length ? draft.requiredTags : draft.requiredTag ? [draft.requiredTag] : []).join(", ")}
+                        onChange={(event) => {
+                          const requiredTags = event.target.value.split(/[\n,，]/).map((tag) => tag.trim()).filter(Boolean);
+                          edit({ requiredTags, requiredTag: requiredTags[0] || "" });
+                        }}
+                      />
+                    </label>
+                    <label className="text-xs font-semibold">
+                      排除标签（逗号分隔）
+                      <input
+                        className="field mt-1.5 w-full p-2.5"
+                        placeholder="作品包含任一标签时不符合活动"
+                        value={(draft.excludedTags || []).join(", ")}
+                        onChange={(event) => edit({ excludedTags: event.target.value.split(/[\n,，]/).map((tag) => tag.trim()).filter(Boolean) })}
                       />
                     </label>
                   </div>
@@ -484,6 +505,22 @@ export default function ActivitiesPanel() {
                       </label>
                     ))}
                   </div>
+                  <div className="mt-4 border-t border-[var(--line)] pt-4">
+                    <p className="mb-2 text-xs font-semibold">允许的投稿来源</p>
+                    <div className="flex flex-wrap gap-4">
+                      {([["local", "本地上传"], ["lfn", "本站生成"], ["other", "其他来源"]] as const).map(([key, label]) => (
+                        <label key={key} className="flex items-center gap-2 text-xs">
+                          <input type="checkbox" checked={(draft.allowedSources || ["other", "lfn", "local"]).includes(key)} onChange={(event) => edit({ allowedSources: event.target.checked ? [...(draft.allowedSources || ["other", "lfn", "local"]), key] : (draft.allowedSources || ["other", "lfn", "local"]).filter((source) => source !== key) })} />
+                          {label}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-4 border-t border-[var(--line)] pt-4">
+                    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={draft.oneWinnerPerUser === true} onChange={(event) => edit({ oneWinnerPerUser: event.target.checked })} />周榜每位用户最多一个名次</label>
+                    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={draft.publicVisible !== false} onChange={(event) => edit({ publicVisible: event.target.checked })} />在创作者工作台公开展示</label>
+                    <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={draft.featured === true} onChange={(event) => edit({ featured: event.target.checked })} />置顶展示</label>
+                  </div>
                 </AdminCard>
                 <AdminCard
                   title="奖励与预算"
@@ -496,7 +533,16 @@ export default function ActivitiesPanel() {
                       "每人投稿奖励次数上限",
                       "submissionLimitPerUser",
                     )}
-                    {numberField("周榜最低点赞数", "minWeeklyLikes")}
+                    {numberField("活动投稿奖励总次数上限", "submissionRewardLimit")}
+                    <label className="block text-xs font-semibold">
+                      周榜统计指标
+                      <select className="field mt-1.5 w-full p-2.5" value={draft.weeklyMetric || "likes"} onChange={(event) => edit({ weeklyMetric: event.target.value as CreatorRewardCampaign["weeklyMetric"] })}>
+                        <option value="likes">点赞数</option>
+                        <option value="downloads">下载数</option>
+                        <option value="uses">导入使用数</option>
+                      </select>
+                    </label>
+                    {numberField("周榜最低指标值", "minWeeklyMetric")}
                   </div>
                   <div className="mt-5 flex items-center justify-between gap-3">
                     <h3 className="text-sm font-semibold">周榜奖励名次</h3>

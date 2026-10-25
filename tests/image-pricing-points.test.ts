@@ -5,7 +5,7 @@ import {
   estimatePoints,
   estimateTokens,
   roundBillingAmount,
-  pointPriceUsd,
+  pointPriceCny,
   snapshotFromRawPricing,
   tokensToPoints,
   usesLimitPricing,
@@ -36,7 +36,7 @@ describe("NewAPI image cost previews", () => {
       billing_expr: 'p < 100 ? tier("limit", p * 0 + c * 0 + 8000000) : tier("full", p * 100000 + c * 0)',
     }, 1);
     expect(estimateNewApiCost(tiered, base)).toBe(8);
-    expect(estimateNewApiCost(tiered, { ...base, steps: 29 })).toBe(210);
+    expect(estimateNewApiCost(tiered, { ...base, steps: 29 })).toBe(160);
     const half = snapshotFromRawPricing(base.model, {
       billing_mode: "tiered_expr",
       billing_expr: 'p < 100 ? tier("limit", p * 0 + c * 0 + 8000000) : tier("full", p * 100000 + c * 0)',
@@ -51,7 +51,7 @@ describe("NewAPI image cost previews", () => {
   });
 
   it("keeps the Anlas conversion separate from NewAPI usage tokens", () => {
-    expect(pointPriceUsd(base.model)).toBe(0.03);
+    expect(pointPriceCny(base.model)).toBe(0.025);
     expect(tokensToPoints(1000)).toBe(20);
     expect(tokensToPoints(51)).toBe(1.02);
     expect(estimatePoints(base)).toBe(0);
@@ -71,22 +71,22 @@ describe("NewAPI image cost previews", () => {
       0.5,
     );
     expect(estimateNewApiCost(halfPrice, base)).toBe(3.25);
-    expect(estimateNewApiCost(halfPrice, { ...base, samples: 4 })).toBe(1040);
+    expect(estimateNewApiCost(halfPrice, { ...base, samples: 4 })).toBe(780);
   });
 
-  it("matches logged V5 batch charges at 1024 squared and 28 steps", () => {
-    expect(estimatePoints({ ...base, samples: 4 })).toBe(160);
-    expect(estimateTokens({ ...base, samples: 4 })).toBe(8000);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1560);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 4 })).toBe(2080);
-    expect(estimateNewApiCost(liveV5, { ...base, steps: 29 })).toBe(546);
+  it("matches official V5 Anlas batch quotes at 1024 squared and 28 steps", () => {
+    expect(estimatePoints({ ...base, samples: 4 })).toBe(120);
+    expect(estimateTokens({ ...base, samples: 4 })).toBe(6000);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1170);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 4 })).toBe(1560);
+    expect(estimateNewApiCost(liveV5, { ...base, steps: 29 })).toBe(416);
   });
 
   it("prices independent n=1 requests separately from one multi-image request", () => {
     expect(estimateNewApiCost(liveV5, { ...base, samples: 3, sequential: true })).toBe(19.5);
     expect(estimateNewApiCost(liveV5, { ...base, samples: 3, maxSamplesPerRequest: 1 })).toBe(19.5);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1560);
-    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(2086.5);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 3 })).toBe(1170);
+    expect(estimateNewApiCost(liveV5, { ...base, samples: 5, maxSamplesPerRequest: 4 })).toBe(1566.5);
   });
 
   it("keeps text-only character prompts inside the fixed envelope", () => {
@@ -108,7 +108,7 @@ describe("NewAPI image cost previews", () => {
       1,
     );
     expect(estimateNewApiCost(target, base)).toBe(0.1875);
-    expect(estimateNewApiCost(target, { ...base, samples: 4 })).toBe(4.8);
+    expect(estimateNewApiCost(target, { ...base, samples: 4 })).toBe(3.6);
   });
 
   it("does not show a numeric quote without a matching, readable price", () => {

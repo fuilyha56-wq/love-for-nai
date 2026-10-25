@@ -1,0 +1,19 @@
+{
+  "info": {
+    "name": "LfN 图像 API 入门",
+    "description": "填写 base_url 与你自己的 NewAPI 图像 api_key。集合不含真实凭据。先运行模型目录与订阅摘要；生成请求会实际出图并按站点规则计费。签到等站内会话接口不使用图像 Key，详见 LfN 文档。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "https://lfn.example", "type": "string" },
+    { "key": "api_key", "value": "", "type": "string" }
+  ],
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{api_key}}", "type": "string" }] },
+  "item": [
+    { "name": "1. 查询可用模型", "request": { "method": "GET", "url": "{{base_url}}/v1/models" } },
+    { "name": "2. Launcher 兼容订阅摘要", "request": { "method": "GET", "url": "{{base_url}}/user/subscription", "description": "余额为 LfN AFF 合成摘要，不是 NovelAI 官方 Anlas。" } },
+    { "name": "3. OpenAI 兼容生成一张图片（计费）", "request": { "method": "POST", "url": "{{base_url}}/v1/images/generations", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"model\": \"nai-v5-full\",\n  \"prompt\": \"landscape, blue sky, mountains\",\n  \"size\": \"832x1216\",\n  \"n\": 1,\n  \"response_format\": \"b64_json\"\n}", "options": { "raw": { "language": "json" } } } } },
+    { "name": "4. NAI 原生生成一张图片（计费，响应保存为 ZIP）", "request": { "method": "POST", "url": "{{base_url}}/ai/generate-image", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"input\": \"landscape, blue sky, mountains\",\n  \"model\": \"nai-diffusion-5-full\",\n  \"action\": \"generate\",\n  \"parameters\": {\n    \"width\": 832,\n    \"height\": 1216,\n    \"steps\": 28,\n    \"scale\": 5,\n    \"sampler\": \"k_euler_ancestral\",\n    \"noise_schedule\": \"karras\",\n    \"n_samples\": 1\n  }\n}", "options": { "raw": { "language": "json" } } } } },
+    { "name": "5. 原生标签建议", "request": { "method": "GET", "url": "{{base_url}}/ai/generate-image/suggest-tags?prompt=blue&model=nai-diffusion-3" } }
+  ]
+}

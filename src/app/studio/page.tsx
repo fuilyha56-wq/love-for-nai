@@ -1,6 +1,8 @@
-import StudioWorkspace from "./studio-workspace";
-import { CreatorActivities } from "./creator-activities";
+import { ViewportPage } from "@/app/viewport-page";
+import DesktopPage from "./desktop-page";
+import MobilePage from "@/mobile/studio/page";
 export const dynamic = "force-dynamic";
-export default function StudioPage() {
-  return <StudioWorkspace activities={<CreatorActivities />} />;
+
+export default function Page() {
+  return <ViewportPage desktop={<DesktopPage />} mobile={<MobilePage />} />;
 }

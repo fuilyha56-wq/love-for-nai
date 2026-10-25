@@ -1,0 +1,24 @@
+{
+  "revision": 2026102404,
+  "guides": [
+    { "id": "docs-quickstart", "slug": "quickstart", "title": "快速开始：生成你的第一张图片", "category": "入门与使用", "summary": "从注册登录、钱包和模型选择，到生成、下载与继续编辑。", "sortOrder": 10 },
+    { "id": "docs-workspace-guide", "slug": "workspace-guide", "title": "图像工作台与编辑器教程", "category": "入门与使用", "summary": "提示词、角色、参考图、图生图、局部重绘、扩图和手机操作。", "sortOrder": 20 },
+    { "id": "docs-gallery-discovery", "slug": "gallery-discovery", "title": "图片广场：搜索、筛选与分享", "category": "入门与使用", "summary": "LfN 搜索框、标签建议、分级和排行，以及下载、导入与投稿。", "sortOrder": 30 },
+    { "id": "docs-documentation-guide", "slug": "documentation-guide", "title": "如何搜索和阅读文档", "category": "入门与使用", "summary": "全文搜索、分类、重置条件、手机目录和文档链接的使用方法。", "sortOrder": 40 },
+    { "id": "docs-account-check-in", "slug": "account-and-check-in", "title": "账号、签到与自动化接入", "category": "账号与额度", "summary": "签到奖励、兑换码、图包，以及 API Key 与登录会话的权限边界。", "sortOrder": 50 },
+    { "id": "docs-auth-billing", "slug": "authentication-and-billing", "title": "鉴权、AFF 与计费说明", "category": "账号与额度", "summary": "分清图像密钥、系统访问令牌和 Cookie，了解支付顺序与每日分档。", "sortOrder": 60 },
+    { "id": "docs-api-overview", "slug": "api-overview", "title": "API 接入总览与端点速查", "category": "API 接入", "summary": "按需求选择 /ai、/v1 或站内 /api，查找方法、鉴权与响应格式。", "sortOrder": 70 },
+    { "id": "docs-api-keys-clients", "slug": "api-keys-and-clients", "title": "创建密钥与选择外部工具", "category": "API 接入", "summary": "推荐 Aaalice NAI Launcher、curl、Postman、Bruno 和自编脚本。", "sortOrder": 80 },
+    { "id": "docs-launcher-integration", "slug": "launcher-integration", "title": "Aaalice NAI Launcher 接入教程", "category": "API 接入", "summary": "原项目下载、第三方站点登录、地址和 Token 填写、流式与余额说明。", "sortOrder": 90 },
+    { "id": "docs-openai-reference", "slug": "openai-compatible-api", "title": "OpenAI 图像兼容 API 与 Python 示例", "category": "API 参考", "summary": "模型目录、文生图、JSON 与 multipart 编辑，以及保存 base64 图片。", "sortOrder": 100 },
+    { "id": "docs-native-reference", "slug": "native-api-reference", "title": "NAI 原生生成与 MessagePack 流式", "category": "API 参考", "summary": "JSON、request.json 上传、ZIP 图片和四字节长度 MessagePack 解帧。", "sortOrder": 110 },
+    { "id": "docs-native-tools", "slug": "native-tools", "title": "超分、Vibe、Director 与标签建议", "category": "API 参考", "summary": "图像工具端点、必要字段、模型限制、返回格式和调用步骤。", "sortOrder": 120 },
+    { "id": "docs-models-limits", "slug": "models-and-limits", "title": "模型、参数与请求限制", "category": "API 参考", "summary": "模型别名、尺寸、步数、批量、参考图和节约档参数约束。", "sortOrder": 130 },
+    { "id": "docs-history-privacy", "slug": "history-and-privacy", "title": "图片历史、下载、签名与隐私", "category": "进阶功能", "summary": "服务端与本机历史、导出方式、生成参数、来源检测和记录排查。", "sortOrder": 140 },
+    { "id": "docs-stories-assistant", "slug": "stories-and-assistant", "title": "故事工作台、提示词助手与标签词库", "category": "进阶功能", "summary": "模型选择、故事分支、标签检索、助手任务与可用服务的关系。", "sortOrder": 150 },
+    { "id": "docs-gallery-tutorial", "slug": "gallery-tutorial", "title": "完整教程：投稿、审核与活动奖励", "category": "进阶功能", "summary": "以带标签的作品为例，从活动报名与投稿一直走到周榜结算。", "sortOrder": 160 },
+    { "id": "docs-troubleshooting", "slug": "troubleshooting", "title": "常见错误与请求排查", "category": "参考与排查", "summary": "HTTP 状态码、地址拼接、登录会话、流式无图、账单和请求 ID。", "sortOrder": 170 },
+    { "id": "docs-platform-configuration", "slug": "platform-configuration", "title": "管理员：平台配置与注册登录", "category": "平台管理", "summary": "注册策略、服务接入、端点、模型、额度、网络、存储与配置接口。", "sortOrder": 180 },
+    { "id": "docs-creator-activities", "slug": "creator-activities", "title": "管理员：创作活动、周榜与文档维护", "category": "平台管理", "summary": "资格规则、奖励预算、UTC 周榜、CMS 发布与内置文档版本更新。", "sortOrder": 190 }
+  ]
+}

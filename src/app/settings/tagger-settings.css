@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .tagger-settings { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 84px; }
 .tagger-settings-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .tagger-settings-copy { min-width: 0; flex: 1 1 360px; }
@@ -29,4 +30,6 @@
   .tagger-settings { scroll-margin-top: 145px; }
   .tagger-settings-actions { flex: 1 1 100%; }
   .tagger-settings-actions button { flex: 1 1 auto; }
+}
+
 }

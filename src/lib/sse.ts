@@ -1,3 +1,5 @@
+import { imageHistoryReferences } from "@/lib/image-operation-response";
+
 export function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 }
@@ -75,11 +77,9 @@ export async function consumeImageStream(
           const images = Array.isArray(payload.images)
             ? payload.images.filter((item): item is string => typeof item === "string" && Boolean(item))
             : [];
-          const historyIds = Array.isArray(payload.historyIds)
-            ? payload.historyIds.filter((item): item is string => typeof item === "string")
-            : [];
-          options.onComplete?.(historyIds, typeof payload.requestId === "string" ? payload.requestId : undefined);
           const completed = images.length ? images : finals.filter(Boolean);
+          const references = imageHistoryReferences(completed, payload.historyIds);
+          options.onComplete?.(references.historyIds, typeof payload.requestId === "string" ? payload.requestId : undefined);
           if (completed.length) options.onPreview(completed);
           return completed;
         }

@@ -1,5 +1,7 @@
 "use client";
 
+import { naiDimensionLimit, naiMaxPixels } from "@/lib/nai-image-limits";
+import { normalizeImageModelSize } from "@/lib/image-model-capabilities";
 import { useState } from "react";
 import { RectangleHorizontal, RectangleVertical, Square } from "lucide-react";
 import { PopupSelect } from "@/app/ui/popup-select";
@@ -9,12 +11,14 @@ const sizes = {
   small: [512, 768],
   normal: [832, 1216],
   large: [1024, 1536],
+  maximum: [1536, 2048],
 } as const;
 type SizePreset = keyof typeof sizes;
 
 export const MAX_NAI_IMAGE_COUNT = 30;
 
 export function NaiImageSettings({
+  model = "nai-v5-full",
   width,
   height,
   count,
@@ -22,6 +26,7 @@ export function NaiImageSettings({
   setHeight,
   setCount,
 }: {
+  model?: string;
   width: number;
   height: number;
   count: number;
@@ -34,14 +39,15 @@ export function NaiImageSettings({
     width === height ? "square" : width > height ? "landscape" : "portrait";
   function applySize(next: SizePreset, shape = orientation) {
     const [short, long] = sizes[next];
-    const square = next === "small" ? 640 : next === "large" ? 1280 : 1024;
-    setWidth(shape === "square" ? square : shape === "landscape" ? long : short);
-    setHeight(shape === "square" ? square : shape === "landscape" ? short : long);
+    const square = next === "small" ? 640 : next === "maximum" ? 1728 : next === "large" ? 1280 : 1024;
+    const size = normalizeImageModelSize(model, shape === "square" ? square : shape === "landscape" ? long : short, shape === "square" ? square : shape === "landscape" ? short : long);
+    setWidth(size.width); setHeight(size.height);
     setPreset(next);
   }
   return (
     <section className="nai-image-settings">
       <h3>图像设置</h3>
+      <small>面积上限 {naiMaxPixels(model).toLocaleString("zh-CN")} 像素</small>
       <div className="nai-resolution">
         <div className="nai-resolution-heading">
           <b>分辨率</b>
@@ -49,7 +55,7 @@ export function NaiImageSettings({
             <WheelNumberInput
               ariaLabel="图片宽度"
               min={64}
-              max={1600}
+              max={naiDimensionLimit(height, model)}
               step={64}
               value={width}
               setValue={setWidth}
@@ -68,7 +74,7 @@ export function NaiImageSettings({
             <WheelNumberInput
               ariaLabel="图片高度"
               min={64}
-              max={1600}
+              max={naiDimensionLimit(width, model)}
               step={64}
               value={height}
               setValue={setHeight}
@@ -83,7 +89,8 @@ export function NaiImageSettings({
             options={[
               { value: "small", label: "小尺寸" },
               { value: "normal", label: "标准" },
-              { value: "large", label: "大尺寸" },
+              ...(naiMaxPixels(model) > 1_048_576 ? [{ value: "large", label: "大尺寸" }] : []),
+              ...(naiMaxPixels(model) > 1_048_576 ? [{ value: "maximum", label: "最大画布" }] : []),
             ]}
           />
           <div className="nai-segmented nai-segmented-icons" role="group" aria-label="画面方向">

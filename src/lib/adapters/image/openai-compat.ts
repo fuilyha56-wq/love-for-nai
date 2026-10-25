@@ -5,6 +5,7 @@
 
 import type { EndpointConfig, ImageAdapter, ImageGenerationRequest } from "../types";
 import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 
 type ImageResult = {
   data?: Array<{ url?: string; b64_json?: string }>;
@@ -62,7 +63,7 @@ export function createOpenAICompatImageAdapter(config: EndpointConfig): ImageAda
         headers,
         body: JSON.stringify(payload),
         cache: "no-store",
-        signal: AbortSignal.timeout(180_000),
+        signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
       });
 
       if (!response.ok) {

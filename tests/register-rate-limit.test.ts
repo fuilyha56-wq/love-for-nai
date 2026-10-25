@@ -1,11 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+let temporaryData = "";
+beforeEach(async () => {
+  temporaryData = await mkdtemp(path.join(os.tmpdir(), "lfn-register-"));
+  vi.stubEnv("LFN_DATA_DIR", temporaryData);
+});
+afterEach(async () => { vi.unstubAllEnvs(); await rm(temporaryData, { recursive: true, force: true }); });
+function verifiedUpstream(handler: typeof fetch) {
+  return vi.fn(async (input: string | URL | Request, init?: RequestInit) => String(input).endsWith("/api/status")
+    ? Response.json({ success: true, data: { email_verification: true } })
+    : handler(input, init));
+}
 
 describe("registration verification rate limiting", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => Response.json({ success: true }, { status: 200 })),
+      verifiedUpstream(async () => Response.json({ success: true }, { status: 200 })),
     );
   });
 
@@ -25,7 +39,7 @@ describe("registration verification rate limiting", () => {
 
     expect(blocked.status).toBe(429);
     expect(blocked.headers.get("Retry-After")).toBeTruthy();
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("/api/verification?"))).toHaveLength(3);
   });
 });
 
@@ -55,7 +69,7 @@ describe("registration upstream responses", () => {
         return Response.json({ success: true }, { status: 200 });
       },
     );
-    vi.stubGlobal("fetch", upstream);
+    vi.stubGlobal("fetch", verifiedUpstream(upstream));
     const { POST } = await import("@/app/api/auth/register/route");
 
     const response = await POST(registrationRequest("fields@example.com"));
@@ -75,7 +89,7 @@ describe("registration upstream responses", () => {
   it("preserves upstream rate limits as a readable JSON error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(
+      verifiedUpstream(
         async () =>
           new Response("", {
             status: 429,
@@ -97,7 +111,7 @@ describe("registration upstream responses", () => {
   it("preserves a NewAPI registration rejection and its message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
+      verifiedUpstream(async () =>
         Response.json(
           { success: false, message: "邮箱验证码错误或已过期" },
           { status: 200 },
@@ -117,7 +131,7 @@ describe("registration upstream responses", () => {
   it("converts malformed successful upstream responses into a gateway error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => new Response("not-json", { status: 200 })),
+      verifiedUpstream(async () => new Response("not-json", { status: 200 })),
     );
     const { POST } = await import("@/app/api/auth/register/route");
 

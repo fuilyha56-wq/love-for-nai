@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { getGalleryItem, readGalleryImage } from "@/lib/gallery";
 import { getSession } from "@/lib/session";
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+import { createImageThumbnail } from "@/lib/image-processing";
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const item = await getGalleryItem((await params).id);
   const session = await getSession();
   if (!item || (item.status !== "approved" && session?.userId !== item.ownerId)) return new NextResponse(null, { status: 404 });
   try {
     const { data, extension } = await readGalleryImage(item);
-    return new NextResponse(new Uint8Array(data), { headers: { "Content-Type": extension === "jpg" ? "image/jpeg" : `image/${extension}`, "Cache-Control": item.status === "approved" ? "public, max-age=3600" : "private, no-store" } });
+    const thumbnail = new URL(request.url).searchParams.get("variant") === "thumbnail";
+    const bytes = thumbnail ? await createImageThumbnail(data) : data;
+    return new NextResponse(new Uint8Array(bytes), { headers: { "Content-Type": thumbnail ? "image/webp" : extension === "jpg" ? "image/jpeg" : `image/${extension}`, "Cache-Control": thumbnail ? item.status === "approved" ? "public, max-age=86400, stale-while-revalidate=604800" : "private, max-age=3600" : item.status === "approved" ? "public, max-age=3600" : "private, no-store" } });
   } catch { return new NextResponse(null, { status: 404 }); }
 }

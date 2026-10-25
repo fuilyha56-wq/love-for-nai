@@ -1,3 +1,4 @@
+import { SETTINGS_PAGES } from "@/lib/platform-settings-sections";
 import { getPlatformCapabilities, type PlatformCapabilities } from "@/lib/platform";
 
 export type AdminModuleId =
@@ -11,6 +12,7 @@ export type AdminModuleId =
   | "referrals"
   | "audits"
   | "platform"
+  | "authentication" | "services" | "endpoints" | "billing" | "image-policy" | "network" | "gateway"
   | "docs"
   | "creator"
   | "rewards"
@@ -82,9 +84,10 @@ export function listAdminModules(
     {
       id: "platform",
       label: "平台配置",
-      description: "用 LFN 控件改账号、图像、钱包上游和全部站点环境项，保存后立即生效。",
+      description: "站点基础信息与分类设置入口。",
       enabled: capabilities.admin.platform,
     },
+    ...SETTINGS_PAGES.map((page) => ({ ...page, enabled: capabilities.admin.platform })),
     {
       id: "docs",
       label: "文档管理",

@@ -18,7 +18,9 @@ function inspect(value: unknown, into: Map<string, boolean>): void {
   for (const nested of [record.data, record.items, record.models]) if (nested) inspect(nested, into);
   const id = [record.id, record.model, record.model_name, record.name].find((item) => typeof item === "string") as string | undefined;
   if (!id || !MODEL_ID.test(id.trim())) return;
-  const metadata = [record.kind, record.type, record.category, record.capabilities, record.modalities, record.supported_endpoint_types]
+  const endpoints = record.supported_endpoint_types;
+  const metadata = [record.kind, record.type, record.category, record.capabilities, record.output_modalities,
+    endpoints && typeof endpoints === "object" && !Array.isArray(endpoints) ? JSON.stringify(endpoints) : endpoints]
     .flatMap((item) => Array.isArray(item) ? item : [item])
     .filter((item): item is string => typeof item === "string")
     .join(" ").toLowerCase();

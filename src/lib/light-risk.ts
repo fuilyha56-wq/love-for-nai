@@ -6,11 +6,11 @@ import { getRiskSettings, riskFlag as flag, riskNumber as num, writeRiskJson, ty
 import { dailyImageDay } from "./daily-image-pricing";
 
 export class RiskAdmissionError extends Error {
-  constructor(message: string, public readonly code: string, public readonly status = 403, public readonly retryAfter = 0) { super(message); this.name = "RiskAdmissionError"; }
+  constructor(message: string, public readonly code: string, public readonly status = 403, public readonly retryAfter = 0, public readonly details?: Record<string, unknown>) { super(message); this.name = "RiskAdmissionError"; }
 }
 export function riskAdmissionResponse(error: unknown): Response | undefined {
   if (!(error instanceof RiskAdmissionError)) return;
-  return Response.json({ message: error.message, error: { code: error.code, message: error.message } }, { status: error.status, headers: { "Cache-Control": "no-store", ...(error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {}) } });
+  return Response.json({ message: error.message, ...(error.retryAfter ? { retryAfterSeconds: error.retryAfter } : {}), error: { code: error.code, message: error.message, ...(error.retryAfter ? { retryAfterSeconds: error.retryAfter } : {}), ...(error.details ? { details: error.details } : {}) } }, { status: error.status, headers: { "Cache-Control": "no-store", ...(error.retryAfter ? { "Retry-After": String(error.retryAfter) } : {}) } });
 }
 export async function moderationFromUpstream(payload: unknown): Promise<"denied" | "passed" | undefined> {
   if (!payload || typeof payload !== "object") return;
@@ -28,7 +28,7 @@ export async function recheckQueuedRisk(requestId: string) {
   const context = state().contexts.get(requestId);
   if (!context?.userId) return;
   const settings = await getRiskSettings(context.userId), a = await account(context.userId, settings, Date.now());
-  if (a.restrictions.some(r => r.expiresAt > Date.now()) || await import("./risk-control").then(m => m.isRiskBlocked(context.userId!))) throw new RiskAdmissionError("排队期间账号生成权限发生变化，请查看账号安全状态", "lfn_queued_risk_denied");
+  if (a.restrictions.some(r => r.expiresAt > Date.now() && (r.rule !== "grant-rebind-frequency" || flag(settings, "grant.enabled"))) || await import("./risk-control").then(m => m.isRiskBlocked(context.userId!))) throw new RiskAdmissionError("排队期间账号生成权限发生变化，请查看账号安全状态", "lfn_queued_risk_denied");
 }
 type Evidence = { id: string; rule: string; family: string; points: number; strong: boolean; at: number; expires: number; details: Record<string, unknown> };
 type Restriction = { id: string; rule: string; action: "deny" | "rate-limit"; startsAt: number; expiresAt: number; reason: string };
@@ -37,6 +37,7 @@ type Account = {
   userId: number; at: number; tokens: number; tokenAt: number; inFlight: Map<string, number>; seen: Map<string, number>;
   prompts: Array<{ hash: string; at: number }>; devices: Array<{ id: string; at: number }>; switches: number[]; ips: Array<{ hash: string; at: number }>;
   evidence: Evidence[]; restrictions: Restriction[]; applied: Record<string, number>; outcomes: Outcome[]; firstFeedback?: number; retries: Map<number, number>;
+  rebindAttempts: number[];
   baseline: Record<string, { calls: number[]; cost: number; costs?: number[]; settlements: number }>; lastSaved: number;
   observedSince: number;
 };
@@ -92,7 +93,7 @@ async function account(userId: number, settings: RiskSettings, now: number): Pro
   let pending = rt.accounts.get(userId);
   if (!pending) {
     if (rt.accounts.size >= num(settings, "capacity.accounts")) throw new RiskAdmissionError("风控容量暂满，请稍后重试", "lfn_risk_capacity", 503, 30);
-    pending = readOptional<{ evidence?: Evidence[]; restrictions?: Restriction[]; applied?: Record<string, number>; baseline?: Account["baseline"]; observedSince?: number }>(path.join(rt.root, `user-${userId}.json`)).then(saved => ({ userId, at: now, tokens: num(settings, "rate.burst"), tokenAt: now, inFlight: new Map(), seen: new Map(), prompts: [], devices: [], switches: [], ips: [], evidence: saved?.evidence || [], restrictions: saved?.restrictions || [], applied: saved?.applied || {}, outcomes: [], retries: new Map(), baseline: saved?.baseline || {}, observedSince: saved?.observedSince || now, lastSaved: now }));
+    pending = readOptional<{ evidence?: Evidence[]; restrictions?: Restriction[]; applied?: Record<string, number>; rebindAttempts?: number[]; baseline?: Account["baseline"]; observedSince?: number }>(path.join(rt.root, `user-${userId}.json`)).then(saved => ({ userId, at: now, tokens: num(settings, "rate.burst"), tokenAt: now, inFlight: new Map(), seen: new Map(), prompts: [], devices: [], switches: [], ips: [], evidence: Array.isArray(saved?.evidence) ? saved.evidence : [], restrictions: Array.isArray(saved?.restrictions) ? saved.restrictions : [], applied: saved?.applied && typeof saved.applied === "object" ? saved.applied : {}, outcomes: [], retries: new Map(), rebindAttempts: Array.isArray(saved?.rebindAttempts) ? saved.rebindAttempts.filter(Number.isFinite) : [], baseline: saved?.baseline && typeof saved.baseline === "object" ? saved.baseline : {}, observedSince: saved?.observedSince || now, lastSaved: now }));
     rt.accounts.set(userId, pending);
     pending.catch(() => { if (rt.accounts.get(userId) === pending) rt.accounts.delete(userId); });
   }
@@ -100,7 +101,7 @@ async function account(userId: number, settings: RiskSettings, now: number): Pro
 }
 function persist(a: Account): Promise<unknown> {
   const rt = state();
-  const next = (rt.writes.get(a.userId) || Promise.resolve()).catch(() => undefined).then(() => writeRiskJson(path.join(rt.root, `user-${a.userId}.json`), { evidence: a.evidence, restrictions: a.restrictions, applied: a.applied, baseline: a.baseline, observedSince: a.observedSince }));
+  const next = (rt.writes.get(a.userId) || Promise.resolve()).catch(() => undefined).then(() => writeRiskJson(path.join(rt.root, `user-${a.userId}.json`), { evidence: a.evidence, restrictions: a.restrictions, applied: a.applied, rebindAttempts: a.rebindAttempts, baseline: a.baseline, observedSince: a.observedSince }));
   rt.writes.set(a.userId, next);
   void next.finally(() => { if (rt.writes.get(a.userId) === next) rt.writes.delete(a.userId); }).catch(() => undefined);
   return next;
@@ -132,6 +133,7 @@ function cleanup(settings: RiskSettings, now: number) {
 function prune(a: Account, settings: RiskSettings, now: number) {
   a.evidence = a.evidence.filter(e => e.expires > now);
   a.restrictions = a.restrictions.filter(r => r.expiresAt > now);
+  a.rebindAttempts = a.rebindAttempts.filter(at => now - at < REBIND_FREQUENCY_WINDOW_SECONDS * 1000);
   a.outcomes = a.outcomes.filter(o => now - o.at < Math.max(num(settings, "content.ratioWindowSeconds"), num(settings, "quota.windowSeconds")) * 1000).slice(-512);
   for (const [id, at] of a.inFlight) if (now - at > num(settings, "rate.leaseSeconds") * 1000) a.inFlight.delete(id);
   for (const [id, at] of a.seen) if (now - at > 86400000) a.seen.delete(id);
@@ -174,7 +176,8 @@ export async function evaluateLightRisk(input: { userId: number; requestId?: str
   if (context?.result) return context.result;
   const hits: Evidence[] = [];
   const hit = (id: string, key: string, details: Record<string, unknown>) => { const e = add(a, settings, id, key, details, now); if (e) hits.push(e); };
-  const active = a.restrictions.find(r => r.action === "deny") || a.restrictions.find(() => true);
+  const activeRestrictions = a.restrictions.filter(r => r.expiresAt > now && (r.rule !== "grant-rebind-frequency" || flag(settings, "grant.enabled")));
+  const active = activeRestrictions.find(r => r.action === "deny") || activeRestrictions.find(() => true);
   if (!flag(settings, "global.enabled")) return { decision: active?.action || "allow", level: "normal", score: 0, signalIds: [], signals: [], retryAfterSeconds: active ? Math.ceil((active.expiresAt - now) / 1000) : undefined, policyVersion: settings.version };
   let decision: LightEvaluation["decision"] = active?.action || "allow", reason = active?.reason;
   let retry = active ? Math.max(1, Math.ceil((active.expiresAt - now) / 1000)) : 0;
@@ -325,6 +328,110 @@ export async function finishLightRisk(input: { userId: number; requestId: string
 }
 
 function grantKey(userId: number, day: string) { return `${day}:${userId}`; }
+const REBIND_FREQUENCY_WINDOW_SECONDS = 10 * 60;
+const REBIND_FREQUENCY_LIMIT = 3;
+const REBIND_RATE_LIMIT_SECONDS = 2 * 60 * 60;
+
+function durationLabel(seconds: number) {
+  let remaining = Math.max(0, Math.ceil(seconds));
+  if (remaining === 0) return "0 秒";
+  const parts: string[] = [];
+  for (const [size, label] of [[86400, "天"], [3600, "小时"], [60, "分钟"], [1, "秒"]] as const) {
+    const count = Math.floor(remaining / size);
+    if (count > 0) {
+      parts.push(`${count}${label}`);
+      remaining %= size;
+    }
+  }
+  return parts.join("");
+}
+
+function shanghaiTime(timestamp: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function rebindPolicyDetails(settings: RiskSettings) {
+  const mode = String(settings.values["grant.rebindMode"] || "hybrid");
+  const modeLabel = mode === "count" ? "固定次数" : mode === "cooldown" ? "按冷却时间" : "混合模式";
+  const maxRebinds = num(settings, "grant.maxRebinds");
+  const minRebindSeconds = num(settings, "grant.minRebindSeconds");
+  const activeRules = [
+    ...(mode === "count" || mode === "hybrid" ? [`每日最多 ${maxRebinds} 次`] : []),
+    ...(mode === "cooldown" || mode === "hybrid" ? [`每次换绑间隔 ${durationLabel(minRebindSeconds)}`] : []),
+  ];
+  return {
+    mode,
+    modeLabel,
+    maxRebinds,
+    minRebindSeconds,
+    description: `${modeLabel}（${activeRules.join("，")}）`,
+    frequencyTrigger: { attempts: REBIND_FREQUENCY_LIMIT, windowSeconds: REBIND_FREQUENCY_WINDOW_SECONDS },
+    rateLimitSeconds: REBIND_RATE_LIMIT_SECONDS,
+  };
+}
+
+function rebindLimitError(
+  settings: RiskSettings,
+  input: { reason: string; retryAfterSeconds: number; retryAt: number; rateLimitUntil?: number; countLimited?: boolean; cooldownLimited?: boolean },
+) {
+  const policy = rebindPolicyDetails(settings);
+  const retryAt = Math.max(input.retryAt, input.rateLimitUntil || 0);
+  const remaining = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+  const trigger = `${policy.frequencyTrigger.windowSeconds / 60} 分钟内连续 ${policy.frequencyTrigger.attempts} 次触发换绑限制，将触发 ${durationLabel(policy.rateLimitSeconds)}账号限流`;
+  const rateLimitLine = input.rateLimitUntil
+    ? `账号限流剩余 ${durationLabel(Math.ceil((input.rateLimitUntil - Date.now()) / 1000))}，预计 ${shanghaiTime(input.rateLimitUntil)} 解除。`
+    : "";
+  const policyLimit = input.rateLimitUntil
+    ? ""
+    : input.countLimited && input.cooldownLimited
+    ? "每日次数和换绑冷却均未解除"
+    : input.countLimited
+      ? "今日换绑次数已用完"
+      : input.cooldownLimited
+        ? "换绑仍在冷却期"
+        : input.reason;
+  const nextRebindLine = input.rateLimitUntil
+    ? retryAt > input.rateLimitUntil
+      ? `同时受每日次数或冷却限制影响，预计最早可再次换绑时间 ${shanghaiTime(retryAt)}（剩余 ${durationLabel(remaining)}）。`
+      : ""
+    : `${policyLimit}；预计可再次换绑时间 ${shanghaiTime(retryAt)}（剩余 ${durationLabel(remaining)}）。`;
+  const message = `${input.reason}。当前换绑规则：${policy.description}。${rateLimitLine}${nextRebindLine}${trigger}。`;
+  return new RiskAdmissionError(message, input.rateLimitUntil ? "lfn_rebind_rate_limited" : "lfn_rebind_limited", 429, Math.max(1, input.retryAfterSeconds), {
+    retryAt: new Date(retryAt).toISOString(),
+    rebindPolicy: policy,
+    frequencyLimit: { ...policy.frequencyTrigger, durationSeconds: policy.rateLimitSeconds },
+    ...(input.rateLimitUntil ? { rateLimitUntil: new Date(input.rateLimitUntil).toISOString() } : {}),
+  });
+}
+
+async function recordGrantRebindViolation(userId: number, now: number) {
+  const settings = await getRiskSettings(userId);
+  const a = await account(userId, settings, now);
+  prune(a, settings, now);
+  a.rebindAttempts.push(now);
+  const active = a.restrictions.find((item) => item.rule === "grant-rebind-frequency" && item.expiresAt > now);
+  if (!active && a.rebindAttempts.length >= REBIND_FREQUENCY_LIMIT) {
+    a.restrictions.unshift({
+      id: randomBytes(12).toString("hex"),
+      rule: "grant-rebind-frequency",
+      action: "rate-limit",
+      startsAt: now,
+      expiresAt: now + REBIND_RATE_LIMIT_SECONDS * 1000,
+      reason: "短时间内反复尝试更换免费网络授权，已触发账号限流",
+    });
+  }
+  await persist(a);
+  const restriction = a.restrictions.find((item) => item.rule === "grant-rebind-frequency" && item.expiresAt > now);
+  return restriction ? { retryAfterSeconds: Math.max(1, Math.ceil((restriction.expiresAt - now) / 1000)), expiresAt: restriction.expiresAt } : null;
+}
+
 async function loadGrant(userId: number, now: number) {
   const rt = state(), day = dailyImageDay(now), key = grantKey(userId, day);
   if (!rt.grants.has(key)) {
@@ -362,7 +469,18 @@ export async function assertFreeGrant(userId: number, requestId: string) {
 }
 export async function rebindFreeGrant(userId: number, request: Request, authenticatedAt: number) {
   const settings = await getRiskSettings(userId), now = Date.now();
+  if (!flag(settings, "grant.enabled")) throw new RiskAdmissionError("请求不可用", "lfn_feature_unavailable", 404);
   const a = await account(userId, settings, now);
+  const rebindRestriction = a.restrictions.find(r => r.rule === "grant-rebind-frequency" && r.expiresAt > now);
+  if (rebindRestriction) {
+    const retryAfterSeconds = Math.max(1, Math.ceil((rebindRestriction.expiresAt - now) / 1000));
+    throw rebindLimitError(settings, {
+      reason: rebindRestriction.reason,
+      retryAfterSeconds,
+      retryAt: rebindRestriction.expiresAt,
+      rateLimitUntil: rebindRestriction.expiresAt,
+    });
+  }
   if (a.restrictions.some(r => r.expiresAt > now) || await import("./risk-control").then(m => m.isRiskBlocked(userId))) throw new RiskAdmissionError("账号当前有有效限制，换绑不能绕过该限制", "lfn_rebind_restricted");
   if (!authenticatedAt || now - authenticatedAt > num(settings, "grant.reauthMinutes") * 60000) throw new RiskAdmissionError("请重新登录后确认换绑", "lfn_recent_login_required", 401);
   if (flag(settings, "grant.strictNoRebind")) throw new RiskAdmissionError("当前策略禁止当日换绑", "lfn_rebind_disabled");
@@ -373,7 +491,33 @@ export async function rebindFreeGrant(userId: number, request: Request, authenti
     const grant = await loadGrant(userId, now);
     if (!grant) throw new RiskAdmissionError("今日尚无免费授权，无需换绑", "lfn_grant_missing", 409);
     if (grant.ips.includes(ip)) return { ...grant, ips: undefined };
-    if (grant.rebinds >= num(settings, "grant.maxRebinds") || now - grant.changedAt < num(settings, "grant.minRebindSeconds") * 1000) throw new RiskAdmissionError("换绑次数已用完或尚在换绑冷却期", "lfn_rebind_limited", 429);
+    const mode = String(settings.values["grant.rebindMode"] || "hybrid");
+    const policy = rebindPolicyDetails(settings);
+    const checksCount = mode === "count" || mode === "hybrid";
+    const checksCooldown = mode === "cooldown" || mode === "hybrid";
+    const countLimited = checksCount && grant.rebinds >= num(settings, "grant.maxRebinds");
+    const cooldownUntil = grant.changedAt + num(settings, "grant.minRebindSeconds") * 1000;
+    const cooldownLimited = checksCooldown && now < cooldownUntil;
+    if (countLimited || cooldownLimited) {
+      const nextDay = Date.parse(`${grant.day}T00:00:00+08:00`) + 86400000;
+      const retryUntil = Math.max(countLimited ? nextDay : now, cooldownLimited ? cooldownUntil : now);
+      const frequencyLimit = await recordGrantRebindViolation(userId, now);
+      const retryAt = Math.max(retryUntil, frequencyLimit?.expiresAt || 0);
+      const retryAfter = Math.max(1, Math.ceil((retryAt - now) / 1000));
+      const reason = frequencyLimit
+        ? `短时间内已连续 ${policy.frequencyTrigger.attempts} 次触发换绑限制，账号换绑限流 ${durationLabel(policy.rateLimitSeconds)}`
+        : countLimited
+          ? "今日换绑次数已用完"
+          : "换绑仍在冷却期";
+      throw rebindLimitError(settings, {
+        reason,
+        retryAfterSeconds: retryAfter,
+        retryAt,
+        ...(frequencyLimit ? { rateLimitUntil: frequencyLimit.expiresAt } : {}),
+        countLimited,
+        cooldownLimited,
+      });
+    }
     const next = { ...grant, ips: [ip], version: grant.version + 1, rebinds: grant.rebinds + 1, changedAt: now };
     await writeRiskJson(path.join(state().root, "grants", `${userId}-${grant.day}.json`), next); state().grants.set(key, Promise.resolve(next));
     return { ...next, ips: undefined };

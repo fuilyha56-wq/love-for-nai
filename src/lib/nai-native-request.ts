@@ -52,6 +52,13 @@ export function isNaiMediumModel(model: string): boolean {
     /nai-diffusion-5-full-medium(?:-inpainting)?$/i.test(model);
 }
 
+/** Older OpenAI-compatible NAI gateways append quality_tags independently of
+ * qualityToggle. Send both opt-outs so composed/custom/disabled presets survive
+ * buffering and stream fallback without an extra default suffix. */
+export function naiGatewayGenerationBody(body: Record<string, unknown>): Record<string, unknown> {
+  return { ...body, ...(body.qualityToggle === false ? { quality_tags: "" } : {}) };
+}
+
 export function randomNaiSeed(): number {
   const cryptoObject = globalThis.crypto;
   if (cryptoObject) {
@@ -64,7 +71,7 @@ export function randomNaiSeed(): number {
 
 function actionFor(operation: string): string {
   if (operation === "img2img") return "img2img";
-  if (operation === "inpainting" || operation === "edits" || operation === "outpainting") return "infill";
+  if (["inpainting", "infill", "edits", "outpainting"].includes(operation)) return "infill";
   return "generate";
 }
 
@@ -154,8 +161,10 @@ export function naiNativeGenerationBody(
     parameters.tag_hint_uc_preset = 2;
   }
   if (options.stream) parameters.stream = "msgpack";
-  if (typeof body.strength === "number") parameters.strength = body.strength;
-  if (typeof body.inpaintImg2ImgStrength === "number") parameters.inpaintImg2ImgStrength = body.inpaintImg2ImgStrength;
+  if (typeof body.strength === "number" || action === "img2img")
+    parameters.strength = typeof body.strength === "number" ? body.strength : 0.7;
+  if (typeof body.inpaintImg2ImgStrength === "number" || action === "infill")
+    parameters.inpaintImg2ImgStrength = typeof body.inpaintImg2ImgStrength === "number" ? body.inpaintImg2ImgStrength : 1;
   if (typeof body.uncond_scale === "number") parameters.uncond_scale = body.uncond_scale;
   if (typeof body.service_tier === "string") parameters.service_tier = body.service_tier;
   if (typeof body.image === "string" && body.image)
@@ -176,6 +185,26 @@ export function naiNativeGenerationBody(
   if (Array.isArray(body.reference_images) && body.reference_images.length) {
     parameters.reference_image_multiple = stripDataUrl(body.reference_images);
   }
+  // The studio's character-reference operation wraps each uploaded image in
+  // characters[].reference_image. Native NAI accepts these in the same
+  // reference-image fields as other reference operations.
+  if (operation === "character-reference" && Array.isArray(body.characters)) {
+    const characters = body.characters.filter(
+      (item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item),
+    );
+    const references = characters
+      .map((character) => character.reference_image)
+      .filter((image): image is string => typeof image === "string" && image.length > 0);
+    if (references.length) {
+      parameters.reference_image_multiple = stripDataUrl(references);
+      parameters.reference_strength_multiple = characters
+        .filter((character) => typeof character.reference_image === "string" && character.reference_image.length > 0)
+        .map((character) => typeof character.reference_strength === "number" ? character.reference_strength : 0.6);
+      parameters.reference_information_extracted_multiple = characters
+        .filter((character) => typeof character.reference_image === "string" && character.reference_image.length > 0)
+        .map((character) => typeof character.reference_information_extracted === "number" ? character.reference_information_extracted : 1);
+    }
+  }
   if (Array.isArray(body.references) && body.references.length) {
     parameters.director_reference_images = (body.references as Array<Record<string, unknown>>)
       .map((item) => stripDataUrl(item.reference_image))
@@ -195,9 +224,6 @@ export function naiNativeGenerationBody(
     parameters.director_reference_strength_values = (
       body.references as Array<Record<string, unknown>>
     ).map((item) => (typeof item.strength === "number" ? item.strength : 1));
-  }
-  if (Array.isArray(body.characters) && body.characters.length) {
-    parameters.characterPrompts = body.characters;
   }
   if (Array.isArray(body.characterPrompts) && body.characterPrompts.length) {
     parameters.characterPrompts = medium

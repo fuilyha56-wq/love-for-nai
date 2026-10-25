@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { grantAffOnce } from "@/lib/aff";
+import { createUserNotification } from "@/lib/notifications";
 import {
   galleryWeekKey,
   listGalleryAdmin,
@@ -11,6 +12,7 @@ import {
 
 export type CreatorRewardKind = "submission" | "weekly" | "manual";
 export type CreatorRewardStatus = "granted" | "skipped" | "failed";
+export type CreatorWeeklyMetric = "likes" | "downloads" | "uses";
 
 export type CreatorRewardGrant = {
   id: string;
@@ -40,9 +42,18 @@ export type CreatorRewardCampaign = {
   rules?: string;
   coverUrl?: string;
   requiredTag?: string;
+  requiredTags?: string[];
+  excludedTags?: string[];
   allowedRatings?: Array<"general" | "r13" | "r17" | "r18">;
+  allowedSources?: Array<"other" | "lfn" | "local">;
   minWeeklyLikes?: number;
+  weeklyMetric?: CreatorWeeklyMetric;
+  minWeeklyMetric?: number;
   submissionLimitPerUser?: number;
+  submissionRewardLimit?: number;
+  oneWinnerPerUser?: boolean;
+  publicVisible?: boolean;
+  featured?: boolean;
   priority?: number;
   createdAt?: string;
   updatedAt?: string;
@@ -116,7 +127,7 @@ function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorReward
     })
     : base.weeklyRewards;
   const rawBudget = value.budget as number | null | undefined;
-  for (const key of ["submissionReward", "budget", "minWeeklyLikes", "submissionLimitPerUser", "priority"] as const) {
+  for (const key of ["submissionReward", "budget", "minWeeklyLikes", "minWeeklyMetric", "submissionLimitPerUser", "submissionRewardLimit", "priority"] as const) {
     const amount = value[key];
     if (amount != null && (!Number.isSafeInteger(amount) || amount < 0 || amount > 10_000_000)) throw new Error(`${key} 必须是 0 到 10000000 的整数`);
   }
@@ -126,6 +137,23 @@ function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorReward
       ? undefined
       : nonNegativeInteger(rawBudget, 0);
   const text = (key: "summary" | "description" | "rules" | "requiredTag", max: number) => typeof value[key] === "string" ? value[key]!.trim().slice(0, max) : "";
+  const tagList = (input: unknown, fallback: string[] = []) => (Array.isArray(input) ? input : fallback)
+    .filter((tag): tag is string => typeof tag === "string")
+    .map((tag) => tag.trim().slice(0, 100))
+    .filter(Boolean)
+    .filter((tag, index, items) => items.findIndex((item) => item.toLocaleLowerCase() === tag.toLocaleLowerCase()) === index)
+    .slice(0, 40);
+  const legacyRequiredTag = text("requiredTag", 100);
+  const rawRequiredTags = Array.isArray(value.requiredTags) && value.requiredTags.length
+    ? value.requiredTags
+    : legacyRequiredTag ? [legacyRequiredTag] : [];
+  const requiredTags = tagList(rawRequiredTags);
+  const excludedTags = tagList(value.excludedTags);
+  const allowedSources: Array<"other" | "lfn" | "local"> = Array.isArray(value.allowedSources)
+    ? value.allowedSources.filter((source): source is "other" | "lfn" | "local" => source === "other" || source === "lfn" || source === "local")
+    : ["other", "lfn", "local"];
+  if (!allowedSources.length) throw new Error("活动至少需要允许一种作品来源");
+  const weeklyMetric = value.weeklyMetric === "downloads" || value.weeklyMetric === "uses" ? value.weeklyMetric : "likes";
   const coverUrl = typeof value.coverUrl === "string" ? value.coverUrl.trim().slice(0, 2000) : "";
   if (coverUrl && !/^https?:\/\//i.test(coverUrl)) throw new Error("活动封面必须是 http 或 https 图片地址");
   if (value.weeklyRewards && (value.weeklyRewards.length < 1 || value.weeklyRewards.length > 20)) throw new Error("周榜支持 1 到 20 个奖励名次");
@@ -139,10 +167,17 @@ function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorReward
     submissionReward: nonNegativeInteger(value.submissionReward, base.submissionReward),
     weeklyRewards,
     ...(budget === undefined ? {} : { budget }),
-    summary: text("summary", 300), description: text("description", 12000), rules: text("rules", 12000), requiredTag: text("requiredTag", 100), coverUrl,
+    summary: text("summary", 300), description: text("description", 12000), rules: text("rules", 12000), requiredTag: requiredTags[0] || "", requiredTags, excludedTags, coverUrl,
     allowedRatings: (value.allowedRatings || ["general", "r13", "r17", "r18"]).filter((rating) => ["general", "r13", "r17", "r18"].includes(rating)),
+    allowedSources,
     minWeeklyLikes: nonNegativeInteger(value.minWeeklyLikes, 1),
+    weeklyMetric,
+    minWeeklyMetric: nonNegativeInteger(value.minWeeklyMetric, nonNegativeInteger(value.minWeeklyLikes, 1)),
     submissionLimitPerUser: nonNegativeInteger(value.submissionLimitPerUser, 0),
+    submissionRewardLimit: nonNegativeInteger(value.submissionRewardLimit, 0),
+    oneWinnerPerUser: value.oneWinnerPerUser === true,
+    publicVisible: value.publicVisible !== false,
+    featured: value.featured === true,
     priority: nonNegativeInteger(value.priority, 0),
     createdAt: value.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -196,7 +231,7 @@ export async function listCreatorRewardCampaigns(includeDeleted = false): Promis
 export async function publicCreatorRewardCampaigns() {
   const campaigns = await listCreatorRewardCampaigns();
   const now = Date.now();
-  return campaigns.filter((item) => item.enabled).sort((a, b) => (b.priority || 0) - (a.priority || 0)).map((campaign) => ({ ...campaign, phase: campaign.endsAt && Date.parse(campaign.endsAt) < now ? "已结束" : campaign.startsAt && Date.parse(campaign.startsAt) > now ? "即将开始" : "进行中" }));
+  return campaigns.filter((item) => item.enabled && item.publicVisible !== false).sort((a, b) => Number(b.featured) - Number(a.featured) || (b.priority || 0) - (a.priority || 0)).map((campaign) => ({ ...campaign, phase: campaign.endsAt && Date.parse(campaign.endsAt) < now ? "已结束" : campaign.startsAt && Date.parse(campaign.startsAt) > now ? "即将开始" : "进行中" }));
 }
 
 export async function upsertCreatorRewardCampaign(input: Partial<CreatorRewardCampaign> & { id?: string }): Promise<CreatorRewardCampaign> {
@@ -257,7 +292,10 @@ export async function grantCreatorReward(input: {
   return withLock(async () => {
     const store = await readStore();
     const previous = store.grants.find((item) => item.referenceId === referenceId && item.status !== "failed");
-    if (previous) return previous;
+    if (previous) {
+      await notifyCreatorReward(previous);
+      return previous;
+    }
     const record: CreatorRewardGrant = {
       id: randomUUID(),
       kind: input.kind,
@@ -273,6 +311,13 @@ export async function grantCreatorReward(input: {
     try {
       if (input.campaignId) {
         const campaign = store.campaigns.find((item) => item.id === input.campaignId);
+        if (input.kind === "submission" && campaign?.submissionRewardLimit && store.grants.filter((item) => item.kind === "submission" && item.campaignId === input.campaignId && item.status === "granted").length >= campaign.submissionRewardLimit) {
+          record.status = "skipped";
+          record.error = "活动投稿奖励总次数已达上限";
+          store.grants.unshift(record);
+          await writeStore(store);
+          return record;
+        }
         if (input.kind === "submission" && campaign?.submissionLimitPerUser && store.grants.filter((item) => item.kind === "submission" && item.campaignId === input.campaignId && item.userId === input.userId && item.status === "granted").length >= campaign.submissionLimitPerUser) {
           record.status = "skipped";
           record.error = "已达到活动的个人投稿奖励次数上限";
@@ -295,6 +340,7 @@ export async function grantCreatorReward(input: {
       record.status = result.granted ? "granted" : "skipped";
       store.grants.unshift(record);
       await writeStore(store);
+      await notifyCreatorReward(record);
       return record;
     } catch (error) {
       record.error = error instanceof Error ? error.message : "奖励发放失败";
@@ -303,6 +349,27 @@ export async function grantCreatorReward(input: {
       throw error;
     }
   });
+}
+
+async function notifyCreatorReward(grant: CreatorRewardGrant): Promise<void> {
+  if (grant.status !== "granted" || grant.amount <= 0) return;
+  const parts = grant.referenceId.split(":");
+  const rank = grant.kind === "weekly" ? grant.description.match(/第\s*(\d+)\s*名/)?.[1] : undefined;
+  const href = grant.kind === "weekly" && parts[2]
+    ? `/gallery/${encodeURIComponent(parts[2])}?reward=1${rank ? `&rank=${rank}` : ""}`
+    : grant.kind === "submission" && parts[2]
+      ? `/gallery/${encodeURIComponent(parts[2])}?reward=1`
+      : "/profile#profile-rewards";
+  const title = grant.kind === "weekly" ? "图库周榜奖励已发放" : grant.kind === "submission" ? "图库投稿奖励已到账" : "创作者奖励已发放";
+  await createUserNotification({
+    userId: grant.userId,
+    type: "creator-reward",
+    title,
+    body: `${grant.description}，已到账 ${grant.amount} AFF。`,
+    href,
+    dedupeKey: `creator-reward:${grant.id}`,
+    createdAt: grant.createdAt,
+  }).catch((error) => console.error("[lfn] 保存创作者奖励通知失败", error));
 }
 
 export async function grantSubmissionReward(userId: number, submissionId: string, actorId?: number): Promise<CreatorRewardGrant> {
@@ -320,8 +387,12 @@ export async function grantSubmissionReward(userId: number, submissionId: string
 }
 
 function campaignAllowsItem(campaign: CreatorRewardCampaign, item: GalleryItem | undefined): boolean {
-  if (campaign.requiredTag && !item?.tags.includes(campaign.requiredTag)) return false;
+  const itemTags = new Set((item?.tags || []).map((tag) => tag.toLocaleLowerCase()));
+  const requiredTags = campaign.requiredTags?.length ? campaign.requiredTags : campaign.requiredTag ? [campaign.requiredTag] : [];
+  if (requiredTags.some((tag) => !itemTags.has(tag.toLocaleLowerCase()))) return false;
+  if (campaign.excludedTags?.some((tag) => itemTags.has(tag.toLocaleLowerCase()))) return false;
   if (campaign.allowedRatings?.length && item && !campaign.allowedRatings.includes(item.rating)) return false;
+  if (campaign.allowedSources?.length && item && !campaign.allowedSources.includes(item.source)) return false;
   return true;
 }
 
@@ -334,10 +405,18 @@ export async function settleWeeklyCreatorRewards(week = galleryWeekKey(new Date(
   const weekEnd = new Date(Date.parse(`${week}T00:00:00.000Z`) + 7 * 86_400_000 - 1);
   const campaign = activeCampaign(await listCreatorRewardCampaigns(), weekEnd.getTime());
   const gallery = await listGalleryAdmin();
-  const winners = gallery.filter((item) => item.status === "approved" && campaignAllowsItem(campaign, item) && (item.weeklyLikes?.[week] || 0) >= (campaign.minWeeklyLikes ?? 1))
-    .sort((a, b) => (b.weeklyLikes?.[week] || 0) - (a.weeklyLikes?.[week] || 0))
-    .slice(0, campaign.enabled ? campaign.weeklyRewards.length : 0)
-    .filter((item) => Boolean(item.weeklyLikes?.[week]));
+  const metricFor = (item: GalleryItem) => campaign.weeklyMetric === "downloads"
+    ? item.weeklyDownloads?.[week] || 0
+    : campaign.weeklyMetric === "uses"
+      ? item.weeklyUses?.[week] || 0
+      : item.weeklyLikes?.[week] || 0;
+  const minimum = campaign.minWeeklyMetric ?? campaign.minWeeklyLikes ?? 1;
+  const ranked = gallery.filter((item) => item.status === "approved" && campaignAllowsItem(campaign, item) && metricFor(item) >= minimum && metricFor(item) > 0)
+    .sort((a, b) => metricFor(b) - metricFor(a) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
+  const eligible = campaign.oneWinnerPerUser
+    ? ranked.filter((item, index, list) => list.findIndex((candidate) => candidate.ownerId === item.ownerId) === index)
+    : ranked;
+  const winners = eligible.slice(0, campaign.enabled ? campaign.weeklyRewards.length : 0);
   const items: CreatorRewardGrant[] = [];
   for (const [index, item] of winners.entries()) {
     items.push(await grantCreatorReward({

@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 /* Shared LFN controls: native HTML semantics, with LFN rendering throughout. */
 input[type="checkbox"], input[type="radio"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; flex: 0 0 18px; margin: 0; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); vertical-align: middle; cursor: pointer; transition: background .15s, border-color .15s; }
 input[type="checkbox"]:checked { border-color: var(--rose); background: var(--rose) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 18 18'%3E%3Cpath d='m4 9 3 3 7-7' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/18px; }
@@ -45,3 +46,5 @@ input[type="file"]::file-selector-button { border: 0; border-radius: 6px; backgr
 .lfn-dialog input { width: 100%; padding: 10px; }
 .lfn-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 @media (pointer: coarse) { .popup-select-option { min-height: 44px; } .lfn-button { min-height: 44px; } }
+
+}

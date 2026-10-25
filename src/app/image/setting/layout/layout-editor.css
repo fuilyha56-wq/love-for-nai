@@ -1,3 +1,4 @@
+@media (min-width: 840px) {
 .layout-editor-page {
   min-height: 100dvh;
   background: var(--paper);
@@ -189,4 +190,6 @@
 @media (prefers-reduced-motion: reduce) {
   .layout-module,
   .layout-module-visibility span::after { transition: none; }
+}
+
 }

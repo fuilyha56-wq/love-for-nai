@@ -1,12 +1,14 @@
 import { privateKey, SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 import { cachedRiskSettings } from "./risk-settings";
 import { isNaiMediumModel, NAI_MEDIUM_NEGATIVE_PROMPT } from "@/lib/nai-native-request";
+import { officialNaiAnlasCost, NAI_MAX_ANLAS_PER_IMAGE } from "./image-pricing";
+import { isNaiLimitModel, naiImageSizeError, NAI_MAX_DIMENSION, NAI_MAX_PIXELS } from "./nai-image-limits";
 
 export const MAX_IMAGE_SAMPLES = 30;
 export const MAX_IMAGE_STEPS = 50;
 export const MIN_IMAGE_DIMENSION = 64;
-export const MAX_IMAGE_DIMENSION = 1600;
-export const MAX_IMAGE_PIXELS = 1_600 * 1_600;
+export const MAX_IMAGE_DIMENSION = NAI_MAX_DIMENSION;
+export const MAX_IMAGE_PIXELS = NAI_MAX_PIXELS;
 export const MAX_IMAGE_REFERENCE_COUNT = 12;
 export const MAX_IMAGE_BODY_BYTES = 25 * 1024 * 1024;
 
@@ -88,6 +90,19 @@ export function validateImageShape(width: number, height: number): void {
     invalid(`图像像素不能超过 ${MAX_IMAGE_PIXELS.toLocaleString("zh-CN")}`);
 }
 
+export function validateNaiModelSize(model: string, width: number, height: number): void {
+  const message = naiImageSizeError(model, width, height);
+  if (message) invalid(message);
+}
+
+export function validateNaiGenerationCost(model: string, width: number, height: number, steps: number, strength?: number, operation = "generate"): void {
+  validateNaiModelSize(model, width, height);
+  if (strength !== undefined && (!Number.isFinite(strength) || strength < 0 || strength > 1)) invalid("生图强度必须在 0 到 1 之间");
+  if (isNaiLimitModel(model) && steps > 28) invalid("Limit 模型最多支持 28 步");
+  if (officialNaiAnlasCost({ model, width, height, steps, strength, operation, samples: 1 }) > NAI_MAX_ANLAS_PER_IMAGE)
+    invalid("这些设置的单张生成费超过 140 Anlas，请降低分辨率或步数");
+}
+
 export function validateReferenceCount(count: number): void {
   if (!Number.isSafeInteger(count) || count < 0 || count > MAX_IMAGE_REFERENCE_COUNT)
     invalid(`参考图数量不能超过 ${MAX_IMAGE_REFERENCE_COUNT}`);
@@ -126,11 +141,11 @@ export function validateMediumRequest(model: string, body: Record<string, unknow
   const size = typeof parameters.size === "string" ? parameters.size.split("x").map(Number) : [];
   const width = guard(() => normalizeDimension(parameters.width ?? size[0], "width"));
   const height = guard(() => normalizeDimension(parameters.height ?? size[1], "height"));
-  if (width % 64 || height % 64 || width * height > 1_048_576)
-    reject("Medium 档尺寸必须为 64 的倍数，面积不超过 1048576 像素");
-  if (guard(() => normalizeSamples(parameters)) !== 1 || guard(() => normalizeSteps(parameters.steps, 14)) !== 14)
-    reject("Medium 档每请求仅限 1 张，步数固定为 14");
-  if (Object.prototype.hasOwnProperty.call(parameters, "cfg_rescale"))
+  guard(() => validateNaiModelSize(model, width, height));
+  guard(() => normalizeSamples(parameters));
+  if (guard(() => normalizeSteps(parameters.steps, 14)) !== 14)
+    reject("Medium 档步数固定为 14");
+  if (parameters.cfg_rescale !== undefined && parameters.cfg_rescale !== 0)
     reject("Medium 档不支持 Prompt Guidance Rescale");
   const fixed: Record<string, unknown> = { sampler: "k_euler_ancestral", uncond_scale: 1, params_version: 4, ucPreset: 0, ucPresetId: "heavy", tag_hint_uc_preset: 2, sm: false, sm_dyn: false };
   for (const [key, value] of Object.entries(fixed)) {

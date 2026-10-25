@@ -6,6 +6,7 @@ import { affLedger, checkInAff, grantAffOnce } from "@/lib/aff";
 import { galleryWeekKey } from "@/lib/gallery";
 import { grantCreatorReward, listCreatorRewardCampaigns, listCreatorRewardGrants, upsertCreatorRewardCampaign } from "@/lib/creator-rewards";
 import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
+import { listUserNotifications } from "@/lib/notifications";
 
 const originalDataDir = process.env.LFN_DATA_DIR;
 
@@ -67,6 +68,7 @@ describe("runtime rewards", () => {
     process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-rewards-budget-"));
     await upsertCreatorRewardCampaign({ id: "unlimited", name: "不限额", budget: 0 });
     await expect(grantCreatorReward({ kind: "manual", userId: 10, amount: 500, description: "不限额", referenceId: "budget-unlimited", campaignId: "unlimited" })).resolves.toMatchObject({ status: "granted" });
+    await expect(listUserNotifications(10)).resolves.toMatchObject({ unreadCount: 1, items: [{ type: "creator-reward", title: "创作者奖励已发放", body: "不限额，已到账 500 AFF。", href: "/profile#profile-rewards" }] });
     await upsertCreatorRewardCampaign({ id: "limited", name: "有限额", budget: 100 });
     await expect(grantCreatorReward({ kind: "manual", userId: 10, amount: 80, description: "有限额", referenceId: "budget-limited-1", campaignId: "limited" })).resolves.toMatchObject({ status: "granted" });
     await expect(grantCreatorReward({ kind: "manual", userId: 10, amount: 30, description: "有限额", referenceId: "budget-limited-2", campaignId: "limited" })).resolves.toMatchObject({ status: "skipped", error: "活动预算已用尽" });

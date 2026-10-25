@@ -19,10 +19,11 @@ field("global", "autoLevels", "按等级自动处置", false, undefined, undefin
 field("global", "minimumStrongSignals", "等级动作最少强证据族", 1, 1, 8);
 field("global", "minimumIndependentSignals", "等级动作最少独立证据族", 2, 1, 8);
 field("global", "maxCooldownSeconds", "自动暂停最长秒数", 86400, 60, 604800);
-field("grant", "enabled", "个人赠送 AFF 每日出口授权", true, undefined, undefined, "只在实际使用个人奖励 AFF 时检查；购买图包与个人供应商不受该出口绑定影响");
+field("grant", "enabled", "个人赠送 AFF 每日出口授权", false, undefined, undefined, "关闭后不再校验每日网络授权或换绑限制；购买图包与个人供应商不受该设置影响");
 field("grant", "maxActiveExits", "同时有效出口数", 1, 1, 4);
-field("grant", "maxRebinds", "每日换绑次数", 2, 0, 20);
-field("grant", "minRebindSeconds", "换绑最小间隔（秒）", 900, 0, 86400);
+field("grant", "rebindMode", "换绑限制模式", "hybrid", undefined, undefined, "次数模式只限制每日次数；冷却模式只限制每次间隔；混合模式同时执行两项限制", ["count", "cooldown", "hybrid"]);
+field("grant", "maxRebinds", "每日换绑次数", 12, 0, 20);
+field("grant", "minRebindSeconds", "换绑最小间隔（秒）", 7200, 0, 86400);
 field("grant", "strictNoRebind", "全天禁止换绑", false);
 field("grant", "retentionDays", "授权记录保留天数", 7, 1, 90);
 field("grant", "reauthMinutes", "换绑要求近期登录（分钟）", 15, 1, 60);
@@ -194,7 +195,33 @@ export function validateRiskSettings(raw: RiskSettings): RiskSettings {
 }
 export async function getRiskSettings(userId?: number): Promise<RiskSettings> {
   const directory = root();
-  if (shared.cache?.root !== directory) shared.cache = { root: directory, settings: readFile(path.join(directory, "settings-v2.json"), "utf8").then(s => validateRiskSettings(JSON.parse(s))).catch(error => { if (error.code === "ENOENT") return defaultRiskSettings(); throw error; }) };
+  if (shared.cache?.root !== directory) shared.cache = { root: directory, settings: (async () => {
+    const settingsPath = path.join(directory, "settings-v2.json");
+    try {
+      const raw = JSON.parse(await readFile(settingsPath, "utf8")) as RiskSettings;
+      const settings = validateRiskSettings(raw);
+      if (!Object.hasOwn(raw.values || {}, "grant.rebindMode")) {
+        const upgraded = {
+          ...settings,
+          version: `risk-${Date.now()}-${randomUUID().slice(0, 8)}`,
+          values: { ...settings.values, "grant.rebindMode": "hybrid", "grant.maxRebinds": 12, "grant.minRebindSeconds": 7200 },
+        };
+        await writeRiskJson(path.join(directory, "policy-history", `${upgraded.version}.json`), {
+          before: settings,
+          after: upgraded,
+          operator: "system",
+          reason: "换绑策略升级为混合模式：每日 12 次，每次间隔 2 小时",
+          at: new Date().toISOString(),
+        });
+        await writeRiskJson(settingsPath, upgraded);
+        return upgraded;
+      }
+      return settings;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return defaultRiskSettings();
+      throw error;
+    }
+  })() };
   const settings = await shared.cache.settings;
   shared.resolved = { root: directory, settings };
   const override = userId ? settings.overrides.find(o => o.userId === userId && Date.parse(o.expiresAt) > Date.now()) : undefined;

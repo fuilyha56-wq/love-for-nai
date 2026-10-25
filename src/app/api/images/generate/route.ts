@@ -12,6 +12,7 @@ import { getSession } from "@/lib/session";
 import { getImageToken, imageFromResult, resolvedImageUpstream, resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
 import { userCanGenerateWithNewApiModel } from "@/lib/provider/newapi-models";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
@@ -31,6 +32,7 @@ import {
   normalizeSamples,
   normalizeSteps,
   validateImageShape,
+  validateNaiGenerationCost,
   validateMediumRequest,
 } from "@/lib/image-request";
 
@@ -76,6 +78,7 @@ export async function POST(request: Request) {
     height = normalizeDimension(body.height, "height");
     validateImageShape(width, height);
     steps = normalizeSteps(body.steps, String(body.model).endsWith("-medium") ? 14 : 28);
+    validateNaiGenerationCost(String(body.model), width, height, steps);
     samples = normalizeSamples(body);
     validateMediumRequest(String(body.model), body);
   } catch (error) {
@@ -213,7 +216,7 @@ export async function POST(request: Request) {
         response_format: "b64_json",
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(120_000),
+      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
     });
     const result = await upstream.json();
     audit.record.moderation = await moderationFromUpstream(result);

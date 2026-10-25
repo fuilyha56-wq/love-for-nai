@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageAspectRatio, nearestImageSize, normalizeImageModelSize, resolveImageModelCapabilities, resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
 
 describe("图像模型能力和协议选择", () => {
+  it("识别带上游分组前缀的图像生成模型", () => {
+    expect(isKnownImageModel("[官]gemini-2.5-flash-image")).toBe(true);
+    expect(isKnownImageModel("[官]gemini-2.5-flash-image-preview")).toBe(true);
+    expect(isKnownImageModel("[图像]custom-render-model")).toBe(true);
+    expect(isKnownImageModel("microsoft/mai-image-2.6")).toBe(true);
+    expect(isKnownImageModel("microsoft/mai-image-2.6-flash")).toBe(true);
+    expect(isKnownImageModel("[企]gemini-2.5-pro")).toBe(false);
+  });
   it("NAI 保留标签、种子、采样和原生参考；GPT/Gemini 使用自然语言", () => {
     expect(resolveImageModelCapabilities("nai-v5-full")).toMatchObject({ family: "nai", protocol: "nai", promptStyle: "tags", acceptsNegative: true, seed: true, sampling: true, characters: true });
     expect(resolveImageModelCapabilities("gpt-image-1.5")).toMatchObject({ family: "gpt-image", protocol: "openai-images", promptStyle: "natural", nativeMask: true, acceptsNegative: false, seed: false, sampling: false });

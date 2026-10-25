@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { ImageRequestValidationError, MAX_IMAGE_BODY_BYTES, normalizeDimension, normalizeSteps, validateImageShape, validateReferenceCount } from "@/lib/image-request";
 import { nearestImageAspectRatio, normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { naiGatewayGenerationBody } from "@/lib/nai-native-request";
 
 export type ImageTransportRequest = { path: string; headers: Record<string, string>; body: string | FormData; width: number; height: number };
 export type ImageTransportResult = { images: string[]; usage: unknown; text: string };
@@ -191,7 +192,7 @@ export async function buildImageTransportRequest(body: Record<string, unknown>, 
     const payload: Record<string, unknown> = { model, ...Object.fromEntries(allowed.filter((field) => body[field] !== undefined).map((field) => [field, body[field]])), width, height, steps, n: samples, n_samples: samples, response_format: "b64_json" };
     for (const field of ["image", "mask", "reference_image", "reference_images", "references", "characters"]) if (payload[field] !== undefined) payload[field] = stripInlineImagePrefixes(payload[field]);
     if (operation !== "generate") payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
-    return { path: "/v1/images/generations", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(payload), ...dimensions };
+    return { path: "/v1/images/generations", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(naiGatewayGenerationBody(payload)), ...dimensions };
   }
   const outputSize = normalizeImageModelSize(model, width, height, protocol);
   const options: Record<string, string | number> = { model, prompt, n: samples, size: `${outputSize.width}x${outputSize.height}` };
