@@ -217,9 +217,9 @@ export default function AdminPage() {
           <ShieldCheck size={34} className="mx-auto text-[var(--rose)]" />
           <h1 className="mt-4 text-lg font-bold">仅管理员可用</h1>
           <p className="mt-2 text-sm text-[var(--muted)]">此界面仅对站点管理员开放，不绑定某一家上游。</p>
-          <a href="/" className="mt-5 inline-flex h-9 items-center gap-2 rounded border border-[var(--line)] px-4 text-sm font-semibold hover:border-[var(--rose)]">
+          <Link href="/" className="mt-5 inline-flex h-9 items-center gap-2 rounded border border-[var(--line)] px-4 text-sm font-semibold hover:border-[var(--rose)]">
             <ArrowLeft size={15} /> 返回工作台
-          </a>
+          </Link>
         </div>
       </main>
     );
@@ -231,10 +231,10 @@ export default function AdminPage() {
           <span className="admin-brand-mark"><ShieldCheck size={19} /></span>
           <div className="min-w-0"><b className="block truncate tracking-tight">LFN 管理中心</b><span className="hidden text-[10px] text-[var(--muted)] sm:block">运营与安全控制台</span></div>
         </div>
-        <a href="/" className="admin-back-link flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
+        <Link href="/" className="admin-back-link flex h-9 shrink-0 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm font-semibold hover:border-[var(--rose)]">
           <ArrowLeft size={16} />
           返回工作台
-        </a>
+        </Link>
       </header>
       {message && (
         <p className="mx-auto mt-4 max-w-6xl rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{message}</p>
