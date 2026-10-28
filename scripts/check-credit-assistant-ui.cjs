@@ -19,7 +19,8 @@ const results = [], errors = [];
   try {
     for (const [width, workspaceLayout] of [[390, 'lfn'], [1023, 'lfn'], [1191, 'lfn'], [1440, 'nai'], [1366, 'nlw']]) {
       const name = `${workspaceLayout}-${width}`;
-      const { context, page } = await setup(browser, { theme: 'paper', workspaceLayout }, { width, height: 884 });
+      const preferences = workspaceLayout === 'nai' ? { theme: 'nai', workspaceLayout: 'lfn' } : { theme: 'paper', workspaceLayout };
+      const { context, page } = await setup(browser, preferences, { width, height: 884 });
       page.on('pageerror', error => errors.push(error.message));
       const submitted = [];
       await context.route('**/api/public/credit-pricing', route => route.fulfill({ json: pricing }));
@@ -32,6 +33,7 @@ const results = [], errors = [];
       });
       try {
         await page.goto(baseURL + '/image');
+        await page.locator(width < 1024 ? '.mobile-studio-workbar:visible' : preferences.theme === 'nai' ? '[data-studio-layout="nai"]:visible' : `[data-workspace-layout="${workspaceLayout}"]:visible`).waitFor();
         const trigger = page.locator('[data-credit-pricing-trigger]:visible').first();
         await trigger.click();
         const dialog = page.getByRole('dialog', { name: '当前定价与阶梯计费', exact: true });
