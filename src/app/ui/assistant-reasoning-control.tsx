@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { assistantReasoningProfile, resolveAssistantReasoning } from "@/lib/assistant-reasoning";
+import { PopupSelect } from "./popup-select";
+import "./assistant-reasoning-control.css";
 const key = "lfn-assistant-reasoning-v1";
 const current: Record<string, string> = {};
 export function storedAssistantReasoning(model: string) {
@@ -19,16 +21,17 @@ export function AssistantReasoningControl({ model }: { model: string }) {
   const p = assistantReasoningProfile(model);
   let selected: string;
   try { selected = resolveAssistantReasoning(model, preferences[model]) || "auto"; } catch { selected = resolveAssistantReasoning(model) || "auto"; }
-  return <label className="assistant-reasoning-control" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px", fontSize: "11px", marginTop: "8px" }}>
+  return <div className="assistant-reasoning-control">
     <span>思考强度 · {p.vendor}</span>
-    <select aria-label="助手思考强度" className="field" style={{ width: "auto", minWidth: "96px", minHeight: "32px", marginLeft: "auto", padding: "4px 8px" }} value={selected} disabled={!p.levels.length} onChange={event => {
-      current[model] = event.target.value;
-      const next = { ...preferences, [model]: event.target.value }; setPreferences(next);
+    <PopupSelect ariaLabel="助手思考强度" className="assistant-reasoning-select" triggerClassName="assistant-reasoning-trigger" menuClassName="assistant-reasoning-menu"
+      value={selected} disabled={!p.levels.length}
+      options={p.levels.length ? p.levels.map(level => ({ value: level, label: `${level === "none" ? "关闭" : level}${level === "high" ? " · 默认" : ""}` })) : [{ value: "auto", label: "上游默认" }]}
+      onChange={effort => {
+      current[model] = effort;
+      const next = { ...preferences, [model]: effort }; setPreferences(next);
       try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* current page selection remains usable */ }
-      window.dispatchEvent(new CustomEvent("lfn-assistant-reasoning", { detail: { model, effort: event.target.value } }));
-    }}>
-      {p.levels.length ? p.levels.map(level => <option key={level} value={level}>{level === "none" ? "关闭" : level}{level === "high" ? " · 默认" : ""}</option>) : <option value="auto">上游默认</option>}
-    </select>
-    {p.note && <small style={{ width: "100%", color: "var(--muted)", lineHeight: 1.6 }}>{p.note}</small>}
-  </label>;
+      window.dispatchEvent(new CustomEvent("lfn-assistant-reasoning", { detail: { model, effort } }));
+    }} />
+    {p.note && <small>{p.note}</small>}
+  </div>;
 }
