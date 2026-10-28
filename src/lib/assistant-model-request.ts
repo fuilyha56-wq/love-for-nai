@@ -6,6 +6,8 @@ export type AssistantKeyAuth = {
   refreshKey?: (rejectedKey: string) => Promise<string>;
   refreshed?: boolean;
   reasoningEffort?: string;
+  /** Server-owned transport for saved custom providers; never accept a client URL. */
+  transport?: (init: RequestInit) => Promise<Response>;
 };
 
 // Only retry a rejected NewAPI API key, never quota/rate limits, provider errors,
@@ -29,7 +31,7 @@ export async function fetchAssistantModel(
   const send = () => {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${auth.key}`);
-    return fetchWithModelConcurrency(url, { ...init, headers });
+    return auth.transport ? auth.transport({ ...init, headers }) : fetchWithModelConcurrency(url, { ...init, headers });
   };
   const response = await send();
   if (

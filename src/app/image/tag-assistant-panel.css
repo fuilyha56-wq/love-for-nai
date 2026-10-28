@@ -166,3 +166,13 @@
  .tag-assistant-panel:has(.assistant-jump-latest) .assistant-panel-modes{padding-right:26px;gap:6px}
  .tag-assistant-panel:has(.assistant-usage-toggle[aria-expanded=true]) .assistant-jump-latest{display:none}
 }
+
+.assistant-source-control{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 0;border-bottom:1px solid var(--line);font-size:10px}
+.assistant-source-control>div[role=group]{display:flex;gap:2px;flex-shrink:0}
+.assistant-source-control>div[role=group]>button{min-height:28px;padding:3px 6px;border:0;border-radius:5px;color:var(--muted);background:transparent;font:inherit;white-space:nowrap}
+.assistant-source-control>div[role=group]>button[aria-pressed=true]{background:color-mix(in srgb,var(--rose) 10%,transparent);color:var(--rose)}
+.assistant-source-control>div:not([role=group]){min-width:0;flex:1;margin-left:auto}
+.assistant-source-control .field{min-height:28px;height:28px;padding-block:2px;font:inherit}
+.assistant-source-group{margin-left:auto;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@container(max-width:280px){.assistant-source-control{gap:3px;font-size:9px}.assistant-source-control>div[role=group]>button{padding-inline:4px}}
+@container(max-height:420px){.assistant-source-control{padding-block:1px}.assistant-source-control .field,.assistant-source-control>div[role=group]>button{min-height:24px;height:24px}}

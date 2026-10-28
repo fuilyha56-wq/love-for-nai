@@ -33,6 +33,7 @@ export type ReplicaPromptEditorProps = {
   imageProtocol?: ImageProviderProtocol;
   operation?: string;
   assistantModel?: string;
+  assistantProviderId?: string; assistantGroup?: string;
   historyPrompts?: string[];
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
@@ -214,9 +215,9 @@ function PromptComposition({ target, text, parts, natural }: { target: PromptTar
   </div>;
 }
 
-function PromptTextInput({ variant, target, value, onChange, config, onAssistant, assistantModel, onError, height, relatedSamples, imageModel, imageProtocol, operation, natural }: {
+function PromptTextInput({ variant, target, value, onChange, config, onAssistant, assistantModel, assistantProviderId, assistantGroup, onError, height, relatedSamples, imageModel, imageProtocol, operation, natural }: {
   variant: ReplicaVariant; target: PromptTarget; value: string; onChange: (value: string) => void; config: ReplicaPromptConfig;
-  onAssistant?: (text: string) => void; assistantModel?: string; onError: (text: string) => void; height: number; relatedSamples: string[];
+  onAssistant?: (text: string) => void; assistantModel?: string; assistantProviderId?: string; assistantGroup?: string; onError: (text: string) => void; height: number; relatedSamples: string[];
   imageModel: string; imageProtocol?: ImageProviderProtocol; operation?: string; natural: boolean;
 }) {
   const editor = useRef<HTMLDivElement>(null);
@@ -301,7 +302,7 @@ function PromptTextInput({ variant, target, value, onChange, config, onAssistant
       }} />
     </div>, document.body)}
     {session && assistantModel && createPortal(<div className='replica-prompt-overlay replica-inline-host' data-variant={variant}>
-      <InlineChatZone key={JSON.stringify([target, imageModel, imageProtocol || "auto", operation || "generate", assistantModel])} session={session} model={assistantModel} imageModel={imageModel} modelProtocol={imageProtocol} operation={operation} onClose={() => setSession(null)} onKeep={(replacement) => {
+      <InlineChatZone key={JSON.stringify([target, imageModel, imageProtocol || "auto", operation || "generate", assistantModel, assistantProviderId, assistantGroup])} session={session} model={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} imageModel={imageModel} modelProtocol={imageProtocol} operation={operation} onClose={() => setSession(null)} onKeep={(replacement) => {
         if (value.slice(session.selection.start, session.selection.end) !== session.selection.text) { onError('所选提示词已变更，请重新选择后应用 AI 建议。'); return; }
         onChange(value.slice(0, session.selection.start) + replacement + value.slice(session.selection.end));
       }} />
@@ -318,7 +319,7 @@ const settingItems = [
   ["resolveAliasesOnCopy", "复制时展开词库", "复制时把 <词库名> 替换为词库内容"],
 ] as const;
 
-export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange, onNegativeChange, onEffectiveChange, onAssistant, model, imageProtocol, operation, assistantModel, historyPrompts = [], collapsed, onCollapsedChange }: ReplicaPromptEditorProps) {
+export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange, onNegativeChange, onEffectiveChange, onAssistant, model, imageProtocol, operation, assistantModel, assistantProviderId, assistantGroup, historyPrompts = [], collapsed, onCollapsedChange }: ReplicaPromptEditorProps) {
   const natural = resolveImageModelCapabilities(model, imageProtocol).promptStyle === "natural";
   const acceptsNegative = resolveImageModelCapabilities(model, imageProtocol).acceptsNegative || natural;
   const [config, saveConfig] = usePromptConfig(variant);
@@ -377,12 +378,12 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
     if (editorTarget === "negative" && !acceptsNegative) return null;
     const value = editorTarget === "positive" ? prompt : negative;
     const change = editorTarget === "positive" ? onPromptChange : onNegativeChange;
-    const editorKey = JSON.stringify([editorTarget, model, imageProtocol || "auto", operation || "generate", assistantModel]);
+    const editorKey = JSON.stringify([editorTarget, model, imageProtocol || "auto", operation || "generate", assistantModel, assistantProviderId, assistantGroup]);
     return !natural && tagModes[editorTarget]
       ? <div key={editorKey} style={{ height: editorHeight }} className='replica-shared-tag-editor'><TagChipEditor value={value} onChange={change} zhOf={(tag) => tagZh(tag.replaceAll(' ', '_'))}
         autocomplete={config.settings.autocomplete} library={config.library} cooccurrence={config.settings.cooccurrence} relatedSamples={relatedSamples}
         resolveCopy={config.settings.resolveAliasesOnCopy ? (text) => resolvePromptAliases(text, config.library) : undefined} /></div>
-      : <PromptTextInput key={editorKey} variant={variant} target={editorTarget} value={value} onChange={change} config={config} onAssistant={onAssistant} assistantModel={assistantModel} imageModel={model} imageProtocol={imageProtocol} operation={operation} natural={natural} onError={setNotice} height={editorHeight} relatedSamples={relatedSamples} />;
+      : <PromptTextInput key={editorKey} variant={variant} target={editorTarget} value={value} onChange={change} config={config} onAssistant={onAssistant} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} imageModel={model} imageProtocol={imageProtocol} operation={operation} natural={natural} onError={setNotice} height={editorHeight} relatedSamples={relatedSamples} />;
   }
   function presetButton(preset: "quality" | "uc", naiFooter = false) {
     if (natural) return null;

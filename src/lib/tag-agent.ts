@@ -104,7 +104,7 @@ async function callModel(
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(ASSISTANT_MODEL_TIMEOUT_MS)]) : AbortSignal.timeout(ASSISTANT_MODEL_TIMEOUT_MS),
   }, auth);
   const result = await response.json().catch(() => { throw new Error(`助手上游返回了无法解析的响应（HTTP ${response.status}），请稍后重试。`); }) as ChatResponse;
-  if (response.ok || result.usage) onUsage?.(modelUsageReceipt(randomUUID(), response.headers.get("x-oneapi-request-id"), result.usage));
+  if (response.ok || result.usage) onUsage?.(modelUsageReceipt(randomUUID(), auth.transport ? null : response.headers.get("x-oneapi-request-id"), result.usage));
   assertAssistantModelNotBlocked(result);
   const protocolError = result.error?.message || "";
   if (!response.ok && response.status === 400 && protocol.native && protocol.parallel !== false &&
@@ -231,13 +231,14 @@ export async function runTagAgent(
     history?: Array<{ request: string; answer: string }>;
     /** Server-owned configuration only; never copy a browser-provided URL here. */
     baseUrl?: string;
+    transport?: AssistantKeyAuth["transport"];
     refreshKey?: (rejectedKey: string) => Promise<string>;
     signal?: AbortSignal;
   },
 ): Promise<{ content: string; steps: AgentStep[] }> {
   options?.signal?.throwIfAborted();
   const baseUrl = options?.baseUrl ?? await resolvedNewApiBaseUrl();
-  const auth: AssistantKeyAuth = { key, refreshKey: options?.refreshKey, reasoningEffort: options?.reasoningEffort };
+  const auth: AssistantKeyAuth = { key, refreshKey: options?.refreshKey, reasoningEffort: options?.reasoningEffort, transport: options?.transport };
   const target = resolveAssistantImageTarget(context);
   const naturalPrompt = target.capabilities.promptStyle === "natural";
   const images = [

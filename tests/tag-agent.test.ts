@@ -16,6 +16,15 @@ vi.mock("@/lib/newapi", () => ({
 }));
 
 describe("runTagAgent budgets", () => {
+  it("keeps custom-provider tokens while excluding external request IDs from NewAPI billing", async () => {
+    const transport = vi.fn(async () => Response.json({ choices: [{ message: { content: '{"prompt":"A blue sky.","tags":[]}' } }], usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } }, { headers: { "x-oneapi-request-id": "external-request" } }));
+    const usage = vi.fn(), direct = vi.fn(); vi.stubGlobal("fetch", direct);
+    const { runTagAgent } = await import("@/lib/tag-agent");
+    await runTagAgent("custom-fixture", "vision-chat", "整理场景", { imageModel: "gpt-image-1" }, 1, { baseUrl: "https://custom.test", transport, onUsage: usage });
+    expect(transport).toHaveBeenCalled(); expect(direct).not.toHaveBeenCalled();
+    expect(usage.mock.calls[0][0]).toMatchObject({ inputTokens: 120, outputTokens: 30, totalTokens: 150, billing: "unavailable", balanceCost: null });
+    expect(usage.mock.calls[0][0].requestId).toBeUndefined();
+  });
   beforeEach(() => {
     runTool.mockClear();
     summarizeToolResult.mockClear();

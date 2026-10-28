@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkImageRateLimit } from "@/lib/image-request";
-import { getChatToken, refreshChatToken, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolveAssistantSource, AssistantSourceError } from "@/lib/assistant-source";
 import { isImageProviderProtocol, isKnownImageModel } from "@/lib/image-model-capabilities";
 import { runImagePromptSuggestion } from "@/lib/image-prompt-suggestion";
 import { inlineRaster } from "@/lib/image-transport";
@@ -27,8 +27,7 @@ export async function handleNaturalImagePromptSuggestion(request: Request, sessi
     images = images.map((image) => { const raster = inlineRaster(image); return `data:${raster.mime};base64,${raster.data}`; });
   } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议参数无效" }, { status: 400 }); }
   try {
-    const key = await getChatToken(session, chatModel);
-    const baseUrl = await resolvedNewApiBaseUrl();
-    return NextResponse.json(await runImagePromptSuggestion({ key, chatModel, baseUrl, reasoningEffort, refreshKey: (rejectedKey) => refreshChatToken(session, chatModel, rejectedKey), imageModel, modelProtocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto", prompt: body.prompt as string, images, signal: request.signal }));
-  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议失败" }, { status: 502 }); }
+    const source = await resolveAssistantSource(session, chatModel, body.assistantProviderId, body.assistantGroup);
+    return NextResponse.json(await runImagePromptSuggestion({ ...source, chatModel, reasoningEffort, imageModel, modelProtocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto", prompt: body.prompt as string, images, signal: request.signal }));
+  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议失败" }, { status: error instanceof AssistantSourceError ? 400 : 502 }); }
 }

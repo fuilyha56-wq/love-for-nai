@@ -10,12 +10,15 @@ const mocks = vi.hoisted(() => ({
   appendConversationTurn: vi.fn(),
   chatFetch: vi.fn(),
   availableModels: vi.fn(),
+  customModel: vi.fn(),
 }));
 
 vi.mock("@/lib/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/lib/provider/newapi-models", async (original) => ({ ...await original<typeof import("@/lib/provider/newapi-models")>(), loadNewApiModels: mocks.availableModels }));
+vi.mock("@/lib/provider/store", () => ({ listRegistryEntries: async () => [], resolveTextProviderModel: mocks.customModel }));
+vi.mock("@/lib/shared-user-self", () => ({ fetchNewApiSelf: async () => Response.json({ success: true, data: { group: "vip" } }) }));
 vi.mock("@/lib/tag-catalog", () => ({ readCatalogTag: () => null }));
-vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, refreshChatToken: mocks.refreshChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
+vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, refreshChatToken: mocks.refreshChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", isUpstreamAuthError: () => false, readUsableGroups: async () => ["vip"], userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
 vi.mock("@/lib/tag-agent", () => ({ runTagAgent: mocks.runTagAgent }));
 vi.mock("@/lib/outbound", () => ({ outboundFetch: mocks.outboundFetch }));
 vi.mock("@/lib/model-concurrency", () => ({ fetchWithModelConcurrency: mocks.chatFetch }));
@@ -52,6 +55,22 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image model context in assistant routes", () => {
+  it("uses an owned custom provider for tag and inline chat and rejects removed sources without NewAPI fallback", async () => {
+    mocks.customModel.mockResolvedValue({ model: "vision-chat", provider: { baseUrl: "https://custom.test", apiKey: "custom-fixture" } });
+    const tags = await import("@/app/api/assistant/tags/route");
+    const result = await tags.POST(postRequest("tags", { model: "vision-chat", request: "describe", assistantProviderId: "own-provider" }));
+    expect(result.status).toBe(200);
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][0]).toBe("custom-fixture");
+    expect(mocks.runTagAgent.mock.calls[0][5]).toMatchObject({ baseUrl: "https://custom.test", transport: expect.any(Function) });
+    expect(mocks.runTagAgent.mock.calls[0][5].refreshKey).toBeUndefined();
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
+    mocks.customModel.mockResolvedValue(null);
+    const inline = await import("@/app/api/assistant/inline-chat/route");
+    expect((await inline.POST(postRequest("inline-chat", { model: "vision-chat", mode: "fix", selection: "hello", assistantProviderId: "removed-provider" }))).status).toBe(400);
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
+    expect(mocks.chatFetch).not.toHaveBeenCalled();
+  });
   it("accepts custom full-access limits beyond five and rejects out-of-range values before credential lookup", async () => {
     const route = await import("@/app/api/assistant/tags/route");
     for (const goalMaxRounds of [0, 101, 2.5, "10"]) {
@@ -100,7 +119,7 @@ describe("image model context in assistant routes", () => {
     const route = await import("@/app/api/assistant/models/route");
     const response = await route.GET();
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ models: ["gpt-4o", "text-chat"] });
+    expect(await response.json()).toMatchObject({ models: ["gpt-4o", "text-chat"] });
   });
 
   it("refreshes the upstream list and excludes custom image channels", async () => {
@@ -108,9 +127,9 @@ describe("image model context in assistant routes", () => {
       .mockResolvedValueOnce([{ id: "new-chat", kind: "助手模型" }]);
     const route = await import("@/app/api/assistant/models/route");
     const first = await route.GET();
-    expect(await first.json()).toEqual({ models: ["old-chat"] });
+    expect(await first.json()).toMatchObject({ models: ["old-chat"] });
     expect(first.headers.get("cache-control")).toBe("private, no-store");
-    expect(await (await route.GET()).json()).toEqual({ models: ["new-chat"] });
+    expect(await (await route.GET()).json()).toMatchObject({ models: ["new-chat"] });
   });
 
   it("rejects a custom image channel before requesting a chat credential", async () => {

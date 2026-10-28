@@ -2,7 +2,7 @@ import { resolvedNewApiBaseUrl, userHeaders, type Session } from "@/lib/newapi";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 
-export type AvailableModel = { id: string; kind: "图像模型" | "助手模型" };
+export type AvailableModel = { id: string; kind: "图像模型" | "助手模型"; groups?: string[] };
 
 const MODEL_ID = /^[^\u0000-\u001f\u007f]{1,160}$/;
 
@@ -28,7 +28,7 @@ function inspect(value: unknown, into: Map<string, boolean>): void {
   into.set(id.trim(), Boolean(into.get(id.trim()) || image));
 }
 
-export async function loadNewApiModels(session: Session): Promise<AvailableModel[]> {
+export async function loadNewApiModels(session: Session, includeGroups = false): Promise<AvailableModel[]> {
   const base = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
   const response = await fetch(`${base}/api/user/models`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
@@ -36,12 +36,14 @@ export async function loadNewApiModels(session: Session): Promise<AvailableModel
   if (!response.ok || payload.success === false) throw new Error(payload.message || "无法读取可用模型");
   const models = new Map<string, boolean>();
   inspect(payload.data ?? payload, models);
+  const groups = new Map<string, string[]>();
   // NewAPI pricing provides the actual Draw-channel grouping when /api/user/models only lists IDs.
   try {
     const pricing = await fetch(`${base}/api/pricing`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
     if (pricing.ok) {
       const result = await pricing.json() as { data?: Array<{ model_name?: string; enable_groups?: string[] }> };
       for (const entry of result.data ?? []) {
+        if (entry.model_name && Array.isArray(entry.enable_groups)) groups.set(entry.model_name, [...new Set(entry.enable_groups.filter((group): group is string => typeof group === "string" && Boolean(group.trim())))]);
         if (entry.model_name && models.has(entry.model_name) && entry.enable_groups?.some((group) => group.toLowerCase() === "draw"))
           models.set(entry.model_name, true);
       }
@@ -51,7 +53,7 @@ export async function loadNewApiModels(session: Session): Promise<AvailableModel
   for (const [id, image] of models) {
     if (await isNaiModelEnabled(id)) filtered.push([id, image]);
   }
-  return filtered.map(([id, image]) => ({ id, kind: image ? "图像模型" as const : "助手模型" as const }))
+  return filtered.map(([id, image]) => ({ id, kind: image ? "图像模型" as const : "助手模型" as const, ...(includeGroups ? { groups: groups.get(id) || [] } : {}) }))
     .sort((a,b) => a.id.localeCompare(b.id));
 }
 

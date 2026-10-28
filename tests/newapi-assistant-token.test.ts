@@ -83,6 +83,24 @@ beforeEach(() => {
 });
 
 describe("assistant keys reuse before creation", () => {
+  it("keeps explicitly selected groups separate from automatic caches and reuses only that group's key", async () => {
+    tokens = [token(166), token(167, { group: "gemini" })];
+    const user = session();
+    expect(await getChatToken(user, model)).toBe("existing-166");
+    expect(await getChatToken(user, model, "gemini")).toBe("existing-167");
+    expect(await getChatToken(user, model, "vip")).toBe("existing-166");
+    expect(creates).toBe(0);
+    await expect(getChatToken(user, model, "private")).rejects.toThrow("所选分组");
+    expect(creates).toBe(0);
+  });
+  it("creates one key only in a selected authorized group when that group has no valid key", async () => {
+    const user = session();
+    expect(await getChatToken(user, model, "gemini")).toBe("existing-900");
+    expect(creates).toBe(1);
+    expect(tokens.at(-1)?.group).toBe("gemini");
+    expect(await refreshChatToken(user, model, "existing-900", "gemini")).toBe("existing-900");
+    expect(creates).toBe(1);
+  });
   it("reuses a user-named key from any owned compatible group, not only the first group", async () => {
     expect(await getChatToken(session(), model)).toBe("existing-166");
     expect(creates).toBe(0);

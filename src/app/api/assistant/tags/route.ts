@@ -1,14 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, refreshChatToken, type Session } from "@/lib/newapi";
+import { type Session } from "@/lib/newapi";
+import { resolveAssistantSource, AssistantSourceError, type AssistantSource } from "@/lib/assistant-source";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { MAX_ASSISTANT_IMAGES, MAX_ASSISTANT_IMAGE_BYTES, MAX_ASSISTANT_TOTAL_IMAGE_BYTES, DEFAULT_GOAL_GENERATIONS, MAX_GOAL_GENERATIONS, validGoalGenerations } from "@/lib/assistant-limits";
 import { refreshAssistantJobUsage } from "@/lib/assistant-usage-billing";
 import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
 import { readCatalogTag } from "@/lib/tag-catalog";
-import { isAssistantChatModel, assistantModelIds } from "@/lib/assistant-models";
-import { loadNewApiModels } from "@/lib/provider/newapi-models";
+import { isAssistantChatModel } from "@/lib/assistant-models";
 import {
   adaptAssistantSuggestion,
   assistantHistoryMatchesTarget,
@@ -39,6 +39,8 @@ import {
 } from "@/lib/assistant-conversations";
 
 type AssistantPayload = {
+  assistantProviderId?: unknown;
+  assistantGroup?: unknown;
   reasoningEffort?: unknown;
   model?: string;
   request?: string;
@@ -216,7 +218,7 @@ function mergeTagsIntoPrompt(
 async function runJob(
   job: AssistantJob,
   session: Session,
-  key: string,
+  source: AssistantSource,
   model: string,
   request: string,
   context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[]; reasoningEffort?: string } & AssistantImageContext,
@@ -235,7 +237,7 @@ async function runJob(
         : !turn.goalMode && !turn.goalRunId)
       .slice(-MODEL_HISTORY_TURNS)
       .map((turn) => ({ request: turn.request, answer: turn.answer }));
-    const { content } = await runTagAgent(key, model, request, context, 6, {
+    const { content } = await runTagAgent(source.key, model, request, context, 6, {
       // 每步实时写入 job，客户端轮询立即能看到检索轨迹。
       onStep: (step) => {
         job.steps.push(step);
@@ -245,7 +247,9 @@ async function runJob(
       history,
       reasoningEffort: context.reasoningEffort,
       signal: jobSignal,
-      refreshKey: (rejectedKey) => refreshChatToken(session, model, rejectedKey),
+      baseUrl: source.baseUrl,
+      transport: source.transport,
+      refreshKey: source.refreshKey,
     });
     const suggestion = adaptAssistantSuggestion(parseTagSuggestion(content), target);
     const candidates = target.capabilities.promptStyle === "tags" ? [...new Set(suggestion.tags)] : [];
@@ -459,13 +463,12 @@ export async function POST(request: Request) {
         { message: "图片总大小不能超过 24MB" },
         { status: 400 },
       );
-    if (!assistantModelIds(await loadNewApiModels(session)).includes(body.model)) return NextResponse.json({ message: "该模型不是当前 NewAPI 账号可用的对话模型，请刷新模型列表" }, { status: 400 });
-    const key = await getChatToken(session, body.model);
+    const source = await resolveAssistantSource(session, body.model, body.assistantProviderId, body.assistantGroup);
     const job = createAssistantJob(session.userId);
     void runJob(
       job,
       session,
-      key,
+      source,
       body.model,
       body.request,
       {
@@ -495,7 +498,7 @@ export async function POST(request: Request) {
         message:
           error instanceof Error ? error.message : "智能标签助手调用失败",
       },
-      { status: 502 },
+      { status: error instanceof AssistantSourceError ? 400 : 502 },
     );
   }
 }

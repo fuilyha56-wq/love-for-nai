@@ -11,7 +11,7 @@ let testData = "";
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), allowed: vi.fn(), token: vi.fn(), spend: vi.fn(), history: vi.fn(), personal: vi.fn(), suggestion: vi.fn(), chatToken: vi.fn(), download: vi.fn() }));
 vi.mock("@/lib/session", () => ({ getSession: async () => ({ userId: 78501, username: "models-test" }) }));
 vi.mock("@/lib/platform", () => ({ resolvedAuthProviderId: mocks.auth }));
-vi.mock("@/lib/provider/newapi-models", () => ({ userCanGenerateWithNewApiModel: mocks.allowed }));
+vi.mock("@/lib/provider/newapi-models", () => ({ userCanGenerateWithNewApiModel: mocks.allowed, loadNewApiModels: async () => [{ id: "gemini-3-pro", kind: "助手模型" }] }));
 vi.mock("@/lib/newapi", () => ({ getImageToken: mocks.token, getChatToken: mocks.chatToken, resolvedNewApiBaseUrl: async () => "https://newapi.example.com", resolvedImageUpstream: async () => null, resolvedNaiImageUpstream: async () => null, imageFromResult: () => [] }));
 vi.mock("@/lib/aff", () => ({ trySpendImageCredits: mocks.spend, refundImageCredits: vi.fn() }));
 vi.mock("@/lib/history", () => ({ saveHistory: mocks.history }));

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, refreshChatToken, resolvedNewApiBaseUrl, type Session } from "@/lib/newapi";
+import { resolveAssistantSource, AssistantSourceError, type AssistantSource } from "@/lib/assistant-source";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import { buildInlineAssistantPrompt, resolveAssistantImageTarget, type AssistantImageTarget } from "@/lib/assistant-model-prompts";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
@@ -16,6 +16,7 @@ import {
 // 不带工具循环——单轮 chat completions，快进快出。
 
 type InlinePayload = {
+  assistantProviderId?: unknown; assistantGroup?: unknown;
   reasoningEffort?: unknown;
   model?: string;
   mode?: string;
@@ -50,15 +51,14 @@ const MAX_INSTRUCTION = 1000;
 
 async function runJob(
   job: InlineChatJob,
-  key: string,
+  source: AssistantSource,
   model: string,
   systemPrompt: string,
   userContent: string,
-  session: Session,
   reasoningEffort?: string,
 ) {
   try {
-    const baseUrl = await resolvedNewApiBaseUrl();
+    const { key, baseUrl } = source;
     const response = await fetchAssistantModel(
       `${baseUrl}/v1/chat/completions`,
       {
@@ -79,7 +79,7 @@ async function runJob(
         cache: "no-store",
         signal: AbortSignal.timeout(90_000),
       },
-      { key, reasoningEffort, refreshKey: (rejectedKey) => refreshChatToken(session, model, rejectedKey) },
+      { ...source, reasoningEffort },
     );
     const result = (await response.json()) as ChatResponse;
     if (!response.ok || result.error)
@@ -170,9 +170,9 @@ export async function POST(request: Request) {
     .join("\n");
 
   try {
-    const key = await getChatToken(session, body.model);
+    const source = await resolveAssistantSource(session, body.model, body.assistantProviderId, body.assistantGroup);
     const job = createInlineChatJob(session.userId);
-    void runJob(job, key, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent, session, reasoningEffort);
+    void runJob(job, source, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent, reasoningEffort);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(
@@ -180,7 +180,7 @@ export async function POST(request: Request) {
         message:
           error instanceof Error ? error.message : "内联聊天调用失败",
       },
-      { status: 502 },
+      { status: error instanceof AssistantSourceError ? 400 : 502 },
     );
   }
 }

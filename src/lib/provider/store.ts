@@ -240,12 +240,13 @@ export async function listTextProviders(userId: number): Promise<CustomProvider[
   return (await listRegistryEntries(userId, "text")).map((item) => toLegacyProvider(item, "text"));
 }
 
-export async function resolveTextProviderModel(userId: number, providerId: string, modelId?: string): Promise<{ provider: CustomProvider; model: string } | null> {
-  const provider = (await listTextProviders(userId)).find((item) => item.id === providerId);
-  if (!provider) return null;
+export async function resolveTextProviderModel(userId: number, providerId: string, modelId?: string): Promise<{ provider: CustomProvider; model: string; kind: ProviderKind } | null> {
+  const entry = (await listRegistryEntries(userId, "text")).find((item) => item.id === providerId);
+  if (!entry) return null;
+  const provider = toLegacyProvider(entry, "text");
   const eligible = provider.modelEntries?.filter((entry) => entry.capabilities === "text" || entry.capabilities === "both") || [];
   const selected = modelId ? eligible.find((entry) => entry.id === modelId)?.id : eligible[0]?.id;
-  return selected ? { provider, model: selected } : null;
+  return selected ? { provider, model: selected, kind: entry.kind } : null;
 }
 
 export async function rememberDiscoveredModels(userId: number, id: string, models: string[]): Promise<boolean> {

@@ -22,6 +22,7 @@ type Props = {
   mobileSection?: "prompt" | "reference" | "size" | "tools";
   prompt: string; negative: string; model: string; operation: string;
   assistantModel: string;
+  assistantProviderId?: string; assistantGroup?: string;
   imageProtocol?: ImageProviderProtocol;
   historyPrompts?: string[];
   onPromptChange: (value: string) => void; onNegativeChange: (value: string) => void;
@@ -202,7 +203,7 @@ export function ReplicaControls(p: Props) {
   const activeSource = (operation: string) => p.operation === operation ? p.source : null;
   const reverseSource = p.reverseSource === undefined ? activeSource("suggest-tags") : p.reverseSource;
   const removeReverseSource = p.onRemoveReverseSource || p.onRemoveSource;
-  const prompt = <ReplicaPromptEditor variant={p.variant} prompt={p.prompt} negative={p.negative} model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} assistantModel={p.assistantModel} historyPrompts={p.historyPrompts} onPromptChange={p.onPromptChange} onNegativeChange={p.onNegativeChange} onEffectiveChange={p.onEffectiveChange} onAssistant={p.onAssistant} />;
+  const prompt = <ReplicaPromptEditor variant={p.variant} prompt={p.prompt} negative={p.negative} model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} assistantModel={p.assistantModel} assistantProviderId={p.assistantProviderId} assistantGroup={p.assistantGroup} historyPrompts={p.historyPrompts} onPromptChange={p.onPromptChange} onNegativeChange={p.onNegativeChange} onEffectiveChange={p.onEffectiveChange} onAssistant={p.onAssistant} />;
   const reverseSection = <Section title="反推" icon={<ScanSearch size={20} />}>
     <button type="button" className="replica-primary-upload" disabled={p.reverseBusy} onClick={() => upload("suggest-tags")} onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); const file = event.dataTransfer.files?.[0]; if (file && !p.reverseBusy) p.onUpload(file, "suggest-tags"); }}><ImagePlus size={19} />增加图片 / 拖入图片</button>
     <SourcePreview source={reverseSource} onRemove={removeReverseSource} />

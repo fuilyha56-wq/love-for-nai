@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantModels } from "@/app/ui/use-assistant-models";
 
 import { TagAssistantPanel } from "@/app/image/tag-assistant-panel";
 import { SeedModeNotice } from "@/app/image/seed-mode-notice";
@@ -21,7 +22,6 @@ import { copyTextToClipboard } from "@/lib/client-clipboard";
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { imageHistoryReferences, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
-import { isAssistantChatModel } from "@/lib/assistant-models";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
@@ -802,11 +802,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   const [tagResults, setTagResults] = useState<DanbooruTag[]>([]);
   const [tagSearching, setTagSearching] = useState(false);
-  const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
-  const [assistantModel, setAssistantModel] = useState("");
-  const assistantModelsLoading = useRef<AbortSignal | null>(null);
-  const [assistantModelsPending, setAssistantModelsPending] = useState(false);
-  const [assistantModelsError, setAssistantModelsError] = useState("");
+  const assistantSelection = useAssistantModels();
+  const { model: assistantModel, providerId: assistantProviderId, group: assistantGroup, refresh: refreshAssistantModels } = assistantSelection;
   const [agentInput, setAgentInput] = useState("");
   const [assistantMode, setAssistantMode] = useState<"tags" | "goal">("tags");
   const [autonomyMode, setAutonomyMode] = useState<"approval" | "full">("approval");
@@ -1485,34 +1482,6 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setGenerating(false);
     }
   }
-  const refreshAssistantModels = useCallback(async (signal: AbortSignal) => {
-    if (assistantModelsLoading.current && !assistantModelsLoading.current.aborted) return;
-    assistantModelsLoading.current = signal;
-    setAssistantModelsPending(true);
-    try {
-      const response = await fetch("/api/assistant/models", { cache: "no-store", signal });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "无法读取助手模型");
-      if (signal.aborted) return;
-      const options: SelectOption[] = (Array.isArray(result.models) ? result.models : [])
-        .filter((id: unknown): id is string => typeof id === "string" && isAssistantChatModel(id))
-        .map((id: string) => ({ value: id, label: id }));
-      setAssistantModels(options);
-      setAssistantModelsError("");
-      setAssistantModel((current) => {
-        let preferred = current;
-        try { preferred ||= window.localStorage.getItem("lfn-agent-model") || ""; } catch { /* storage can be unavailable */ }
-        return options.some((option) => option.value === preferred) ? preferred : (options[0]?.value || "");
-      });
-    } catch (error) {
-      if (!signal.aborted) setAssistantModelsError(error instanceof Error ? error.message : "无法读取助手模型");
-    } finally {
-      if (assistantModelsLoading.current === signal) {
-        assistantModelsLoading.current = null;
-        setAssistantModelsPending(false);
-      }
-    }
-  }, []);
 
   function openAssistantPanel() {
     if (customWorkspace && !customLayout.visibleModules.agent) {
@@ -2156,10 +2125,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     ));
   }, [formCacheReady, modelPolicyReady, model, modelOptions]);
 
-  useEffect(() => {
-    if (!assistantModel) return;
-    try { window.localStorage.setItem("lfn-agent-model", assistantModel); } catch { /* model selection still works without local storage */ }
-  }, [assistantModel]);
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -2495,6 +2461,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: assistantModel,
+          assistantProviderId, assistantGroup,
           reasoningEffort: storedAssistantReasoning(assistantModel),
           imageModel: model,
           modelProtocol: imageProtocol,
@@ -3718,7 +3685,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           <div data-layout-module="prompt" data-layout-collapsed={customWorkspace && customPromptCollapsed ? "true" : undefined} style={customModuleStyle("prompt", customPromptCollapsed)}>
             {layoutModuleTools("prompt")}
             {customWorkspace ? <>
-              <ReplicaPromptEditor variant="nai" prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} historyPrompts={sessionHistory.map((item) => item.prompt)}
+              <ReplicaPromptEditor variant="nai" prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} historyPrompts={sessionHistory.map((item) => item.prompt)}
                 onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
                 collapsed={customPromptCollapsed} onCollapsedChange={setCustomPromptCollapsed}
                 onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }} />
@@ -4054,7 +4021,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       quality: effectiveImageQuality,
       imageSize: effectiveImageResolution,
       background: imageBackground,
-      assistantModel,
+      assistantModel, assistantProviderId, assistantGroup,
       reasoningEffort: storedAssistantReasoning(assistantModel),
       model,
       prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
@@ -4535,8 +4502,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       style={layoutEditorOpen ? customModuleStyle("agent") : undefined} tools={layoutModuleTools("agent")}
       mode={assistantMode} onModeChange={setAssistantMode} autonomy={autonomyMode} onAutonomyChange={setAutonomyMode}
       rounds={goalMaxRounds} onRoundsChange={setGoalMaxRounds} goal={goalRun} onStopGoal={stopGoalAgent} onClearGoal={() => updateGoalRun(null)}
-      modelControl={{ value: assistantModel, options: assistantModels, pending: assistantModelsPending, error: assistantModelsError,
-        onChange: setAssistantModel, onRefresh: () => void refreshAssistantModels(new AbortController().signal) }}
+      modelControl={assistantSelection.control}
       usage={assistantUsage} input={agentInput} onInputChange={setAgentInput} onSubmit={runAgent} onCancel={cancelAssistantTask}
       loading={assistantLoading} searching={tagSearching} error={assistantTaskError}
       images={agentImages} imagesLoading={agentImagesLoading} onAddImages={files => { void handleAgentImageFiles(files); }}
@@ -4735,7 +4701,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     ? !signedIn ? "体验模式" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
     : "个人 Key";
   const controls = replicaLayout ? <ReplicaControls variant={replicaVariant}
-    prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} historyPrompts={sessionHistory.map((item) => item.prompt)}
+    prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} historyPrompts={sessionHistory.map((item) => item.prompt)}
     onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
     onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }}
     width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount}
@@ -5436,6 +5402,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         <InlineChatZone
           session={inlineChat}
           model={assistantModel}
+          assistantProviderId={assistantProviderId} assistantGroup={assistantGroup}
           imageModel={model}
           modelProtocol={imageProtocol}
           operation={operation}

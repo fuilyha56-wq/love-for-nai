@@ -208,6 +208,7 @@ export function InlineChatMenu({
 export function InlineChatZone({
   session,
   model,
+  assistantProviderId, assistantGroup,
   imageModel,
   modelProtocol,
   operation,
@@ -216,6 +217,7 @@ export function InlineChatZone({
 }: {
   session: InlineChatSession;
   model: string;
+  assistantProviderId?: string; assistantGroup?: string;
   imageModel?: string;
   modelProtocol?: string;
   operation?: string;
@@ -257,7 +259,7 @@ export function InlineChatZone({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model,
+            model, assistantProviderId, assistantGroup,
             reasoningEffort: storedAssistantReasoning(model),
             imageModel,
             modelProtocol,

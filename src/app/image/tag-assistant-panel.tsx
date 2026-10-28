@@ -2,13 +2,12 @@
 
 import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, Expand, Minimize2, Plus, RefreshCw, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
-import { AssistantModelPicker } from "./assistant-model-picker";
+import { AssistantModelPicker, AssistantSourceControl, type AssistantModelControl } from "./assistant-model-picker";
 import { AssistantReasoningControl } from "@/app/ui/assistant-reasoning-control";
 import { AssistantUsagePanel, GoalRoundControl, type useAssistantUsage } from "@/app/ui/assistant-usage";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
 import { copyTextToClipboard } from "@/lib/client-clipboard";
-import type { SelectOption } from "@/app/ui/popup-select";
 import "./tag-assistant-panel.css";
 
 type Tag = { name: string; displayName: string; categoryName: string; postCount: number };
@@ -25,7 +24,7 @@ type Props = {
   mode: "tags" | "goal"; onModeChange: (mode: "tags" | "goal") => void;
   autonomy: "approval" | "full"; onAutonomyChange: (mode: "approval" | "full") => void;
   rounds: number; onRoundsChange: (rounds: number) => void; goal: GoalRun | null; onStopGoal: () => void; onClearGoal: () => void;
-  modelControl: { value: string; options: SelectOption[]; pending: boolean; error: string; onChange: (model: string) => void; onRefresh: () => void };
+  modelControl: AssistantModelControl;
   usage: ReturnType<typeof useAssistantUsage>;
   input: string; onInputChange: (input: string) => void; onSubmit: () => void; onCancel: () => void;
   loading: boolean; searching: boolean; error: string;
@@ -113,7 +112,7 @@ export function TagAssistantPanel(p: Props) {
       <div><b>助手设置</b><button type="button" onClick={() => setSettingsOpen(false)} aria-label="关闭助手设置"><X size={16} /></button></div>
       <p>{p.natural ? `根据 ${p.imageModel || "当前模型"} 的能力整理场景描述和参考图修改。` : "自动查阅本地标签库、Danbooru 或 QuickTagCloud，也可在消息中指定来源。"}</p>
       <p>多轮对话保留上下文和已校验标签。支持上传或粘贴 10 张参考图，自动压缩；目标复核使用前 9 张与最新结果。</p>
-      <p>Enter 发送，Shift + Enter 换行。模型调用使用当前账号 NewAPI 额度，生图按工作台当前计价。</p>
+      <p>Enter 发送，Shift + Enter 换行。{p.modelControl.providerId && p.modelControl.providerId !== "newapi" ? "模型调用由所选自定义模型源计费。" : "模型调用使用当前账号 NewAPI 额度。"}生图按工作台当前计价。</p>
       <button type="button" className="assistant-settings-refresh" disabled={p.modelControl.pending} onClick={p.modelControl.onRefresh}><RefreshCw size={14} />{p.modelControl.pending ? "刷新中…" : "刷新模型列表"}</button>
     </div>}
     <div className="assistant-transcript" ref={scrollRef} onScroll={() => {
@@ -180,7 +179,7 @@ export function TagAssistantPanel(p: Props) {
         }} placeholder={p.mode === "goal" ? "描述你希望达到的画面…" : "给助手发送消息，可粘贴参考图…"} />
           <button type="button" aria-label={expandedInput ? "收起助手输入框" : "展开助手输入框"} aria-expanded={expandedInput} title={expandedInput ? "收起输入框" : "展开输入框"} onClick={() => setExpandedInput(!expandedInput)}>{expandedInput ? <Minimize2 size={13} /> : <Expand size={13} />}</button></div>
         <div className="assistant-composer-meta"><span>{p.imagesLoading ? "正在压缩参考图…" : "Enter 发送 · Shift + Enter 换行"}</span><span id={countId} data-assistant-input-count>{p.input.length.toLocaleString()} / {ASSISTANT_INPUT_MAX_LENGTH.toLocaleString()} 字</span></div>
-        {p.signedIn && <div className="assistant-composer-models"><AssistantModelPicker {...p.modelControl} compact disabled={p.loading} /><AssistantReasoningControl model={p.modelControl.value} compact /></div>}
+        {p.signedIn && <><AssistantSourceControl {...p.modelControl} disabled={busy} /><div className="assistant-composer-models"><AssistantModelPicker {...p.modelControl} compact disabled={busy} /><AssistantReasoningControl model={p.modelControl.value} compact /></div></>}
         <div className="assistant-composer-actions"><label className="assistant-add-reference" title={`添加参考图 · ${p.images.length} / ${MAX_ASSISTANT_IMAGES}`} aria-disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES}><Plus size={18} /><span>{p.images.length ? `${p.images.length} / ${MAX_ASSISTANT_IMAGES}` : "参考图"}</span><input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="上传识图图片" disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES} onChange={event => { const files = [...(event.target.files || [])]; event.target.value = ""; addImages(files); }} /></label>
           <span className="assistant-composer-spacer" />{p.goal?.status === "running" ? <button className="assistant-send-button" type="button" onClick={p.onStopGoal} aria-label="停止目标 Agent" title="停止自动迭代"><Square size={14} fill="currentColor" /></button> : p.loading ? <button className="assistant-send-button" type="button" onClick={p.onCancel} aria-label="取消助手任务" title="取消"><Square size={14} fill="currentColor" /></button> : <button type="submit" className="assistant-send-button" disabled={busy || p.imagesLoading || !p.input.trim()} aria-label={sendLabel} title={sendLabel}><ArrowUp size={18} /></button>}
         </div>

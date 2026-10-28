@@ -190,7 +190,7 @@ export function userHeaders(session: Session): Record<string, string> {
   };
 }
 
-async function readUsableGroups(
+export async function readUsableGroups(
   baseUrl: string,
   headers: Record<string, string>,
 ): Promise<string[]> {
@@ -258,6 +258,7 @@ async function resolveToken(
   prefix: string,
   requiredGroup?: string,
   baseUrl = newApiBaseUrl(),
+  strictGroup = false,
 ): Promise<string> {
   const headers = userHeaders(session);
   const selfResponse = await fetchNewApiSelf(baseUrl, headers);
@@ -283,6 +284,8 @@ async function resolveToken(
     selfGroup,
     requiredGroup,
   );
+  if (strictGroup && group !== requiredGroup)
+    throw new Error("所选分组不支持此模型或当前账号无权使用，请刷新模型列表");
   if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
     throw new Error(
@@ -334,7 +337,7 @@ async function resolveToken(
   // 助手先检查所有兼容分组的已有密钥，再决定是否创建；不能因为模型
   // 的第一个分组没有密钥，就忽略另一个兼容分组中用户已经持有的密钥。
   const compatibleGroups =
-    prefix === LFN_CHAT_TOKEN_PREFIX
+    prefix === LFN_CHAT_TOKEN_PREFIX && !strictGroup
       ? new Set(
           modelGroups.filter((item) =>
             [selfGroup, ...usableGroups].includes(item),
@@ -431,10 +434,11 @@ async function cachedToken(
   model: string,
   prefix: string,
   requiredGroup?: string,
+  strictGroup = false,
 ): Promise<string> {
   // baseUrl 也放进 key，运行时切换 NewAPI 后不会误用旧实例密钥。
   const baseUrl = await resolvedNewApiBaseUrl();
-  const key = tokenCacheKey(session, model, prefix, baseUrl, requiredGroup);
+  const key = tokenCacheKey(session, model, prefix, baseUrl, requiredGroup) + (strictGroup ? "|selected" : "");
   const now = Date.now();
   const existing = tokenCache.get(key);
   if (existing?.pending) return existing.pending;
@@ -444,7 +448,7 @@ async function cachedToken(
   pruneTokenCache(now);
   const entry: TokenCacheEntry = { expiresAt: now + TOKEN_CACHE_TTL_MS };
   const pending = withTokenLock(`${baseUrl}|${session.userId}`, () =>
-    resolveToken(session, model, prefix, requiredGroup, baseUrl),
+    resolveToken(session, model, prefix, requiredGroup, baseUrl, strictGroup),
   );
   entry.pending = pending;
   tokenCache.set(key, entry);
@@ -469,8 +473,8 @@ export function getImageToken(
   return cachedToken(session, model, LFN_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
-export function getChatToken(session: Session, model: string): Promise<string> {
-  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
+export function getChatToken(session: Session, model: string, group?: string): Promise<string> {
+  return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, group || LFN_MODEL_GROUP, Boolean(group));
 }
 
 export function getStoryToken(
@@ -485,6 +489,7 @@ export async function refreshChatToken(
   session: Session,
   model: string,
   rejectedKey: string,
+  group?: string,
 ): Promise<string> {
   const baseUrl = await resolvedNewApiBaseUrl();
   const scope = `${baseUrl}|${session.userId}|`;
@@ -492,7 +497,7 @@ export async function refreshChatToken(
     if (key.startsWith(scope) && entry.token === rejectedKey)
       tokenCache.delete(key);
   }
-  return getChatToken(session, model);
+  return getChatToken(session, model, group);
 }
 
 // 上游会话过期时消息是英文的，前端需要据此提示重新登录而不是展示原文。

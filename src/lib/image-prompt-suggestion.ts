@@ -2,6 +2,7 @@ import { isKnownImageModel, type ImageProviderProtocol } from "@/lib/image-model
 import { adaptAssistantSuggestion, resolveAssistantImageTarget } from "@/lib/assistant-model-prompts";
 import { runTagAgent } from "@/lib/tag-agent";
 import { parseTagSuggestion } from "@/lib/tag-suggestion";
+import type { AssistantKeyAuth } from "@/lib/assistant-model-request";
 
 /** Called after route-owned session, model permission and upstream selection checks. */
 export async function runImagePromptSuggestion(options: {
@@ -9,6 +10,7 @@ export async function runImagePromptSuggestion(options: {
   chatModel: string;
   baseUrl?: string;
   refreshKey?: (rejectedKey: string) => Promise<string>;
+  transport?: AssistantKeyAuth["transport"];
   reasoningEffort?: string;
   imageModel: string;
   modelProtocol?: ImageProviderProtocol;
@@ -34,7 +36,7 @@ export async function runImagePromptSuggestion(options: {
       : "完善并补写现有提示词，保持原意，补充清晰的场景、构图及视觉细节，返回可以直接替换原文的完整自然语言提示词。仅生成提示词，不生成图片，不进行网络检索。",
     { currentPrompt: options.prompt, imageModel: target.imageModel, modelProtocol: target.modelProtocol, operation: "generate" },
     1,
-    { images, reasoningEffort: options.reasoningEffort, baseUrl: options.baseUrl, signal: options.signal, ...(options.refreshKey ? { refreshKey: options.refreshKey } : {}) },
+    { images, reasoningEffort: options.reasoningEffort, baseUrl: options.baseUrl, signal: options.signal, ...(options.transport ? { transport: options.transport } : {}), ...(options.refreshKey ? { refreshKey: options.refreshKey } : {}) },
   );
   const suggestion = adaptAssistantSuggestion(parseTagSuggestion(result.content), target);
   if (!suggestion.prompt.trim()) throw new Error("助手未返回可使用的提示词");
