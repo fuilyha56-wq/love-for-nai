@@ -84,10 +84,19 @@ export function useAssistantUsage() {
 }
 
 const number = (value: number) => value.toLocaleString("zh-CN", { maximumFractionDigits: 6 });
-export function AssistantUsagePanel({ usage, goal }: { usage: ReturnType<typeof useAssistantUsage>; goal: boolean }) {
+export function AssistantUsagePanel({ usage, goal, compact = false }: { usage: ReturnType<typeof useAssistantUsage>; goal: boolean; compact?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const summary = summarizeAssistantUsage(Object.values(usage.state.jobs).flat(), Object.values(usage.state.images));
   const active = Object.keys(usage.state.jobs).length > 0 || summary.images > 0;
-  return <section className="assistant-usage-panel" aria-label="助手上下文与消耗" aria-live="polite">
+  const imageReceipts = Object.values(usage.state.images);
+  const hasBalance = summary.settledModels > 0 || imageReceipts.some(image => image.balanceCost !== null);
+  return <section className={`assistant-usage-panel${compact ? " is-compact" : ""}`} aria-label="助手上下文与消耗" aria-live="polite">
+    {compact && <button type="button" className="assistant-usage-toggle" aria-label={expanded ? "收起用量明细" : "展开用量明细"} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+      <span>{summary.contextTokens === null ? "上下文 —" : `${number(summary.contextTokens)} tokens`}</span>
+      <span title="已结算的模型与生图消耗；展开查看分项">{hasBalance ? `${number(summary.modelBalance + summary.imageBalance)} 余额` : summary.pending || usage.state.openJobs.length ? "待结算" : "消耗 —"}</span>
+      {imageReceipts.some(image => image.aff !== null) && <span>{formatAff(summary.imageAff)} AFF</span>}<span aria-hidden="true">{expanded ? "⌃" : "⌄"}</span>
+    </button>}
+    <div className="assistant-usage-detail" hidden={compact && !expanded}>
     <header><b>{goal ? "本次目标用量" : "最近任务用量"}</b><button type="button" disabled={usage.refreshing || !active} onClick={() => void usage.refresh()}>{usage.refreshing ? "刷新中…" : "刷新账单"}</button></header>
     {active ? <>
       <dl>
@@ -106,5 +115,6 @@ export function AssistantUsagePanel({ usage, goal }: { usage: ReturnType<typeof 
       {summary.calls === 0 && usage.state.openJobs.length === 0 && <p className="assistant-usage-note">上游未返回可核对的模型用量，费用以 NewAPI 账单为准。</p>}
     </> : <p className="assistant-usage-note">任务开始后显示上下文 token、模型调用额度与生图费用。</p>}
     {usage.error && <p role="status" className="assistant-usage-note">{usage.error}</p>}
+    </div>
   </section>;
 }

@@ -28,7 +28,7 @@ const results = [], errors = [];
       await context.route('**/api/assistant/**', route => {
         if (route.request().url().includes('/models')) return route.fulfill({ json: { models: ['deepseek-v4-pro'] } });
         if (route.request().method() === 'POST') { submitted.push(route.request().postDataJSON()); return route.fulfill({ json: { jobId: 'fixture' } }); }
-        if (route.request().url().includes('?job=')) return route.fulfill({ json: { status: 'done', suggestion: { prompt: 'cloud', negativePrompt: '', parameters: {}, tags: [] }, validatedTags: [], rejectedTags: [], unverifiedTags: [] } });
+        if (route.request().url().includes('?job=')) return route.fulfill({ json: { status: 'done', usage: [], suggestion: { prompt: 'cloud', negativePrompt: '', parameters: {}, tags: [] }, validatedTags: [], rejectedTags: [], unverifiedTags: [] } });
         return route.fulfill({ json: { turns: [], tagPool: [] } });
       });
       try {
@@ -52,6 +52,7 @@ const results = [], errors = [];
         await input.waitFor();
         const reasoning = page.getByRole('button', { name: '助手思考强度', exact: true });
         await reasoning.waitFor();
+        await page.getByRole('button', { name: '智能助手模型', exact: true }).filter({ hasText: 'deepseek-v4-pro' }).waitFor();
         assert.match(await reasoning.innerText(), /high/);
         assert.equal(await reasoning.getAttribute('aria-haspopup'), 'listbox');
         assert.equal(await page.locator('.assistant-reasoning-control select').count(), 0);
@@ -60,7 +61,7 @@ const results = [], errors = [];
         await reasoning.click();
         const menu = page.getByRole('listbox', { name: '助手思考强度', exact: true });
         await menu.waitFor();
-        assert.deepEqual(await menu.getByRole('option').allTextContents(), ['low', 'high · 默认', 'max']);
+        assert.deepEqual(await menu.getByRole('option').allTextContents(), ['low', 'high', 'max']);
         assert.match(await menu.getByRole('option').first().evaluate(element => getComputedStyle(element).fontFamily), /^"?Noto Sans SC"?, sans-serif$/);
         const menuBox = await menu.boundingBox(); assert(menuBox.x >= 0 && menuBox.x + menuBox.width <= width + 1);
         await page.screenshot({ path: path.join(output, `${name}-reasoning-select.png`) });

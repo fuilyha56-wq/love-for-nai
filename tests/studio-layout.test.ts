@@ -347,8 +347,9 @@ describe("工作台布局按主题隔离", () => {
     expect(html).not.toContain("grid-row:");
     expect(html).not.toContain('data-layout-drag=');
     expectCollapsedTools(tools);
-    const assistant = elementMarkup(tools, "div", '<div data-layout-module="agent"');
-    expect(assistant.match(/^<div\b[^>]*>/)?.[0]).not.toContain("min-height:");
+    const assistant = elementMarkup(tools, "section", '<section class="tag-assistant-panel"');
+    expect(assistant.match(/^<section\b[^>]*>/)?.[0]).not.toContain("min-height:");
+    expect(assistant).toContain('data-assistant-layout="launcher"');
     expect(html).not.toContain('data-replica-studio=');
     expect(html).not.toContain('class="replica-controls"');
     expect(canvas).not.toContain("<textarea");

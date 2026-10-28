@@ -17,7 +17,7 @@ const results = [], errors = [];
         const req = route.request(), url = new URL(req.url());
         if (url.pathname.endsWith('/models')) return route.fulfill({ json: { models: ['text-chat'] } });
         if (req.method() === 'POST') { requests.push(req.postDataJSON()); return route.fulfill({ json: { jobId: 'input-test' } }); }
-        if (url.searchParams.has('job')) return route.fulfill({ json: { status: 'done', suggestion: { prompt: '1girl', negativePrompt: 'lowres', message: '输入测试完成', tags: [], parameters: {} }, validatedTags: [], rejectedTags: [], unverifiedTags: [] } });
+        if (url.searchParams.has('job')) return route.fulfill({ json: { status: 'done', usage: [], suggestion: { prompt: '1girl', negativePrompt: 'lowres', message: '输入测试完成', tags: [], parameters: {} }, validatedTags: [], rejectedTags: [], unverifiedTags: [] } });
         return route.fulfill({ json: { turns: [], tagPool: [] } });
       });
       try {
@@ -36,7 +36,7 @@ const results = [], errors = [];
         assert.equal((await input.inputValue()).length, 10000);
         assert.match(await page.locator('[data-assistant-input-count]:visible').innerText(), /10,000\s*\/\s*10,000/);
         await input.press('Enter');
-        await page.waitForFunction(() => !document.querySelector('button[type=submit]:disabled'));
+        await page.getByRole('button', { name: '让助手处理', exact: true }).waitFor();
         assert.equal(requests.length, 1);
         assert.equal(requests[0].request, text);
         await page.getByRole('button', { name: '目标 Agent', exact: true }).click();

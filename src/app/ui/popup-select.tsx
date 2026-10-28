@@ -34,6 +34,7 @@ export function PopupSelect({
   className = "",
   triggerClassName = "",
   menuClassName = "",
+  menuMinWidth = 0,
   id,
 }: {
   value: string;
@@ -47,6 +48,7 @@ export function PopupSelect({
   className?: string;
   triggerClassName?: string;
   menuClassName?: string;
+  menuMinWidth?: number;
   id?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -89,7 +91,7 @@ export function PopupSelect({
     const openAbove = availableBelow < desiredHeight && availableAbove > availableBelow;
     const available = openAbove ? availableAbove : availableBelow;
     const height = Math.min(desiredHeight, available);
-    const width = Math.min(trigger.width, viewportWidth - 16);
+    const width = Math.min(Math.max(trigger.width, menuMinWidth), viewportWidth - 16);
     setMenuStyle({
       position: "fixed",
       visibility: "visible",
@@ -101,7 +103,7 @@ export function PopupSelect({
       transform: "none",
       transformOrigin: openAbove ? "bottom left" : "top left",
     });
-  }, [searchable, visible.length]);
+  }, [searchable, visible.length, menuMinWidth]);
 
   useLayoutEffect(() => {
     if (open) {

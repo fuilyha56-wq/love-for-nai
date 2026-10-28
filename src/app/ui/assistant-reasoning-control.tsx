@@ -9,7 +9,7 @@ export function storedAssistantReasoning(model: string) {
   try { return resolveAssistantReasoning(model, current[model] ?? JSON.parse(localStorage.getItem(key) || "{}")[model]); }
   catch { return resolveAssistantReasoning(model); }
 }
-export function AssistantReasoningControl({ model }: { model: string }) {
+export function AssistantReasoningControl({ model, compact = false }: { model: string; compact?: boolean }) {
   const [preferences, setPreferences] = useState<Record<string, string>>({});
   useEffect(() => {
     const load = () => { try { setPreferences({ ...JSON.parse(localStorage.getItem(key) || "{}"), ...current }); } catch { setPreferences({ ...current }); } };
@@ -21,11 +21,12 @@ export function AssistantReasoningControl({ model }: { model: string }) {
   const p = assistantReasoningProfile(model);
   let selected: string;
   try { selected = resolveAssistantReasoning(model, preferences[model]) || "auto"; } catch { selected = resolveAssistantReasoning(model) || "auto"; }
-  return <div className="assistant-reasoning-control">
+  return <div className={`assistant-reasoning-control${compact ? " is-compact" : ""}`} title={`思考强度 · ${p.vendor}${p.note ? `：${p.note}` : ""}`}>
     <span>思考强度 · {p.vendor}</span>
     <PopupSelect ariaLabel="助手思考强度" className="assistant-reasoning-select" triggerClassName="assistant-reasoning-trigger" menuClassName="assistant-reasoning-menu"
+      menuMinWidth={compact ? 150 : 0}
       value={selected} disabled={!p.levels.length}
-      options={p.levels.length ? p.levels.map(level => ({ value: level, label: `${level === "none" ? "关闭" : level}${level === "high" ? " · 默认" : ""}` })) : [{ value: "auto", label: "上游默认" }]}
+      options={p.levels.length ? p.levels.map(level => ({ value: level, label: `${level === "none" ? "关闭" : level}${level === "high" && !compact ? " · 默认" : ""}` })) : [{ value: "auto", label: "上游默认" }]}
       onChange={effort => {
       current[model] = effort;
       const next = { ...preferences, [model]: effort }; setPreferences(next);

@@ -121,7 +121,6 @@
 .mobile-studio-sheet-content .replica-generation-footer { display: none; }
 .mobile-studio-assistant-content { min-width: 0; min-height: 100%; }
 .mobile-studio-assistant-content > [data-layout-module="agent"] { min-height: 0; margin: 0; border: 0; padding: 4px 2px 16px; overflow: visible; }
-.mobile-studio-assistant-content .field { min-height: 112px; resize: vertical; }
 /* One persistent workspace: all three pages use the prompt page's surfaces,
    gutters and chrome. Switching only changes which scroll pane is visible. */
 .mobile-studio-prompt-backdrop[hidden], .mobile-studio-workspace-content[hidden] { display: none; }
@@ -131,26 +130,6 @@
 .mobile-studio-workspace-content .replica-controls[data-variant] .replica-controls-scroll { padding: 0; }
 .mobile-studio-workspace-content .mobile-parameter-panel { padding: 0; }
 .mobile-studio-workspace-content .mobile-studio-assistant-content { display: flex; flex-direction: column; }
-.mobile-studio-workspace-content .mobile-studio-assistant-content > .mobile-assistant-panel { display: flex; min-height: 0; flex: 1; flex-direction: column; padding: 0; overflow: visible; }
-.mobile-studio-workspace-content .mobile-assistant-panel { font-size: 13px; }
-.mobile-studio-workspace-content .mobile-assistant-panel > p { font-size: 12px; line-height: 1.7; }
-.mobile-studio-workspace-content .mobile-assistant-panel > div:first-of-type { min-height: 28px; flex-wrap: wrap; }
-.mobile-studio-workspace-content .mobile-assistant-panel > div:first-of-type button { min-height: 44px; padding-inline: 8px; }
-.mobile-studio-workspace-content .mobile-assistant-segments { gap: 4px; padding: 0; border: 0; border-radius: 8px; background: transparent; }
-.mobile-studio-workspace-content .mobile-assistant-segments button { min-width: 0; min-height: 48px; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; transition: none; }
-.mobile-studio-workspace-content .mobile-assistant-segments button[aria-pressed="true"] { background: var(--workspace-input); color: var(--accent-text); }
-.mobile-studio-workspace-content .mobile-assistant-model { margin-top: 16px; }
-.mobile-studio-workspace-content .mobile-assistant-model > div:first-child { min-height: 44px; margin-bottom: 4px; font-size: 13px; }
-.mobile-studio-workspace-content .mobile-assistant-model > div:first-child button { min-width: 44px; min-height: 44px; color: var(--accent-text); }
-.mobile-studio-workspace-content .mobile-assistant-form { display: flex; flex: 1; flex-direction: column; gap: 8px; margin-top: 16px; }
-.mobile-studio-workspace-content .mobile-assistant-form > * { margin-block: 0; }
-.mobile-studio-workspace-content .mobile-assistant-form textarea.field { display: block; min-height: 144px; height: auto; max-height: 480px; flex: 1 0 144px; padding: 12px; border: 0; border-radius: 8px; background: var(--workspace-input); box-shadow: none; color: var(--ink); font-size: 16px; line-height: 1.6; resize: none; }
-.mobile-studio-workspace-content .mobile-assistant-form textarea.field:focus-visible { outline: 2px solid var(--rose); outline-offset: 1px; }
-.mobile-studio-workspace-content .mobile-assistant-form .key-action { display: inline-flex; min-width: 44px; min-height: 44px; justify-content: center; border: 0; border-radius: 8px; background: var(--workspace-input); color: var(--ink); }
-.mobile-studio-workspace-content .mobile-assistant-form button[type="submit"] { min-height: 44px; height: auto; padding: 12px; border: 0; border-radius: 8px; background: var(--rose); color: white; font-size: 13px; }
-.mobile-studio-workspace-content .mobile-assistant-panel :is(.bg-white,.bg-\[\#faf9f5\]) { border-color: transparent; border-radius: 8px; background: var(--workspace-input); }
-.mobile-studio-workspace-content .mobile-assistant-panel .bg-\[\#f1eee7\] { background: var(--surface-muted); color: var(--ink); }
-.mobile-studio-workspace-content .mobile-assistant-panel .mobile-assistant-segments { background: transparent; }
 @media (max-width: 359px) { .mobile-studio-workspace-content { padding-inline: 16px; } }
 .mobile-legacy-sheet-section { display: grid; min-width: 0; gap: 14px; }
 .mobile-legacy-sheet-heading { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--line); color: var(--ink); font-size: 14px; }

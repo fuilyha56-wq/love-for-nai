@@ -1,5 +1,7 @@
 "use client";
 
+import { TagAssistantPanel } from "@/app/image/tag-assistant-panel";
+
 import { useStudioSessionHistory } from "@/app/image/use-studio-session-history";
 import { localStudioHistory, remoteStudioHistory, mergeStudioHistory, studioHistoryKey } from "@/lib/studio-history";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
@@ -17,7 +19,6 @@ import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
 import { imageHistoryReferences, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
 import { isAssistantChatModel } from "@/lib/assistant-models";
-import { AssistantModelPicker } from "./assistant-model-picker";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
@@ -62,7 +63,6 @@ import {
   PawPrint,
   Plus,
   Redo2,
-  Search,
   RotateCcw,
   Save,
   ShieldCheck,
@@ -102,10 +102,9 @@ import {
   type UcPresetType,
 } from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
-import { AssistantReasoningControl, storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
-import { AssistantAttachments } from "@/app/ui/assistant-attachments";
+import { storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
 import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
-import { AssistantUsagePanel, GoalRoundControl, useAssistantUsage, useGoalRoundLimit } from "@/app/ui/assistant-usage";
+import { useAssistantUsage, useGoalRoundLimit } from "@/app/ui/assistant-usage";
 import type { AssistantCallUsage } from "@/lib/assistant-usage";
 import { CreditPricingButton, useCreditPricing } from "@/app/ui/credit-pricing";
 import { formatAff } from "@/lib/credit-pricing";
@@ -343,20 +342,6 @@ type ConversationUi = {
   tagPool: DanbooruTag[];
 };
 
-// 检索过程里展示用的工具中文名。
-const agentToolLabels: Record<string, string> = {
-  search_tag_catalog: "检索本地标签库",
-  read_tag_catalog: "读取本地完整介绍",
-  tag_catalog_status: "核对标签库",
-  search_danbooru_tags: "在线检索 Danbooru",
-  verify_danbooru_tag: "在线校验 Danbooru",
-  read_danbooru_wiki: "在线读取 Danbooru 词条",
-  list_quicktagcloud_codexes: "在线读取 QuickTagCloud 目录",
-  search_quicktagcloud_tags: "在线检索 QuickTagCloud",
-  read_quicktagcloud_entry: "在线读取 QuickTagCloud 词条",
-  web_search: "概念检索",
-};
-
 // 创作中心链接：完整侧栏与折叠图标栏（new-api 式 icon rail）共用。
 // 图标按功能语义选择，图标栏下同名图标不能重复。
 const CREATIVE_CENTER_LINKS: Array<{
@@ -471,7 +456,6 @@ const acceptedUploadTypes = new Set([
   "image/webp",
 ]);
 const MAX_UPLOAD_SIZE = 15 * 1024 * 1024;
-const ASSISTANT_MESSAGE_MAX = 500;
 const SOURCE_REFRESH_TTL_MS = 5 * 60 * 1_000;
 const POLICY_REFRESH_TTL_MS = 5 * 60 * 1_000;
 const defaultPrompt =
@@ -779,7 +763,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [tagSearching, setTagSearching] = useState(false);
   const [assistantModels, setAssistantModels] = useState<SelectOption[]>([]);
   const [assistantModel, setAssistantModel] = useState("");
-  const assistantModelsLoading = useRef(false);
+  const assistantModelsLoading = useRef<AbortSignal | null>(null);
   const [assistantModelsPending, setAssistantModelsPending] = useState(false);
   const [assistantModelsError, setAssistantModelsError] = useState("");
   const [agentInput, setAgentInput] = useState("");
@@ -813,7 +797,6 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     turns: [],
     tagPool: [],
   });
-  const [conversationOpen, setConversationOpen] = useState(false);
   const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantTimeoutRef = useRef<number | null>(null);
@@ -1450,8 +1433,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
   const refreshAssistantModels = useCallback(async (signal: AbortSignal) => {
-    if (assistantModelsLoading.current) return;
-    assistantModelsLoading.current = true;
+    if (assistantModelsLoading.current && !assistantModelsLoading.current.aborted) return;
+    assistantModelsLoading.current = signal;
     setAssistantModelsPending(true);
     try {
       const response = await fetch("/api/assistant/models", { cache: "no-store", signal });
@@ -1471,8 +1454,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     } catch (error) {
       if (!signal.aborted) setAssistantModelsError(error instanceof Error ? error.message : "无法读取助手模型");
     } finally {
-      assistantModelsLoading.current = false;
-      setAssistantModelsPending(false);
+      if (assistantModelsLoading.current === signal) {
+        assistantModelsLoading.current = null;
+        setAssistantModelsPending(false);
+      }
     }
   }, []);
 
@@ -4519,363 +4504,26 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   // 标签助手内容保持挂载，切换标签、折叠和浮窗均保留输入与对话。
   const agentBlockInner = (
-    <>
-          <div data-layout-module="agent" style={layoutEditorOpen ? customModuleStyle("agent") : undefined} className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--line)] p-4">
-            {layoutModuleTools("agent")}
-            <div className="flex items-center gap-2">
-              <WandSparkles size={15} className="text-[var(--rose)]" />
-              <b className="text-sm">标签助手</b>
-              {signedIn && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
-                <span className="ml-auto flex items-center gap-2 text-[10px]">
-                  <button
-                    type="button"
-                    onClick={() => setConversationOpen((open) => !open)}
-                    className="font-semibold text-[var(--muted)] hover:text-[var(--rose)]"
-                  >
-                    {conversationOpen ? "收起对话" : `对话 ${conversation.turns.length} 轮`}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      if (
-                        (await lfnConfirm(
-                          "确定清空助手对话记录？历史轮次与累积标签都会删除。",
-                        ))
-                      )
-                        void clearConversationHistory();
-                    }}
-                    className="font-semibold text-[var(--muted)] hover:text-red-600"
-                    title="删除全部对话记录"
-                  >
-                    清空
-                  </button>
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">
-              {naturalImageModel ? `助手按 ${model || "当前图像模型"} 的能力整理场景描述、参考图修改和排除要求。` : "助手可自主选择本地标签库、在线 Danbooru 或在线 QuickTagCloud，查阅词条并整理标签；可在需求中指定来源。"}
-              {signedIn && " 多轮对话共享上下文，已校验标签会持续保留。"}
-            </p>
-            <div className="mt-3 grid grid-cols-2 gap-1 rounded-lg border border-[var(--line)] bg-white p-1" role="group" aria-label="标签助手模式">
-              <button type="button" aria-pressed={assistantMode === "tags"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAssistantMode("tags")} className={`rounded-md px-2 py-2 text-[11px] font-semibold transition ${assistantMode === "tags" ? "bg-[var(--rose)] text-white" : "text-[var(--muted)] hover:bg-[var(--paper)]"}`}>标签助手</button>
-              <button type="button" aria-pressed={assistantMode === "goal"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAssistantMode("goal")} className={`rounded-md px-2 py-2 text-[11px] font-semibold transition ${assistantMode === "goal" ? "bg-[var(--rose)] text-white" : "text-[var(--muted)] hover:bg-[var(--paper)]"}`}>目标 Agent</button>
-            </div>
-            {assistantMode === "goal" && <>
-              <div className="mt-2 grid grid-cols-2 gap-1" role="group" aria-label="Agent 执行权限">
-                <button type="button" aria-pressed={autonomyMode === "approval"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("approval")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "approval" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>请求批准（默认）</button>
-                <button type="button" aria-pressed={autonomyMode === "full"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("full")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "full" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>完全访问</button>
-              </div>
-              <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">{autonomyMode === "approval" ? "每轮生成后 Agent 会评估并提出调整；提示词、标签与参数都由你决定是否应用。" : `LLM 会自动应用调整并继续生成，最多 ${goalMaxRounds} 轮，每轮 1 张；生成费用由当前账号承担。`}</p>
-            </>}
-            {assistantMode === "goal" && autonomyMode === "full" && <GoalRoundControl value={goalMaxRounds} onChange={setGoalMaxRounds} disabled={goalRun?.status === "running" || assistantLoading} />}
-            {goalRun && <div className="mt-2 rounded border border-[var(--line)] bg-white p-2.5 text-[10px] leading-4">
-              <div className="flex items-center justify-between gap-2"><b>目标 Agent · 已生成 {goalRun.completedGenerations}{goalRun.accessMode === "full" ? ` / ${goalRun.maxGenerations}` : ""} 轮</b>{goalRun.status === "running" ? <button type="button" onClick={stopGoalAgent} className="font-semibold text-[var(--rose)]">停止</button> : <button type="button" onClick={() => updateGoalRun(null)} className="font-semibold text-[var(--muted)]">清除</button>}</div>
-              <p className="mt-1 text-[var(--muted)]">{goalRun.status === "running" ? goalRun.accessMode === "full" ? "Agent 正在迭代，生成后的图片会自动送回模型评估。" : "等待建议或下一张结果；所有改动都需要你手动应用。" : goalRun.status === "complete" ? "Agent 判断图像已达到目标。" : goalRun.status === "limit" ? "已达到完全访问轮数上限，最后建议仍可手动应用。" : goalRun.status === "stopped" ? "Agent 已停止。" : "Agent 暂停，请检查当前设置或重新发起目标。"}</p>
-            </div>}
-            {signedIn && (<>
-              <AssistantModelPicker value={assistantModel} options={assistantModels} onChange={setAssistantModel} pending={assistantModelsPending}
-                error={assistantModelsError} disabled={assistantLoading} onRefresh={() => void refreshAssistantModels(new AbortController().signal)} />
-              <AssistantReasoningControl model={assistantModel} />
-              <AssistantUsagePanel usage={assistantUsage} goal={assistantMode === "goal" && Boolean(goalRun)} />
-            </>)}
-            {assistantTaskError && <p role="alert" className="mt-2 rounded border border-[#e2c38c] bg-[#fff8e8] p-2.5 text-[11px] leading-5 text-[#86551c]">{assistantTaskError}</p>}
-            {conversationOpen && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
-              <div className="mt-3 space-y-3">
-                {!!conversation.tagPool.length && (
-                  <div className="rounded border border-[var(--line)] bg-white p-2.5">
-                    <b className="text-[11px]">已保留标签 · {conversation.tagPool.length}</b>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {conversation.tagPool.map((tag) => (
-                        <button
-                          key={tag.name}
-                          type="button"
-                          onClick={() => appendTag(tag.name)}
-                          className="rounded bg-[#f1eee7] px-2 py-1 text-[10px] hover:bg-[#e8ddda]"
-                          title={`${tag.categoryName} · ${tag.postCount.toLocaleString("zh-CN")} 张 · 点击追加到提示词`}
-                        >
-                          {tag.displayName}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="max-h-80 space-y-2 overflow-y-auto">
-                  {conversation.turns.map((turn) => (
-                    <div
-                      key={turn.id}
-                      className="rounded border border-[var(--line)] bg-[#faf9f5] p-2.5"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="min-w-0 break-words text-[11px] font-semibold">
-                          {turn.request}
-                        </p>
-                        <time className="shrink-0 text-[10px] text-[var(--muted)]">
-                          {new Date(turn.createdAt).toLocaleString("zh-CN", {
-                            month: "2-digit",
-                            day: "2-digit",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </time>
-                      </div>
-                      {!!turn.tags.length && (
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {turn.tags.map((tag) => (
-                            <button
-                              key={tag.name}
-                              type="button"
-                              onClick={() => appendTag(tag.name)}
-                              className="rounded bg-white px-1.5 py-0.5 text-[10px] hover:bg-[#f1eee7]"
-                              title="点击追加到提示词"
-                            >
-                              {tag.displayName}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {turn.message && (
-                        <p className="assistant-speech-turn">
-                          {turn.message.slice(0, ASSISTANT_MESSAGE_MAX)}
-                        </p>
-                      )}
-                      {turn.prompt && (
-                        <p className="mt-1.5 line-clamp-2 break-words text-[10px] leading-4 text-[var(--muted)]">
-                          {turn.prompt}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <form
-              className="mt-3 space-y-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                runAgent();
-              }}
-            >
-              <textarea
-                className="field min-h-20 w-full resize-y p-2 text-xs"
-                value={agentInput}
-                maxLength={ASSISTANT_INPUT_MAX_LENGTH}
-                aria-description={`最多 ${ASSISTANT_INPUT_MAX_LENGTH} 字，当前 ${agentInput.length} 字`}
-                onChange={(event) => setAgentInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.shiftKey) return;
-                  event.preventDefault();
-                  runAgent();
-                }}
-                onPaste={(event) => {
-                  const files = [...event.clipboardData.items].filter(item => item.type.startsWith("image/")).map(item => item.getAsFile()).filter((file): file is File => !!file);
-                  if (!files.length) return;
-                  event.preventDefault();
-                  void handleAgentImageFiles(files);
-                }}
-                placeholder={assistantMode === "goal" ? "描述最终想要的图像，例如：保留人物和构图，把雨夜逐步调整成清晨薄雾，直到光线和色彩符合预期…" : "白发　或　雨夜里的白发少女…（可粘贴/上传图片让助手识图）"}
-                aria-label="标签助手输入"
-              />
-              <p data-assistant-input-count className="text-right text-[10px] text-[var(--muted)]">
-                {agentInput.length.toLocaleString()} / {ASSISTANT_INPUT_MAX_LENGTH.toLocaleString()} 字
-              </p>
-              <AssistantAttachments images={agentImages} loading={agentImagesLoading}
-                onAdd={files => { void handleAgentImageFiles(files); }}
-                onRemove={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
-                onClear={() => updateAgentImages([])} onPreview={setAgentPreview} />
-            <div className="flex items-center gap-2">
-              <button
-                type="submit"
-                disabled={tagSearching || assistantLoading || agentImagesLoading || goalRun?.status === "running"}
-                className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
-              >
-                <Search size={15} />
-                {tagSearching
-                  ? "检索中…"
-                  : assistantLoading
-                    ? "模型分析中…"
-                    : assistantMode === "goal" ? autonomyMode === "full" ? "开始自动迭代" : "请求目标建议" : "让助手处理"}
-              </button>
-              {assistantLoading && (
-                <button
-                  type="button"
-                  onClick={cancelAssistantTask}
-                  className="h-10 shrink-0 rounded border border-[var(--line)] bg-white px-3 text-xs font-semibold text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]"
-                >
-                  取消
-                </button>
-              )}
-            </div>
-          </form>
-            {(assistantLoading || agentSteps.length > 0) && (
-              <div className="mt-3 rounded border border-[var(--line)] bg-white p-2.5">
-                <b className="text-[11px]">
-                  检索过程
-                  {assistantLoading && ` · 已 ${agentSteps.length} 步`}
-                </b>
-                <ul className="mt-1.5 space-y-1">
-                  {agentSteps.map((step, index) => (
-                    <li
-                      key={`${step.tool}-${index}`}
-                      className="flex items-start gap-1.5 text-[11px] leading-4"
-                    >
-                      <span
-                        className={
-                          step.ok
-                            ? "font-semibold text-emerald-600"
-                            : "font-semibold text-red-600"
-                        }
-                      >
-                        {step.ok ? "✓" : "✕"}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <b>{agentToolLabels[step.tool] || step.tool}</b>
-                        {step.query && (
-                          <span className="text-[var(--muted)]">
-                            {" "}
-                            · {step.query}
-                          </span>
-                        )}
-                        {step.summary && (
-                          <span className="block text-[10px] text-[var(--muted)]">
-                            {step.summary}
-                          </span>
-                        )}
-                      </span>
-                    </li>
-                  ))}
-                  {assistantLoading && (
-                    <li className="text-[11px] text-[var(--muted)]">
-                      模型思考中…
-                    </li>
-                  )}
-                </ul>
-              </div>
-            )}
-            <div className="mt-3 space-y-1.5">
-              {tagResults.map((tag) => (
-                <button
-                  type="button"
-                  key={tag.name}
-                  onClick={() => appendTag(tag.name)}
-                  className="danbooru-result"
-                  title="追加到提示词"
-                >
-                  <span>
-                    <b>{tag.displayName}</b>
-                    <small>{tag.categoryName}</small>
-                  </span>
-                  <small>{tag.postCount.toLocaleString("zh-CN")}</small>
-                </button>
-              ))}
-            </div>
-            <div className="mt-4">
-              {!signedIn && (
-                <p className="rounded border border-[var(--line)] bg-white p-2 text-[11px] leading-5 text-[var(--muted)]">
-                  登录后助手可调用你的 NewAPI 文本模型整理提示词，按原规则计费。
-                </p>
-              )}
-              {assistantSuggestion && (!assistantSuggestion.imageModel || (assistantSuggestion.imageModel === model && assistantSuggestion.modelProtocol === imageProtocol)) && (
-                <div className="assistant-preview">
-                  <b>建议差异预览</b>
-                  {assistantMode === "goal" && assistantSuggestion.goalComplete === true && <p className="mt-2 rounded bg-emerald-50 px-2 py-1.5 text-[10px] font-semibold text-emerald-800">Agent 判断当前图片已达到目标。</p>}
-                  {assistantMode === "goal" && assistantSuggestion.goalComplete === false && <p className="mt-2 rounded bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">Agent 判断仍需调整；完全访问模式会自动应用并继续生成。</p>}
-                  {assistantSuggestion.message && (
-                    <div className="assistant-speech">
-                      <Sparkles size={13} className="mt-0.5 shrink-0 text-[var(--rose)]" />
-                      <p>{assistantSuggestion.message.slice(0, ASSISTANT_MESSAGE_MAX)}</p>
-                    </div>
-                  )}
-                  {assistantSuggestion.englishDescription && (
-                    <PreviewRow
-                      label="英文画面描述"
-                      value={assistantSuggestion.englishDescription}
-                    />
-                  )}
-                  {assistantSuggestion.prompt && (
-                    <PreviewRow
-                      label="正向提示词"
-                      value={assistantSuggestion.prompt}
-                    />
-                  )}
-                  {assistantSuggestion.negativePrompt && (
-                    <PreviewRow
-                      label="负向提示词"
-                      value={assistantSuggestion.negativePrompt}
-                    />
-                  )}
-                  {!!assistantSuggestion.tags.length && (
-                    <PreviewRow
-                      label="已校验标签"
-                      value={assistantSuggestion.tags
-                        .map((tag) => tag.name)
-                        .join(", ")}
-                    />
-                  )}
-                  {!!assistantSuggestion.characters?.length && (
-                    <PreviewRow
-                      label={`多角色 · ${assistantSuggestion.characters.length} 个`}
-                      value={assistantSuggestion.characters
-                        .map(
-                          (character, index) =>
-                            `角色${index + 1}: ${character.prompt}（x ${character.centerX.toFixed(2)} / y ${character.centerY.toFixed(2)}）`,
-                        )
-                        .join("\n")}
-                    />
-                  )}
-                  {!!Object.keys(assistantSuggestion.parameters).length && (
-                    <PreviewRow
-                      label="推荐参数"
-                      value={JSON.stringify(assistantSuggestion.parameters)}
-                    />
-                  )}
-                  <div className="assistant-actions">
-                    {!naturalImageModel && <button
-                      type="button"
-                      onClick={() =>
-                        assistantSuggestion.tags.forEach((tag) =>
-                          appendTag(tag.name),
-                        )
-                      }
-                    >
-                      追加标签
-                    </button>}
-                    <button
-                      type="button"
-                      onClick={() => { setPrompt(assistantSuggestion.prompt); if (naturalImageModel) setNegative(assistantSuggestion.negativePrompt || ""); }}
-                    >
-                      替换提示词
-                    </button>
-                    {!naturalImageModel && <button
-                      type="button"
-                      onClick={() =>
-                        setNegative(assistantSuggestion.negativePrompt)
-                      }
-                    >
-                      替换负向词
-                    </button>}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        applySuggestedParameters(assistantSuggestion.parameters)
-                      }
-                    >
-                      应用参数
-                    </button>
-                    <button type="button" onClick={applyAllSuggestions}>
-                      应用全部
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setAssistantSuggestion(null)}
-                    >
-                      放弃建议
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-    </>
+    <TagAssistantPanel signedIn={signedIn} natural={naturalImageModel} imageModel={model}
+      style={layoutEditorOpen ? customModuleStyle("agent") : undefined} tools={layoutModuleTools("agent")}
+      mode={assistantMode} onModeChange={setAssistantMode} autonomy={autonomyMode} onAutonomyChange={setAutonomyMode}
+      rounds={goalMaxRounds} onRoundsChange={setGoalMaxRounds} goal={goalRun} onStopGoal={stopGoalAgent} onClearGoal={() => updateGoalRun(null)}
+      modelControl={{ value: assistantModel, options: assistantModels, pending: assistantModelsPending, error: assistantModelsError,
+        onChange: setAssistantModel, onRefresh: () => void refreshAssistantModels(new AbortController().signal) }}
+      usage={assistantUsage} input={agentInput} onInputChange={setAgentInput} onSubmit={runAgent} onCancel={cancelAssistantTask}
+      loading={assistantLoading} searching={tagSearching} error={assistantTaskError}
+      images={agentImages} imagesLoading={agentImagesLoading} onAddImages={files => { void handleAgentImageFiles(files); }}
+      onRemoveImage={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
+      onClearImages={() => updateAgentImages([])} onPreviewImage={setAgentPreview}
+      conversation={conversation} onClearConversation={() => { void (async () => {
+        if (await lfnConfirm("确定清空助手对话记录？历史轮次与累积标签都会删除。")) void clearConversationHistory();
+      })(); }}
+      steps={agentSteps} results={tagResults} onAppendTag={appendTag}
+      suggestion={assistantSuggestion && (!assistantSuggestion.imageModel || (assistantSuggestion.imageModel === model && assistantSuggestion.modelProtocol === imageProtocol)) ? assistantSuggestion : null}
+      onReplacePrompt={() => { if (assistantSuggestion) { setPrompt(assistantSuggestion.prompt); if (naturalImageModel) setNegative(assistantSuggestion.negativePrompt || ""); } }}
+      onReplaceNegative={() => { if (assistantSuggestion) setNegative(assistantSuggestion.negativePrompt); }}
+      onApplyParameters={() => { if (assistantSuggestion) applySuggestedParameters(assistantSuggestion.parameters); }}
+      onApplyAll={applyAllSuggestions} onDismissSuggestion={() => setAssistantSuggestion(null)} />
   );
 
   // 会话状态（钱包）：左侧导航栏展开态、NAI overlay 与移动抽屉共用。
@@ -6656,14 +6304,6 @@ function Control({
   );
 }
 
-function PreviewRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="assistant-preview-row">
-      <span>{label}</span>
-      <p>{value}</p>
-    </div>
-  );
-}
 function NumericSlider({
   label,
   value,

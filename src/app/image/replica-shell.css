@@ -30,7 +30,7 @@
 .replica-run-button:disabled { opacity:.5; cursor:wait; }
 .replica-run-button>small { background:color-mix(in srgb, var(--paper) 20%, transparent); border-radius:7px; padding:3px 7px; color:var(--paper); font-size:13px; }
 [data-replica-footer="nai"]>.replica-run-button { background:var(--rose); font-size:17px; }
-[data-aaalice-dock] .replica-dock-content [data-layout-module="agent"] { border:0; padding:16px; font-family:var(--font-sans); }
+[data-aaalice-dock] .replica-dock-content [data-layout-module="agent"]:not(.tag-assistant-panel) { border:0; padding:16px; font-family:var(--font-sans); }
 [data-aaalice-dock] .replica-dock-content :is(textarea,input) { background:var(--surface); color:var(--ink); border-color:var(--line); }
 [data-aaalice-dock] .replica-dock-content .popup-select-trigger { background:var(--surface); color:var(--ink); border-color:var(--line); }
 [data-aaalice-dock] .replica-dock-content .bg-white { background:var(--surface); }
