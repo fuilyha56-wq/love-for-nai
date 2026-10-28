@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { LogIn } from "lucide-react";
 import { balancePreview } from "./balance-preview";
+import { formatAff } from "@/lib/credit-pricing";
 
 export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
   balance: number | null | undefined;
@@ -22,7 +23,7 @@ export function NaiBalanceMeter({ balance, cost, unit, signedIn }: {
   if (!preview) {
     return <div className="nai-balance-meter"><span>余额或价格暂不可用</span><Link href="/profile#profile-wallet">钱包</Link></div>;
   }
-  const format = (value: number) => unit === "AFF" ? `${value.toLocaleString("zh-CN")} AFF` : `$${value.toFixed(2)}`;
+  const format = (value: number) => unit === "AFF" ? `${formatAff(value)} AFF` : `$${value.toFixed(2)}`;
   return (
     <div className="nai-balance-meter">
       <span>{preview.insufficient ? "余额不足" : "可用余额"} · {format(preview.available)}</span>
