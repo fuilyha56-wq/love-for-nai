@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .admin-shell {
   background:
     radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--rose) 7%, transparent), transparent 28rem),

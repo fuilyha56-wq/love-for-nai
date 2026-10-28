@@ -72,6 +72,12 @@ describe("parseNaiImageMetadata", () => {
     expect(parseNaiImageMetadata(new TextEncoder().encode("hello"))).toBeNull();
   });
 
+  it("keeps role captions and reads v4-only base and negative text", () => {
+    const v4 = { Software: "NovelAI", v4_prompt: { caption: { base_caption: "scene", char_captions: [{ char_caption: "red hair" }] } }, v4_negative_prompt: { caption: { base_caption: "lowres", char_captions: [{ char_caption: "hat" }] } } };
+    const result = parseNaiImageMetadata(pngWithText("Comment", JSON.stringify(v4)));
+    expect(result?.parameters).toMatchObject({ prompt: "scene", negative_prompt: "lowres", v4_prompt: v4.v4_prompt, v4_negative_prompt: v4.v4_negative_prompt });
+  });
+
   it("returns null for PNG without NAI metadata", () => {
     expect(parseNaiImageMetadata(pngWithText("Title", "plain"))).toBeNull();
   });

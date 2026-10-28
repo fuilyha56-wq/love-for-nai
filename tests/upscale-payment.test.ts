@@ -1,6 +1,11 @@
 import JSZip from "jszip";
 import sharp from "sharp";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { verifyWatermark } from "@/lib/image-watermark";
+import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
 import { POST } from "@/app/api/images/operate/route";
 
 const mocks = vi.hoisted(() => ({
@@ -37,13 +42,31 @@ vi.mock("@/lib/request-audit", () => ({ startRequestAudit: async () => ({
 let input: string;
 let output: string;
 let archive: Uint8Array;
+let directory = "";
+const originalData = process.env.LFN_DATA_DIR;
 beforeAll(async () => {
+  directory = await mkdtemp(path.join(os.tmpdir(), "lfn-upscale-watermark-"));
+  process.env.LFN_DATA_DIR = directory;
+  resetRuntimeConfigCache();
+  await updateRuntimeSettings({ watermarkEnabled: true });
   const source = await sharp({ create: { width: 64, height: 64, channels: 3, background: "red" } }).png().toBuffer();
   const enlarged = await sharp(source).resize(128, 128).png().toBuffer();
   input = `data:image/png;base64,${source.toString("base64")}`;
   output = `data:image/png;base64,${enlarged.toString("base64")}`;
   archive = await new JSZip().file("image_0.png", enlarged).generateAsync({ type: "uint8array" });
 });
+afterAll(async () => {
+  resetRuntimeConfigCache();
+  if (originalData == null) delete process.env.LFN_DATA_DIR;
+  else process.env.LFN_DATA_DIR = originalData;
+  await rm(directory, { recursive: true, force: true });
+});
+async function signedOutput(response: Response) {
+  const body = await response.json();
+  expect(await verifyWatermark(body.image)).toMatchObject({ valid: true, shaMatch: true, payload: { userId: 316 } });
+  expect(await sharp(Buffer.from(body.image.split(",")[1], "base64")).raw().toBuffer()).toEqual(await sharp(Buffer.from(output.split(",")[1], "base64")).raw().toBuffer());
+  return body;
+}
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.native.mockResolvedValue({ baseUrl: "http://gateway.test", token: "gateway-token" });
@@ -66,7 +89,7 @@ describe("upscale payment fallback", () => {
   ])("uses station balance for %s when package and personal AFF are insufficient", async (model, billingModel) => {
     const response = await POST(request(model));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ image: output, width: 128, height: 128, payment: "newapi", paymentSource: "newapi", aff: null });
+    expect(await signedOutput(response)).toMatchObject({ width: 128, height: 128, payment: "newapi", paymentSource: "newapi", aff: null });
     expect(response.headers.get("x-lfn-payment-source")).toBe("newapi");
     expect(mocks.token).toHaveBeenCalledWith(expect.objectContaining({ userId: 316 }), billingModel);
     expect(mocks.send).toHaveBeenCalledTimes(1);
@@ -83,7 +106,7 @@ describe("upscale payment fallback", () => {
     mocks.send.mockResolvedValueOnce(new Response(new Uint8Array(archive)));
     const response = await POST(request());
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ image: output, payment: "aff", paymentSource: source, aff: { cost: 1 } });
+    expect(await signedOutput(response)).toMatchObject({ payment: "aff", paymentSource: source, aff: { cost: 1 } });
     expect(mocks.token).not.toHaveBeenCalled();
     expect(mocks.send).toHaveBeenCalledWith("http://gateway.test/ai/upscale", expect.anything());
     expect(mocks.refund).not.toHaveBeenCalled();
@@ -111,7 +134,7 @@ describe("upscale payment fallback", () => {
     mocks.history.mockRejectedValueOnce(new Error("Storage unavailable"));
     const response = await POST(request());
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ image: output, warning: expect.any(String), paymentSource: "newapi" });
+    expect(await signedOutput(response)).toMatchObject({ warning: expect.any(String), paymentSource: "newapi" });
     expect(mocks.refund).not.toHaveBeenCalled();
   });
 

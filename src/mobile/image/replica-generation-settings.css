@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 :is(.rgs-shell,.rgs-image-size,.rgs-menu):is([data-replica-variant="nai"],[data-replica-variant="nlw"]) {
   --rgs-surface:var(--panel); --rgs-control:var(--surface); --rgs-input:var(--paper);
   --rgs-line:var(--line); --rgs-text:var(--ink); --rgs-muted:var(--muted); --rgs-accent:var(--rose);

@@ -5,6 +5,7 @@ import { affTotals } from "@/lib/aff";
 import { runtimeRewards } from "@/lib/runtime-config";
 import { countAnnouncementComments } from "@/lib/announcement-comments";
 import { countAnnouncements } from "@/lib/announcements";
+import { galleryComments } from "@/lib/gallery-comments";
 import { countGallery } from "@/lib/gallery";
 import { countLocalUsers } from "@/lib/local-users";
 import { getResolvedPlatformCapabilities, resolvedAuthProviderId } from "@/lib/platform";
@@ -20,7 +21,7 @@ export async function GET() {
   const [announcements, comments, gallery, referrals, credits, localUsers, rewards, sessions] =
     await Promise.all([
       countAnnouncements(),
-      countAnnouncementComments(),
+      Promise.all([countAnnouncementComments(), galleryComments.countComments()]).then(([announcement, gallery]) => announcement + gallery),
       countGallery(),
       countReferrals(),
       affTotals(),

@@ -1,0 +1,75 @@
+import type { TutorialOverride } from "./types";
+
+const shot = (step: number, alt: string) => ({
+  src: `/tutorials/tiled-upscale/step-${String(step).padStart(2, "0")}.png`,
+  alt,
+  width: 1440,
+  height: 1000,
+  caption: "本地运行的 Love for NAI 实际操作界面截图",
+});
+
+export const tutorialOverride: TutorialOverride = {
+  preparation: "准备一张本机 PNG、JPG 或 WebP 图片，并登录本地练习账号。分块超分会对多个图块分别执行图生图；先检查预估块数与来源能力，练习时可以跳过生成。",
+  summary: "载入源图，进入分块超分，核对倍率、模型和重绘强度，再检查拼接结果并保存。",
+  steps: {
+    0: {
+      title: "选择图生图模式",
+      body: "在工作台的生成模式中选择「图生图」，让源图片可以作为编辑输入。下一步会引导你上传本机 PNG、JPG 或 WebP，并从源图裁出带重叠的小块分别处理。",
+      tip: "源图只在当前浏览器读取。建议从较小的倍率开始；图片越大，通常需要处理的图块越多。",
+      path: "/image",
+      area: "mode",
+      target: ".studio-mode-picker, .mobile-studio-mode-selector",
+      keywords: ["生成模式", "图生图", "源图片", "本机", "PNG", "JPG", "WebP", "图块"],
+      screenshot: shot(1, "Love for NAI 工作台中的图生图模式选择入口"),
+    },
+    1: {
+      title: "从源图打开图像编辑器",
+      body: "源图载入后，点击参考图旁的「独立重绘编辑器」或「绘制草图」入口。手机上可从画布下方的参考图片操作进入。编辑器会继续使用这张源图。",
+      tip: "必须先载入源图，编辑器入口才可用。没有图片时回到上一步上传；也可以随时退出教程回到教程中心。",
+      path: "/image",
+      target: '[data-tutorial="source"], .mobile-studio-reference-panel, button[data-tutorial-editor="canvas"]',
+      keywords: ["源图", "独立重绘编辑器", "绘制草图", "参考图片", "编辑器"],
+      screenshot: shot(2, "工作台中已载入源图并显示图像编辑器入口"),
+    },
+    2: {
+      title: "切换到分块超分",
+      body: "在编辑器顶部点击「分块超分」。画布会切换到自动切块预览，并显示当前源图尺寸与倍率。",
+      tip: "分块超分会将大图拆成带重叠的局部图块，逐块图生图后再按原位置拼接；它不调用 V5 专用超分接口。",
+      path: "/image/editor?mode=canvas",
+      area: "editor-params",
+      target: '.editor-mode-tabs button:nth-child(3)',
+      keywords: ["分块超分", "自动切块", "图块", "图生图", "拼接", "V5 专用超分"],
+      screenshot: shot(3, "图像编辑器顶部的分块超分模式按钮"),
+    },
+    3: {
+      title: "核对倍率、块数与模型",
+      body: "打开生成参数，查看「超分倍率」和自动计算的最终尺寸、图块数。选择当前来源支持的「重绘模型」，填写可选的细节提示词，并检查重绘强度、步数等参数。",
+      tip: "块数和倍率共同影响请求数量与总耗时。不同来源的模型能力、并发和计费方式可能不同；以页面提示和当前来源报价为准。",
+      path: "/image/editor?mode=tiled-upscale",
+      area: "editor-params",
+      target: '[data-tutorial="editor-params"], .editor-mobile-sheet-body',
+      keywords: ["超分倍率", "最终尺寸", "图块数", "重绘模型", "细节提示词", "重绘强度", "并发", "计费"],
+      screenshot: shot(4, "分块超分参数面板展示倍率、图块数、模型与重绘参数"),
+    },
+    4: {
+      title: "提交并等待分块拼接",
+      body: "确认来源、模型和任务规模后，亲自点击「分块重绘并拼接」。状态区会显示已完成图块、并发和排队数量；所有图块完成后，编辑器会自动拼成候选结果。",
+      tip: "每个图块都会单独发起图生图请求，可能产生多次费用。只想熟悉流程时可跳过提交，直接阅读下一步。",
+      path: "/image/editor?mode=tiled-upscale",
+      area: "editor-actions",
+      target: ".editor-actions button.generate-button",
+      keywords: ["分块重绘并拼接", "已完成", "图块", "并发", "排队", "候选结果", "费用"],
+      screenshot: shot(5, "图像编辑器中的分块重绘并拼接操作按钮"),
+    },
+    5: {
+      title: "检查拼接结果并保存",
+      body: "放大查看整体画面与图块接缝，重点检查纹理、人物细节和边缘是否连贯。满意后可下载合成图，或点击「应用到工作台」；不满意时可丢弃后调整参数再试。最后点击「完成教程，返回教程中心」。",
+      tip: "应用会把合成图写回工作台。提前结束时点击「退出教程，返回个人资料的教程中心」；完成和退出都会回到 /profile#profile-tutorials。",
+      path: "/image/editor?mode=tiled-upscale",
+      area: "editor-actions",
+      target: ".editor-actions .download-result-button summary, .editor-actions button.apply-button",
+      keywords: ["拼接结果", "接缝", "纹理", "边缘", "下载合成图", "应用到工作台", "完成教程", "退出教程", "/profile#profile-tutorials"],
+      screenshot: shot(6, "分块超分候选结果的比较、下载与应用操作"),
+    },
+  },
+};

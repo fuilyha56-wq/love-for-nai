@@ -1,7 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken } from "@/lib/newapi";
+import { getChatToken, refreshChatToken, type Session } from "@/lib/newapi";
+import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
+import { MAX_ASSISTANT_IMAGES, MAX_ASSISTANT_IMAGE_BYTES, MAX_ASSISTANT_TOTAL_IMAGE_BYTES } from "@/lib/assistant-limits";
+import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
 import { readCatalogTag } from "@/lib/tag-catalog";
 import { isAssistantChatModel, assistantModelIds } from "@/lib/assistant-models";
 import { loadNewApiModels } from "@/lib/provider/newapi-models";
@@ -35,6 +38,7 @@ import {
 } from "@/lib/assistant-conversations";
 
 type AssistantPayload = {
+  reasoningEffort?: unknown;
   model?: string;
   request?: string;
   currentPrompt?: string;
@@ -48,7 +52,7 @@ type AssistantPayload = {
   image?: string;
   // 当前用户可访问的历史 ID；服务端读取图片，不信任客户端 URL。
   historyIds?: unknown;
-  // data URL 图片数组，最多 4 张。
+  // data URL 图片数组，最多 10 张。
   images?: unknown;
   goalMode?: unknown;
   accessMode?: unknown;
@@ -84,9 +88,6 @@ type ValidationResult =
 
 const DATA_IMAGE_RE =
   /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
-const MAX_ASSISTANT_IMAGE_BYTES = 8_000_000;
-const MAX_ASSISTANT_IMAGES = 4;
-const MAX_ASSISTANT_TOTAL_IMAGE_BYTES = 24_000_000;
 
 function validDataImage(value: unknown): value is string {
   return (
@@ -212,14 +213,15 @@ function mergeTagsIntoPrompt(
 // 成功后把本轮（含校验过的标签）落盘到用户会话，供下一次对话延续。
 async function runJob(
   job: AssistantJob,
-  userId: number,
+  session: Session,
   key: string,
   model: string,
   request: string,
-  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[] } & AssistantImageContext,
+  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[]; reasoningEffort?: string } & AssistantImageContext,
   images: string[],
   target: AssistantImageTarget,
 ) {
+  const userId = session.userId;
   const jobSignal = AbortSignal.timeout(ASSISTANT_JOB_TIMEOUT_MS);
   try {
     // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
@@ -238,7 +240,9 @@ async function runJob(
       },
       images,
       history,
+      reasoningEffort: context.reasoningEffort,
       signal: jobSignal,
+      refreshKey: (rejectedKey) => refreshChatToken(session, model, rejectedKey),
     });
     const suggestion = adaptAssistantSuggestion(parseTagSuggestion(content), target);
     const candidates = target.capabilities.promptStyle === "tags" ? [...new Set(suggestion.tags)] : [];
@@ -338,8 +342,10 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   let target: AssistantImageTarget;
+  let reasoningEffort: string | undefined;
   try {
     target = resolveAssistantImageTarget(body);
+    reasoningEffort = resolveAssistantReasoning(body.model, body.reasoningEffort);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "图像目标无效" },
@@ -349,10 +355,10 @@ export async function POST(request: Request) {
   if (
     typeof body.request !== "string" ||
     !body.request.trim() ||
-    body.request.length > 1000
+    body.request.length > ASSISTANT_INPUT_MAX_LENGTH
   )
     return NextResponse.json(
-      { message: "请输入不超过 1000 字的创作需求" },
+      { message: "请输入不超过 10000 字的创作需求" },
       { status: 400 },
     );
   if (body.goalMode !== undefined && typeof body.goalMode !== "boolean")
@@ -361,14 +367,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "目标会话 ID 无效" }, { status: 400 });
   if (body.accessMode !== undefined && body.accessMode !== "approval" && body.accessMode !== "full")
     return NextResponse.json({ message: "Agent 权限模式无效" }, { status: 400 });
-  if (body.goalMode === true && (typeof body.goal !== "string" || !body.goal.trim() || body.goal.length > 1000))
-    return NextResponse.json({ message: "目标 Agent 需要不超过 1000 字的明确目标" }, { status: 400 });
+  if (body.goalMode === true && (typeof body.goal !== "string" || !body.goal.trim() || body.goal.length > ASSISTANT_INPUT_MAX_LENGTH))
+    return NextResponse.json({ message: "目标 Agent 需要不超过 10000 字的明确目标" }, { status: 400 });
   if (body.goalIteration !== undefined && (typeof body.goalIteration !== "number" || !Number.isInteger(body.goalIteration) || body.goalIteration < 0 || body.goalIteration > 5))
     return NextResponse.json({ message: "Agent 轮次超出范围" }, { status: 400 });
   if (body.localTags !== undefined && (
     !Array.isArray(body.localTags) || body.localTags.length > 256 ||
     body.localTags.some((tag) => typeof tag !== "string" || tag.length > 120)
   )) return NextResponse.json({ message: "localTags 必须为最多 256 个候选标签的数组" }, { status: 400 });
+
+  if ([body.currentPrompt, body.currentNegativePrompt].some(value => value !== undefined && (typeof value !== "string" || value.length > 40_000)))
+    return NextResponse.json({ message: "助手读取的当前正向或负向提示词必须为不超过 40000 字符的文本，请精简后重试" }, { status: 400 });
 
   if (body.historyIds !== undefined && !Array.isArray(body.historyIds))
     return NextResponse.json(
@@ -386,7 +395,7 @@ export async function POST(request: Request) {
     (body.image === undefined ? 0 : 1);
   if (requestedImageCount > MAX_ASSISTANT_IMAGES)
     return NextResponse.json(
-      { message: "最多只能分析 4 张图片" },
+      { message: "最多只能分析 10 张图片" },
       { status: 400 },
     );
   if (body.image !== undefined && !validDataImage(body.image))
@@ -446,12 +455,13 @@ export async function POST(request: Request) {
     const job = createAssistantJob(session.userId);
     void runJob(
       job,
-      session.userId,
+      session,
       key,
       body.model,
       body.request,
       {
         currentPrompt: body.currentPrompt,
+        reasoningEffort,
         currentNegativePrompt: body.currentNegativePrompt,
         imageModel: target.imageModel,
         modelProtocol: target.modelProtocol,

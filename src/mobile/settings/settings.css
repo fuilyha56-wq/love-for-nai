@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .settings-header { position: sticky; z-index: 30; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px max(20px, calc((100vw - 1240px) / 2)); border-bottom: 1px solid var(--line); background: var(--panel); }
 .settings-brand { display: flex; align-items: center; gap: 10px; font-size: 17px; }
 .settings-brand svg { color: var(--rose); }

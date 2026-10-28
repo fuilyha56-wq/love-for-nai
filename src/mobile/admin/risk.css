@@ -1,9 +1,9 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .risk-workspace {
   min-width: 0;
   display: grid;
   gap: 20px;
-  font-family: var(--font-sans), sans-serif;
+  font-family: var(--font-sans);
 }
 .risk-workspace *,
 .risk-config * {
@@ -708,6 +708,6 @@
 }
 
 .risk-kicker { display:none; }
-@media (max-width:839px) { .risk-savebar { bottom:calc(72px + env(safe-area-inset-bottom)); } }
+@media (max-width:1023px) { .risk-savebar { bottom:calc(72px + env(safe-area-inset-bottom)); } }
 
 }

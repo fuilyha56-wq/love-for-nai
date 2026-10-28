@@ -1179,6 +1179,7 @@ function CreditsPanel({
             <div className="flex shrink-0 flex-wrap justify-end gap-3 text-xs font-semibold">
               {mode === "creator" && item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
               {item.status === "approved" && <button type="button" onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
+              <a href={`/gallery/${encodeURIComponent(item.id)}#comments`} className="text-[var(--rose)] hover:underline">评论管理</a>
               <button type="button" onClick={() => open(item)} className="text-[var(--rose)] hover:underline">编辑</button>
               <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
             </div>

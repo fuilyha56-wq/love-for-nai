@@ -2,6 +2,7 @@
 
 import { ArrowLeft, Bell, Brush, ChevronDown, History, Images, Tags, MoreHorizontal, RefreshCw, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
+import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { memo, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
 import { PopupSelect, type SelectOption } from "@/mobile/ui/popup-select";
@@ -78,6 +79,14 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
   const legacySheet = sheet && !isWorkspacePane(sheet) ? sheet : null;
   const activePane = legacySheet ? null : workspace.pane;
   const activeSheet = legacySheet ?? activePane;
+  usePanelHistory("lfnStudioPage", page === "generate" ? null : page, (next) => setPage(next === "history" || next === "more" ? next : "generate"));
+  usePanelHistory("lfnStudioPanel", activeSheet, (next) => {
+    const pane = isWorkspacePane(next as MobileStudioSheet) ? next as WorkspacePane : null;
+    setWorkspace(previous => ({ ...previous, pane, backToPrompt: false,
+      visited: pane && !previous.visited.includes(pane) ? [...previous.visited, pane] : previous.visited }));
+    if (next && !pane) onOpenSheet(next as MobileStudioSheet);
+    else if (sheet) onCloseSheet();
+  });
   const dialogOpen = Boolean(activeSheet);
   const promptOpen = activePane === "prompt";
   const generateScrollRef = useRef<HTMLDivElement>(null);

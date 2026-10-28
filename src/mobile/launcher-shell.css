@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 /* Ported geometry: Aaalice DESIGN.md and MainNavRail / collection workspace.
    Color roles intentionally remain LFn's appearance tokens. */
 .launcher-shell { --launcher-rail-width:60px; --launcher-title-height:40px; --launcher-gap:8px; --launcher-section:var(--panel); --launcher-control:var(--surface-muted); min-height:100dvh; color:var(--ink); background:var(--paper); }
@@ -133,7 +133,7 @@
 .launcher-destination-group a:hover, .launcher-destination-group a[aria-current="page"] { color:var(--accent-text); background:var(--surface-muted); }
 @media (min-width:600px) { .launcher-destination-groups { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; } }
 /* The global rail owns navigation; generation has the same three working panes in every theme. */
-@media (min-width:840px) {
+@media (min-width:1024px) {
   .launcher-content .admin-layout { display:flex; }
   .launcher-content .admin-sidebar { display:block; }
   .launcher-content .admin-mobile-nav { display:none; }
@@ -146,7 +146,7 @@
   .launcher-shell [data-replica-studio="nlw"] .studio-layout { grid-template-columns:var(--lfn-left) 8px minmax(0,1fr) 8px var(--lfn-right); }
   .launcher-shell [data-replica-studio="nlw"][data-left-collapsed="true"] .studio-layout { grid-template-columns:40px 8px minmax(0,1fr) 8px var(--lfn-right); }
 }
-@media (max-width:839px) {
+@media (max-width:1023px) {
   .launcher-shell { --launcher-title-height:0px; --launcher-rail-width:0px; }
   .launcher-titlebar,.launcher-rail { display:none; }
   .launcher-content { margin:0; padding-top:0; padding-bottom:calc(64px + env(safe-area-inset-bottom)); }

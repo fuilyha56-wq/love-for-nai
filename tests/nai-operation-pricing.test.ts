@@ -29,6 +29,9 @@ const cases: [string, Record<string, unknown>, number, number][] = [
   ["Vibe 两张只编码一次", { operation: "vibe-transfer", reference_images: [raw], n: 2 }, 182, 920],
 ];
 
+// Historical review prices are explicit fixtures; live daily defaults may change.
+const REVIEW_DAILY_POLICY = { ...DEFAULT_DAILY_IMAGE_POLICY, v45AnlasCny: 0.02, v5AnlasCny: 0.025 };
+
 describe("全部生成模式的请求、预估与结算", () => {
   it.each(cases)("%s", (_, override, anlas, aff) => {
     const body = { ...base, ...override };
@@ -36,7 +39,7 @@ describe("全部生成模式的请求、预估与结算", () => {
     expect(generation).not.toBeNull();
     expect(officialNaiAnlasCost(generation!)).toBe(anlas);
     expect(affCost(generation!)).toBe(aff);
-    expect(quoteDailyImage(generation!, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 0)).toMatchObject({ anlas, costAff: aff });
+    expect(quoteDailyImage(generation!, REVIEW_DAILY_POLICY, 0.005, 0)).toMatchObject({ anlas, costAff: aff });
     expect(estimateTokens(generation!)).toBe(anlas * 50);
     const native = naiNativeGenerationBody(body);
     const roundTrip = externalGeneration(native);
@@ -55,20 +58,20 @@ describe("全部生成模式的请求、预估与结算", () => {
     expect(affCost(generation)).toBe(anlas * 5);
     expect(estimateTokens(generation)).toBe(anlas * 50);
     expect(estimateNewApiCost(pricing, generation)).toBe(anlas * 5);
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 0)).toBeNull();
+    expect(quoteDailyImage(generation, REVIEW_DAILY_POLICY, 0.005, 0)).toBeNull();
   });
 
   it.each(["declutter", "lineart", "sketch", "colorize", "emotion", "bg-removal"])("Director %s 保留独立工具费用", (tool) => {
     const anlas = tool === "bg-removal" ? 65 : 5;
     const generation = { ...base, samples: 1, operation: "director-" + tool };
     expect(affCost(generation)).toBe(anlas * 5);
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 100)).toBeNull();
+    expect(quoteDailyImage(generation, REVIEW_DAILY_POLICY, 0.005, 100)).toBeNull();
   });
 
   it("Vibe 编码单独收费且不进入每日生图阶梯", () => {
     const generation = { ...base, samples: 1, operation: "encode-vibe", referenceImageCount: 1 };
     expect(affCost(generation)).toBe(10);
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, 0.005, 100)).toBeNull();
+    expect(quoteDailyImage(generation, REVIEW_DAILY_POLICY, 0.005, 100)).toBeNull();
   });
 
   it("Limit 在扣款前拒绝付费参考图和超额缓存参考图", () => {

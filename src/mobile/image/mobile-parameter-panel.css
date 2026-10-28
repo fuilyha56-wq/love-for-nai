@@ -1,5 +1,5 @@
 /* Aaalice ParameterPanel / ThemedDropdown / SizeSelector, using LFN tokens. */
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
   .mobile-parameter-panel { display: grid; min-width: 0; gap: 16px; padding: 2px 0 8px; color: var(--ink); font-size: 13px; }
   .mobile-parameter-panel > *, .mobile-parameter-panel .studio-control { min-width: 0; }
   .mobile-parameter-panel .studio-control { color: var(--ink); font-size: 13px; }

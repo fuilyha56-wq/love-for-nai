@@ -1,10 +1,18 @@
 @import "tailwindcss";
-@import "./desktop-globals.css" (min-width: 840px);
-@import "../mobile/globals.css" (max-width: 839px);
+@import "./desktop-globals.css" (min-width: 1024px);
+@import "../mobile/globals.css" (max-width: 1023px);
 @theme static {
   --font-sans: "Noto Sans SC", sans-serif;
+  --font-display: var(--font-sans);
   --font-serif: var(--font-sans);
   --font-mono: var(--font-sans);
 }
+*,
+::before,
+::after,
+::marker,
+::file-selector-button {
+  font-family: var(--font-sans);
+}
 .viewport-surface { display: contents; }
-@media(max-width:839px) { html[data-client-viewport="mobile"] [data-viewport-surface="desktop"] { display:none; } }
+@media(max-width:1023px) { html[data-client-viewport="mobile"] [data-viewport-surface="desktop"] { display:none; } }

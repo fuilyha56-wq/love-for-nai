@@ -1,4 +1,5 @@
 "use client";
+import { PromptHistoryButton } from "@/app/ui/prompt-versions";
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -311,7 +312,7 @@ const qualityLabels: Record<QualityPreset, string> = { standard: "Standard", lig
 const ucLabels: Record<UcPreset, string> = { heavy: "重度", light: "轻度", human: "人物专注", furry: "兽人专注", none: "无", custom: "自定义" };
 const settingItems = [
   ["autocomplete", "智能补全", "输入时显示标签建议"],
-  ["autoFormat", "自动格式化", "中文逗号转英文、标签内空格转下划线（保留换行）"],
+  ["autoFormat", "自动格式化", "失焦时按 Aaalice 规则将词内空格转下划线，保留分隔符附近、词库引用内的空格及换行"],
   ["highlight", "高亮强调", "括号和权重语法高亮显示"],
   ["sdConvert", "SD语法自动转换", "失焦时将SD数字权重转换为NAI格式"],
   ["resolveAliasesOnCopy", "复制时展开词库", "复制时把 <词库名> 替换为词库内容"],
@@ -428,7 +429,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
         {modeToggle(target)}
         <button type="button" aria-label="随机提示词" title="随机提示词" disabled={randomizing} onClick={() => void randomize(target)}><Dice5 size={17} /></button>
         <button type="button" aria-label="清空当前提示词" title="清空" onClick={() => (target === "positive" ? onPromptChange : onNegativeChange)("")}><X size={17} /></button>
-        <button type="button" ref={settingsButton} aria-label="提示词设置" title="提示词设置" aria-expanded={menu === "settings"} onClick={() => toggleMenu("settings")}><Settings2 size={18} /></button>
+        <PromptHistoryButton target={target === "positive" ? "prompt" : "negative"} /><button type="button" ref={settingsButton} aria-label="提示词设置" title="提示词设置" aria-expanded={menu === "settings"} onClick={() => toggleMenu("settings")}><Settings2 size={18} /></button>
         </div>
       </footer>
     </> : <div className="replica-nai-prompt-cards">

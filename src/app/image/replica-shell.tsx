@@ -23,14 +23,16 @@ export function ReplicaNavigation({ onMenu, onAssistant }: { onMenu: () => void;
   </nav>;
 }
 
-export function ReplicaGenerationFooter({ variant, settings, generating, disabled, progress, operationLabel, balance, cost, count, batchMode, onBatchModeChange, onRun }: {
-  variant: "nai" | "nlw"; settings: ReactNode; generating: boolean; disabled: boolean;
+export function ReplicaGenerationFooter({ variant, settings, generating, disabled, progress, operationLabel, balance, cost, count, batchMode, onBatchModeChange, onRun, seedControl, pricingControl }: {
+  variant: "nai" | "nlw"; settings: ReactNode; seedControl?: ReactNode; pricingControl?: ReactNode; generating: boolean; disabled: boolean;
   progress: string; operationLabel: string; balance: string; cost: string; count: number;
   batchMode: "once" | "sequential"; onBatchModeChange: (value: "once" | "sequential") => void; onRun: () => void;
 }) {
   return <footer className="replica-generation-footer" data-replica-footer={variant} data-layout-module="generate">
     {settings}
     {variant === "nlw" && <div className="replica-generation-meta"><span title="账户可用额度"><Diamond size={14} />{balance}</span><span className="replica-generation-meta-spacer" /><span>{count}</span><button type="button" onClick={() => onBatchModeChange(batchMode === "once" ? "sequential" : "once")} title={batchMode === "once" ? "单次请求生成全部图片，点击切换分批" : "每张独立请求，点击切换一次性生成"}>×{count}</button><span className="replica-batch-label">{batchMode === "once" ? "一次性" : "分批"}</span></div>}
+    {seedControl}
+    {pricingControl}
     <button type="button" className="replica-run-button" disabled={disabled || generating} onClick={onRun}><Sparkles size={22} /><span>{generating ? progress || "生成中…" : operationLabel}</span>{!generating && cost && <small title="预估费用，以实际账单为准">{cost}</small>}</button>
   </footer>;
 }

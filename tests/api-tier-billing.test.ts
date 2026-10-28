@@ -153,6 +153,8 @@ beforeEach(async () => {
   resetLightRisk();
   resetRiskSettingsCache();
   resetRuntimeConfigCache();
+  // Existing configured prices remain honored after changing the fresh defaults.
+  await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, v45AnlasCny: 0.02, v5AnlasCny: 0.025 });
   (globalThis as typeof globalThis & { __lfnImageRequestLimiter?: { clear(): void } }).__lfnImageRequestLimiter?.clear();
   upstream.userId = 801;
   upstream.configured = true;
@@ -192,6 +194,14 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 describe("API pricing coverage: final wallet debits for the approved prices", () => {
+  it.each([["nai-v5-full", 185], ["nai-v4.5-full", 121]] as const)("charges the configured 0.01 CNY price through the real %s billing path", async (model, cost) => {
+    await saveDailyImagePolicy(DEFAULT_DAILY_IMAGE_POLICY);
+    const response = await POST(jsonRequest("/v1/images/generations", { model, prompt: "billing", size: "2048x1536", steps: 28, n: 1 }));
+    expect(response.status, await response.clone().text()).toBe(200);
+    await response.arrayBuffer();
+    expect((await affStatus(801)).balance).toBe(1000 - cost);
+    expect((await listUserImageUsage(801))[0]).toMatchObject({ charged_aff: cost });
+  });
   it.each([
     ["V5 text", { model: "nai-v5-full" }, 455],
     ["V4.5 text", { model: "nai-v4.5-full" }, 241],
@@ -297,7 +307,7 @@ describe("API pricing coverage: final wallet debits for the approved prices", ()
     expect((await affStatus(801)).balance).toBe(1000);
   });
   it("applies the persisted 75-image daily boundary to API requests", async () => {
-    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, v5: [
+    await saveDailyImagePolicy({ ...DEFAULT_DAILY_IMAGE_POLICY, v45AnlasCny: 0.02, v5AnlasCny: 0.025, v5: [
       { afterImages: 0, baseCny: 0.04, anlasMultiplier: 1, totalMultiplier: 1 },
       { afterImages: 75, baseCny: 0.04, anlasMultiplier: 1.1, totalMultiplier: 1.1 },
     ] });

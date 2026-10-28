@@ -1,9 +1,9 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .risk-workspace {
   min-width: 0;
   display: grid;
   gap: 20px;
-  font-family: var(--font-sans), sans-serif;
+  font-family: var(--font-sans);
 }
 .risk-workspace *,
 .risk-config * {

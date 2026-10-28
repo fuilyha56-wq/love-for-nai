@@ -1,9 +1,12 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import { decode, encode } from "@msgpack/msgpack";
 import JSZip from "jszip";
+const { download } = vi.hoisted(() => ({ download: vi.fn() }));
+vi.mock("@/lib/provider/http", () => ({ downloadProviderImage: download }));
 import { watermarkImageResponse } from "@/lib/image-response-watermark";
 import { verifyWatermark } from "@/lib/image-watermark";
 import {
@@ -22,6 +25,8 @@ const options = {
 const original = process.env.LFN_DATA_DIR;
 let directory = "";
 beforeEach(async () => {
+  download.mockReset();
+  download.mockResolvedValue(`data:image/png;base64,${png.toString("base64")}`);
   directory = await mkdtemp(path.join(os.tmpdir(), "lfn-api-watermark-"));
   process.env.LFN_DATA_DIR = directory;
   resetRuntimeConfigCache();
@@ -175,7 +180,7 @@ describe("API image signatures across response protocols", () => {
     await expect(result.response.arrayBuffer()).rejects.toThrow("Incomplete");
     expect(result.status()).toBe("failed");
   });
-  it("preserves the original response when disabled and labels URL-only responses as skipped", async () => {
+  it("signs URL-only results without credentials, and leaves disabled responses untouched", async () => {
     const json = JSON.stringify({
       data: [{ url: "https://images.invalid/example.png" }],
     });
@@ -185,8 +190,10 @@ describe("API image signatures across response protocols", () => {
       "nai-v5-full",
       options,
     );
-    expect(skipped.status()).toBe("skipped");
-    expect(await skipped.response.text()).toBe(json);
+    expect(skipped.status()).toBe("embedded");
+    expect(download).toHaveBeenCalledExactlyOnceWith("https://images.invalid/example.png");
+    const signed = await skipped.response.json();
+    expect(await verifyWatermark(signed.data[0].url)).toMatchObject({ valid: true, shaMatch: true });
     await updateRuntimeSettings({ watermarkEnabled: false });
     const result = await watermarkImageResponse(
       new Response(png, { headers: { "content-type": "image/png" } }),
@@ -198,6 +205,49 @@ describe("API image signatures across response protocols", () => {
     expect(new Uint8Array(await result.response.arrayBuffer())).toEqual(
       new Uint8Array(png),
     );
+  });
+  it("signs website images and image aliases even for partial results", async () => {
+    const input = `data:image/png;base64,${png.toString("base64")}`;
+    const marked = await watermarkImageResponse(Response.json({ images: [input], image: input, partial: true }, { status: 207 }), 71, "nai-v5-full", options);
+    const body = await marked.response.json();
+    expect(marked.response.status).toBe(207);
+    expect(body.partial).toBe(true);
+    expect(body.image).toBe(body.images[0]);
+    expect(await verifyWatermark(body.image)).toMatchObject({ valid: true, shaMatch: true });
+  });
+  it("streams previews immediately, then signs final and done images across split SSE frames", async () => {
+    const input = `data:image/png;base64,${png.toString("base64")}`;
+    const encoder = new TextEncoder();
+    let push!: ReadableStreamDefaultController<Uint8Array>;
+    const source = new ReadableStream<Uint8Array>({ start(controller) { push = controller; } });
+    const result = await watermarkImageResponse(new Response(source, { headers: { "content-type": "text/event-stream" } }), 71, "nai-v5-full", options);
+    const reader = result.response.body!.getReader();
+    const preview = `event: preview\ndata: ${JSON.stringify({ image: input })}\n\n`;
+    push.enqueue(encoder.encode(preview));
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe(preview);
+    const final = `event: final\ndata: ${JSON.stringify({ image: input, sampleIndex: 0 })}\n\n`;
+    const done = `event: done\ndata: ${JSON.stringify({ images: [input], image: input, historyIds: ["saved"] })}\n\n`;
+    const reading = (async () => {
+      let text = "";
+      while (true) { const next = await reader.read(); if (next.done) break; text += new TextDecoder().decode(next.value); }
+      return text;
+    })();
+    push.enqueue(encoder.encode((final + done).slice(0, 45)));
+    push.enqueue(encoder.encode((final + done).slice(45)));
+    push.close();
+    const frames = (await reading).trim().split("\n\n").map((text) => JSON.parse(text.split("\n").find((line) => line.startsWith("data:"))!.slice(5)));
+    expect(frames[0].image).toBe(frames[1].image);
+    expect(frames[1].historyIds).toEqual(["saved"]);
+    expect(await verifyWatermark(frames[0].image)).toMatchObject({ valid: true, shaMatch: true });
+    expect(result.status()).toBe("embedded");
+  });
+  it.each(["jpeg", "webp"] as const)("signs %s as PNG with unchanged decoded pixels and matching content type", async (format) => {
+    const original = await sharp(png).toFormat(format).toBuffer();
+    const marked = await watermarkImageResponse(new Response(new Uint8Array(original), { headers: { "content-type": `image/${format}` } }), 71, "image-model", options);
+    const result = Buffer.from(await marked.response.arrayBuffer());
+    expect(marked.response.headers.get("content-type")).toBe("image/png");
+    expect(await sharp(result).raw().toBuffer()).toEqual(await sharp(original).raw().toBuffer());
+    expect(await verify(result)).toMatchObject({ valid: true, shaMatch: true });
   });
   it("persists one signing key for concurrent first-use responses", async () => {
     const results = await Promise.all(

@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .layout-editor-page {
   min-height: 100dvh;
   background: var(--paper);

@@ -13,7 +13,7 @@ export async function PATCH(request: Request) {
   const session = await getSession();
   if (!session) return NextResponse.json({ message: "请先登录" }, { status: 401 });
   const body = await request.json().catch(() => null) as { id?: unknown; all?: unknown } | null;
-  if (!body || (body.all !== true && typeof body.id !== "string"))
+  if (!body || (body.all !== true && (typeof body.id !== "string" || !body.id.trim() || body.id.length > 100)))
     return NextResponse.json({ message: "请指定要标记已读的消息" }, { status: 400 });
   const result = await markUserNotificationRead(session.userId, body.all === true ? undefined : body.id as string);
   return NextResponse.json(result, { headers: { "Cache-Control": "private, no-store" } });

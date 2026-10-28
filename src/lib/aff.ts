@@ -11,7 +11,7 @@ import type { ImagePricingGeneration } from "@/lib/image-pricing";
 import { runtimeModelFixedCost, runtimeRewards } from "@/lib/runtime-config";
 import { MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
 import { isAffAmount, roundAffAmount, type DailyImageQuote } from "@/lib/daily-image-pricing";
-import { reserveDailyImageQuote, settleDailyImageUsage } from "@/lib/daily-image-billing";
+import { dailyImagePolicy, reserveDailyImageQuote, settleDailyImageUsage } from "@/lib/daily-image-billing";
 import { assertFreeGrant } from "@/lib/light-risk";
 
 export type AffTransaction = {
@@ -24,6 +24,7 @@ export type AffTransaction = {
     | "refund"
     | "referral"
     | "package-purchase"
+    | "avatar-change"
     | "package-generation";
   description: string;
   referenceId?: string;
@@ -48,6 +49,8 @@ export type ImagePackageOrder = {
 type PackageUsage = { id: string; at: number };
 
 type AffAccount = {
+  avatar?: { hash: string; updatedAt: string; requestId: string };
+  avatarRequests?: Record<string, string>;
   // 个人 AFF：签到、邀请、管理员发放都进入这里。
   balance: number;
   // 图包 AFF：购买后进入这里，不能被签到/邀请奖励混入。
@@ -133,6 +136,8 @@ async function readAccount(userId: number): Promise<AffAccount> {
       | Partial<AffAccount>
       | undefined;
     return {
+      avatar: parsed?.avatar && /^[a-f0-9]{64}$/.test(parsed.avatar.hash) ? parsed.avatar : undefined,
+      avatarRequests: parsed?.avatarRequests && typeof parsed.avatarRequests === "object" ? parsed.avatarRequests : {},
       balance: validNonNegativeAmount(parsed?.balance),
       packageBalance: validNonNegativeAmount(parsed?.packageBalance),
       lastCheckInDay:
@@ -396,7 +401,7 @@ export async function trySpendImageCredits(
     let committed = false;
     try {
     const dailyQuote = await reserveDailyImageQuote(userId, generation, reservationId);
-    const cost = fixedCostPerSample != null ? imageCreditCost(generation, fixedCostPerSample) : dailyQuote?.costAff ?? imageCreditCost(generation);
+    const cost = fixedCostPerSample != null ? imageCreditCost(generation, fixedCostPerSample) : dailyQuote?.costAff ?? imageCreditCost(generation, null, await dailyImagePolicy());
     if (!isAffAmount(cost) || cost < 0)
       throw new Error("图像费用计算结果无效");
     if (fixedCostPerSample == null && !dailyQuote && cost === 0)
@@ -612,6 +617,29 @@ export async function adjustAff(
     addTransaction(account, delta, delta > 0 ? "referral" : "refund", description, undefined, "personal", delta > 0 ? "admin" : undefined);
     await writeAccount(userId, account);
     return next;
+  });
+}
+
+export async function getUserAvatar(userId: number) {
+  return (await readAccount(userId)).avatar || null;
+}
+
+/** The avatar pointer and its 5 AFF debit commit in the same account write. */
+export async function purchaseAvatarChange(userId: number, requestId: string, hash: string) {
+  if (!/^[a-f0-9-]{36}$/i.test(requestId) || !/^[a-f0-9]{64}$/.test(hash)) throw new Error("头像保存请求无效");
+  return withUserLock(userId, async () => {
+    const account = await readAccount(userId);
+    if (account.avatarRequests?.[requestId]) {
+      if (account.avatarRequests[requestId] !== hash) throw new Error("请重新选择头像后再提交");
+      return { avatar: account.avatar!, balance: account.balance, charged: 0 };
+    }
+    if (account.balance < 5) throw new Error(`个人 AFF 余额不足：修改头像需要 5 AFF，当前 ${account.balance} AFF`);
+    account.balance -= 5;
+    account.avatar = { hash, requestId, updatedAt: new Date().toISOString() };
+    account.avatarRequests = Object.fromEntries([...Object.entries(account.avatarRequests || {}), [requestId, hash]].slice(-1000));
+    addTransaction(account, -5, "avatar-change", "修改头像", `avatar:${requestId}`, "personal");
+    await writeAccount(userId, account);
+    return { avatar: account.avatar, balance: account.balance, charged: 5 };
   });
 }
 

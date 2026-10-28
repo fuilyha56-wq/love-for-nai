@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .launcher-docs { background:var(--paper); color:var(--ink); }
 .docs-content { padding:20px; }
 .docs-layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:16px; align-items:start; max-width:1240px; margin:auto; }
@@ -25,7 +25,7 @@
 .docs-error :is(span,button) { display:flex; align-items:center; gap:8px; }
 .docs-error button { min-height:44px; padding:8px 12px; }
 .docs-empty { padding:48px 16px; text-align:center; color:var(--muted); font-size:14px; }
-@media (max-width:839px) {
+@media (max-width:1023px) {
   .docs-content { padding:12px; }
   .docs-layout { display:block; }
   .docs-directory { position:static; }

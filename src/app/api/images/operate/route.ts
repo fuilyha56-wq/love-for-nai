@@ -2,6 +2,7 @@ import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { MAX_IMAGE_REQUEST_SAMPLES, splitImageBatches } from "@/lib/image-batches";
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import JSZip from "jszip";
 import {
   refundImageCredits,
@@ -20,6 +21,7 @@ import {
 } from "@/lib/newapi";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { reserveHistoryImageIds, saveHistory } from "@/lib/history";
+import { watermarkImageResponse } from "@/lib/image-response-watermark";
 import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
@@ -314,6 +316,16 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
+
+  const response = await operateImage(request, session, body);
+  const watermarkModel = body.operation === "upscale" ? String(body.upscale_model || "nai-diffusion-5-curated") : body.model || "unknown";
+  const marked = await watermarkImageResponse(response, session.userId, watermarkModel, {
+    requestId: response.headers.get("X-LFN-Request-Id") || (typeof body._lfnRequestId === "string" ? body._lfnRequestId : randomUUID()),
+  });
+  return marked.response;
+}
+
+async function operateImage(request: Request, session: NonNullable<Awaited<ReturnType<typeof getSession>>>, body: Record<string, unknown> & { operation?: string; model?: string }) {
 
   const operation =
     typeof body.operation === "string" ? body.operation : "generate";

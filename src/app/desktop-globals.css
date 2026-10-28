@@ -261,7 +261,7 @@ html[data-theme="ocean"] {
   --line: #d2e0ea;
 }
 html[data-glass="on"] .panel,
-html[data-glass="on"] header,
+html[data-glass="on"] main > header,
 html[data-glass="on"] .popup-select-menu,
 html[data-glass="on"] .glass-surface {
   background: color-mix(in srgb, var(--panel) var(--glass-alpha), transparent);
@@ -270,7 +270,7 @@ html[data-glass="on"] .glass-surface {
 }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   html[data-glass="on"] .panel,
-  html[data-glass="on"] header,
+  html[data-glass="on"] main > header,
   html[data-glass="on"] .popup-select-menu,
   html[data-glass="on"] .glass-surface {
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -961,7 +961,7 @@ html[data-theme="night"] .mask-editor-number {
 .studio-layout {
   grid-template-columns: 1fr;
 }
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
   /* Resized prompt editors may exceed the viewport; keep the canvas reachable. */
   [data-studio-layout] .studio-layout > .studio-canvas {
     overflow-x: hidden;

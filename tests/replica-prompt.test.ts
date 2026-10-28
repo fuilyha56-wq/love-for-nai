@@ -86,6 +86,13 @@ describe("提示词合成与现有编辑器互通", () => {
 });
 
 describe("健壮存储与NAI文本结构", () => {
+  it("默认失焦按 Aaalice 转换词内空格，保留语法边界和原有下划线", () => {
+    const source = 'white hair, {blue eyes}, 1.20::soft light::\nA girl with long hair, "Hello world", existing_tag, ^_^';
+    const settings = parseReplicaPromptConfig(JSON.stringify(config()));
+    const expected = 'white_hair, {blue_eyes}, 1.20::soft_light::\nA_girl_with_long_hair, "Hello_world", existing_tag, ^_^';
+    expect(transformPromptOnBlur(source, settings)).toEqual({ text: expected, error: null });
+    expect(formatReplicaPrompt(source)).toBe(expected);
+  });
   it.each([null, "", "{", "[]", '{"version":9,"quality":"none"}'])("损坏或不同版本设置安全回退 (%s)", (serialized) => {
     expect(parseReplicaPromptConfig(serialized)).toEqual(DEFAULT_REPLICA_PROMPT_CONFIG);
   });
@@ -119,7 +126,7 @@ describe("健壮存储与NAI文本结构", () => {
   it("格式化保留空行、缩进、别名空间和禁用片段，并且重复失焦不改变结果", () => {
     const source = "  white hair，{ red eyes, blue eyes }\r\n\r\n  <my character>，/*disabled:red eyes, blue eyes*/，blue sky,  ";
     const formatted = formatReplicaPrompt(source);
-    expect(formatted).toBe("  white_hair, { red_eyes, blue_eyes }\r\n\r\n  <my character>, /*disabled:red eyes, blue eyes*/, blue_sky,  ");
+    expect(formatted).toBe("  white_hair, { red_eyes, blue_eyes }\r\n\r\n  <my character>,/*disabled:red eyes, blue eyes*/,blue_sky,  ");
     expect(formatReplicaPrompt(formatted)).toBe(formatted);
   });
   it("正则按顺序使用捕获组，支持忽略大小写；无效规则不会部分修改原文", () => {

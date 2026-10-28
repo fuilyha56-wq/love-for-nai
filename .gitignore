@@ -105,3 +105,10 @@ __pycache__/
 /newapi-unbanned-*.csv
 # Research screenshots include a personal account balance; retain locally only.
 /docs/assets/nai-pricing-2026-10-22/*.jpg
+
+# Private request/production audit notes and exported live policy stay local.
+/docs/LFN-USER-REQUESTS-20261025.md
+/docs/anlas-policy-2026-10-26.json
+/scripts/.tmp/
+/%SystemDrive%/
+/public/tutorials/**/audit*.json

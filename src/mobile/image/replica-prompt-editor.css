@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) {

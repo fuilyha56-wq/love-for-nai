@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPromptEditorHeight, insertPromptCompletion, localCooccurringTags, matchLocalPromptTags, promptTokenAt } from "@/lib/prompt-completion";
+import { clampPromptEditorHeight, insertPromptCompletion, localCooccurringTags, matchLocalPromptTags, promptCompletionText, promptTokenAt } from "@/lib/prompt-completion";
 
 describe("提示词补全与本地共现", () => {
   it("光标在标签中间时替换完整标签，不删除后面的其它提示词", () => {
@@ -16,11 +16,32 @@ describe("提示词补全与本地共现", () => {
     const hits = matchLocalPromptTags("white h", ["white hair", "very white hair", "white_hair", "white hair bow", "blue hair"]);
     expect(hits.map((hit) => hit.name)).toEqual(["white_hair", "white_hair_bow", "very_white_hair"]);
     expect(hits.every((hit) => hit.local)).toBe(true);
+    expect(hits.map(promptCompletionText)).toEqual(["white_hair", "white_hair_bow", "very_white_hair"]);
+  });
+  it("按 Aaalice 默认保留补全标签名中的下划线，光标和后续文本正确", () => {
+    for (const hit of [
+      { name: "blue_eyes" },
+      { name: "blue_eyes", insertion: "blue_eyes", source: "danbooru" },
+      ...matchLocalPromptTags("blue e", ["blue eyes"]),
+    ]) {
+      expect(insertPromptCompletion("1girl, blue hair, smile", 12, promptCompletionText(hit))).toEqual({ text: "1girl, blue_eyes, smile", cursor: 16 });
+    }
+  });
+  it("组合提示词、显式插入内容与含下划线的词库引用保持原文", () => {
+    const insertion = "1.2::artist:some_name::, white hair\ntext:hello_world";
+    expect(promptCompletionText({ name: "example_entry", insertion, source: "quicktagcloud" })).toBe(insertion);
+    expect(promptCompletionText({ name: "authored_tag", insertion: "authored_tag", source: "quicktagcloud" })).toBe("authored_tag");
+    expect(promptCompletionText({ name: "example_entry", insertion })).toBe(insertion);
+    expect(promptCompletionText({ name: "<my_character>", insertion: "<my_character>" })).toBe("<my_character>");
+  });
+  it.each(["0_0", "(o)_(o)", "^_^", "o_o", ">_<", "<o>_<o>"])("颜文字 %s 的下划线保留原意", (name) => {
+    expect(promptCompletionText({ name })).toBe(name);
   });
   it("仅基于真实样本统计共现次数，忽略已存在标签及disabled内容", () => {
     const samples = ["1girl, white hair, blue eyes", "{white_hair}, smile, blue_eyes", "1.20::white hair::, blue eyes, red eyes", "white hair, /*disabled:bad hands*/", "black hair, sunset"];
     const hits = localCooccurringTags("{{white_hair}}", samples, "1girl, white hair");
     expect(hits.map((hit) => [hit.name, hit.occurrences])).toEqual([["blue_eyes", 3], ["red_eyes", 1], ["smile", 1]]);
+    expect(hits.map(promptCompletionText)).toEqual(["blue_eyes", "red_eyes", "smile"]);
     expect(localCooccurringTags("unknown", samples, "unknown")).toEqual([]);
     expect(localCooccurringTags("white hair, blue eyes", samples, "")).toEqual([]);
   });

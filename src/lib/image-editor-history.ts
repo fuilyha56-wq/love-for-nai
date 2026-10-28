@@ -154,7 +154,8 @@ export function filterEditorHistoryProjects(projects: EditorHistoryProject[], qu
 }
 
 export function editorHistoryEditHref(node: EditorHistoryNode, branchId = node.branchId): string {
-  return `/image/editor?${new URLSearchParams({ draftId: node.draftId, mode: node.mode, nodeId: node.id, branchId }).toString()}`;
+  const returnTo = `/image/editor/history?${new URLSearchParams({ draftId: node.draftId, branchId, nodeId: node.id })}`;
+  return `/image/editor?${new URLSearchParams({ draftId: node.draftId, mode: node.mode, nodeId: node.id, branchId, returnTo }).toString()}`;
 }
 
 export function editorHistoryChanged(): void {

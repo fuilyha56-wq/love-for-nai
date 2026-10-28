@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ImageProviderProtocol } from "./image-model-capabilities";
+import { hasImageCharacterPrompts, readImageCharacterPrompts } from "./image-character-prompts";
 import {
   deleteRemoteHistoryImage,
   getRemoteHistoryImage,
@@ -105,11 +106,13 @@ function safeParameters(body: Record<string, unknown>): GenerationParameters {
     "_lfnWatermarkStatus",
     "_lfnSkipServerHistory",
   ]);
-  return Object.fromEntries(
+  const parameters = Object.fromEntries(
     Object.keys(body)
       .filter((key) => !excluded.has(key) && body[key] !== undefined)
       .map((key) => [key, body[key]]),
   ) as GenerationParameters;
+  if (hasImageCharacterPrompts(body)) parameters.characterPrompts = readImageCharacterPrompts(body);
+  return parameters;
 }
 
 function generateFingerprint(userId: number, timestamp: string, parameters: GenerationParameters): string {
@@ -255,15 +258,13 @@ export async function saveHistory(
         returned.push(known);
         continue;
       }
-      const extension = match[1] === "jpeg" ? "jpg" : match[1];
       const id = effectiveOptions.imageIds?.[imageIndex] || randomUUID();
-      const fileName = `${id}.${extension}`;
       const timestamp = new Date().toISOString();
       const parameters = safeParameters(body);
       const fingerprint = effectiveOptions.requestFingerprint || generateFingerprint(userId, timestamp, parameters);
       let watermarkStatus: HistoryItem["watermarkStatus"] = effectiveOptions.watermarkStatus || "skipped";
       let processedImage = image;
-      if (match[1] === "png" && !effectiveOptions.skipWatermark) {
+      if (!effectiveOptions.skipWatermark) {
         try {
           processedImage = await embedWatermark(image, id, userId, parameters.model || "unknown", {
             imageId: id,
@@ -277,6 +278,8 @@ export async function saveHistory(
         }
       }
 
+      const outputFormat = processedImage.match(/^data:image\/(png|jpeg|webp);/)?.[1] || match[1];
+      const fileName = `${id}.${outputFormat === "jpeg" ? "jpg" : outputFormat}`;
       const imageMatch = processedImage.match(/^data:image\/[^;]+;base64,([\s\S]+)$/);
       if (imageMatch) {
         const buffer = Buffer.from(imageMatch[1], "base64");

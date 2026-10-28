@@ -188,7 +188,7 @@ describe("runTagAgent budgets", () => {
     ]);
   });
 
-  it("sends at most four images as a multimodal current request", async () => {
+  it("sends all ten images as a multimodal current request and rejects eleven", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       Response.json({ choices: [{ message: { content: '{"tags":[]}' } }] }),
     );
@@ -196,18 +196,14 @@ describe("runTagAgent budgets", () => {
     const { runTagAgent } = await import("@/lib/tag-agent");
 
     await runTagAgent("key", "model", "analyze", {}, 1, {
-      images: [
-        "data:image/png;base64,a",
-        "data:image/png;base64,b",
-        "data:image/png;base64,c",
-        "data:image/png;base64,d",
-        "data:image/png;base64,e",
-      ],
+      images: Array.from({ length: 10 }, (_, index) => `data:image/png;base64,${index}`),
     });
     const body = JSON.parse(
       (fetchMock.mock.calls[0][1] as RequestInit).body as string,
     ) as { messages: Array<{ content: string | Array<unknown> }> };
-    expect(body.messages.at(-1)?.content).toHaveLength(5);
+    expect(body.messages.at(-1)?.content).toHaveLength(11);
+    await expect(runTagAgent("key", "model", "analyze", {}, 1, { images: Array(11).fill("image") })).rejects.toThrow("10");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("injects the selected image model while retaining the separate upstream chat model", async () => {

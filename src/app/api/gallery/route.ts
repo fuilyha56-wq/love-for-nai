@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         title: String(form.get("title") || ""), authorName: String(form.get("authorName") || ""), rating: assertGalleryRating(form.get("rating")),
         source: source === "other" ? "other" : "local", tags: String(form.get("tags") || "").split(","),
         prompt: String(form.get("prompt") || ""), negativePrompt: String(form.get("negativePrompt") || ""), parameters, exposeParameters,
+        requireLikeForParameters: form.get("requireLikeForParameters") === "true",
       });
       return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });
     }
@@ -62,6 +63,7 @@ export async function POST(request: Request) {
       source: ["other", "lfn", "local"].includes(body.source as string) ? body.source as GallerySource : "lfn",
       tags: Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === "string") : [],
       exposeParameters: body.exposeParameters !== false,
+      requireLikeForParameters: body.requireLikeForParameters === true,
     });
     return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });
   } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "发布失败" }, { status: 400 }); }

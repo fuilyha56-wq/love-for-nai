@@ -108,11 +108,12 @@ function RankingChart({
       chart.setOption({
         color: palette,
         animationDuration: 250,
-        textStyle: { fontFamily: "inherit", fontSize: 11 },
+        textStyle: { fontFamily: '"Noto Sans SC", sans-serif', fontSize: 11 },
         tooltip: {
           trigger: "axis",
           confine: true,
-          renderMode: "richText",
+          renderMode: "html",
+          textStyle: { fontFamily: '"Noto Sans SC", sans-serif' },
           axisPointer: { type: "shadow" },
           valueFormatter: (value: number | string) =>
             numberFormat.format(Number(value)),

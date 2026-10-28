@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type UserNotification = {
   id: string;
   userId: number;
-  type: "announcement-reply" | "creator-reward" | "system";
+  type: "announcement-reply" | "gallery-comment" | "gallery-reply" | "comment-like" | "creator-reward" | "system";
   title: string;
   body: string;
   href: string;
@@ -15,12 +15,18 @@ export type UserNotification = {
 };
 
 const root = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "notifications");
-const locks = new Map<number, Promise<unknown>>();
+// Route bundles can load separate module instances. Share the queue so creating
+// a message cannot write an old snapshot over another route's read receipt.
+const notificationRuntime = globalThis as typeof globalThis & { __lfnNotificationLocks?: Map<string, Promise<unknown>> };
+const locks = (notificationRuntime.__lfnNotificationLocks ??= new Map<string, Promise<unknown>>());
 
 function withUserLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
-  const previous = locks.get(userId) || Promise.resolve();
+  const key = filePath(userId);
+  const previous = locks.get(key) || Promise.resolve();
   const current = previous.then(task, task);
-  locks.set(userId, current.catch(() => undefined));
+  const settled = current.catch(() => undefined);
+  locks.set(key, settled);
+  void settled.then(() => { if (locks.get(key) === settled) locks.delete(key); });
   return current;
 }
 
@@ -91,4 +97,21 @@ export async function deleteUserNotificationByDedupeKey(userId: number, dedupeKe
     await write(userId, remaining);
     return true;
   });
+}
+
+export async function deleteCommentNotifications(scope: "gallery" | "announcement", commentIds: string[]) {
+  let files: string[];
+  try { files = await readdir(root()); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  const ids = new Set(commentIds);
+  await Promise.all(files.filter(name => /^\d+\.json$/.test(name)).map(async name => {
+    const userId = Number(name.slice(0, -5));
+    await withUserLock(userId, async () => {
+      const items = await read(userId);
+      const next = items.filter(item => {
+        const parts = item.dedupeKey?.split(":") || [];
+        return !(parts[0]?.startsWith(scope) && ids.has(parts[1]));
+      });
+      if (next.length !== items.length) await write(userId, next);
+    });
+  }));
 }

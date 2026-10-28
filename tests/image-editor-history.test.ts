@@ -114,6 +114,10 @@ describe("dedicated redraw history", () => {
     const url = new URL(editorHistoryEditHref(result, "selected-branch"), "http://localhost");
     expect(url.searchParams.get("nodeId")).toBe(result.id);
     expect(url.searchParams.get("branchId")).toBe("selected-branch");
+    const parent = new URL(url.searchParams.get("returnTo")!, "http://localhost");
+    expect(parent.pathname).toBe("/image/editor/history");
+    expect(parent.searchParams.get("draftId")).toBe(result.draftId);
+    expect(parent.searchParams.get("nodeId")).toBe(result.id);
   });
 
   it("preserves the original branch head when continuing an older node, including simultaneous results", async () => {
@@ -176,10 +180,11 @@ describe("dedicated redraw history", () => {
   });
 
   it("deletes only nodes unique to a branch and keeps shared ancestry", async () => {
-    const root = await createEditorHistoryRoot("delete-branch", snapshot());
-    const mainResult = await saveEditorHistoryCheckpoint("delete-branch", root.branch.id, root.node.id, snapshot(12), "main result", { resultOperation: "inpaint" });
+    // Distinct timestamps keep this deletion test independent of random ID order within one millisecond.
+    const root = await createEditorHistoryRoot("delete-branch", snapshot(), 1_000);
+    const mainResult = await saveEditorHistoryCheckpoint("delete-branch", root.branch.id, root.node.id, snapshot(12), "main result", { resultOperation: "inpaint", createdAt: 2_000 });
     const branch = await createEditorHistoryBranch("delete-branch", "extra", root.node.id);
-    const branchResult = await saveEditorHistoryCheckpoint("delete-branch", branch.id, root.node.id, snapshot(30), "branch result", { resultOperation: "canvas" });
+    const branchResult = await saveEditorHistoryCheckpoint("delete-branch", branch.id, root.node.id, snapshot(30), "branch result", { resultOperation: "canvas", createdAt: 3_000 });
     await deleteEditorHistoryBranch(branch.id);
     const history = await listEditorHistory("delete-branch");
     expect(history.branches.map((item) => item.id)).toEqual([root.branch.id]);

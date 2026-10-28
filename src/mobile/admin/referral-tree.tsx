@@ -2,10 +2,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, GitBranch, UserRound } from "lucide-react";
 import type { ReferralRiskComponent } from "@/lib/referral";
+import {
+  referralAccountStatusText,
+  type ReferralAccountStatus,
+} from "@/lib/referral-account-status";
 import { AdminButton, AdminCard } from "./ui/admin-primitives";
 
 export type ChainPreview = {
   component: ReferralRiskComponent;
+  accountProvider?: "LFN" | "NewAPI";
   users: Array<{
     userId: number;
     username: string;
@@ -13,6 +18,7 @@ export type ChainPreview = {
     level: string;
     score: number;
     blocked: boolean;
+    accountStatus?: ReferralAccountStatus;
   }>;
 };
 
@@ -25,6 +31,7 @@ export function ReferralExplorer({
 }) {
   const [data, setData] = useState<ChainPreview | null>(null),
     [error, setError] = useState("");
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void fetch("/api/admin/risk/chain-preview", {
@@ -36,6 +43,7 @@ export function ReferralExplorer({
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || "读取邀请关系失败");
+        if (controller.signal.aborted) return;
         setData(result);
         onLoaded?.(result);
       })
@@ -44,12 +52,23 @@ export function ReferralExplorer({
           setError(cause instanceof Error ? cause.message : "读取邀请关系失败");
       });
     return () => controller.abort();
-  }, [userId, onLoaded]);
+  }, [userId, onLoaded, revision]);
+  function refresh() {
+    setError("");
+    setData(null);
+    setRevision((value) => value + 1);
+  }
   if (error)
     return (
-      <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
-        {error}
-      </p>
+      <div className="space-y-2">
+        <p
+          role="alert"
+          className="rounded-lg bg-red-50 p-3 text-sm text-red-700"
+        >
+          {error}
+        </p>
+        <AdminButton onClick={refresh}>重试读取账号状态</AdminButton>
+      </div>
     );
   if (!data || data.component.rootUserId !== userId)
     return (
@@ -57,7 +76,14 @@ export function ReferralExplorer({
         正在读取邀请关系…
       </p>
     );
-  return <ReferralTree key={userId} data={data} />;
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <AdminButton onClick={refresh}>刷新账号状态</AdminButton>
+      </div>
+      <ReferralTree key={userId} data={data} />
+    </div>
+  );
 }
 
 export function ReferralTree({ data }: { data: ChainPreview }) {
@@ -137,7 +163,12 @@ export function ReferralTree({ data }: { data: ChainPreview }) {
                   : component.descendants.includes(id)
                     ? " · 下游被邀请人"
                     : " · 关联分支"}
-              {person?.blocked ? " · 已封禁" : ""}
+              {person?.accountStatus === "disabled"
+                ? ` · ${data.accountProvider || "账号"} 已禁用`
+                : person?.accountStatus !== "active"
+                  ? " · 账号状态未知"
+                  : ""}
+              {person?.blocked ? " · LFN 风控封禁" : ""}
             </small>
           </button>
           {branches.length > 0 && (
@@ -278,9 +309,15 @@ export function ReferralTree({ data }: { data: ChainPreview }) {
               </div>
             )}
             <div>
-              <dt className="text-[var(--muted)]">风控状态</dt>
+              <dt className="text-[var(--muted)]">
+                {data.accountProvider || "登录"} 账号状态
+              </dt>
+              <dd>{referralAccountStatusText(current?.accountStatus)}</dd>
+            </div>
+            <div>
+              <dt className="text-[var(--muted)]">LFN 风控状态</dt>
               <dd>
-                {current?.blocked ? "已封禁" : "未封禁"} · 分数{" "}
+                {current?.blocked ? "已封禁" : "无本地封禁记录"} · 分数{" "}
                 {current?.score || 0}
               </dd>
             </div>

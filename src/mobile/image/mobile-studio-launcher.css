@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .mobile-studio-launcher { display: none; min-width: 0; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; background: var(--paper); color: var(--ink); }
 .mobile-studio-page { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1 1 0; flex-direction: column; overflow: hidden; }
 .mobile-studio-page-panel { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; }
@@ -185,7 +185,7 @@
 @keyframes mobile-studio-content-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
 @keyframes mobile-studio-content-in-left { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
 @keyframes mobile-studio-sheet-in { from { opacity: 0; } to { opacity: 1; } }
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
   main[data-studio-layout] { height: var(--lfn-viewport-height, 100dvh); min-height: 0; }
   main[data-studio-layout] .layout-editor-entry { display: none; }
   /* Constrain the flex/grid sizing chain when a result first gains intrinsic size. */
@@ -241,7 +241,7 @@ html:is([data-theme="night"], [data-theme="nai"]) .mobile-studio-launcher :is(.m
   [data-studio-layout] > header > div:last-child { gap: 4px; }
   [data-studio-layout] > header > div:last-child > a[href="/profile#profile-wallet"] { gap: 4px; padding-inline: 8px; font-size: 12px; white-space: nowrap; }
 }
-@media (max-width: 839px) and (max-height: 500px) and (min-width: 600px) {
+@media (max-width: 1023px) and (max-height: 500px) and (min-width: 600px) {
   .mobile-studio-page.is-generate > .mobile-studio-page-panel:not([hidden]) { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, .65fr); grid-template-rows: 44px minmax(0, 1fr) auto; }
   .mobile-studio-workbar { grid-column: 1 / -1; }
   .mobile-studio-workbar { min-height: 44px; padding-block: 2px; }

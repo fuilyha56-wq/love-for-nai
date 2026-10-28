@@ -1,0 +1,19 @@
+.avatar-settings { display:flex; flex-direction:column; align-items:flex-start; gap:10px; }
+.avatar-change-button { display:flex; align-items:center; gap:6px; min-height:40px; color:var(--rose); font-size:12px; }
+.avatar-settings > p { font-size:12px; color:var(--muted); }
+.avatar-editor-backdrop { position:fixed; z-index:40000; inset:0; display:grid; place-items:center; padding:20px; background:#0008; }
+.avatar-editor-dialog { display:flex; flex-direction:column; width:min(100%,440px); max-height:90dvh; border-radius:16px; background:var(--panel); color:var(--ink); overflow:hidden; }
+.avatar-editor-dialog header { display:flex; flex:none; align-items:center; justify-content:space-between; padding:12px 16px; border-bottom:1px solid var(--line); }
+.avatar-editor-dialog header h2 { font-size:18px; font-weight:650; }
+.avatar-editor-dialog header button { display:grid; place-items:center; width:44px; height:44px; }
+.avatar-editor-body { min-height:0; overflow:auto; padding:16px; }
+.avatar-editor-body canvas { display:block; width:min(100%,256px); height:auto; margin:0 auto 16px; border-radius:50%; background:var(--surface-muted); }
+.avatar-editor-body label { display:grid; gap:6px; margin:12px 0; font-size:13px; }
+.avatar-editor-body input { width:100%; min-height:32px; accent-color:var(--rose); }
+.avatar-editor-body p { margin-top:14px; color:var(--muted); font-size:12px; line-height:1.7; }
+.avatar-editor-body .avatar-editor-error { color:var(--rose); }
+.avatar-editor-dialog footer { display:flex; flex:none; justify-content:flex-end; gap:10px; padding:12px 16px max(12px,env(safe-area-inset-bottom)); border-top:1px solid var(--line); }
+.avatar-editor-dialog footer button { min-height:44px; padding:8px 12px; border:1px solid var(--line); border-radius:8px; font-size:13px; }
+.avatar-editor-dialog footer button:last-child { background:var(--rose); color:white; border-color:var(--rose); }
+.avatar-editor-dialog button:disabled { opacity:.45; cursor:not-allowed; }
+@media(max-width:599px) { .avatar-editor-backdrop { padding:0; align-items:end; }.avatar-editor-dialog { max-height:95dvh; width:100%; border-radius:20px 20px 0 0; } }

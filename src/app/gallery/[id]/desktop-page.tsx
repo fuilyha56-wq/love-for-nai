@@ -1,7 +1,10 @@
 "use client";
+import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
-import { Check, Copy, Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
+import Link from "next/link";
+import { ArrowLeft, Check, Copy, Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
 import Image from "@/app/cached-image";
+import { DiscussionComments } from "@/app/ui/discussion-comments";
 import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { PublicHeader } from "@/app/public-header";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
@@ -21,6 +24,9 @@ type GalleryItem = {
   imageUrl: string;
   thumbnailUrl?: string;
   likes: number;
+  liked?: boolean;
+  parametersLocked?: boolean;
+  requireLikeForParameters?: boolean;
 };
 
 const ratingLabels: Record<string, string> = {
@@ -71,6 +77,7 @@ export default function GalleryItemPage({
   const [originalImageUrl, setOriginalImageUrl] = useState("");
 
   useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
     (async () => {
       const id = (await params).id;
       const query = new URLSearchParams(window.location.search);
@@ -85,6 +92,7 @@ export default function GalleryItemPage({
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || "作品不存在");
         setItem(result.item);
+        setLiked(result.item.liked === true);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "作品读取失败");
       }
@@ -101,7 +109,12 @@ export default function GalleryItemPage({
       setMessage(result.message || "请登录后点赞");
       return;
     }
-    setItem({ ...item, likes: result.likes });
+    if (item.requireLikeForParameters) {
+      const detail = await fetch(`/api/gallery/${item.id}`, { cache: "no-store" });
+      if (!detail.ok) { setMessage("点赞状态已更新，作品详情读取失败，请刷新重试。"); return; }
+      const refreshed = await detail.json();
+      setItem(refreshed.item);
+    } else setItem({ ...item, likes: result.likes });
     setLiked(result.liked);
   }
 
@@ -113,12 +126,14 @@ export default function GalleryItemPage({
     );
   }
 
+  const characterPrompts = readImageCharacterPrompts(item?.parameters || {});
   const isHidden = (item?.rating === "r17" || item?.rating === "r18") && !revealed;
 
   return (
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader current="gallery" actionLabel="进入工作台" actionHref="/image" />
       <section className="mx-auto max-w-5xl p-4 sm:p-7">
+        <Link replace href="/gallery?restore=1" scroll={false} className="mb-5 inline-flex min-h-11 items-center gap-2 rounded border border-[var(--line)] bg-[var(--panel)] px-4 text-sm font-semibold"><ArrowLeft size={17} />返回图片广场</Link>
         {rewardNotice && <p role="status" className="mb-5 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900 shadow-[0_0_0_3px_rgba(245,158,11,.12)]"><Trophy size={18} className="shrink-0" />{rewardNotice}</p>}
         {message && (
           <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -224,10 +239,16 @@ export default function GalleryItemPage({
                   导入图片到工作台
                 </button>
               </div>
+              {item.parametersLocked && <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm"><p>作者设置了点赞后查看提示词与生成参数。</p><button type="button" onClick={like} className="mt-3 flex min-h-11 items-center gap-2 rounded bg-[var(--rose)] px-4 font-semibold text-white"><Heart size={16} />点赞并查看提示词</button></div>}
               {Object.keys(item.parameters).length > 0 && (
                 <>
                   {item.prompt && <PromptPanel title="正面提示词" value={item.prompt} />}
                   {item.negativePrompt && <PromptPanel title="负面提示词" value={item.negativePrompt} />}
+              {characterPrompts.map((character, index) => <section key={index} aria-label={`角色 ${index + 1} 提示词`} className="space-y-2">
+                <h2 className="text-sm font-semibold">角色 {index + 1}</h2>
+                {character.prompt && <PromptPanel title={`角色 ${index + 1} 正面提示词`} value={character.prompt} />}
+                {character.negativePrompt && <PromptPanel title={`角色 ${index + 1} 负面提示词`} value={character.negativePrompt} />}
+              </section>)}
                 </>
               )}
             </aside>
@@ -235,6 +256,7 @@ export default function GalleryItemPage({
         )}
       </section>
       {importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}
+      {item && <div className="mx-auto w-full max-w-6xl px-4 pb-8 sm:px-7"><DiscussionComments resource="gallery" resourceId={item.id} /></div>}
     </main>
   );
 }

@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 /* Aaalice workspace geometry with LFn's semantic palette. */
 .stories-shell {
   --story-bg:var(--paper); --story-panel:var(--panel); --story-input:var(--surface-muted);
@@ -133,7 +133,7 @@
 .stories-auth-panel>p { color:var(--story-muted); font-size:13px; }
 .stories-auth-panel>a { display:inline-flex; min-height:44px; align-items:center; gap:8px; margin:16px 4px 0; padding:8px 16px; border-radius:8px; background:var(--story-action); color:var(--story-action-text); font-size:14px; }
 .stories-auth-panel>.story-auth-back { background:transparent; color:var(--story-muted); }
-@media (max-width:839px) {
+@media (max-width:1023px) {
   .story-form-toolbar { padding:8px 12px; }
   .story-create-form { width:calc(100% - 24px); margin:12px; padding:16px; }
   .story-editor-header { gap:4px; padding:8px; }

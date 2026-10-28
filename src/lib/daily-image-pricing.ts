@@ -1,4 +1,4 @@
-import { AFF_PER_ANLAS, CNY_PER_ANLAS, V5_ANLAS_SALES_MULTIPLIER, affCost, MEDIUM_AFF_PER_IMAGE, V5_BASE_AFF_PER_IMAGE, type ImagePricingGeneration } from "./image-pricing";
+import { billableNaiAnlasCost, MEDIUM_AFF_PER_IMAGE, V5_BASE_AFF_PER_IMAGE, type ImagePricingGeneration } from "./image-pricing";
 import { isNaiMediumModel, naiUsageModel } from "./nai-native-request";
 
 export type DailyImageFamily = "v45" | "v5";
@@ -44,8 +44,8 @@ export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
   enabled: true,
   strictApiBilling: false,
   displayUsdPerCny: 200,
-  v45AnlasCny: CNY_PER_ANLAS,
-  v5AnlasCny: CNY_PER_ANLAS * V5_ANLAS_SALES_MULTIPLIER,
+  v45AnlasCny: 0.01,
+  v5AnlasCny: 0.01,
   v45: [
     { afterImages: 0, baseCny: 0, anlasMultiplier: 1, totalMultiplier: 1 },
     {
@@ -139,9 +139,7 @@ export function quoteDailyImage(
   )
     throw new Error("每日计费参数无效");
   const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE : family === "v5" ? V5_BASE_AFF_PER_IMAGE : 1;
-  const baselineAff = affCost(generation) / generation.samples;
-  const anlasAff = Math.max(0, baselineAff - baseAff);
-  const anlas = anlasAff * generation.samples / (AFF_PER_ANLAS * (family === "v5" ? V5_ANLAS_SALES_MULTIPLIER : 1));
+  const anlas = billableNaiAnlasCost(generation);
   const anlasPerSample = anlas / generation.samples;
   const anlasCny = family === "v45" ? policy.v45AnlasCny : policy.v5AnlasCny;
   const affCosts = Array.from({ length: generation.samples }, (_, index) => {

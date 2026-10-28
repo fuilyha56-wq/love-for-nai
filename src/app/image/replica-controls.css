@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .replica-controls { display:flex; flex-direction:column; min-height:0; flex:1; color:var(--replica-ink); background:var(--replica-panel); }
 .replica-controls[data-variant="nai"] { --replica-ink:var(--ink); --replica-muted:var(--muted); --replica-panel:var(--panel); --replica-control:var(--surface); --replica-input:var(--paper); --replica-accent:var(--rose); --replica-line:var(--line); font-family:var(--font-sans); font-size:16px; }
 .replica-controls[data-variant="nlw"] { --replica-ink:var(--ink); --replica-muted:var(--muted); --replica-panel:var(--panel); --replica-control:var(--surface); --replica-input:var(--paper); --replica-accent:var(--rose); --replica-line:var(--line); font-family:var(--font-sans); font-size:16px; }

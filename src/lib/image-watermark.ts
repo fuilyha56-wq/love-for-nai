@@ -2,6 +2,7 @@ import { createHash, createSign, createVerify, generateKeyPairSync } from "node:
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeSettings } from "@/lib/runtime-config";
+import { jpegComments } from "@/lib/nai-metadata";
 
 export type WatermarkPayload = {
   schema: "lfn-watermark-v2" | "lfn-watermark-v1";
@@ -126,10 +127,20 @@ export async function embedWatermark(
   model: string,
   options: WatermarkOptions = {},
 ): Promise<string> {
-  const { mime, buffer } = dataUrlParts(imageDataUrl);
-  if (!isPng(buffer)) return imageDataUrl;
   const settings = await getRuntimeSettings();
   if (!settings.watermarkEnabled) return imageDataUrl;
+  const inline = imageDataUrl.startsWith("data:") ? imageDataUrl
+    : await (await import("@/lib/provider/http")).downloadProviderImage(imageDataUrl);
+  const source = dataUrlParts(inline);
+  // Existing PNG chunks and pixels (including NAI stealth metadata) are left
+  // byte-for-byte intact. Other raster outputs keep EXIF/XMP/ICC when converted.
+  let buffer = isPng(source.buffer) ? source.buffer
+    : await (await import("sharp")).default(source.buffer, { limitInputPixels: 67_108_864 }).keepMetadata().png().toBuffer();
+  // Sharp preserves EXIF/XMP but not JPEG COM segments containing NAI JSON.
+  if (source.buffer[0] === 0xff && source.buffer[1] === 0xd8) {
+    for (const [, text] of jpegComments(source.buffer))
+      buffer = injectPngTextChunk(buffer, "Comment", text);
+  }
   const keys = await getKeyPair();
   const payload: WatermarkPayload = {
     schema: "lfn-watermark-v2",
@@ -148,7 +159,7 @@ export async function embedWatermark(
     parameters: options.parameters,
   };
   const watermarked = signWatermark(buffer, payload, keys);
-  return `data:${mime};base64,${watermarked.toString("base64")}`;
+  return `data:image/png;base64,${watermarked.toString("base64")}`;
 }
 
 type WatermarkVerification = {

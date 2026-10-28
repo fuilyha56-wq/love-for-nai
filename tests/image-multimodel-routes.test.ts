@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
+import { resetRuntimeConfigCache, updateRuntimeSettings } from "@/lib/runtime-config";
+import { verifyWatermark } from "@/lib/image-watermark";
+const originalData = process.env.LFN_DATA_DIR;
+let testData = "";
 
 const mocks = vi.hoisted(() => ({ auth: vi.fn(), allowed: vi.fn(), token: vi.fn(), spend: vi.fn(), history: vi.fn(), personal: vi.fn(), suggestion: vi.fn(), chatToken: vi.fn(), download: vi.fn() }));
 vi.mock("@/lib/session", () => ({ getSession: async () => ({ userId: 78501, username: "models-test" }) }));
@@ -19,7 +26,11 @@ const request = (body: Record<string, unknown>) => new Request("http://localhost
 const base = { model: "gpt-image-1.5", prompt: "A quiet forest", width: 832, height: 1216, n: 1 };
 const raster = async (color: string) => `data:image/png;base64,${(await sharp({ create: { width: 64, height: 64, channels: 4, background: color } }).png().toBuffer()).toString("base64")}`;
 
-beforeEach(() => {
+beforeEach(async () => {
+  testData = await mkdtemp(path.join(os.tmpdir(), "lfn-model-watermark-"));
+  process.env.LFN_DATA_DIR = testData;
+  resetRuntimeConfigCache();
+  await updateRuntimeSettings({ watermarkEnabled: true });
   vi.clearAllMocks();
   mocks.auth.mockResolvedValue("newapi");
   mocks.allowed.mockResolvedValue(true);
@@ -28,9 +39,25 @@ beforeEach(() => {
   mocks.history.mockResolvedValue([{ id: "history-1" }]);
   vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ b64_json: "aGVsbG8=" }] })));
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  resetRuntimeConfigCache();
+  if (originalData == null) delete process.env.LFN_DATA_DIR;
+  else process.env.LFN_DATA_DIR = originalData;
+  await rm(testData, { recursive: true, force: true });
+});
 
 describe("图像模型路由和计费适配", () => {
+  it.each([["operate", operate], ["generate", generate]] as const)("%s 给个人模型源返回和延迟历史结果也写入隐式签名", async (_name, handler) => {
+    const image = await raster("purple");
+    mocks.personal.mockResolvedValue(Response.json({ images: [image], image, historyIds: [] }));
+    const response = await handler(request({ ...base, providerId: "personal-model", editor_composite: true }));
+    const body = await response.json();
+    expect(await verifyWatermark(body.image)).toMatchObject({ valid: true, shaMatch: true, payload: { userId: 78501, model: base.model } });
+    expect(body.images[0]).toBe(body.image);
+    expect(response.headers.get("X-LFN-Watermark")).toBe("embedded");
+    expect(mocks.history).not.toHaveBeenCalled();
+  });
   it("GPT 生成按模型尺寸协议请求；不使用 NAI AFF，也不发送 diffusion 扩展字段", async () => {
     const response = await operate(request({ ...base, operation: "generate", steps: 28, seed: 100, scale: 5 }));
     expect(response.status).toBe(200);
@@ -96,7 +123,10 @@ describe("图像模型路由和计费适配", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ url: "https://cdn.example.com/generated.png?signature=secret" }] })));
     const response = await operate(request(base));
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ image, width: 64, height: 64 });
+    const result = await response.json();
+    expect(result).toMatchObject({ width: 64, height: 64 });
+    expect(await verifyWatermark(result.image)).toMatchObject({ valid: true, shaMatch: true, payload: { userId: 78501, model: base.model } });
+    expect(await sharp(Buffer.from(result.image.split(",")[1], "base64")).raw().toBuffer()).toEqual(await sharp(Buffer.from(image.split(",")[1], "base64")).raw().toBuffer());
     expect(mocks.download).toHaveBeenCalledWith("https://cdn.example.com/generated.png?signature=secret", expect.any(AbortSignal));
     expect(mocks.history).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ width: 64, height: 64 }), [image], null);
   });

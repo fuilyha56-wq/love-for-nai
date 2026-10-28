@@ -266,7 +266,7 @@ html[data-theme="ocean"] {
   --line: #d2e0ea;
 }
 html[data-glass="on"] .panel,
-html[data-glass="on"] header,
+html[data-glass="on"] main > header,
 html[data-glass="on"] .popup-select-menu,
 html[data-glass="on"] .glass-surface {
   background: color-mix(in srgb, var(--panel) var(--glass-alpha), transparent);
@@ -275,7 +275,7 @@ html[data-glass="on"] .glass-surface {
 }
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   html[data-glass="on"] .panel,
-  html[data-glass="on"] header,
+  html[data-glass="on"] main > header,
   html[data-glass="on"] .popup-select-menu,
   html[data-glass="on"] .glass-surface {
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
@@ -2205,6 +2205,6 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
 .char-color-4 { --char-color: #6b46c1; }
 .char-color-5 { --char-color: #b83280; }
 /* Keep the development indicator from covering phone navigation. */
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
   nextjs-portal { display: none; }
 }

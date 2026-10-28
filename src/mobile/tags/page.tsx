@@ -14,12 +14,12 @@ export default async function TagCatalogPage({ searchParams }: { searchParams: P
   return <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
     <PublicHeader current="tags" />
     <section className="mx-auto max-w-5xl space-y-6 p-5 sm:p-8">
+      {key && <Link replace href={query ? `/tags?q=${encodeURIComponent(query)}` : "/tags"} className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--muted)]"><ArrowLeft size={18} />返回检索结果</Link>}
       <form className="flex gap-2" action="/tags"><input aria-label="搜索标签数据库" name="q" defaultValue={query} placeholder="搜索英文标签、中文标题或说明" minLength={2} maxLength={80} className="field min-w-0 flex-1" /><button className="rounded bg-[var(--rose)] px-4 py-2 text-sm text-white">搜索</button></form>
       {!status.available && <p role="status">标签数据库尚未导入。</p>}
       {status.available && !status.complete && <p role="status" className="text-sm text-[var(--muted)]">数据同步尚未完成，当前已入库记录可以读取。</p>}
       {key && !item && <p role="status">未找到这条记录。</p>}
       {item && <article className="space-y-4 rounded-lg bg-[var(--panel)] p-4 sm:p-6">
-        <Link href={query ? `/tags?q=${encodeURIComponent(query)}` : "/tags"} className="inline-flex min-h-11 items-center gap-2 text-sm text-[var(--muted)]"><ArrowLeft size={18} />返回检索结果</Link>
         <header><p className="text-xs text-[var(--muted)]">{item.source} · {item.categoryName}</p><h2 className="mt-2 break-words text-xl font-semibold">{item.displayName}</h2><p className="mt-2 break-all font-mono text-xs text-[var(--muted)]">{item.name}</p></header>
         <TagActions value={item.insertion} />
         {item.zh && <p>{item.zh}</p>}

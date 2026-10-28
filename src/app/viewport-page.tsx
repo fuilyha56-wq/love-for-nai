@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 
-export const MOBILE_VIEWPORT_QUERY = "(max-width: 839px)";
+export const MOBILE_VIEWPORT_QUERY = "(max-width: 1023px)";
 function subscribe(listener: () => void) {
   const query = window.matchMedia(MOBILE_VIEWPORT_QUERY);
   query.addEventListener("change", listener);

@@ -6,6 +6,9 @@ import { invalidateCachedJsonFile, readCachedJsonFile } from "@/lib/server-json-
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
+import { hasImageCharacterPrompts, imagePromptText, restoreImageCharacterPrompts } from "@/lib/image-character-prompts";
+import { galleryComments } from "@/lib/gallery-comments";
+import { deleteCommentNotifications } from "@/lib/notifications";
 
 export type GalleryRating = "general" | "r13" | "r17" | "r18";
 export type GallerySource = "other" | "lfn" | "local";
@@ -44,6 +47,9 @@ export type GalleryItem = {
   parameters: Record<string, unknown>;
   imageFile: string;
   imageMetadataStripped?: boolean;
+  requireLikeForParameters?: boolean;
+  parametersLocked?: boolean;
+  liked?: boolean;
   createdAt: string;
   likes: number;
   /** Counted after a download action succeeds; older records default to 0. */
@@ -154,7 +160,7 @@ export async function publishFromHistory(
   ownerId: number,
   ownerName: string,
   historyId: string,
-  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; exposeParameters: boolean },
+  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; exposeParameters: boolean; requireLikeForParameters?: boolean },
 ): Promise<GalleryItem> {
   return withLock(async () => {
     const history = await findHistory(ownerId, historyId);
@@ -164,16 +170,17 @@ export async function publishFromHistory(
     const rating = assertGalleryRating(input.rating);
     if (!["other", "lfn", "local"].includes(input.source))
       throw new Error("图片来源不合法");
-    const sourcePrompt = String(history.parameters.prompt || "");
-    const sourceNegative = String(history.parameters.negative_prompt || "");
     const id = randomUUID();
     await mkdir(root(), { recursive: true });
     const source = history.remote
       ? (await getRemoteHistoryImage(ownerId, history.imagePath))?.data
       : await readFile(historyImagePath(ownerId, history.imagePath));
     if (!source) throw new Error("历史图片读取失败");
+    const parameters = restoreImageCharacterPrompts(history.parameters, parseNaiImageMetadata(source)?.parameters || {});
+    const { prompt: sourcePrompt, negativePrompt: sourceNegative } = imagePromptText(parameters);
     const originalExtension = path.extname(history.imagePath).replace(/^\./, "") || "png";
-    const cleaned = input.exposeParameters ? null : await stripImageMetadata(source, history.imagePath);
+    const requireLikeForParameters = input.exposeParameters && input.requireLikeForParameters === true;
+    const cleaned = input.exposeParameters && !requireLikeForParameters ? null : await stripImageMetadata(source, history.imagePath);
     const file = `${id}.${cleaned?.extension || originalExtension}`;
     await writeFile(imagePath(file), cleaned?.data || source);
     const item: GalleryItem = {
@@ -181,8 +188,9 @@ export async function publishFromHistory(
       rating, source: input.source,
       tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
       prompt: input.exposeParameters ? sourcePrompt : "", negativePrompt: input.exposeParameters ? sourceNegative : "",
-      parameters: input.exposeParameters ? history.parameters : {}, imageFile: file,
-      imageMetadataStripped: !input.exposeParameters,
+      parameters: input.exposeParameters ? parameters : {}, imageFile: file,
+      imageMetadataStripped: !input.exposeParameters || requireLikeForParameters,
+      requireLikeForParameters,
       createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
     };
     const store = await readStore();
@@ -192,15 +200,20 @@ export async function publishFromHistory(
   });
 }
 
-export function publicGalleryItem(item: GalleryItem): GalleryItem {
+export function publicGalleryItem(item: GalleryItem, viewerId?: number): GalleryItem {
   const safeItem = { ...item };
   delete safeItem.reviewedAt;
   delete safeItem.reviewedBy;
   delete safeItem.reviewNote;
+  const liked = viewerId != null && item.likedBy.includes(viewerId);
+  const parametersLocked = item.requireLikeForParameters === true && viewerId !== item.ownerId && !liked;
   return {
     ...safeItem,
     likedBy: [],
     weeklyLikes: undefined,
+    liked,
+    parametersLocked,
+    ...(parametersLocked ? { prompt: "", negativePrompt: "", parameters: {} } : {}),
     ...(Object.keys(item.parameters).length ? {} : { prompt: "", negativePrompt: "" }),
   };
 }
@@ -280,7 +293,7 @@ export async function queryGallery(query: GalleryQuery = {}): Promise<GalleryQue
   filtered.sort((a, b) => sort === "newest"
     ? b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)
     : metric(b) - metric(a) || b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
-  const pageSize = Number.isSafeInteger(query.pageSize) ? Math.min(100, Math.max(1, Number(query.pageSize))) : 24;
+  const pageSize = Number.isSafeInteger(query.pageSize) ? Math.min(100, Math.max(1, Number(query.pageSize))) : 100;
   const total = filtered.length;
   const pageCount = Math.ceil(total / pageSize);
   const page = Math.min(Math.max(1, Number.isSafeInteger(query.page) ? Number(query.page) : 1), Math.max(1, pageCount));
@@ -366,12 +379,26 @@ export async function deleteGalleryItem(id: string): Promise<boolean> {
     store.items = store.items.filter((entry) => entry.id !== id);
     await writeStore(store);
     await unlink(imagePath(item.imageFile)).catch(() => undefined);
+    const comments = await galleryComments.listComments(id);
+    await galleryComments.deleteCommentsForResource(id);
+    await deleteCommentNotifications("gallery", comments.map(comment => comment.id));
     return true;
   });
 }
 export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
   const item = (await readStore(true)).items.find((entry) => entry.id === id);
-  return item ? structuredClone(item) : null;
+  if (!item) return null;
+  const result = structuredClone(item);
+  // Old history submissions dropped characterPrompts, but the original image
+  // often still contains them. Recover only inside parameters, so the existing
+  // publication/like gate also protects every character's text.
+  if (!result.imageMetadataStripped && Object.keys(result.parameters).length && !hasImageCharacterPrompts(result.parameters)) {
+    try {
+      const metadata = parseNaiImageMetadata(await readFile(imagePath(result.imageFile)));
+      if (metadata) result.parameters = restoreImageCharacterPrompts(result.parameters, metadata.parameters);
+    } catch { /* Missing/unreadable old images must not break their detail page. */ }
+  }
+  return result;
 }
 
 export async function resubmitGalleryItem(ownerId: number, id: string, note?: string): Promise<GalleryItem> {
@@ -408,14 +435,14 @@ export async function readGalleryImage(item: GalleryItem): Promise<{ data: Buffe
   const filePath = imagePath(item.imageFile);
   const data = await readFile(filePath);
   const extension = path.extname(item.imageFile).slice(1) || "png";
-  if (Object.keys(item.parameters).length > 0 || item.imageMetadataStripped === true) {
+  if ((Object.keys(item.parameters).length > 0 && !item.requireLikeForParameters) || item.imageMetadataStripped === true) {
     return { data, extension };
   }
 
   return withLock(async () => {
     const store = await readStore();
     const storedItem = store.items.find((entry) => entry.id === item.id);
-    if (!storedItem || Object.keys(storedItem.parameters).length > 0 || storedItem.imageMetadataStripped) {
+    if (!storedItem || (Object.keys(storedItem.parameters).length > 0 && !storedItem.requireLikeForParameters) || storedItem.imageMetadataStripped) {
       return { data: await readFile(filePath), extension };
     }
     const cleaned = await stripImageMetadata(data, storedItem.imageFile);
@@ -459,7 +486,7 @@ export async function publishLocalImage(
   ownerName: string,
   buffer: Buffer,
   fileName: string,
-  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; prompt: string; negativePrompt: string; parameters: Record<string, unknown>; exposeParameters: boolean },
+  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; prompt: string; negativePrompt: string; parameters: Record<string, unknown>; exposeParameters: boolean; requireLikeForParameters?: boolean },
 ): Promise<GalleryItem> {
   return withLock(async () => {
     if (input.source !== "local" && input.source !== "other") throw new Error("本地上传来源不合法");
@@ -468,7 +495,8 @@ export async function publishLocalImage(
     const rating = assertGalleryRating(input.rating);
     const metadata = assertNaiImage(buffer, fileName);
     const id = randomUUID();
-    const cleaned = input.exposeParameters ? null : await stripImageMetadata(buffer, fileName);
+    const requireLikeForParameters = input.exposeParameters && input.requireLikeForParameters === true;
+    const cleaned = input.exposeParameters && !requireLikeForParameters ? null : await stripImageMetadata(buffer, fileName);
     const imageFile = `${id}.${cleaned?.extension || metadata.extension}`;
     await mkdir(root(), { recursive: true });
     await writeFile(imagePath(imageFile), cleaned?.data || buffer);
@@ -479,7 +507,8 @@ export async function publishLocalImage(
       negativePrompt: input.exposeParameters ? String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt) : "",
       parameters: input.exposeParameters ? metadata.parameters : {},
       imageFile, createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
-      imageMetadataStripped: !input.exposeParameters,
+      imageMetadataStripped: !input.exposeParameters || requireLikeForParameters,
+      requireLikeForParameters,
     };
     const store = await readStore();
     store.items.unshift(item);

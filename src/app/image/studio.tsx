@@ -1,4 +1,11 @@
 "use client";
+
+import { useStudioSessionHistory } from "@/app/image/use-studio-session-history";
+import { localStudioHistory, remoteStudioHistory, mergeStudioHistory, studioHistoryKey } from "@/lib/studio-history";
+import { usePanelHistory } from "@/app/ui/use-panel-history";
+import { hasImageCharacterPrompts, imageCharacterUseCoords, readImageCharacterPrompts } from "@/lib/image-character-prompts";
+import { UserAvatar } from "@/app/ui/user-avatar";
+import { PromptHistoryButton, PromptVersionProvider } from "@/app/ui/prompt-versions";
 import "./studio-mode-indicator.css";
 import { LfnSelect } from "@/app/ui/lfn-select";
 import { dailyImageDay, dailyImageFamily, quoteDailyImage, type DailyImageBillingState } from "@/lib/daily-image-pricing";
@@ -12,6 +19,7 @@ import { consumeImageStream } from "@/lib/sse";
 import { isAssistantChatModel } from "@/lib/assistant-models";
 import { AssistantModelPicker } from "./assistant-model-picker";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
+import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
 import { generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
@@ -55,7 +63,6 @@ import {
   Plus,
   Redo2,
   Search,
-  Scan,
   RotateCcw,
   Save,
   ShieldCheck,
@@ -80,6 +87,8 @@ import { useAppearance } from "@/app/appearance";
 import { generateRandomPrompt } from "@/lib/random-prompt";
 import { PromptAutocompleteTextarea } from "@/app/image/prompt-autocomplete";
 import { TagChipEditor } from "@/app/image/tag-chip-editor";
+import { resolvePromptAliases, type ReplicaPromptConfig } from "@/lib/replica-prompt";
+import { transformModelPromptOnBlur } from "@/lib/model-prompt";
 import { tagZh } from "@/lib/tag-translations";
 import {
   appendQualityTags,
@@ -93,6 +102,12 @@ import {
   type UcPresetType,
 } from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
+import { AssistantReasoningControl, storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
+import { AssistantAttachments } from "@/app/ui/assistant-attachments";
+import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
+import { CreditPricingButton, useCreditPricing } from "@/app/ui/credit-pricing";
+import { formatAff } from "@/lib/credit-pricing";
+import { roundAffAmount } from "@/lib/daily-image-pricing";
 import { NaiBalanceMeter } from "./nai-balance-meter";
 import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverseTagger } from "./replica-controls";
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
@@ -102,12 +117,12 @@ import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestIm
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, type ModelPolicy } from "@/lib/model-policy";
 import { NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
 import { isNaiMediumModel } from "@/lib/nai-native-request";
-import { ReplicaPromptEditor } from "./replica-prompt-editor";
+import { ReplicaPromptEditor, ReplicaPromptSettingsButton, useReplicaPromptConfig } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
 import { ReplicaRightDock } from "./replica-right-dock";
 import { ReplicaHistory, type ReplicaHistoryItem } from "./replica-history";
 import { ReplicaNavigation, ReplicaGenerationFooter } from "./replica-shell";
-import { MobileStudioLauncher, type MobileStudioSheet } from "./mobile-studio-launcher";
+import { SeedModeNotice } from "@/app/image/seed-mode-notice";
 import { NotificationBell } from "@/app/notifications/notification-bell";
 import { GalleryPicker } from "./gallery-picker";
 import {
@@ -126,9 +141,6 @@ import {
   type CustomLayoutModule,
 } from "@/lib/appearance-store";
 import {
-  cloneElement,
-  Fragment,
-  isValidElement,
   useCallback,
   useEffect,
   useId,
@@ -157,6 +169,7 @@ import { clearPersistentStudioSource, editorHistoryOperation, loadEditorHistoryN
 import { recordStudioImageEdit } from "@/lib/image-editor-record";
 import {
   dataUrlToBlob,
+  deleteLocalImageHistory,
   findLocalImageHistory,
   listLocalImageHistory,
   readImageHistoryMode,
@@ -164,7 +177,7 @@ import {
   type ImageHistoryMode,
 } from "@/lib/local-image-history";
 
-type Props = { userName: string; authenticated: boolean; layoutEditor?: boolean };
+type Props = { userName: string; userId?: number; authenticated: boolean; layoutEditor?: boolean };
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
@@ -265,13 +278,6 @@ type SessionResult = ReplicaHistoryItem & EditorHistoryReference & {
   operation: Operation;
   createdAt: number;
 };
-type RemoteHistoryItem = {
-  id: string;
-  createdAt: string;
-  imageUrl: string;
-  parameters: GenerationParameters;
-};
-
 // 多角色：每角色独立 prompt + 负向提示词 + 画面中心坐标（对齐 NAI Character Prompts）。
 type CharacterPromptUi = {
   id: string;
@@ -312,7 +318,7 @@ type AssistantSuggestion = {
   };
 };
 type AgentStep = { tool: string; query: string; ok: boolean; summary?: string };
-type GoalAgentRun = { id: string; goal: string; accessMode: "approval" | "full"; completedGenerations: number; status: "running" | "complete" | "stopped" | "limit" | "needs-attention" };
+type GoalAgentRun = { referenceImages?: string[]; id: string; goal: string; accessMode: "approval" | "full"; completedGenerations: number; status: "running" | "complete" | "stopped" | "limit" | "needs-attention" };
 const MAX_GOAL_AGENT_GENERATIONS = 5;
 
 // 持久化对话：历史轮次（新→旧）与跨轮次累积的标签池。
@@ -604,8 +610,9 @@ function waitForAssistantPoll(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-export default function ImageStudio({ userName, authenticated, layoutEditor = false }: Props) {
+export default function ImageStudio({ userName, userId, authenticated, layoutEditor = false }: Props) {
   const { preferences, updatePreferences } = useAppearance();
+  const [promptConfig, savePromptConfig] = useReplicaPromptConfig("nai");
   const [layoutEditorOpen, setLayoutEditorOpen] = useState(layoutEditor);
   const [previousLayoutEditor, setPreviousLayoutEditor] = useState(layoutEditor);
   if (previousLayoutEditor !== layoutEditor) {
@@ -732,19 +739,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, []);
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
-  const [mobileSheet, setMobileSheet] = useState<MobileStudioSheet | null>(null);
-  const [mobileViewportReady, setMobileViewportReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [wallet, setWallet] = useState<WalletState | null>(null);
+  const creditPricing = useCreditPricing();
   const [aff, setAff] = useState<Aff | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [images, setImages] = useState<string[]>([]);
   const [previewDrafts, setPreviewDrafts] = useState<string[]>([]);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
-  const [sessionHistory, setSessionHistory] = useState<SessionResult[]>([]);
-  const [mobileHistory, setMobileHistory] = useState<ReplicaHistoryItem[]>([]);
-  const [mobileHistoryRefresh, setMobileHistoryRefresh] = useState(0);
+  const [sessionHistory, setSessionHistory] = useStudioSessionHistory<SessionResult>(userId);
   const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("account");
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const [navRailExpanded, setNavRailExpanded] = useState(false);
@@ -786,8 +790,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [assistantTaskError, setAssistantTaskError] = useState("");
   // 随需求发给视觉模型的参考图（data URL）。
-  const [agentImage, setAgentImage] = useState<string | null>(null);
-  const [agentImageZoom, setAgentImageZoom] = useState(false);
+  const [agentImages, setAgentImages] = useState<string[]>([]);
+  const agentImagesRef = useRef<string[]>([]);
+  const agentImage = agentImages[0] || null;
+  const updateAgentImages = (images: string[]) => { agentImagesRef.current = images; setAgentImages(images); };
+  const setAgentImage = (image: string | null) => updateAgentImages(image ? [image] : []);
+  const [agentPreview, setAgentPreview] = useState<string | null>(null);
+  const [agentImagesLoading, setAgentImagesLoading] = useState(false);
+  const agentImageUploadQueue = useRef<Promise<void>>(Promise.resolve());
   const [assistantLoading, setAssistantLoading] = useState(false);
   const [assistantSuggestion, setAssistantSuggestion] =
     useState<AssistantSuggestion | null>(null);
@@ -802,12 +812,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantTimeoutRef = useRef<number | null>(null);
-  const mobileSheetRef = useRef<HTMLElement>(null);
-  const mobileSheetTriggerRef = useRef<HTMLButtonElement>(null);
-  const mobileReferenceFileRef = useRef<HTMLInputElement>(null);
-  const previousMobileSheetRef = useRef<MobileStudioSheet | null>(null);
   const router = useRouter();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  usePanelHistory("lfnStudioImage", lightboxIndex === null ? null : String(lightboxIndex), next => setLightboxIndex(next === null ? null : Number(next)));
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
   const [classicLeftWidth, setClassicLeftWidth] = useState(310);
   const [naiLeftWidth, setNaiLeftWidth] = useState(447);
@@ -823,111 +830,40 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const historyEnabled = !customWorkspace || customLayout.visibleModules.history;
   const assistantEnabled = !customWorkspace || customLayout.visibleModules.agent;
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 1023px)");
-    const syncViewport = () => setMobileViewportReady(media.matches);
-    syncViewport();
-    media.addEventListener("change", syncViewport);
-    return () => media.removeEventListener("change", syncViewport);
-  }, []);
-
-  useEffect(() => {
     const syncMode = () => setImageHistoryMode(readImageHistoryMode());
     syncMode();
     window.addEventListener("lfn-image-history-mode", syncMode);
     return () => window.removeEventListener("lfn-image-history-mode", syncMode);
   }, []);
   useEffect(() => {
-    if (imageHistoryMode !== "local") return;
+    if (imageHistoryMode === "none") return;
+    const startedAt = Date.now();
     let active = true;
-    void listLocalImageHistory().then((items) => {
-      if (!active) return;
-      const restored = items.map((item) => ({
-        id: `local-${item.id}`,
-        image: URL.createObjectURL(item.image),
-        prompt: item.prompt || "",
-        negative: item.negative || "",
-        model: item.model || "",
-        providerId: "local",
-        imageProtocol: "auto" as ImageProviderProtocol,
-        quality: "auto",
-        imageSize: "1K",
-        background: "",
-        operation: (item.operation || "generate") as Operation,
-        createdAt: item.createdAt,
-        width,
-        height,
-        steps,
-        scale,
-        sampler,
-      }));
-      setSessionHistory((current) => current.length ? current : restored);
-    }).catch(() => undefined);
-    return () => {
-      active = false;
-    };
-  }, [imageHistoryMode]);
-  useEffect(() => {
-    if (!mobileViewportReady) return;
     const controller = new AbortController();
-    void fetch("/api/history", { cache: "no-store", signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) return null;
-        return await response.json() as { items?: RemoteHistoryItem[] };
-      })
-      .then((result) => {
-        if (!result?.items) return;
-        setMobileHistory(result.items.map((item) => {
-          const parameters = item.parameters || {};
-          return {
-            image: item.imageUrl,
-            prompt: String(parameters.prompt || ""),
-            negative: String(parameters.negative_prompt || ""),
-            seed: typeof parameters.seed === "number" ? parameters.seed : undefined,
-            width: Number(parameters.width) || width,
-            height: Number(parameters.height) || height,
-            operation: parameters.operation || "generate",
-            createdAt: Date.parse(item.createdAt) || Date.now(),
-            steps: Number(parameters.steps) || steps,
-            scale: Number(parameters.scale) || scale,
-            sampler: String(parameters.sampler || "k_euler_ancestral"),
-            noise_schedule: parameters.noise_schedule,
-            cfg_rescale: typeof parameters.cfg_rescale === "number" ? parameters.cfg_rescale : undefined,
-            strength: typeof parameters.strength === "number" ? parameters.strength : undefined,
-            n: typeof parameters.n === "number" ? parameters.n : undefined,
-            n_samples: typeof parameters.n_samples === "number" ? parameters.n_samples : undefined,
-            noise: typeof parameters.noise === "number" ? parameters.noise : undefined,
-            params_version: typeof parameters.params_version === "number" ? parameters.params_version : undefined,
-            qualityToggle: typeof parameters.qualityToggle === "boolean" ? parameters.qualityToggle : undefined,
-            ucPreset: typeof parameters.ucPreset === "number" ? parameters.ucPreset : undefined,
-            legacy: typeof parameters.legacy === "boolean" ? parameters.legacy : undefined,
-            add_original_image: typeof parameters.add_original_image === "boolean" ? parameters.add_original_image : undefined,
-            autoSmea: typeof parameters.autoSmea === "boolean" ? parameters.autoSmea : undefined,
-            deliberate_euler_ancestral_bug: typeof parameters.deliberate_euler_ancestral_bug === "boolean" ? parameters.deliberate_euler_ancestral_bug : undefined,
-            prefer_brownian: typeof parameters.prefer_brownian === "boolean" ? parameters.prefer_brownian : undefined,
-            sm: typeof parameters.sm === "boolean" ? parameters.sm : undefined,
-            sm_dyn: typeof parameters.sm_dyn === "boolean" ? parameters.sm_dyn : undefined,
-            uncond_scale: typeof parameters.uncond_scale === "number" ? parameters.uncond_scale : undefined,
-            v4_negative: typeof parameters.v4_negative === "boolean" ? parameters.v4_negative : undefined,
-            v4_prompt: typeof parameters.v4_prompt === "boolean" ? parameters.v4_prompt : undefined,
-            dynamic_thresholding: typeof parameters.dynamic_thresholding === "boolean" ? parameters.dynamic_thresholding : undefined,
-            controlnet_strength: typeof parameters.controlnet_strength === "number" ? parameters.controlnet_strength : undefined,
-            emotion: typeof parameters.emotion === "string" ? parameters.emotion : undefined,
-            defry: typeof parameters.defry === "number" ? parameters.defry : undefined,
-            use_coords: typeof parameters.use_coords === "boolean" ? parameters.use_coords : undefined,
-            reference_strength: typeof parameters.reference_strength === "number" ? parameters.reference_strength : undefined,
-            reference_information_extracted: typeof parameters.reference_information_extracted === "number" ? parameters.reference_information_extracted : undefined,
-            model: parameters.model,
-            providerId: parameters.providerId,
-            imageProtocol: parameters.imageProtocol,
-            quality: parameters.quality,
-            imageSize: parameters.imageSize,
-            background: parameters.background,
-          };
-        }));
-      })
-      .catch((error) => { if (!(error instanceof Error && error.name === "AbortError")) setMobileHistory([]); });
-    return () => controller.abort();
-  }, [mobileViewportReady, mobileHistoryRefresh, width, height, steps, scale]);
+    void (async () => {
+      const local = await listLocalImageHistory(Number.POSITIVE_INFINITY).catch(() => []);
+      let restored: SessionResult[];
+      if (imageHistoryMode === "account" && authenticated) {
+        const response = await fetch("/api/history", { cache: "no-store", signal: controller.signal });
+        if (!response.ok) throw new Error("历史加载失败，请重新进入或刷新重试。");
+        const result = await response.json() as { items?: Array<{ id: string; imageUrl: string; createdAt: string; parameters: GenerationParameters }> };
+        const remote = (result.items || []).map(remoteStudioHistory) as SessionResult[];
+        // Account history is authoritative: do not resurrect deleted cloud copies.
+        // Keep unsynced local results only when they belong to this account.
+        const pending = local.filter(item => !item.remoteId && item.ownerId === userId)
+          .map(item => localStudioHistory(item, URL.createObjectURL(item.image))) as SessionResult[];
+        restored = mergeStudioHistory(remote, pending) as SessionResult[];
+      } else {
+        restored = local.filter(item => imageHistoryMode === "local" || item.ownerId === (userId ?? 0))
+          .map(item => localStudioHistory(item, URL.createObjectURL(item.image))) as SessionResult[];
+      }
+      if (active) setSessionHistory(current => mergeStudioHistory(
+        imageHistoryMode === "account" && authenticated
+          ? current.filter(item => item.createdAt >= startedAt || !item.historyId || restored.some(saved => saved.historyId === item.historyId))
+          : current.filter(item => item.createdAt >= startedAt || restored.some(saved => saved.id === item.id)), restored));
+    })().catch(error => { if (active && error.name !== "AbortError") setNotice(error.message || "历史恢复失败，请重试。"); });
+    return () => { active = false; controller.abort(); };
+  }, [imageHistoryMode, authenticated, userId, setSessionHistory]);
   const [customPromptCollapsed, setCustomPromptCollapsed] = useState(false);
   const [customReferenceOpen, setCustomReferenceOpen] = useState(true);
   const [customDirectorOpen, setCustomDirectorOpen] = useState(false);
@@ -1144,7 +1080,20 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     </div>;
   }
 
+  function restoreCharacterParameters(parameters: Record<string, unknown>, resetMissing = false) {
+    if (!resetMissing && !hasImageCharacterPrompts(parameters)) return;
+    const imported = readImageCharacterPrompts(parameters);
+    setCharactersEnabled(imported.length > 0);
+    setCharacters(imported.length ? imported.map((character, index) => ({
+      id: `import-${Date.now()}-${index}`, prompt: character.prompt, negative: character.negativePrompt,
+      centerX: character.center.x, centerY: character.center.y,
+    })) : [{ id: "c1", prompt: "", negative: "", centerX: .5, centerY: .5 }]);
+    const useCoords = imageCharacterUseCoords(parameters);
+    if (useCoords !== undefined) setAiAutoPosition(!useCoords);
+  }
+
   function restoreGenerationParameters(parameters: GenerationParameters) {
+    restoreCharacterParameters(parameters);
     const metadata = parseImageHistoryMetadata(parameters);
     if (metadata.providerId) setProviderId(metadata.providerId);
     if (metadata.imageProtocol) setNewApiImageProtocol(metadata.imageProtocol);
@@ -1183,6 +1132,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         negative: composedPromptLayout ? effectivePrompts.negative : negative,
         seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
         model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
+        characterPrompts: ["generate", "img2img", "inpainting"].includes(sourceOperation) && modelCapabilities.characters && charactersEnabled
+          ? readImageCharacterPrompts({ characterPrompts: characters.filter(character => character.prompt.trim()).map(character => ({ prompt: character.prompt, negativePrompt: mediumEffort ? "" : character.negative || "", center: { x: character.centerX, y: character.centerY } })) }) : [],
+        use_coords: !aiAutoPosition,
         operation: sourceOperation,
         createdAt: now + index,
         ...settings,
@@ -1199,6 +1151,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         try {
           await saveLocalImageHistory({
             id: item.id,
+            ownerId: userId ?? 0,
             remoteId: item.historyId,
             requestId: item.requestId,
             createdAt: item.createdAt,
@@ -1207,6 +1160,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             negative: item.negative,
             model: item.model,
             operation: item.operation,
+            parameters: { prompt: item.prompt, negative_prompt: item.negative, characterPrompts: item.characterPrompts, use_coords: item.use_coords, providerId: item.providerId, imageProtocol: item.imageProtocol, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, seed: item.seed },
           });
         } catch {
           setNotice("图片已生成，但浏览器无法保存本地历史；请检查存储空间或权限。");
@@ -1307,7 +1261,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     }
     setOperation(nextOperation);
     setSelectedImageIndex(0);
-    if (window.matchMedia("(max-width: 1023px)").matches) setMobileSheet("reference");
     setNotice("已将当前图片载入工作台。");
   }
 
@@ -1523,11 +1476,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setNotice("标签助手模块已关闭，可在布局设置中启用。");
       return;
     }
-    if (window.innerWidth < 1024) {
-      setMobileSheet("assistant");
-    } else {
-      setReplicaAssistantOpenRequest(value => value + 1);
-    }
+    setReplicaAssistantOpenRequest(value => value + 1);
     if (signedIn) void refreshAssistantModels(new AbortController().signal);
   }
 
@@ -1740,23 +1689,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }, []);
 
   useEffect(() => {
-    if (!mobileSheet && !menuOpen) return;
+    if (!menuOpen) return;
     function onKey(event: KeyboardEvent) {
       if (event.key !== "Escape" || event.defaultPrevented) return;
       if ((event.target as Element).closest?.(".rgs-panel, [data-replica-menu]")) return;
       event.preventDefault();
-      setMobileSheet(null);
       setMenuOpen(false);
     }
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [mobileSheet, menuOpen]);
-
-  useEffect(() => {
-    if (mobileSheet) mobileSheetRef.current?.focus();
-    else if (previousMobileSheetRef.current) mobileSheetTriggerRef.current?.focus();
-    previousMobileSheetRef.current = mobileSheet;
-  }, [mobileSheet]);
+  }, [menuOpen]);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("lfn-layout");
@@ -2001,8 +1943,9 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const refresh = () => {
       if (controller.signal.aborted || policyRequestRef.current || Date.now() - policyRefreshedAt.current < POLICY_REFRESH_TTL_MS) return;
       policyRefreshedAt.current = Date.now();
-      policyRequestRef.current = fetch("/api/public/image-policy", { cache: "no-store", signal: controller.signal })
+      const request = fetch("/api/public/image-policy", { cache: "no-store", signal: controller.signal })
         .then(async (response) => {
+          if (controller.signal.aborted) return;
           if (response.ok) {
             const result = await response.json() as Partial<ModelPolicy>;
             if (typeof result.enableV5Models === "boolean" && typeof result.enableV45Models === "boolean") {
@@ -2015,13 +1958,16 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           if (!controller.signal.aborted) setModelPolicyReady(true);
           // Keep the conservative client policy until the next refresh.
         })
-        .finally(() => { policyRequestRef.current = null; });
+        .finally(() => { if (policyRequestRef.current === request) policyRequestRef.current = null; });
+      policyRequestRef.current = request;
     };
     refresh();
     window.addEventListener("focus", refresh);
     const timer = window.setInterval(refresh, POLICY_REFRESH_TTL_MS);
     return () => {
       controller.abort();
+      policyRequestRef.current = null;
+      policyRefreshedAt.current = 0;
       window.removeEventListener("focus", refresh);
       window.clearInterval(timer);
     };
@@ -2124,6 +2070,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const timer = window.setInterval(onFocus, SOURCE_REFRESH_TTL_MS);
     return () => {
       controller.abort();
+      sourcesRefreshedAt.current = 0;
       window.removeEventListener("focus", onFocus);
       window.clearInterval(timer);
     };
@@ -2283,6 +2230,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           galleryUseRecorded.current.add(galleryId);
           void fetch(`/api/gallery/${encodeURIComponent(galleryId)}/use`, { method: "POST" }).catch(() => undefined);
         }
+        if (galleryId) {
+          const response = await fetch(`/api/gallery/${encodeURIComponent(galleryId)}`, { cache: "no-store" });
+          const result = await response.json().catch(() => null) as { item?: { parameters?: GenerationParameters; prompt?: string; negativePrompt?: string } } | null;
+          if (active && response.ok && result?.item?.parameters && Object.keys(result.item.parameters).length) {
+            restoreGenerationParameters({ ...result.item.parameters, prompt: result.item.prompt ?? result.item.parameters.prompt, negative_prompt: result.item.negativePrompt ?? result.item.parameters.negative_prompt });
+            setOperation(importMode === "img2img" ? "img2img" : "generate");
+            setNotice("已载入作品公开的主提示词、角色提示词与生成参数。");
+          }
+        }
         if (historyId && !local?.parameters) {
           const metadataResponse = await fetch(`/api/history/${encodeURIComponent(historyId)}`, { cache: "no-store" });
           const metadata = await metadataResponse.json().catch(() => null) as { parameters?: GenerationParameters } | null;
@@ -2343,7 +2299,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       element.src = dataUrl;
     });
     const scale = Math.min(1, 1024 / Math.max(image.naturalWidth, image.naturalHeight));
-    if (scale >= 1 && dataUrl.length < 900_000) return dataUrl;
+    // Normalize every upload to a supported, compact image format.
+    // This also handles browser-decodable GIFs without sending unsupported data URLs.
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -2353,17 +2310,23 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     return canvas.toDataURL("image/jpeg", 0.85);
   }
 
-  async function handleAgentImageFile(file?: File | null) {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setNotice("请选择图片文件。");
-      return;
-    }
-    try {
-      setAgentImage(await compressAgentImage(file));
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : "图片处理失败");
-    }
+  async function handleAgentImageFiles(files: File[]) {
+    if (!files.length) return;
+    agentImageUploadQueue.current = agentImageUploadQueue.current.then(async () => {
+      setAgentImagesLoading(true);
+      try {
+        const available = MAX_ASSISTANT_IMAGES - agentImagesRef.current.length;
+        if (files.length > available) setNotice(`最多可附 ${MAX_ASSISTANT_IMAGES} 张参考图，本次仅添加前 ${available} 张。`);
+        const added: string[] = [];
+        for (const file of files.slice(0, available)) {
+          if (!file.type.startsWith("image/")) throw new Error("请选择图片文件。");
+          added.push(await compressAgentImage(file));
+        }
+        updateAgentImages([...agentImagesRef.current, ...added].slice(0, MAX_ASSISTANT_IMAGES));
+      } catch (error) { setNotice(error instanceof Error ? error.message : "图片处理失败"); }
+      finally { setAgentImagesLoading(false); }
+    });
+    await agentImageUploadQueue.current;
   }
 
   useEffect(() => {
@@ -2449,9 +2412,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   function inputImagesForAgent(): string[] {
-    return agentImage ? [agentImage] : [];
+    return [...agentImagesRef.current];
   }
   async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalRunId?: string }) {
+    await agentImageUploadQueue.current;
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
       return null;
@@ -2478,6 +2442,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: assistantModel,
+          reasoningEffort: storedAssistantReasoning(assistantModel),
           imageModel: model,
           modelProtocol: imageProtocol,
           operation,
@@ -2546,6 +2511,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   // “让助手处理”是明确的 Agent 入口。仅在无可用模型时降级到直接检索。
   async function runAgent() {
     const input = agentInput.trim();
+    if (agentInput.length > ASSISTANT_INPUT_MAX_LENGTH) {
+      setNotice("创作需求不能超过 10000 字。");
+      return;
+    }
     if (!input) {
       setNotice(assistantMode === "goal" ? "请描述你希望最终图像达到的目标。" : "请描述画面，或输入要查询的标签关键词。");
       return;
@@ -2586,6 +2555,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       else if (operation === "generate" || operation === "suggest-tags")
         setOperation("img2img");
       if (!metadata) {
+        if (targetOperation) restoreCharacterParameters({ characterPrompts: [] }, true);
         if (targetOperation === "generate") {
           setPrompt(""); setNegative("");
           setNotice("已切换到文生图；作品未包含可读取的公开参数，请填写提示词后生成。");
@@ -2598,6 +2568,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         models.map(({ value }) => value),
       );
       if (!isActive()) return false;
+      restoreCharacterParameters({ characterPrompts: imported.characterPrompts || [], use_coords: imported.useCoords }, true);
       if (imported.prompt || targetOperation) setPrompt(imported.prompt || "");
       if (imported.negativePrompt || targetOperation) setNegative(imported.negativePrompt || "");
       if (imported.model) setModel(imported.model);
@@ -2770,6 +2741,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   }
 
   async function startGoalAgent(goal: string) {
+    if (agentImagesLoading) { setNotice("参考图正在处理，请稍候。"); return; }
     if (!signedIn || !assistantModel) {
       setNotice("目标 Agent 需要登录并选择可用的 NewAPI 文本模型。");
       return;
@@ -2777,10 +2749,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     const current: GoalAgentRun = { id: createBrowserRequestId(), goal, accessMode: autonomyMode, completedGenerations: 0, status: "running" };
     updateGoalRun(current);
     if (current.accessMode === "full") setCount(1);
-    const referenceImage = agentImage || (source && ["img2img", "inpainting", "edits", "outpainting", "character-reference", "precise-reference", "vibe-transfer"].includes(operation) ? source.data : undefined);
+    const referenceImage = source && ["img2img", "inpainting", "edits", "outpainting", "character-reference", "precise-reference", "vibe-transfer"].includes(operation) ? source.data : undefined;
+    const referenceImages = agentImagesRef.current.length ? [...agentImagesRef.current] : referenceImage ? [referenceImage] : [];
+    current.referenceImages = referenceImages;
     const suggestion = await askTagAssistant("请根据用户目标和当前工作台配置，提出第一轮最有效的提示词与参数建议。此时尚无本次目标的生成结果。", {
       goalMode: true, accessMode: current.accessMode, goal, goalIteration: 0, goalRunId: current.id,
-      images: referenceImage ? [referenceImage] : [],
+      images: referenceImages,
     });
     const active = goalRunRef.current;
     if (!active || active.id !== current.id || active.status !== "running") return;
@@ -2800,7 +2774,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     updateGoalRun(reviewedRun);
     const suggestion = await askTagAssistant(
       `请检查刚生成的结果是否符合目标；若未满足，给出下一轮最小有效修改。当前已完成 ${completedGenerations} 轮生成。`,
-      { goalMode: true, accessMode: current.accessMode, goal: current.goal, goalIteration: completedGenerations, goalRunId: current.id, images: [image] },
+      { goalMode: true, accessMode: current.accessMode, goal: current.goal, goalIteration: completedGenerations, goalRunId: current.id, images: [...(current.referenceImages || []).slice(0, MAX_ASSISTANT_IMAGES - 1), image] },
     );
     const active = goalRunRef.current;
     if (!active || active.id !== current.id || active.status !== "running") return;
@@ -2846,6 +2820,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     void runOperation(undefined, autonomous);
   }
 
+  const promptRelatedSamples = [...sessionHistory.map((item) => item.prompt), ...promptConfig.library.map((entry) => entry.content)];
+
   // 提示词工具条（借鉴 Aaalice）：随机、清空、文本/Tag 模式切换。
   const promptToolbar = (target: "prompt" | "negative") => (
     <>
@@ -2876,6 +2852,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       >
         <Eraser size={13} />
       </button></Tooltip>
+      <Tooltip label="提示词设置"><ReplicaPromptSettingsButton variant="nai" config={promptConfig} onChange={savePromptConfig}
+        initialText={target === "prompt" ? prompt : negative} natural={naturalImageModel} onNotice={setNotice}
+        className="grid h-6 w-6 place-items-center rounded border border-[var(--line)] text-[var(--muted)] hover:border-[var(--rose)] hover:text-[var(--rose)]" /></Tooltip>
+      <PromptHistoryButton target={target} />
       {!naturalImageModel && target === "prompt" && (
         <span
           className="flex h-6 items-center rounded-full border border-[var(--line)] bg-white text-[10px] font-semibold"
@@ -2929,6 +2909,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         tools={promptToolbar("prompt")}
         autocomplete={!naturalImageModel}
         tagMode={!naturalImageModel && promptTagMode}
+        config={promptConfig}
+        relatedSamples={promptRelatedSamples}
+        natural={naturalImageModel}
+        onNotice={setNotice}
         inlineChatTarget={{ kind: "prompt", label: naiLayout ? "提示词" : "描述画面" }}
         openInlineChatMenu={openInlineChatMenu}
       />
@@ -2941,6 +2925,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           tools={promptToolbar("negative")}
           autocomplete={!naturalImageModel}
           tagMode={!naturalImageModel && promptTagMode}
+          config={promptConfig}
+          relatedSamples={promptRelatedSamples}
+          natural={naturalImageModel}
+          onNotice={setNotice}
           inlineChatTarget={{ kind: "negative", label: naiLayout ? "负面内容" : "排除内容" }}
           openInlineChatMenu={openInlineChatMenu}
         />
@@ -3167,6 +3155,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
 
   const generationParameters = naturalImageModel ? naturalSettings : generationModes.has(operation) && (
     <div
+      data-tutorial="sampling"
       className={
         naiLayout
           ? "nai-ai-settings nai-parameter-dock"
@@ -3240,7 +3229,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 className="field h-10 px-3"
                 value={seed}
                 onChange={(event) => setSeed(event.target.value)}
-                placeholder="输入种子"
+                placeholder="留空或 0 为随机"
                 inputMode="numeric"
               />
             </Control>
@@ -3775,6 +3764,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 type="button"
                 className="flex h-11 w-full items-center justify-center gap-2 rounded bg-[#17191f] px-3 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={!source}
+                data-tutorial-editor="inpaint"
                 onClick={() => void openImageEditor("inpaint")}
               >
                 <Brush size={15} />
@@ -3784,6 +3774,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 type="button"
                 className="flex h-11 w-full items-center justify-center gap-2 rounded border border-[var(--rose)] bg-white px-3 text-xs font-semibold text-[var(--rose)] disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={!source}
+                data-tutorial-editor="canvas"
                 onClick={() => void openImageEditor("canvas")}
               >
                 <Maximize2 size={15} />
@@ -3881,7 +3872,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
               <button type="button" className="nai-inline-tool-button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
-              <button type="button" className="nai-inline-tool-button" disabled={!source} onClick={() => void openImageEditor("canvas")}><Maximize2 size={15} /> 无限画布</button>
+              <button type="button" data-tutorial-editor="canvas" className="nai-inline-tool-button" disabled={!source} onClick={() => void openImageEditor("canvas")}><Maximize2 size={15} /> 无限画布</button>
               <label className="nai-inline-tool-button"><FileUp size={15} /> 导入图片<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { void importImageAndParameters(event.target.files?.[0]); event.target.value = ""; }} /></label>
             </div>
             <div className="mt-3">
@@ -4028,6 +4019,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       imageSize: effectiveImageResolution,
       background: imageBackground,
       assistantModel,
+      reasoningEffort: storedAssistantReasoning(assistantModel),
       model,
       prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
       negative_prompt: composedPromptLayout ? effectivePrompts.negative : negative,
@@ -4381,13 +4373,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     operation === "generate" && charactersEnabled
       ? characters.filter((character) => character.prompt.trim()).length
       : 0;
-  // 超分费用按源图真实尺寸（1-4 Anlas 档位，V5 每 Anlas 为 5 AFF）；其余操作按生成尺寸估算。
+  // 超分按源图尺寸计 Anlas；本站价格统一读取当前服务端配置。
   // 管理员配置了固定 AFF 单价的模型优先按固定价 × 张数。
   const upscaleDims = operation === "upscale" ? upscaleSource : null;
-  const affFixedCost =
-    operation !== "upscale" && typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
-      ? ((modelPricing as unknown as { affFixedCost: number }).affFixedCost)
-      : null;
+  const localPricePolicy = creditPricing.data?.policy ?? wallet?.dailyBilling?.policy;
+  const pricingModel = operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model;
+  const affFixedCost = creditPricing.data
+    ? creditPricing.data.fixedCosts[pricingModel] ?? null
+    : typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
+      ? (modelPricing as unknown as { affFixedCost: number }).affFixedCost : null;
   const affGeneration = {
           model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model,
           operation,
@@ -4402,10 +4396,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           characterPromptCount: activeCharacterCount,
         };
   const dailyFamily = dailyImageFamily(affGeneration);
-  const dailyQuote = wallet?.dailyBilling && dailyFamily && affFixedCost == null
-    ? quoteDailyImage(affGeneration, wallet.dailyBilling.policy, wallet.dailyBilling.cnyPerAff, wallet.dailyBilling.day === dailyImageDay() ? wallet.dailyBilling.counts[dailyFamily] : 0)
+  const dailyQuote = wallet?.dailyBilling && localPricePolicy && dailyFamily && affFixedCost == null
+    ? quoteDailyImage(affGeneration, localPricePolicy, wallet.dailyBilling.cnyPerAff, wallet.dailyBilling.day === dailyImageDay() ? wallet.dailyBilling.counts[dailyFamily] : 0)
     : null;
-  const estimatedAffCost = dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost);
+  const estimatedAffCost = dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost, localPricePolicy);
   const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel && !upscaleDims) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
     model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
@@ -4424,7 +4418,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   const estimatedPackageCost = wallet?.aff?.enabled
     ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages, dailyQuote?.affCosts).packageCost
     : 0;
-  const estimatedPersonalCost = estimatedAffCost - estimatedPackageCost;
+  const estimatedPersonalCost = roundAffAmount(estimatedAffCost - estimatedPackageCost);
   const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling === true;
   const hasSufficientAff = Boolean(wallet?.aff?.enabled && wallet.aff.balance >= estimatedPersonalCost && wallet.aff.packageBalance >= estimatedPackageCost);
   // The price display follows the required wallet even when its balance is insufficient.
@@ -4434,6 +4428,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
     ? !wallet.aff.enabled ? "当前模型的本站额度服务尚未就绪，请刷新后重试。"
       : localAffShortfall > 0 ? `本次预计消耗 ${estimatedAffCost} AFF，当前可用个人 AFF ${wallet.aff.balance}、图包 ${wallet.aff.packageBalance}，个人 AFF 尚缺 ${localAffShortfall}。此模型使用本站额度，NewAPI 余额不参与本次扣费。` : ""
     : "";
+
+  const pricingDetails = (children?: React.ReactNode, className?: string) => (
+    <CreditPricingButton pricing={creditPricing} generation={affGeneration} state={wallet?.dailyBilling}
+      wallet={wallet?.aff} usesAff={canUseAffEstimate} onRefresh={refreshWallet} className={className}
+      paymentNote={providerId !== "newapi" ? "当前使用个人 Key，实际费用以提供方账单为准。下面展示本站 AFF / 图包价格，供对比。" : canUseAffEstimate ? "当前使用本站 AFF / 图包，图包优先，个人 AFF 补足。" : "当前按 NewAPI 自身价格与余额计费。下面的 AFF / 图包规则仅作对比，不是本次 NewAPI 账单。"}>
+      {children}
+    </CreditPricingButton>
+  );
 
   // 右侧功能区：标签助手 + 会话状态（桌面侧栏与移动抽屉共用）。
   // NAI 主题下创作入口移入左上角「站内菜单」，其他主题保留创作中心。
@@ -4544,10 +4546,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <div className="flex items-center justify-between gap-2"><b>目标 Agent · 已生成 {goalRun.completedGenerations} 轮</b>{goalRun.status === "running" ? <button type="button" onClick={stopGoalAgent} className="font-semibold text-[var(--rose)]">停止</button> : <button type="button" onClick={() => updateGoalRun(null)} className="font-semibold text-[var(--muted)]">清除</button>}</div>
               <p className="mt-1 text-[var(--muted)]">{goalRun.status === "running" ? goalRun.accessMode === "full" ? "Agent 正在迭代，生成后的图片会自动送回模型评估。" : "等待建议或下一张结果；所有改动都需要你手动应用。" : goalRun.status === "complete" ? "Agent 判断图像已达到目标。" : goalRun.status === "limit" ? "已达到完全访问轮数上限，最后建议仍可手动应用。" : goalRun.status === "stopped" ? "Agent 已停止。" : "Agent 暂停，请检查当前设置或重新发起目标。"}</p>
             </div>}
-            {signedIn && (
+            {signedIn && (<>
               <AssistantModelPicker value={assistantModel} options={assistantModels} onChange={setAssistantModel} pending={assistantModelsPending}
                 error={assistantModelsError} disabled={assistantLoading} onRefresh={() => void refreshAssistantModels(new AbortController().signal)} />
-            )}
+              <AssistantReasoningControl model={assistantModel} />
+            </>)}
             {assistantTaskError && <p role="alert" className="mt-2 rounded border border-[#e2c38c] bg-[#fff8e8] p-2.5 text-[11px] leading-5 text-[#86551c]">{assistantTaskError}</p>}
             {conversationOpen && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
               <div className="mt-3 space-y-3">
@@ -4628,6 +4631,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
               <textarea
                 className="field min-h-20 w-full resize-y p-2 text-xs"
                 value={agentInput}
+                maxLength={ASSISTANT_INPUT_MAX_LENGTH}
+                aria-description={`最多 ${ASSISTANT_INPUT_MAX_LENGTH} 字，当前 ${agentInput.length} 字`}
                 onChange={(event) => setAgentInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" || event.shiftKey) return;
@@ -4635,69 +4640,25 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   runAgent();
                 }}
                 onPaste={(event) => {
-                  const file = [...event.clipboardData.items]
-                    .find((item) => item.type.startsWith("image/"))
-                    ?.getAsFile();
-                  if (!file) return;
+                  const files = [...event.clipboardData.items].filter(item => item.type.startsWith("image/")).map(item => item.getAsFile()).filter((file): file is File => !!file);
+                  if (!files.length) return;
                   event.preventDefault();
-                  void handleAgentImageFile(file);
+                  void handleAgentImageFiles(files);
                 }}
                 placeholder={assistantMode === "goal" ? "描述最终想要的图像，例如：保留人物和构图，把雨夜逐步调整成清晨薄雾，直到光线和色彩符合预期…" : "白发　或　雨夜里的白发少女…（可粘贴/上传图片让助手识图）"}
                 aria-label="标签助手输入"
               />
-              <div className="flex items-center gap-2">
-                <label
-                  className="key-action shrink-0 cursor-pointer"
-                  title="上传图片让助手识图"
-                >
-                  <ImagePlus size={15} />
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    aria-label="上传识图图片"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      event.target.value = "";
-                      void handleAgentImageFile(file);
-                    }}
-                  />
-                </label>
-                <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--muted)]">
-                  {naturalImageModel ? "可粘贴或上传图片，助手整理为当前图像模型适用的描述" : "可粘贴（Ctrl+V）或上传图片，助手按图检索 Danbooru 标签"}
-                </p>
-              </div>
-              {agentImage && (
-                <div className="flex items-center gap-2 rounded border border-[var(--line)] bg-white p-2">
-                  <button
-                    type="button"
-                    onClick={() => setAgentImageZoom(true)}
-                    className="shrink-0"
-                    title="点击放大查看"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={agentImage}
-                      alt="待识图图片缩略图"
-                      className="h-16 w-16 rounded border border-[var(--line)] object-cover"
-                    />
-                  </button>
-                  <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--muted)]">
-                    已附图，提交后随需求一起发给模型。
-                    <button
-                      type="button"
-                      onClick={() => setAgentImage(null)}
-                      className="ml-1 font-semibold text-[var(--rose)]"
-                    >
-                      移除
-                    </button>
-                  </p>
-                </div>
-              )}
+              <p data-assistant-input-count className="text-right text-[10px] text-[var(--muted)]">
+                {agentInput.length.toLocaleString()} / {ASSISTANT_INPUT_MAX_LENGTH.toLocaleString()} 字
+              </p>
+              <AssistantAttachments images={agentImages} loading={agentImagesLoading}
+                onAdd={files => { void handleAgentImageFiles(files); }}
+                onRemove={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
+                onClear={() => updateAgentImages([])} onPreview={setAgentPreview} />
             <div className="flex items-center gap-2">
               <button
                 type="submit"
-                disabled={tagSearching || assistantLoading || goalRun?.status === "running"}
+                disabled={tagSearching || assistantLoading || agentImagesLoading || goalRun?.status === "running"}
                 className="flex h-10 flex-1 items-center justify-center gap-2 rounded bg-[#292d2c] text-xs font-semibold text-white disabled:opacity-50"
               >
                 <Search size={15} />
@@ -4969,7 +4930,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   const legacyGenerationFooter = (
-    <div className="nai-generation-footer mobile-generation-footer" data-layout-module="generate">
+    <div className="nai-generation-footer" data-layout-module="generate">
       {!sidebarPromptLayout && generationParameters}
       {operation !== "suggest-tags" && providerId === "newapi" && (
         <NaiBalanceMeter
@@ -4982,6 +4943,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       {operation !== "suggest-tags" && providerId !== "newapi" && (
         <span className="text-xs text-[var(--muted)]">个人 Key · 费用以提供方账单为准</span>
       )}
+      {modelCapabilities.seed && <SeedModeNotice seed={seed} onRandom={() => setSeed("")} />}
+      {operation !== "suggest-tags" && pricingDetails()}
       <div className="nai-generation-action">
         <button
           data-studio-generate
@@ -5025,22 +4988,6 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   );
 
   const assistantPanel = agentBlockInner;
-
-  function handleMobileReferenceUpload(file: File | undefined) {
-    if (!file) return;
-    const validation = validateUploadFile(file);
-    if (validation) { setNotice(validation); return; }
-    const reader = new FileReader();
-    reader.onerror = () => setNotice("读取图片失败，请重试。");
-    reader.onload = () => {
-      if (typeof reader.result !== "string") return;
-      setSource({ data: reader.result, name: file.name });
-      setMask(null);
-      setOperation("img2img");
-      setNotice("已载入图片。");
-    };
-    reader.readAsDataURL(file);
-  }
 
   const replicaVariant = naiLayout ? "nai" as const : "nlw" as const;
   const replicaBalance = providerId === "newapi"
@@ -5090,6 +5037,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
       setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
+    pricingControl={operation !== "suggest-tags" ? pricingDetails() : undefined}
+    seedControl={modelCapabilities.seed ? <SeedModeNotice seed={seed} onRandom={() => setSeed("")} /> : undefined}
     generating={generating} disabled={layoutEditorOpen || !model} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
@@ -5097,6 +5046,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
   /> : legacyGenerationFooter;
   function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
     if (nextOperation === "reuse-parameters") {
+      restoreCharacterParameters(item, true);
       if (item.providerId && item.providerId !== "newapi" && item.providerId !== "novelai" && !customProviders.some(provider => provider.id === item.providerId)) {
         setNotice("这张历史图片的 API 来源已移除，请先重新配置来源。"); return;
       }
@@ -5111,64 +5061,28 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed)); setOperation("generate");
     } else applyImageAsSource(item.image, nextOperation as Operation);
   }
+  async function deleteStudioHistory(item: SessionResult | undefined) {
+    if (!item || !(await lfnConfirm("确认删除这张历史图片？"))) return;
+    try {
+      if (imageHistoryMode === "account" && item.historyId) {
+        const response = await fetch(`/api/history?id=${encodeURIComponent(item.historyId)}`, { method: "DELETE" });
+        if (!response.ok) throw new Error("删除失败，历史记录已保留，请重试。");
+      }
+      const local = await findLocalImageHistory(item.historyId || item.id).catch(() => null);
+      if (local) await deleteLocalImageHistory(local.id);
+      const key = studioHistoryKey(item);
+      setSessionHistory(current => current.filter(saved => studioHistoryKey(saved) !== key));
+    } catch (error) { setNotice(error instanceof Error ? error.message : "删除历史失败，请重试。"); }
+  }
   const replicaHistoryPanel = <ReplicaHistory items={sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
-    onUse={reuseHistory} onDelete={(index) => setSessionHistory(current => current.filter((_, itemIndex) => index !== itemIndex))} />;
-  const mobileHistoryPanel = <ReplicaHistory items={mobileHistory.length ? mobileHistory : sessionHistory} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
-    onUse={reuseHistory} onDelete={(index) => {
-      const item = mobileHistory[index];
-      if (!item) { setSessionHistory(current => current.filter((_, itemIndex) => index !== itemIndex)); return; }
-      void fetch(`/api/history?id=${encodeURIComponent(item.image.split("/").at(-2) || "")}`, { method: "DELETE" }).finally(() => setMobileHistory(current => current.filter((_, itemIndex) => index !== itemIndex)));
-    }} />;
-  const mobileControlsFor = (section: "prompt" | "reference" | "size" | "tools") =>
-    isValidElement(controls) && controls.type !== Fragment
-      ? cloneElement(controls as React.ReactElement<{ mobileSection?: string }>, { mobileSection: section })
-      : controls;
-  const mobileLegacyPrompt = <div className="mobile-legacy-sheet-section">
-    <div className="mobile-legacy-sheet-heading"><Paintbrush size={17} /><b>提示词</b></div>
-    {promptFields}
-    {characterControls}
-  </div>;
-  const mobileLegacySize = <div className="mobile-legacy-sheet-section">
-    <ReplicaImageSize model={model} variant="nai" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
-  </div>;
-  const mobileLegacyParameters = <div className="mobile-legacy-sheet-section">
-    <div className="mobile-legacy-sheet-heading"><SlidersHorizontal size={17} /><b>生成参数</b></div>
-    {generationParameters}
-  </div>;
-  const mobilePromptContent = <div className="mobile-prompt-panel">
-    {replicaLayout ? mobileControlsFor("prompt") : mobileLegacyPrompt}
-    {replicaLayout ? <ReplicaImageSize model={model} variant={replicaVariant} width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} /> : mobileLegacySize}
-    {replicaLayout ? <ReplicaGenerationSettings mobileInline variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
-      steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
-      setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
-      count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : mobileLegacyParameters}
-  </div>;
-  const mobileSheetContent = mobileSheet === "prompt"
-    ? mobilePromptContent
-    : mobileSheet === "reference"
-      ? mobileControlsFor("reference")
-      : mobileSheet === "size"
-        ? replicaLayout ? mobileControlsFor("size") : mobileLegacySize
-        : mobileSheet === "tools"
-          ? mobileControlsFor("tools")
-          : mobileSheet === "parameters"
-            ? replicaLayout ? <ReplicaGenerationSettings mobileInline variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
-                steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
-                setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
-                count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} /> : mobileLegacyParameters
-            : mobileSheet === "history"
-              ? <ReplicaRightDock storageKey={null} history={replicaHistoryPanel} assistant={assistantPanel} historyEnabled={historyEnabled} assistantEnabled={false} initialHistoryOpen />
-              : mobileSheet === "assistant"
-                ? <div className="mobile-studio-assistant-content">{assistantPanel}</div>
-                : mobileSheet === "session"
-                  ? <div className="mobile-studio-session-content">{walletBlock}<Link href="/profile#profile-wallet" className="settings-secondary-button">打开账号页面</Link></div>
-                  : null;
-
+    onUse={reuseHistory} onDelete={(index) => void deleteStudioHistory(sessionHistory[index])} />;
   const displayedImages = images.length ? images : previewDrafts;
 
   return (
+    <PromptVersionProvider prompt={prompt} negative={negative} scope={userId ? String(userId) : "guest"} onRestore={(target, text) => (target === "prompt" ? setPrompt : setNegative)(text)}>
     <main
       data-studio-layout={naiLayout ? "nai" : "classic"}
+      data-tutorial-source-ready={Boolean(source)}
       data-workspace-layout={!naiLayout ? (customWorkspace ? "custom" : preferences.workspaceLayout) : undefined}
       data-replica-studio={replicaLayout ? replicaVariant : undefined}
       data-aaalice-dock={aaaliceDock ? "true" : undefined}
@@ -5176,7 +5090,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
       data-left-collapsed={nlwLayout && nlwLeftCollapsed ? "true" : undefined}
       className="flex h-[100dvh] min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden bg-[var(--paper)]"
     >
-      {(!replicaLayout || mobileViewportReady) && (
+      {!replicaLayout && (
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-[var(--line)] bg-[#fffefa]/95 px-4">
           <div className="flex items-center gap-3">
             <Link href="/" aria-label="返回 Love for NAI 首页" className="flex items-center gap-3">
@@ -5222,7 +5136,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                 title="我的账号：资料、钱包、签到与邀请"
                 className="flex h-9 items-center gap-2 rounded border border-[var(--line)] bg-white px-3 text-sm hover:border-[var(--rose)]"
               >
-                <UserRound size={16} />
+                {userId ? <UserAvatar userId={userId} name={userName} size={24} /> : <UserRound size={16} />}
                 {userName}
               </Link>
             ) : (
@@ -5297,7 +5211,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           // 最左侧功能导航栏（new-api/Aaalice 式）：折叠为纯图标，展开显示
           // 创作中心与会话状态；不随悬停自动收起。
           <aside
-            className={`studio-nav-rail panel hidden min-h-0 flex-col border-y-0 border-l-0 lg:flex${navRailExpanded ? " is-expanded" : ""}`}
+            className={`studio-nav-rail panel flex min-h-0 flex-col border-y-0 border-l-0${navRailExpanded ? " is-expanded" : ""}`}
           >
             <div className="studio-nav-header">
             <button
@@ -5338,7 +5252,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             )}
           </aside>
         )}
-        <aside className="studio-controls-panel panel hidden min-h-0 border-y-0 border-l-0 lg:flex lg:flex-col">
+        <aside className="studio-controls-panel panel flex min-h-0 flex-col border-y-0 border-l-0">
           {controls}
           {sidebarPromptLayout && naiGenerationFooter}
         </aside>
@@ -5350,51 +5264,15 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           aria-valuemin={replicaLayout ? 320 : 240}
           aria-valuemax={replicaLayout ? 560 : 520}
           tabIndex={0}
-          className="panel-resizer hidden lg:block"
+          className="panel-resizer block"
           onPointerDown={(event) => startResize("left", event)}
           onKeyDown={(event) => resizePanelWithKeyboard("left", event)}
           onDoubleClick={() => { const value = naiLayout ? 447 : nlwLayout ? 400 : 310; setLeftWidth(value); savePanelWidths(value, rightWidth); }}
         />
         <section className="studio-canvas flex min-h-0 flex-col" data-layout-module="canvas">
-          {mobileViewportReady && <div className="mobile-studio-mount">
-            <MobileStudioLauncher
-              promptSummary={prompt.trim().split("\\n")[0]?.slice(0, 56) || ""}
-              model={modelOptions.find(item => item.value === model)?.label || model}
-              modelOptions={modelSelectionOptions}
-              modelSelectionValue={modelSelectionOptions.some((item) => item.value === modelSelectionValue) ? modelSelectionValue : ""}
-              onModelChange={selectImageModel}
-              generationTier={{ visible: mediumEffort || /^nai-v5-(?:full|inpaint)(?:-limit)?$/.test(model), medium: mediumEffort, disabled: generating, canSelect: (effort) => modelOptions.some((item) => item.value === generationEffortTarget(effort)), onChange: selectGenerationEffort }}
-               operation={modes.find(item => item.id === operation)?.label || "文生图"}
-               operationId={operation}
-               generating={generating}
-              width={width}
-              height={height}
-              isInpainting={operation === "inpainting"}
-              hasResults={displayedImages.length > 0}
-              resultContent={displayedImages.length > 0 ? <ReplicaMedia variant={replicaVariant} images={displayedImages} width={width} height={height} seed={seed} progress={generating ? streamProgress || batchProgress || "正在生成…" : undefined} onOpen={setLightboxIndex} onUse={(image, value) => applyImageAsSource(image, value as Operation)} /> : undefined}
-              historyContent={historyEnabled ? mobileHistoryPanel : undefined}
-              promptContent={mobilePromptContent}
-              onRefreshHistory={() => setMobileHistoryRefresh((value) => value + 1)}
-              referenceContent={<div className="mobile-reference-tools">
-                <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
-                <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
-                <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
-                <button type="button" className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor("canvas")}><Scan size={18} />打开图像编辑器</button>
-                {source && <div className="mobile-reference-current"><Image src={source.data} alt={source.name} width={160} height={160} unoptimized /><span>{source.name}</span></div>}
-              </div>}
-              moreContent={<>{creativeCenterLinks}<nav className="grid gap-2"><Link className="nai-menu-item" href="/image/editor"><Scan size={16} />图像编辑器</Link><Link className="nai-menu-item" href="/settings#models"><KeyRound size={16} />模型与 API 配置</Link><Link className="nai-menu-item" href="/settings"><Paintbrush size={16} />主题与外观</Link><Link className="nai-menu-item" href="/profile"><UserRound size={16} />账户与额度</Link></nav></>}
-              onSelectOperation={(next) => selectOperation(next)}
-              onOpenSheet={(next) => setMobileSheet(next)}
-              sheet={mobileSheet}
-              sheetRef={mobileSheetRef}
-              onCloseSheet={() => setMobileSheet(null)}
-              sheetContent={mobileSheetContent}
-              footerContent={naiGenerationFooter}
-            />
-          </div>}
           {!sidebarPromptLayout &&
             (promptModes.has(operation) || operation === "suggest-tags") && (
-              <div className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
+              <div data-tutorial="prompt" className="grid shrink-0 gap-3 border-b border-[var(--line)] bg-[#f2f0ea] p-3 xl:grid-cols-2">
                 <Prompt
                   label={
                     operation.startsWith("director-") ? "工具提示" : "描述画面"
@@ -5410,6 +5288,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                   tools={promptToolbar("prompt")}
                   autocomplete={!naturalImageModel}
                   tagMode={!naturalImageModel && promptTagMode}
+                  config={promptConfig}
+                  relatedSamples={promptRelatedSamples}
+                  natural={naturalImageModel}
+                  onNotice={setNotice}
                   inlineChatTarget={{ kind: "prompt", label: "描述画面" }}
                   openInlineChatMenu={openInlineChatMenu}
                 />
@@ -5422,6 +5304,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                     tools={promptToolbar("negative")}
                     autocomplete={!naturalImageModel}
                     tagMode={!naturalImageModel && promptTagMode}
+                    config={promptConfig}
+                    relatedSamples={promptRelatedSamples}
+                    natural={naturalImageModel}
+                    onNotice={setNotice}
                     inlineChatTarget={{ kind: "negative", label: "排除内容" }}
                     openInlineChatMenu={openInlineChatMenu}
                   />
@@ -5614,9 +5500,10 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             </div>
           )}
           {!sidebarPromptLayout && (
-            <div className="flex shrink-0 items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
+            <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
+              {modelCapabilities.seed && <SeedModeNotice seed={seed} onRandom={() => setSeed("")} />}
               {operation !== "suggest-tags" && signedIn && (
-                <div className="hidden shrink-0 text-right text-[10px] leading-4 text-[var(--muted)] sm:block">
+                pricingDetails(<>
                   {providerId !== "newapi" ? (
                     <span>个人 Key · 费用以提供方账单为准</span>
                   ) : canUseAffEstimate ? (
@@ -5624,14 +5511,14 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                       <div>
                         预计消耗{" "}
                         <b className="text-[var(--ink)]">
-                          {estimatedAffCost} AFF
+                          {formatAff(estimatedAffCost)} AFF
                         </b>
                       </div>
                       {estimatedPackageCost > 0 && (
                         <div>
                           图包额度{" "}
                           <b className="text-[var(--ink)]">
-                            -{estimatedPackageCost} AFF
+                            -{formatAff(estimatedPackageCost)} AFF
                           </b>
                         </div>
                       )}
@@ -5639,7 +5526,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                         <div>
                           个人 AFF{" "}
                           <b className="text-[var(--ink)]">
-                            -{estimatedPersonalCost} AFF
+                            -{formatAff(estimatedPersonalCost)} AFF
                           </b>
                         </div>
                       )}
@@ -5647,8 +5534,8 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                       <div>
                         图包 / 个人余量{" "}
                         <b className="text-[var(--ink)]">
-                          {wallet?.aff?.packageBalance ?? 0} /{" "}
-                          {wallet?.aff?.balance ?? 0}
+                          {formatAff(wallet?.aff?.packageBalance ?? 0)} /{" "}
+                          {formatAff(wallet?.aff?.balance ?? 0)}
                         </b>
                       </div>
                     </>
@@ -5679,7 +5566,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
                       </div>
                     </>
                   )}
-                </div>
+                <small>查看定价与阶梯</small></>, "credit-pricing-summary")
               )}
               <button
                 data-studio-generate
@@ -5707,13 +5594,13 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             aria-valuemin={200}
             aria-valuemax={replicaLayout ? 520 : 460}
             tabIndex={0}
-            className="panel-resizer hidden lg:block"
+            className="panel-resizer block"
             onPointerDown={(event) => startResize("right", event)}
             onKeyDown={(event) => resizePanelWithKeyboard("right", event)}
             onDoubleClick={() => { const value = 280; setRightWidth(value); savePanelWidths(leftWidth, value); }}
           />
         <aside
-          className={`studio-tools-panel panel hidden min-h-0 flex-col border-y-0 border-r-0 lg:flex${aaaliceDock ? " is-replica-dock" : ""}`}
+          className={`studio-tools-panel panel flex min-h-0 flex-col border-y-0 border-r-0${aaaliceDock ? " is-replica-dock" : ""}`}
         >
           {aaaliceDock ? <ReplicaRightDock
             history={replicaHistoryPanel}
@@ -5759,11 +5646,11 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
           onNavigate={setLightboxIndex}
         />
       )}
-      {agentImageZoom && agentImage && (
+      {agentPreview && (
         <Lightbox
-          images={[agentImage]}
+          images={[agentPreview]}
           index={0}
-          onClose={() => setAgentImageZoom(false)}
+          onClose={() => setAgentPreview(null)}
           onNavigate={() => {}}
         />
       )}
@@ -5804,7 +5691,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             <p className="nai-menu-label">账号</p>
             <div className="nai-menu-user">
               <span className="nai-menu-avatar" aria-hidden="true">
-                {(userName || "游").slice(0, 1).toUpperCase()}
+                {userId ? <UserAvatar userId={userId} name={userName} size={40} /> : (userName || "游").slice(0, 1).toUpperCase()}
               </span>
               <span className="min-w-0">
                 <b className="block truncate text-sm">{userName}</b>
@@ -5890,22 +5777,12 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
             )}
             <button
               type="button"
-              className="nai-menu-item lg:hidden"
-              onClick={() => {
-                setMenuOpen(false);
-                setMobileSheet("history");
-              }}
-            >
-              <History size={16} /> 本次历史
-            </button>
-            <button
-              type="button"
               className="nai-menu-item"
               onClick={() => {
                 setMenuOpen(false);
                 openAssistantPanel();
                 window.setTimeout(() => {
-                  const panel = window.innerWidth < 1024 ? mobileSheetRef.current : document.querySelector(".studio-tools-panel");
+                  const panel = document.querySelector(".studio-tools-panel");
                   panel?.querySelector<HTMLTextAreaElement>('textarea[aria-label="标签助手输入"]')
                     ?.focus();
                 }, 60);
@@ -6022,6 +5899,7 @@ export default function ImageStudio({ userName, authenticated, layoutEditor = fa
         <DropOverlay onPick={() => setDropActive(false)} />
       )}
     </main>
+    </PromptVersionProvider>
   );
 }
 
@@ -6961,7 +6839,7 @@ function UploadField({
     }
   }
   return (
-    <div className="upload-field-stack">
+    <div className="upload-field-stack" data-tutorial="source">
       {value && (
         <div className="image-source-preview upload-preview">
           <Image src={value.data} alt={`${label}预览`} width={96} height={96} unoptimized />
@@ -6997,6 +6875,10 @@ function Prompt({
   tools,
   autocomplete = false,
   tagMode = false,
+  config,
+  relatedSamples = [],
+  natural = false,
+  onNotice,
   inlineChatTarget,
   openInlineChatMenu,
 }: {
@@ -7008,6 +6890,10 @@ function Prompt({
   tools?: React.ReactNode;
   autocomplete?: boolean;
   tagMode?: boolean;
+  config?: ReplicaPromptConfig;
+  relatedSamples?: string[];
+  natural?: boolean;
+  onNotice?: (message: string) => void;
   // VSCode 内联聊天：文本域右键弹出 AI 操作菜单。
   inlineChatTarget?: InlineChatTarget;
   openInlineChatMenu?: (
@@ -7018,6 +6904,22 @@ function Prompt({
   // 外层用 div：工具按钮放进 <label> 时，label 的隐式控件变成第一个
   // button（骰子），点 Tag/清空会被 label 激活行为连带触发骰子。
   const fieldId = useId();
+  const shouldAutocomplete = autocomplete && (config?.settings.autocomplete ?? true);
+  const copyHandler: React.ClipboardEventHandler<HTMLTextAreaElement> | undefined = config?.settings.resolveAliasesOnCopy
+    ? (event) => {
+      const selected = value.slice(event.currentTarget.selectionStart, event.currentTarget.selectionEnd);
+      if (!selected) return;
+      event.preventDefault();
+      event.clipboardData.setData("text/plain", resolvePromptAliases(selected, config.library));
+    }
+    : undefined;
+  const blurHandler: React.FocusEventHandler<HTMLTextAreaElement> | undefined = config
+    ? (event) => {
+      const result = transformModelPromptOnBlur(event.currentTarget.value, config, natural);
+      if (result.text !== event.currentTarget.value) onChange(result.text);
+      if (result.error) onNotice?.(result.error);
+    }
+    : undefined;
   return (
     <div
       className={`rounded border bg-white p-3 ${accent ? "border-[#c99ba3]" : "border-[var(--line)]"}`}
@@ -7031,7 +6933,9 @@ function Prompt({
       </div>
       {tagMode ? (
         <div className="rounded border border-[var(--line)] bg-[#faf9f5] p-2 min-h-14">
-          <TagChipEditor value={value} onChange={onChange} zhOf={tagZh} />
+          <TagChipEditor value={value} onChange={onChange} zhOf={tagZh} autocomplete={shouldAutocomplete}
+            library={config?.library ?? []} cooccurrence={config?.settings.cooccurrence ?? false} relatedSamples={relatedSamples}
+            resolveCopy={config?.settings.resolveAliasesOnCopy ? (text) => resolvePromptAliases(text, config.library) : undefined} />
         </div>
       ) : (
         <PromptAutocompleteTextarea
@@ -7039,7 +6943,14 @@ function Prompt({
           value={value}
           onChange={onChange}
           placeholder={placeholder}
-          autocomplete={autocomplete}
+          autocomplete={shouldAutocomplete}
+          library={config?.library ?? []}
+          cooccurrence={config?.settings.cooccurrence ?? false}
+          relatedSamples={relatedSamples}
+          onCopy={copyHandler}
+          onFeedback={onNotice}
+          highlight={Boolean(config?.settings.highlight && !natural)}
+          onBlur={blurHandler}
           onContextMenu={
             inlineChatTarget && openInlineChatMenu
               ? (event) => openInlineChatMenu(event, inlineChatTarget)

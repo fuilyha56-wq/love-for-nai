@@ -58,6 +58,16 @@ export default function DocsPage() {
   useEffect(() => {
     void Promise.resolve().then(() => load());
   }, [load]);
+  useEffect(() => {
+    const restore = () => {
+      if (window.location.pathname !== "/docs") return;
+      const slug = new URLSearchParams(window.location.search).get("slug");
+      setDetail(Boolean(slug));
+      if (slug) setSelectedSlug(slug);
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
 
   const categories = [...new Set(items.map((item) => item.category))].sort((a, b) => a.localeCompare(b, "zh-CN"));
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -68,11 +78,15 @@ export default function DocsPage() {
   const selected = visibleItems.find((item) => item.slug === selectedSlug) || visibleItems[0];
   function resetFilters() { setQuery(""); setCategory("all"); }
   function select(slug: string | null) {
+    if (!slug && window.history.state?.lfnDocsDetail) { window.history.back(); return; }
     if (slug) setSelectedSlug(slug);
     setDetail(Boolean(slug));
     const params = new URLSearchParams(window.location.search);
     if (slug) params.set("slug", slug); else params.delete("slug");
-    window.history.replaceState(null, "", `/docs${params.size ? `?${params}` : ""}`);
+    const href = `/docs${params.size ? `?${params}` : ""}`;
+    const state = { ...window.history.state, lfnDocsDetail: Boolean(slug) };
+    if (slug && !detail) window.history.pushState(state, "", href);
+    else window.history.replaceState(state, "", href);
     window.scrollTo({ top: 0 });
   }
   return <main className={`launcher-docs workspace-page ${styles.page}`} data-doc-detail={detail}>

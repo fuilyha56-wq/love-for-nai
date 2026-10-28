@@ -4,6 +4,7 @@ export const PROFILE_SECTION_IDS = [
   "profile-info",
   "account-security",
   "profile-security",
+  "profile-tutorials",
 ] as const;
 
 export type ProfileSectionId = (typeof PROFILE_SECTION_IDS)[number];

@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .profile-page-header { position: sticky; top: 0; z-index: 10; background: var(--panel); backdrop-filter: blur(12px); }
 .profile-layout { display: grid; grid-template-columns: 224px minmax(0, 1fr); align-items: start; gap: 28px; max-width: 1240px; margin: 0 auto; padding: 28px 28px 60px; }
 .profile-sidebar { position: sticky; top: 92px; align-self: start; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }

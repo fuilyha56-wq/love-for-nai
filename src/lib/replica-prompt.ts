@@ -1,4 +1,5 @@
 import { isV5Model, qualityTagsForTier, ucForModel } from './nai-quality';
+import { formatNaiPrompt } from './nai-prompt-formatter';
 
 export type ReplicaVariant = "nai" | "nlw";
 export type PromptTarget = "positive" | "negative";
@@ -233,33 +234,9 @@ export function applyPromptRegex(text: string, rules: PromptRegexRule[]): { text
   return { text: active.reduce((value, rule) => value.replace(new RegExp(rule.pattern, rule.flags === "gi" ? "gi" : "g"), rule.replacement), text), error: null };
 }
 
-/** Adapted from Aaalice's NaiPromptFormatter / TextSpaceConverter (MIT; public/nai/LICENSE-Aaalice.txt). */
+/** Aaalice's default NAI formatter: normalize separators and convert unprotected spaces. */
 export function formatReplicaPrompt(text: string): string {
-  const protectedCharacters = new Set([",", "{", "}", "[", "]", "(", ")", "|", "<", ">"]);
-  return text.split(/(\/\*disabled:[\s\S]*?\*\/)/g).map((fragment, fragmentIndex, fragments) => {
-    if (fragment.startsWith("/*disabled:")) return fragment;
-    const formatted = fragment.split(/(\r\n|\r|\n)/g).map((line) => {
-      if (/^[\r\n]+$/.test(line) || !line.trim()) return line;
-      const leading = line.match(/^[ \t]*/)?.[0] || "";
-      const trailing = line.match(/[ \t]*$/)?.[0] || "";
-      const content = line.slice(leading.length, line.length - trailing.length).replace(/[，、]/g, ",").replace(/：/g, ":").replace(/[ \t\f\u00a0\u3000]+/g, " ").replace(/ *, */g, ", ").trimEnd();
-      let angleDepth = 0;
-      let quote = "";
-      let escaped = false;
-      const converted = content.split("").map((char, index) => {
-        if (escaped) { escaped = false; return char; }
-        if (char === "\\") { escaped = true; return char; }
-        if (quote) { if (char === quote) quote = ""; return char; }
-        if (char === '"') { quote = char; return char; }
-        if (char === "<") angleDepth++;
-        if (char === ">") angleDepth = Math.max(0, angleDepth - 1);
-        if (char !== " " || angleDepth || protectedCharacters.has(content[index - 1]) || protectedCharacters.has(content[index + 1])) return char;
-        return "_";
-      }).join("");
-      return leading + converted + trailing;
-    }).join("");
-    return formatted.endsWith(",") && fragments[fragmentIndex + 1]?.startsWith("/*disabled:") ? formatted + " " : formatted;
-  }).join("");
+  return formatNaiPrompt(text);
 }
 export function transformPromptOnBlur(text: string, config: ReplicaPromptConfig): { text: string; error: string | null } {
   const replaced = applyPromptRegex(text, config.regexRules);

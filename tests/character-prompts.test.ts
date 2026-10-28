@@ -75,8 +75,8 @@ describe("多角色与档内判定", () => {
   });
 });
 
-describe("历史参数排除", () => {
-  it("safeParameters 不落盘 characterPrompts 结构", async () => {
+describe("历史角色参数保存", () => {
+  it("保留角色文字与坐标，但排除角色附带图片结构", async () => {
     const { saveHistory, listHistory } = await import("@/lib/history");
     await mkdir(path.join(dataDir, "history", "950"), { recursive: true });
     const items = await saveHistory(
@@ -87,7 +87,7 @@ describe("历史参数排除", () => {
         width: 832,
         height: 1216,
         characterPrompts: [
-          { prompt: "1girl", center: { x: 0.3, y: 0.5 } },
+          { prompt: "1girl", negativePrompt: "hat", center: { x: 0.3, y: 0.5 }, image: "private-image" },
         ],
       },
       ["data:image/png;base64,aaaa"],
@@ -95,10 +95,11 @@ describe("历史参数排除", () => {
     );
 
     expect(items).toHaveLength(1);
-    expect(items[0].parameters).not.toHaveProperty("characterPrompts");
+    expect(items[0].parameters.characterPrompts).toEqual([{ prompt: "1girl", negativePrompt: "hat", center: { x: .3, y: .5 } }]);
     expect(items[0].parameters.prompt).toBe("scene");
     const listed = await listHistory(950);
-    expect(listed[0].parameters).not.toHaveProperty("characterPrompts");
+    expect(listed[0].parameters.characterPrompts).toEqual(items[0].parameters.characterPrompts);
+    expect(JSON.stringify(listed[0].parameters)).not.toContain("private-image");
     await rm(path.join(dataDir, "history", "950"), {
       recursive: true,
       force: true,

@@ -15,7 +15,7 @@ export class AssistantModelBlockedError extends Error {
 
 type ChatResult = {
   error?: { message?: string; code?: string; type?: string };
-  choices?: Array<{ finish_reason?: string; message?: { content?: string | null; refusal?: string | null } }>;
+  choices?: Array<{ finish_reason?: string; message?: { content?: unknown; refusal?: string | null } }>;
   promptFeedback?: { blockReason?: string };
   candidates?: Array<{ finishReason?: string }>;
 };

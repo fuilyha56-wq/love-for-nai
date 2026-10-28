@@ -7,6 +7,8 @@
  * 非贪婪匹配截断导致解析失败，这里改为按容器格式逐段提取。
  */
 
+import { imagePromptText } from "./image-character-prompts";
+
 const PNG_SIGNATURE = [137, 80, 78, 71, 13, 10, 26, 10];
 
 export type NaiImageMetadata = {
@@ -75,7 +77,7 @@ function pngTextChunks(bytes: Uint8Array): Array<[string, string]> {
 }
 
 /** 提取 JPEG COM 段文本。 */
-function jpegComments(bytes: Uint8Array): Array<[string, string]> {
+export function jpegComments(bytes: Uint8Array): Array<[string, string]> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const comments: Array<[string, string]> = [];
   let offset = 2;
@@ -150,7 +152,8 @@ function looksLikeGenerationParameters(
   parsed: Record<string, unknown>,
 ): boolean {
   const hasPrompt =
-    typeof parsed.prompt === "string" || typeof parsed.input === "string";
+    typeof parsed.prompt === "string" || typeof parsed.input === "string" ||
+    Boolean(parsed.v4_prompt) || Boolean(parsed.parameters);
   const hasSize =
     typeof parsed.width === "number" || typeof parsed.height === "number";
   return hasPrompt || hasSize;
@@ -166,12 +169,13 @@ function normalizeParameters(
     !Array.isArray(parsed.parameters)
       ? (parsed.parameters as Record<string, unknown>)
       : {};
+  const captions = imagePromptText({ ...parsed, ...nested });
   const negative =
-    parsed.uc ?? parsed.negative_prompt ?? parsed.negativePrompt ?? nested.uc;
+    parsed.uc ?? parsed.negative_prompt ?? parsed.negativePrompt ?? nested.uc ?? nested.negative_prompt ?? captions.negativePrompt;
   return {
     ...parsed,
     ...nested,
-    prompt: parsed.prompt ?? parsed.input ?? nested.prompt ?? "",
+    prompt: parsed.prompt ?? parsed.input ?? nested.prompt ?? captions.prompt,
     ...(negative != null ? { negative_prompt: negative } : {}),
   };
 }

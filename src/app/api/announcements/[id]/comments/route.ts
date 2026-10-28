@@ -4,6 +4,7 @@ import {
   createAnnouncementComment,
   listAnnouncementComments,
   setAnnouncementCommentVote,
+  getAnnouncementComment,
 } from "@/lib/announcement-comments";
 import { ensureSeed, getAnnouncement } from "@/lib/announcements";
 import {
@@ -12,7 +13,9 @@ import {
   InvalidJsonError,
 } from "@/lib/request";
 import { getSession } from "@/lib/session";
-import { createUserNotification } from "@/lib/notifications";
+import { createUserNotification, deleteUserNotificationByDedupeKey } from "@/lib/notifications";
+import { getCommentPreferences } from "@/lib/comment-preferences";
+import { requireAdmin } from "@/lib/admin-auth";
 
 const commentLimiter = new SlidingWindowRateLimiter({
   limit: 8,
@@ -46,7 +49,10 @@ export async function GET(
     return NextResponse.json({ message: "公告不存在" }, { status: 404 });
   return NextResponse.json({
     items: await listAnnouncementComments(announcementId, session?.userId),
-  }, { headers: { "Cache-Control": "private, max-age=20, stale-while-revalidate=60", Vary: "Cookie" } });
+    viewerId: session?.userId || null,
+    canModerate: session ? !("error" in await requireAdmin()) : false,
+    preferences: await getCommentPreferences(session?.userId),
+  }, { headers: { "Cache-Control": "private, no-store", Vary: "Cookie" } });
 }
 
 export async function POST(
@@ -119,6 +125,7 @@ export async function POST(
       content: optionalString(body.content) || "",
       parentId,
     });
+    await createUserNotification({ userId: session.userId, type: "announcement-reply", title: "我发表的公告评论", body: item.content.slice(0, 220), href: `/announcements?announcement=${encodeURIComponent(announcementId)}&comment=${encodeURIComponent(item.id)}`, dedupeKey: `announcement-self:${item.id}` }).catch(() => undefined);
     if (parentId) {
       const parent = (await listAnnouncementComments(announcementId)).find((comment) => comment.id === parentId);
       if (parent && parent.authorId !== session.userId) {
@@ -155,7 +162,11 @@ export async function PATCH(
   if (body.action === "vote") {
     const vote = body.vote === "up" || body.vote === "down" ? body.vote : body.vote === null ? null : undefined;
     if (vote === undefined) return NextResponse.json({ message: "投票类型无效" }, { status: 400 });
+    const before = await getAnnouncementComment(announcementId, commentId, session.userId);
     const item = await setAnnouncementCommentVote(announcementId, commentId, session.userId, vote);
+    const dedupeKey = `announcement-like:${commentId}:${session.userId}`;
+    if (before && vote === "up" && before.myVote !== "up" && before.authorId !== session.userId) await createUserNotification({ userId: before.authorId, type: "comment-like", title: `${session.displayName || session.username} 赞了你的评论`, body: before.content.slice(0, 220), href: `/announcements?announcement=${encodeURIComponent(announcementId)}&comment=${encodeURIComponent(commentId)}`, dedupeKey }).catch(() => undefined);
+    if (before && vote !== "up") await deleteUserNotificationByDedupeKey(before.authorId, dedupeKey).catch(() => undefined);
     return item ? NextResponse.json({ item }) : NextResponse.json({ message: "评论不存在" }, { status: 404 });
   }
   if (body.action === "pin" && typeof body.pinned === "boolean") {

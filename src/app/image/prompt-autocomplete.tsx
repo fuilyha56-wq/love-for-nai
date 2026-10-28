@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
+import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
 import { tagZh } from "@/lib/tag-translations";
 
 export type TagHit = PromptCompletion;
@@ -10,13 +10,15 @@ const RESULT_CACHE = new Map<string, TagHit[]>();
 
 /** Shared editor: local fallback, tag search, library aliases and private local cooccurrences. */
 export function PromptAutocompleteTextarea({ value, onChange, className, placeholder, autocomplete = false, id, onContextMenu,
-  library = [], cooccurrence = false, relatedSamples = [], onCopy, onFeedback,
+  library = [], cooccurrence = false, relatedSamples = [], onCopy, onFeedback, highlight = false, onBlur,
 }: {
   value: string; onChange: (value: string) => void; className?: string; placeholder?: string; autocomplete?: boolean; id?: string;
-  onContextMenu?: React.MouseEventHandler<HTMLTextAreaElement>; onCopy?: React.ClipboardEventHandler<HTMLTextAreaElement>;
+  onContextMenu?: React.MouseEventHandler<HTMLTextAreaElement>; onCopy?: React.ClipboardEventHandler<HTMLTextAreaElement>; onBlur?: React.FocusEventHandler<HTMLTextAreaElement>;
   library?: Array<{ name: string; content: string }>; cooccurrence?: boolean; relatedSamples?: string[]; onFeedback?: (message: string) => void;
+  highlight?: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLPreElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestRef = useRef<AbortController | null>(null);
   const requestNumber = useRef(0);
@@ -26,6 +28,7 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
   const [related, setRelated] = useState(false);
   const [active, setActive] = useState(0);
   const [position, setPosition] = useState<CSSProperties>({ visibility: "hidden" });
+  const displayParts = useMemo(() => value.split(/(\{+|\}+|\[+|\]+|\(+|\)+|-?(?:\d+(?:\.\d+)?|\.\d+)::|::|<[^<>\n]*>)/g), [value]);
   const showSuggestions = open && suggestions.length > 0 && (related ? cooccurrence : autocomplete);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); requestRef.current?.abort(); }, []);
   useLayoutEffect(() => {
@@ -98,8 +101,9 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
     const element = textareaRef.current;
     if (!element) return;
     cancelPending();
-    const next = related ? { text: element.value.trimEnd() + (/[,，\n]\s*$/.test(element.value) ? " " : element.value.trim() ? ", " : "") + hit.name, cursor: 0 }
-      : insertPromptCompletion(element.value, element.selectionStart, hit.insertion || hit.name);
+    const insertion = promptCompletionText(hit);
+    const next = related ? { text: element.value.trimEnd() + (/[,，\n]\s*$/.test(element.value) ? " " : element.value.trim() ? ", " : "") + insertion, cursor: 0 }
+      : insertPromptCompletion(element.value, element.selectionStart, insertion);
     onChange(next.text); setOpen(false);
     const caret = related ? next.text.length : next.cursor;
     requestAnimationFrame(() => { element.focus(); element.setSelectionRange(caret, caret); });
@@ -112,15 +116,18 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
     } else if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); acceptTag(suggestions[active]); }
     else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelPending(); setOpen(false); }
   }
-  return <div className="prompt-autocomplete-wrap">
+  return <div className={"prompt-autocomplete-wrap" + (highlight ? " has-lfn-syntax-highlight" : "")} onScrollCapture={(event) => {
+    if (event.target instanceof HTMLTextAreaElement && highlightRef.current) { highlightRef.current.scrollTop = event.target.scrollTop; highlightRef.current.scrollLeft = event.target.scrollLeft; }
+  }}>
+    {highlight && <pre ref={highlightRef} className="replica-syntax-highlight lfn-prompt-syntax-highlight" aria-hidden="true">{displayParts.map((text, index) => index % 2 ? <span key={index}>{text}</span> : text)}{'\n'}</pre>}
     <textarea ref={textareaRef} id={id} value={value} onChange={(event) => { onChange(event.target.value); if (!(event.nativeEvent as InputEvent).isComposing) trackCursor(event.target); }}
       onCompositionEnd={(event) => trackCursor(event.currentTarget)} onKeyDown={onKeyDown} onCopy={onCopy}
       aria-autocomplete={autocomplete ? "list" : "none"} aria-controls={showSuggestions ? listId : undefined}
       aria-activedescendant={showSuggestions ? listId + "-" + active : undefined}
-      onBlur={() => { cancelPending(); setOpen(false); }} onSelect={(event) => { if (event.currentTarget.selectionEnd > event.currentTarget.selectionStart) showRelated(event.currentTarget, true); }}
+      onBlur={(event) => { cancelPending(); setOpen(false); onBlur?.(event); }} onSelect={(event) => { if (event.currentTarget.selectionEnd > event.currentTarget.selectionStart) showRelated(event.currentTarget, true); }}
       onClick={(event) => { if (event.ctrlKey) showRelated(event.currentTarget); }}
       onMouseDown={(event) => { if (event.button === 2 && event.currentTarget.selectionEnd > event.currentTarget.selectionStart) event.preventDefault(); }}
-      onContextMenu={onContextMenu} placeholder={placeholder} className={className} />
+      onContextMenu={onContextMenu} placeholder={placeholder} className={(className || "") + (highlight ? " lfn-prompt-syntax-textarea" : "")} />
     {showSuggestions && createPortal(<div data-replica-menu id={listId} style={position} className="tag-suggest-panel replica-completion-panel" role="listbox" aria-label={related ? "本地共现标签" : "标签联想"}>
       <p className="tag-suggest-head">{related ? "本次历史 / 我的词库共现" : "标签建议 · ↑↓ 选择 · Enter / Tab 插入"}</p>
       <div className="tag-suggest-list">{suggestions.map((hit, index) => <button type="button" id={listId + "-" + index} key={hit.catalogKey || hit.name} role="option" aria-selected={index === active} title={hit.description || hit.zh || hit.name}

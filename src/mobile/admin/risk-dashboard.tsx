@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   Activity,
+  ChevronDown,
   FileWarning,
   Globe2,
   RefreshCw,
@@ -23,6 +24,8 @@ import {
   riskLabels,
 } from "./risk-ui";
 import "./risk.css";
+import "@/app/admin/risk-ip-accounts.css";
+import { groupIpEvidence } from "@/lib/ip-evidence-groups";
 
 const LightRiskPanel = dynamic(() => import("./light-risk-panel"));
 const RiskPolicyPanel = dynamic(() => import("./risk-policy-panel"));
@@ -167,18 +170,19 @@ export default function RiskDashboard() {
       (i) =>
         (!ipFilter ||
           (ipFilter === "unqueried" ? !i.geo : i.family === ipFilter)) &&
-        `${i.username || ""} ${i.userId || ""} ${i.evidenceId} ${[i.geo?.countryName, i.geo?.region, i.geo?.city, i.geo?.organization].join(" ")}`
+        `${i.username || ""} ${i.userId || ""} ${Object.keys(i.users || {}).join(" ")} ${i.evidenceId} ${[i.geo?.countryName, i.geo?.region, i.geo?.city, i.geo?.organization].join(" ")}`
           .toLowerCase()
           .includes(ipQuery.trim().toLowerCase()),
     )
     .sort((a, b) => Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt));
+  const groupedIps = groupIpEvidence(filteredIps);
   const currentCasePage = Math.min(
       casePage,
       Math.max(1, Math.ceil(cases.length / size)),
     ),
     currentIpPage = Math.min(
       ipPage,
-      Math.max(1, Math.ceil(filteredIps.length / size)),
+      Math.max(1, Math.ceil(groupedIps.length / size)),
     );
   return (
     <div className="risk-workspace">
@@ -440,7 +444,7 @@ export default function RiskDashboard() {
               NETWORK EVIDENCE
             </div>
             <h3>IP 来源证据</h3>
-            <p>按最近出现时间排列，展示最近加载的 {ips.length} 条记录。</p>
+            <p>按账号归并，展开查看各个 IP 的来源、请求次数与归属地；已加载 {ips.length} 条 IP 证据。</p>
           </div>
           <RiskBadge tone="success">
             <ShieldCheck size={12} />
@@ -471,24 +475,23 @@ export default function RiskDashboard() {
             <option value="unqueried">尚未查询归属地</option>
           </LfnSelect>
         </div>
-        <div className="risk-table-wrap">
-          <table className="risk-table">
-            <thead>
-              <tr>
-                <th>关联用户</th>
-                <th>来源与请求</th>
-                <th>归属地快照</th>
-                <th>最近出现</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredIps
-                .slice((currentIpPage - 1) * size, currentIpPage * size)
-                .map((item) => (
+        <div className="risk-ip-account-groups">
+              {groupedIps.slice((currentIpPage - 1) * size, currentIpPage * size).map(group => (
+                  <details key={group.key} className="risk-ip-account-group">
+                    <summary>
+                      <RiskIdentity name={group.username} id={group.userId} />
+                      <div className="risk-ip-account-stats">
+                        <span><strong>{group.items.length}</strong> 个 IP</span>
+                        <span><strong>{group.requestCount.toLocaleString()}</strong> 次请求</span>
+                      </div>
+                      <time className="risk-ip-account-last-seen" dateTime={group.lastSeenAt}><span>最近活动</span><b>{riskDate(group.lastSeenAt)}</b></time>
+                      <span className="risk-ip-account-toggle"><span className="risk-ip-account-expand">展开明细</span><span className="risk-ip-account-collapse">收起明细</span><ChevronDown size={16} aria-hidden="true" /></span>
+                    </summary>
+                    <div className="risk-table-wrap"><table className="risk-table"><thead><tr><th>IP 来源</th><th>证据与请求</th><th>归属地快照</th><th>最近出现</th><th>操作</th></tr></thead><tbody>
+                      {group.items.map((item, index) => (
                   <tr key={item.evidenceId}>
                     <td>
-                      <RiskIdentity name={item.username} id={item.userId} />
+                      <b>IP {index + 1}</b><span className="risk-subline">{item.family.toUpperCase()}</span>
                       {Object.keys(item.users || {}).length > 1 && (
                         <span className="risk-subline">
                           此来源关联 {Object.keys(item.users || {}).length}{" "}
@@ -544,9 +547,10 @@ export default function RiskDashboard() {
                       </AdminButton>
                     </td>
                   </tr>
-                ))}
-            </tbody>
-          </table>
+                      ))}
+                    </tbody></table></div>
+                  </details>
+              ))}
           {!filteredIps.length && (
             <div className="risk-empty">
               {loading ? "正在读取来源证据…" : "当前筛选下没有来源记录"}
@@ -555,7 +559,7 @@ export default function RiskDashboard() {
         </div>
         <RiskPager
           page={currentIpPage}
-          total={filteredIps.length}
+          total={groupedIps.length}
           size={size}
           onChange={setIpPage}
         />

@@ -6,6 +6,9 @@ import { naiDimensionLimit, naiImageSizeError } from "@/lib/nai-image-limits";
 import { normalizeImageModelSize } from "@/lib/image-model-capabilities";
 import { validateNaiGenerationCost } from "@/lib/image-request";
 
+// Historical review prices are explicit fixtures; live daily defaults may change.
+const REVIEW_DAILY_POLICY = { ...DEFAULT_DAILY_IMAGE_POLICY, v45AnlasCny: 0.02, v5AnlasCny: 0.025 };
+
 describe("官网报价与人民币收费对照", () => {
   const quotes = [
     ["nai-v5-full", 1024, 1536, 28, 45, 230],
@@ -23,14 +26,14 @@ describe("官网报价与人民币收费对照", () => {
     expect(gatewayAnlasCost(generation)).toBe(anlas);
     expect(estimateTokens(generation)).toBe(anlas * 50);
     expect(affCost(generation)).toBe(aff);
-    expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas, costAff: aff, costCny: Number((aff * CNY_PER_AFF).toFixed(8)) });
+    expect(quoteDailyImage(generation, REVIEW_DAILY_POLICY, CNY_PER_AFF, 0)).toMatchObject({ anlas, costAff: aff, costCny: Number((aff * CNY_PER_AFF).toFixed(8)) });
   });
   it("keeps official compute and the V5 sales markup distinct", () => {
     expect(pointPriceCny("nai-v4.5-full")).toBe(0.02);
     expect(pointPriceCny("nai-v5-full")).toBe(0.025);
     expect(dailyAff).toBe(0.005);
     const generation = { model: "nai-v5-full", width: 2048, height: 1536, steps: 28, samples: 1 };
-    expect([0, 50, 100, 200].map((count) => quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, dailyAff, count)?.costAff)).toEqual([455, 500.5, 511.875, 546]);
+    expect([0, 50, 100, 200].map((count) => quoteDailyImage(generation, REVIEW_DAILY_POLICY, dailyAff, count)?.costAff)).toEqual([455, 500.5, 511.875, 546]);
   });
   it("matches every row of the review CSV to the actual first-tier charge", () => {
     const csv = readFileSync(new URL("../docs/nai-pricing-final-2026-10-22.csv", import.meta.url), "utf8");
@@ -44,7 +47,7 @@ describe("官网报价与人民币收费对照", () => {
       expect(pointPriceCny(model)).toBe(Number(unitCny));
       expect(estimatePoints(generation)).toBe(Number(anlas));
       expect(Number(dynamicAff) + Number(baseAff)).toBe(Number(totalAff));
-      expect(quoteDailyImage(generation, DEFAULT_DAILY_IMAGE_POLICY, dailyAff, 0)).toMatchObject({ costAff: Number(totalAff), costCny: Number(totalCny) });
+      expect(quoteDailyImage(generation, REVIEW_DAILY_POLICY, dailyAff, 0)).toMatchObject({ costAff: Number(totalAff), costCny: Number(totalCny) });
     }
   });
   it("preserves the fixed-envelope fees and Medium's standard quote", () => {

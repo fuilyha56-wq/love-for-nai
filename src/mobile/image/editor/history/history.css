@@ -1,5 +1,5 @@
-@media (max-width: 839px) {
-.redraw-history-page { min-height: 100dvh; background: var(--paper); color: var(--ink); font-family: var(--font-sans), sans-serif; }
+@media (max-width: 1023px) {
+.redraw-history-page { min-height: 100dvh; background: var(--paper); color: var(--ink); font-family: var(--font-sans); }
 .redraw-project-navigation { display:contents; }
 .redraw-toolbar>.redraw-mobile-navigation-button { display:none; }
 .redraw-navigation-backdrop { position:fixed; left:0; right:0; top:var(--lfn-viewport-top,0px); height:var(--lfn-viewport-height,100dvh); z-index:30000; display:flex; align-items:center; justify-content:center; padding:24px; background:rgb(0 0 0 / .45); }

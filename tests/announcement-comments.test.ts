@@ -163,29 +163,27 @@ describe("公告评论 API", () => {
     expect(await listAnnouncementComments(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)).toEqual([]);
   });
 
-  it("用户只能删除自己的评论，保留子回复并清理对应通知", async () => {
+  it("用户只能删除自己的评论，级联删除子回复并清理对应通知", async () => {
     const { getSession } = await import("@/lib/session");
     const { requireAdmin } = await import("@/lib/admin-auth");
     const { COMMUNITY_FEEDBACK_ANNOUNCEMENT } = await import("@/lib/announcements");
     const { createAnnouncementComment, listAnnouncementComments } = await import("@/lib/announcement-comments");
     const { createUserNotification, listUserNotifications } = await import("@/lib/notifications");
     const parent = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 21, authorName: "原作者", content: "主评论" });
-    const ownReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "Lycoris", content: "重复回复", parentId: parent.id });
+    const ownReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "示例用户", content: "重复回复", parentId: parent.id });
     const nestedReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 23, authorName: "其他用户", content: "后续回复", parentId: ownReply.id });
     await createUserNotification({ userId: 21, type: "announcement-reply", title: "有人回复你", body: ownReply.content, href: `/announcements?comment=${ownReply.id}`, dedupeKey: `announcement-reply:${ownReply.id}` });
-    vi.mocked(getSession).mockResolvedValue({ userId: 22, username: "reply", displayName: "Lycoris", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
+    vi.mocked(getSession).mockResolvedValue({ userId: 22, username: "reply", displayName: "示例用户", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
     vi.mocked(requireAdmin).mockResolvedValue({ error: "仅管理员可用" });
     const { DELETE } = await import("@/app/api/announcements/[id]/comments/[commentId]/route");
     const params = Promise.resolve({ id: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, commentId: ownReply.id });
     const response = await DELETE(new Request("http://localhost", { method: "DELETE" }), { params });
     expect(response.status).toBe(200);
-    expect(await listAnnouncementComments(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: parent.id, parentId: null }),
-      expect.objectContaining({ id: nestedReply.id, parentId: parent.id }),
-    ]));
+    expect(await listAnnouncementComments(COMMUNITY_FEEDBACK_ANNOUNCEMENT.id)).toEqual([expect.objectContaining({ id: parent.id, parentId: null })]);
+    expect((await response.json()).deletedIds).toContain(nestedReply.id);
     expect(await listUserNotifications(21)).toMatchObject({ items: [], unreadCount: 0 });
 
-    const protectedReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "Lycoris", content: "仍属于作者的评论", parentId: parent.id });
+    const protectedReply = await createAnnouncementComment({ announcementId: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, authorId: 22, authorName: "示例用户", content: "仍属于作者的评论", parentId: parent.id });
     vi.mocked(getSession).mockResolvedValue({ userId: 24, username: "other", displayName: "其他用户", upstreamCookie: "", expiresAt: Date.now() + 3600_000 });
     const forbidden = await DELETE(new Request("http://localhost", { method: "DELETE" }), { params: Promise.resolve({ id: COMMUNITY_FEEDBACK_ANNOUNCEMENT.id, commentId: protectedReply.id }) });
     expect(forbidden.status).toBe(403);

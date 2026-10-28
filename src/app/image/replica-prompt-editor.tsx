@@ -1,4 +1,5 @@
 "use client";
+import { PromptHistoryButton } from "@/app/ui/prompt-versions";
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -57,7 +58,7 @@ function writeStorage(key: string, value: string | null) {
   catch { if (value === null) memoryStorage.delete(key); else memoryStorage.set(key, value); }
   window.dispatchEvent(new CustomEvent(STORAGE_EVENT, { detail: key }));
 }
-function usePromptConfig(variant: ReplicaVariant) {
+export function useReplicaPromptConfig(variant: ReplicaVariant) {
   const key = "lfn-replica-prompt-" + variant;
   const subscribe = useMemo(() => (listener: () => void) => {
     const keys: string[] = [key, REPLICA_SHARED_PRESET_KEYS.quality, REPLICA_SHARED_PRESET_KEYS.uc, "lfn-user-library"];
@@ -311,16 +312,35 @@ const qualityLabels: Record<QualityPreset, string> = { standard: "Standard", lig
 const ucLabels: Record<UcPreset, string> = { heavy: "重度", light: "轻度", human: "人物专注", furry: "兽人专注", none: "无", custom: "自定义" };
 const settingItems = [
   ["autocomplete", "智能补全", "输入时显示标签建议"],
-  ["autoFormat", "自动格式化", "中文逗号转英文、标签内空格转下划线（保留换行）"],
+  ["autoFormat", "自动格式化", "失焦时按 Aaalice 规则将词内空格转下划线，保留分隔符附近、词库引用内的空格及换行"],
   ["highlight", "高亮强调", "括号和权重语法高亮显示"],
   ["sdConvert", "SD语法自动转换", "失焦时将SD数字权重转换为NAI格式"],
   ["resolveAliasesOnCopy", "复制时展开词库", "复制时把 <词库名> 替换为词库内容"],
 ] as const;
 
+export function ReplicaPromptSettingsButton({ variant, config, onChange, initialText, natural = false, onNotice, className }: {
+  variant: ReplicaVariant; config: ReplicaPromptConfig; onChange: (config: ReplicaPromptConfig) => void; initialText: string;
+  natural?: boolean; onNotice?: (message: string) => void; className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [regexOpen, setRegexOpen] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  return <>
+    <button ref={button} type="button" className={className || "replica-settings-trigger"} aria-label="提示词设置" title="提示词设置" aria-expanded={open} onClick={() => setOpen((current) => !current)}><Settings2 size={14} /></button>
+    {open && <FloatingPanel variant={variant} anchor={button} label="提示词设置菜单" width={350} onClose={() => setOpen(false)}>
+      {settingItems.filter(([key]) => !natural || key === "resolveAliasesOnCopy").map(([key, label, description]) => <label key={key} className="replica-setting-row"><input type="checkbox" checked={config.settings[key]} onChange={(event) => onChange({ ...config, settings: { ...config.settings, [key]: event.target.checked } })} /><span><b>{label}</b><small>{description}</small></span></label>)}
+      <button type="button" className="replica-setting-row" onClick={() => { setOpen(false); setRegexOpen(true); }}><Settings2 size={18} /><span><b>正则替换规则…</b><small>已配置 {config.regexRules.length} 条规则</small></span><ChevronDown size={15} /></button>
+      {!natural && <label className="replica-setting-row"><input type="checkbox" checked={config.settings.cooccurrence} onChange={(event) => onChange({ ...config, settings: { ...config.settings, cooccurrence: event.target.checked } })} /><span><b>共现标签推荐</b><small>选中标签、Ctrl+单击或 Ctrl+Shift+Space；根据本次历史与我的词库推荐</small></span></label>}
+    </FloatingPanel>}
+    {regexOpen && <PromptRegexDialog variant={variant} rules={config.regexRules} initialText={initialText} onClose={() => setRegexOpen(false)}
+      onSave={(rules) => { onChange({ ...config, regexRules: rules }); setRegexOpen(false); onNotice?.("替换规则已保存，将在提示词失焦时按顺序应用。"); }} />}
+  </>;
+}
+
 export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange, onNegativeChange, onEffectiveChange, onAssistant, model, imageProtocol, operation, assistantModel, historyPrompts = [], collapsed, onCollapsedChange }: ReplicaPromptEditorProps) {
   const natural = resolveImageModelCapabilities(model, imageProtocol).promptStyle === "natural";
   const acceptsNegative = resolveImageModelCapabilities(model, imageProtocol).acceptsNegative || natural;
-  const [config, saveConfig] = usePromptConfig(variant);
+  const [config, saveConfig] = useReplicaPromptConfig(variant);
   const [selectedTarget, setTarget] = useState<PromptTarget>("positive");
   const target = acceptsNegative ? selectedTarget : "positive";
   const [editorHeight, setEditorHeight] = usePromptEditorHeight(variant, target);
@@ -424,7 +444,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
         {modeToggle(target)}
         <button type="button" aria-label="随机提示词" title="随机提示词" disabled={randomizing} onClick={() => void randomize(target)}><Dice5 size={17} /></button>
         <button type="button" aria-label="清空当前提示词" title="清空" onClick={() => (target === "positive" ? onPromptChange : onNegativeChange)("")}><X size={17} /></button>
-        <button type="button" ref={settingsButton} aria-label="提示词设置" title="提示词设置" aria-expanded={menu === "settings"} onClick={() => toggleMenu("settings")}><Settings2 size={18} /></button>
+        <PromptHistoryButton target={target === "positive" ? "prompt" : "negative"} /><button type="button" ref={settingsButton} aria-label="提示词设置" title="提示词设置" aria-expanded={menu === "settings"} onClick={() => toggleMenu("settings")}><Settings2 size={18} /></button>
         <button type="button" className="replica-prompt-tag-count" title={natural ? "复制描述" : "复制提示词"} onClick={copyCurrent}>{promptCount(target === "positive" ? composition.prompt : composition.negative, natural)}</button>
       </footer>
     </> : <div className="replica-nai-prompt-cards">

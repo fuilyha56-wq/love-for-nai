@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags } from "@/lib/prompt-completion";
+import { renderPromptWeight as renderWeighted, stepPromptWeight } from "@/lib/prompt-weight";
+import { loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, type PromptCompletion } from "@/lib/prompt-completion";
 
 // Tag 模式胶囊编辑器（移植 Aaalice TagEditorView/tag_editor_commands，MIT）：
 // 提示词解析为 tag 胶囊（识别 {}/[] 权重层数、数字 ::权重::、/*disabled:*/
@@ -39,7 +40,7 @@ type Capsule = {
   disabled: boolean;
 };
 
-type Suggestion = { name: string; displayName?: string; zh?: string };
+type Suggestion = PromptCompletion;
 
 const NUMERIC_OPEN = /^-?(?:\d+(?:\.\d*)?|\.\d+)::/;
 const RESULT_CACHE = new Map<string, Suggestion[]>();
@@ -114,24 +115,6 @@ export function parsePromptCapsules(value: string): Capsule[] {
   return splitSegments(value).map(parseCapsule);
 }
 
-// 权重数学（Aaalice withWeight）：数字语法 0.1–3.0 两位小数；
-// {} 每层 1.05x，[] 每层 0.95x；权重 = 1 → 裸文本。
-function renderWeighted(base: string, depth: number, numericWeight: number | null, disabled: boolean): string {
-  let text: string;
-  if (numericWeight != null) {
-    const value = Math.min(3, Math.max(0.1, numericWeight));
-    text = Math.abs(value - 1) < 0.00001
-      ? base
-      : `${value.toFixed(2)}::${base}::`;
-  } else if (depth > 0) {
-    text = "{".repeat(depth) + base + "}".repeat(depth);
-  } else if (depth < 0) {
-    text = "[".repeat(-depth) + base + "]".repeat(-depth);
-  } else {
-    text = base;
-  }
-  return disabled ? `/*disabled:${text.replaceAll("\\", "\\\\").replaceAll("*/", "*\\/")}*/` : text;
-}
 
 function capsuleWeight(capsule: Capsule): number {
   if (capsule.numericWeight != null) return capsule.numericWeight;
@@ -237,7 +220,7 @@ function AddTagInput({
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === ",") {
             event.preventDefault();
-            add(suggestions[active] && open ? suggestions[active].name : text);
+            add(suggestions[active] && open ? promptCompletionText(suggestions[active]) : text);
           } else if (event.key === "ArrowDown" && open) {
             event.preventDefault();
             setActive((index) => (index + 1) % Math.max(1, suggestions.length));
@@ -265,7 +248,7 @@ function AddTagInput({
                 aria-selected={index === active}
                 onMouseDown={(event) => {
                   event.preventDefault();
-                  add(hit.name);
+                  add(promptCompletionText(hit));
                 }}
                 onMouseEnter={() => setActive(index)}
                 className={`tag-suggest-item${index === active ? " is-active" : ""}`}
@@ -347,7 +330,7 @@ export function TagChipEditor({
   function adjustWeight(step: number): void {
     applyToSelected((capsule) => {
       if (capsule.numericWeight != null) {
-        return renderWeighted(capsule.base, 0, capsule.numericWeight + step, capsule.disabled);
+        return renderWeighted(capsule.base, 0, stepPromptWeight(capsule.numericWeight, step), capsule.disabled);
       }
       return renderWeighted(capsule.base, capsule.depth + step, null, capsule.disabled);
     });
@@ -513,7 +496,7 @@ export function TagChipEditor({
           <AddTagInput onAdd={addTag} zhOf={zhOf} autocomplete={autocomplete} library={library} />
         </div>
       )}
-      {relatedTags.length > 0 && <div className="tag-chip-related" aria-label="本地共现标签"><b>本次历史 / 我的词库共现</b><div>{relatedTags.map((tag) => <button type="button" key={tag.name} onClick={() => addTag(tag.name)} title={tag.occurrences + " 条共同出现的记录"}>{tag.displayName || tag.name}<small>{tag.occurrences}</small></button>)}</div></div>}
+      {relatedTags.length > 0 && <div className="tag-chip-related" aria-label="本地共现标签"><b>本次历史 / 我的词库共现</b><div>{relatedTags.map((tag) => <button type="button" key={tag.name} onClick={() => addTag(promptCompletionText(tag))} title={tag.occurrences + " 条共同出现的记录"}>{tag.displayName || tag.name}<small>{tag.occurrences}</small></button>)}</div></div>}
       <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">
         单击选中，Ctrl 加减选，Shift 范围选，双击改词，拖拽排序，右键调权重/禁用/词库菜单。
       </p>

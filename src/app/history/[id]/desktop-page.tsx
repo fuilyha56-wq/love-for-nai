@@ -60,7 +60,7 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
   return (
     <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <header className="flex h-14 items-center justify-between border-b border-[var(--line)] bg-[#fffefa] px-4 sm:px-7">
-        <Link href="/history" className="flex items-center gap-2 text-sm font-semibold"><ArrowLeft size={16} />图片历史</Link>
+        <Link replace href="/history" className="flex items-center gap-2 text-sm font-semibold"><ArrowLeft size={16} />图片历史</Link>
         <Link href="/image" className="text-sm font-semibold text-[var(--rose)]">返回工作台</Link>
       </header>
       <WorkspaceNav />

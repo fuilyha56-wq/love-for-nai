@@ -14,7 +14,6 @@ import {
   type DailyImageBillingState,
   type DailyImageFamily,
 } from "@/lib/daily-image-pricing";
-import { CNY_PER_ANLAS, V5_ANLAS_SALES_MULTIPLIER } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
 
 type Entry = {
@@ -70,7 +69,7 @@ async function write(file: string, value: unknown) {
   await rememberWrittenJson(file, value);
 }
 function normalizePolicy(input: DailyImagePolicy): DailyImagePolicy {
-  input = { ...DEFAULT_DAILY_IMAGE_POLICY, ...input, v45AnlasCny: CNY_PER_ANLAS, v5AnlasCny: CNY_PER_ANLAS * V5_ANLAS_SALES_MULTIPLIER };
+  input = { ...DEFAULT_DAILY_IMAGE_POLICY, ...input };
   if (
     typeof input.enabled !== "boolean" ||
     typeof input.strictApiBilling !== "boolean" ||

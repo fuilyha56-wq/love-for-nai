@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
   getChatToken: vi.fn(),
+  refreshChatToken: vi.fn(),
   runTagAgent: vi.fn(),
   outboundFetch: vi.fn(),
   readConversation: vi.fn(),
@@ -14,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/lib/provider/newapi-models", async (original) => ({ ...await original<typeof import("@/lib/provider/newapi-models")>(), loadNewApiModels: mocks.availableModels }));
 vi.mock("@/lib/tag-catalog", () => ({ readCatalogTag: () => null }));
-vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
+vi.mock("@/lib/newapi", () => ({ getChatToken: mocks.getChatToken, refreshChatToken: mocks.refreshChatToken, resolvedNewApiBaseUrl: async () => "https://gateway.test", userHeaders: () => ({ Authorization: "Bearer session-token" }) }));
 vi.mock("@/lib/tag-agent", () => ({ runTagAgent: mocks.runTagAgent }));
 vi.mock("@/lib/outbound", () => ({ outboundFetch: mocks.outboundFetch }));
 vi.mock("@/lib/model-concurrency", () => ({ fetchWithModelConcurrency: mocks.chatFetch }));
@@ -50,6 +51,33 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image model context in assistant routes", () => {
+  it("accepts ten references, rejects eleven and validates prompt context types", async () => {
+    const route = await import("@/app/api/assistant/tags/route");
+    const images = Array(10).fill("data:image/png;base64,YWJj");
+    expect((await route.POST(postRequest("tags", { model: "vision-chat", imageModel: "gpt-image-1", request: "reference test", images }))).status).toBe(200);
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][5].images).toEqual(images);
+    mocks.getChatToken.mockClear();
+    expect((await route.POST(postRequest("tags", { model: "vision-chat", request: "test", images: [...images, images[0]] }))).status).toBe(400);
+    expect((await route.POST(postRequest("tags", { model: "vision-chat", request: "test", currentPrompt: { invalid: true } }))).status).toBe(400);
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
+  });
+  it("accepts 10000-character requests and goals intact and rejects 10001 before key lookup", async () => {
+    const route = await import("@/app/api/assistant/tags/route");
+    const input = "字".repeat(10_000);
+    const response = await route.POST(postRequest("tags", { model: "vision-chat", imageModel: "gpt-image-1", request: input, goalMode: true, goal: input }));
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][2]).toBe(input);
+    expect(mocks.runTagAgent.mock.calls[0][3].goal).toBe(input);
+    mocks.getChatToken.mockClear();
+    for (const body of [{ request: input + "字" }, { request: "goal", goalMode: true, goal: input + "字" }]) {
+      const rejected = await route.POST(postRequest("tags", { model: "vision-chat", ...body }));
+      expect(rejected.status).toBe(400);
+      expect((await rejected.json()).message).toContain("10000");
+    }
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
+  });
   it("filters every known image family from assistant text models", async () => {
     mocks.availableModels.mockImplementationOnce((await vi.importActual<typeof import("@/lib/provider/newapi-models")>("@/lib/provider/newapi-models")).loadNewApiModels);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ data: [

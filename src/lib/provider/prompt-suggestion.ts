@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { checkImageRateLimit } from "@/lib/image-request";
-import { getChatToken, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { getChatToken, refreshChatToken, resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { isImageProviderProtocol, isKnownImageModel } from "@/lib/image-model-capabilities";
 import { runImagePromptSuggestion } from "@/lib/image-prompt-suggestion";
 import { inlineRaster } from "@/lib/image-transport";
 import type { LfnSession } from "@/lib/session";
 import { validateModelId } from "./validation";
+import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
 
 export async function handleNaturalImagePromptSuggestion(request: Request, session: LfnSession, body: Record<string, unknown>): Promise<NextResponse> {
   const rate = checkImageRateLimit(request, `session:${session.userId}`);
@@ -13,8 +14,10 @@ export async function handleNaturalImagePromptSuggestion(request: Request, sessi
   let chatModel: string;
   let imageModel: string;
   let images: string[];
+  let reasoningEffort: string | undefined;
   try {
     chatModel = validateModelId(body.assistantModel);
+    reasoningEffort = resolveAssistantReasoning(chatModel, body.reasoningEffort);
     imageModel = validateModelId(body.model);
     if (isKnownImageModel(chatModel)) throw new Error("请选择文本或视觉助手模型，图像模型不能代替聊天模型");
     if (body.imageProtocol !== undefined && !isImageProviderProtocol(body.imageProtocol)) throw new Error("图像 API 协议无效");
@@ -26,6 +29,6 @@ export async function handleNaturalImagePromptSuggestion(request: Request, sessi
   try {
     const key = await getChatToken(session, chatModel);
     const baseUrl = await resolvedNewApiBaseUrl();
-    return NextResponse.json(await runImagePromptSuggestion({ key, chatModel, baseUrl, imageModel, modelProtocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto", prompt: body.prompt as string, images, signal: request.signal }));
+    return NextResponse.json(await runImagePromptSuggestion({ key, chatModel, baseUrl, reasoningEffort, refreshKey: (rejectedKey) => refreshChatToken(session, chatModel, rejectedKey), imageModel, modelProtocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto", prompt: body.prompt as string, images, signal: request.signal }));
   } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议失败" }, { status: 502 }); }
 }

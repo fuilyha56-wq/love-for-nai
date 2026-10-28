@@ -1,0 +1,13 @@
+.tutorial-keyword {
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--rose) 15%, var(--panel));
+  color: var(--ink);
+  font-weight: 750;
+  text-decoration: underline;
+  text-decoration-color: var(--rose);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

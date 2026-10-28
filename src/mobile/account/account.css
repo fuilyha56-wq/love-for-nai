@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .account-page-header { background: var(--panel) !important; }
 .account-status-notice { border: 1px solid color-mix(in srgb, #d9a441 42%, var(--line)); border-radius: 8px; background: color-mix(in srgb, #fff3cf 72%, var(--panel)); padding: 12px; color: #77531e; font-size: 13px; line-height: 1.5; }
 .account-muted-error { margin-top: 12px; color: #77531e; font-size: 12px; }

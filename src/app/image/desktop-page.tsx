@@ -17,6 +17,7 @@ export default async function ImagePage({
   return (
     <ImageStudio
       userName={session?.displayName || "体验用户"}
+      userId={session?.userId}
       authenticated={Boolean(session)}
     />
   );

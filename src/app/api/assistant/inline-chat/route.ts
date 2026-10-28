@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { getChatToken, resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { getChatToken, refreshChatToken, resolvedNewApiBaseUrl, type Session } from "@/lib/newapi";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import { buildInlineAssistantPrompt, resolveAssistantImageTarget, type AssistantImageTarget } from "@/lib/assistant-model-prompts";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
-import { fetchWithModelConcurrency } from "@/lib/model-concurrency";
+import { fetchAssistantModel } from "@/lib/assistant-model-request";
+import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
 import {
   createInlineChatJob,
   findInlineChatJob,
@@ -15,6 +16,7 @@ import {
 // 不带工具循环——单轮 chat completions，快进快出。
 
 type InlinePayload = {
+  reasoningEffort?: unknown;
   model?: string;
   mode?: string;
   instruction?: string;
@@ -52,10 +54,12 @@ async function runJob(
   model: string,
   systemPrompt: string,
   userContent: string,
+  session: Session,
+  reasoningEffort?: string,
 ) {
   try {
     const baseUrl = await resolvedNewApiBaseUrl();
-    const response = await fetchWithModelConcurrency(
+    const response = await fetchAssistantModel(
       `${baseUrl}/v1/chat/completions`,
       {
         method: "POST",
@@ -75,6 +79,7 @@ async function runJob(
         cache: "no-store",
         signal: AbortSignal.timeout(90_000),
       },
+      { key, reasoningEffort, refreshKey: (rejectedKey) => refreshChatToken(session, model, rejectedKey) },
     );
     const result = (await response.json()) as ChatResponse;
     if (!response.ok || result.error)
@@ -108,8 +113,10 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   let target: AssistantImageTarget;
+  let reasoningEffort: string | undefined;
   try {
     target = resolveAssistantImageTarget(body);
+    reasoningEffort = resolveAssistantReasoning(body.model, body.reasoningEffort);
   } catch (error) {
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "图像目标无效" },
@@ -165,7 +172,7 @@ export async function POST(request: Request) {
   try {
     const key = await getChatToken(session, body.model);
     const job = createInlineChatJob(session.userId);
-    void runJob(job, key, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent);
+    void runJob(job, key, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent, session, reasoningEffort);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
     return NextResponse.json(

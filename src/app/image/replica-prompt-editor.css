@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]),
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) {
@@ -273,3 +273,9 @@
 }
 
 }
+
+.prompt-autocomplete-wrap.has-lfn-syntax-highlight {position:relative}
+.prompt-autocomplete-wrap.has-lfn-syntax-highlight>.lfn-prompt-syntax-highlight {position:absolute;inset:0;margin:0;overflow:hidden;padding:0;font-family:inherit;font-size:.875rem;line-height:1.5rem;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none;color:var(--ink)}
+.prompt-autocomplete-wrap.has-lfn-syntax-highlight>.lfn-prompt-syntax-highlight span {color:var(--rose)}
+.prompt-autocomplete-wrap.has-lfn-syntax-highlight>.lfn-prompt-syntax-textarea {position:relative;background:transparent!important;color:transparent!important;caret-color:var(--ink)}
+.prompt-autocomplete-wrap.has-lfn-syntax-highlight>.lfn-prompt-syntax-textarea::selection {background:color-mix(in srgb,var(--rose) 30%,transparent);color:transparent}

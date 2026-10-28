@@ -6,6 +6,7 @@ export type UserDisplay = { username: string; name: string; status?: number };
 const cache = new Map<string, { value?: UserDisplay; until: number }>();
 export async function userDisplayNames(
   userIds: number[],
+  options: { fresh?: boolean } = {},
 ): Promise<Map<number, UserDisplay>> {
   const ids = [...new Set(userIds)].filter(
     (id) => Number.isSafeInteger(id) && id > 0,
@@ -13,7 +14,7 @@ export async function userDisplayNames(
   const provider = await resolvedAuthProviderId();
   const prefix = `${provider}:${process.env.LFN_DATA_DIR || process.cwd()}:${process.env.NEWAPI_DB_URL || ""}:`;
   const missing = ids.filter(
-    (id) => (cache.get(`${prefix}${id}`)?.until || 0) < Date.now(),
+    (id) => options.fresh || (cache.get(`${prefix}${id}`)?.until || 0) < Date.now(),
   );
   if (missing.length) {
     let rows: Array<{

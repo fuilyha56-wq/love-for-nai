@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .picker {
   --picker-line: var(--line, #d8d4ca);
   --picker-ink: var(--ink, #292d2c);

@@ -2,6 +2,7 @@ import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import { watermarkImageResponse } from "@/lib/image-response-watermark";
 import {
   affStatus,
   refundImageCredits,
@@ -54,6 +55,13 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
+  const response = await generateImage(request, session, body);
+  return (await watermarkImageResponse(response, session.userId, body.model || "unknown", {
+    requestId: response.headers.get("X-LFN-Request-Id") || randomUUID(),
+  })).response;
+}
+
+async function generateImage(request: Request, session: NonNullable<Awaited<ReturnType<typeof getSession>>>, body: Record<string, unknown> & { model?: string; prompt?: string; negative_prompt?: string; negativePrompt?: string; width?: number; height?: number }) {
   if (!body.model || !body.prompt || body.width == null || body.height == null)
     return NextResponse.json({ message: "生成参数不完整" }, { status: 400 });
 

@@ -1,4 +1,5 @@
 "use client";
+import { storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
 
 // VSCode 内联聊天的 LFN 版：选中文本→右键菜单（1_chat 组语义）→
 // 锚定在文本域下方的对话框，Keep 用结果替换所选内容。
@@ -257,6 +258,7 @@ export function InlineChatZone({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model,
+            reasoningEffort: storedAssistantReasoning(model),
             imageModel,
             modelProtocol,
             operation,

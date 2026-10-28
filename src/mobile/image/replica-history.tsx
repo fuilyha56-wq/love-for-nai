@@ -99,6 +99,7 @@ export type ReplicaHistoryProps = {
   onOpen: (item: ReplicaHistoryItem) => void;
   onUse: (item: ReplicaHistoryItem, operation: string) => void;
   onDelete: (index: number) => void;
+  onPublish?: (item: ReplicaHistoryItem) => void;
 };
 
 type HistoryCardProps = {
@@ -109,9 +110,10 @@ type HistoryCardProps = {
   onOpen: ReplicaHistoryProps["onOpen"];
   onUse: ReplicaHistoryProps["onUse"];
   onDelete: ReplicaHistoryProps["onDelete"];
+  onPublish: ReplicaHistoryProps["onPublish"];
 };
 
-function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: HistoryCardProps): ReactElement {
+function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, onPublish }: HistoryCardProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
   const [natural, setNatural] = useState<{ image: string; width: number; height: number } | null>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -223,6 +225,7 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
             }}
             style={menuPosition ? { top: menuPosition.top, left: menuPosition.left } : { visibility: "hidden" }}
           >
+            {onPublish && <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onPublish(item); }}>投稿图片广场</button>}
             {[
               ["reuse-parameters", "复用参数"],
               ["img2img", "用于图生图"],
@@ -239,7 +242,7 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete }: 
   );
 }
 
-export function ReplicaHistory({ items, onOpen, onUse, onDelete }: ReplicaHistoryProps): ReactElement {
+export function ReplicaHistory({ items, onOpen, onUse, onDelete, onPublish }: ReplicaHistoryProps): ReactElement {
   const [copyingImage, setCopyingImage] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
 
@@ -274,7 +277,7 @@ export function ReplicaHistory({ items, onOpen, onUse, onDelete }: ReplicaHistor
         <span>{notice.text}</span><button type="button" aria-label="关闭历史提示" onClick={() => setNotice(null)}><X size={14} /></button>
       </div>}
       {items.length ? <div className="replica-history-list">
-        {items.map((item, index) => <HistoryCard key={`${item.createdAt}-${index}`} item={item} index={index} copying={copyingImage === item.image} onCopy={copyOriginal} onOpen={onOpen} onUse={onUse} onDelete={onDelete} />)}
+        {items.map((item, index) => <HistoryCard key={`${item.createdAt}-${index}`} item={item} index={index} copying={copyingImage === item.image} onCopy={copyOriginal} onOpen={onOpen} onUse={onUse} onDelete={onDelete} onPublish={onPublish} />)}
       </div> : <div className="replica-history-empty"><History size={48} strokeWidth={2} /><p>暂无历史记录</p></div>}
     </div>
   );

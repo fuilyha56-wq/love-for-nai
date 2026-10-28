@@ -1,8 +1,9 @@
+import { promptTagText } from "./prompt-tag";
+
 /** WaifuDiffusion tagger contract: CSV row order matches output, raw BGR float input. */
 export type TaggerLabel = { name: string; category: number };
 export type TaggerInputSpec = { layout: "nhwc" | "nchw"; size: number; dimensions: number[] };
 export type TaggerPrediction = { name: string; score: number; category: number };
-const KAOMOJIS = new Set(["0_0", "(o)_(o)", "+_+", "+_-", "._.", "<o>_<o>", "<|>_<|>", "=_=", ">_<", "3_3", "6_9", ">_o", "@_@", "^_^", "o_o", "u_u", "x_x", "|_|", "||_||"]);
 
 export function parseTaggerLabels(csv: string): TaggerLabel[] {
   if (csv.length > 16_000_000) throw new Error("标签 CSV 超过 16 MB，请选择模型对应的 selected_tags.csv。");
@@ -70,7 +71,7 @@ export function selectTaggerPredictions(labels: readonly TaggerLabel[], scores: 
     if (!Number.isFinite(score) || score < 0 || score > 1) throw new Error("模型输出需要 0 至 1 的标签概率；此模型不符合 WD tagger 格式。");
     if (label.category !== 0 && label.category !== 4) return [];
     if (score <= (label.category === 4 ? characterThreshold : generalThreshold)) return [];
-    return [{ ...label, name: KAOMOJIS.has(label.name) ? label.name : label.name.replaceAll("_", " "), score }];
+    return [{ ...label, name: promptTagText(label.name), score }];
   }).sort((left, right) => right.score - left.score);
 }
 

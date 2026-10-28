@@ -1,4 +1,6 @@
 "use client";
+import { AvatarEditor } from "@/app/ui/avatar-editor";
+import { TutorialCenter } from "@/app/tutorials/tutorial-center";
 import RiskSecurity from "./risk-security";
 import { lfnConfirm } from "@/app/ui/lfn-dialog";
 
@@ -414,9 +416,7 @@ export default function ProfilePage() {
       )}
       <section className="profile-layout">
         <aside className="profile-sidebar">
-          <div className="profile-avatar">
-            <UserRound size={27} />
-          </div>
+          {profile ? <AvatarEditor userId={profile.id} name={profile.displayName || profile.username} balance={aff?.balance} onSaved={() => void loadWallet()} /> : <div className="profile-avatar"><UserRound size={27} /></div>}
           <h1 className="mt-4 text-xl font-semibold">
             {profileState === "loading"
               ? "读取中…"
@@ -473,6 +473,7 @@ export default function ProfilePage() {
             <a href="#profile-info" aria-current={activeSection === "profile-info" ? "location" : undefined}>资料信息</a>
             {networkGrantEnabled && <a href="#account-security" className="profile-sidebar-nav-featured" aria-current={activeSection === "account-security" ? "location" : undefined}><ShieldCheck size={14} />免费额度网络授权<span>重点</span></a>}
             <a href="#profile-security" aria-current={activeSection === "profile-security" ? "location" : undefined}>密码与安全</a>
+            <a href="#profile-tutorials" aria-current={activeSection === "profile-tutorials" ? "location" : undefined}>功能教程</a>
           </nav>
           <button type="button" className="profile-logout-button" onClick={() => void logout()} disabled={loggingOut}>
             <LogOut size={15} />{loggingOut ? "正在退出…" : "退出登录"}
@@ -561,6 +562,7 @@ export default function ProfilePage() {
           <button type="submit" disabled={!profile || passwordSaving || !currentPassword || !newPassword || !confirmPassword} className="flex h-11 items-center gap-2 rounded bg-[var(--rose)] px-5 text-sm font-semibold text-white disabled:opacity-50"><LockKeyhole size={16} />{passwordSaving ? "更新中…" : "更新密码"}</button>
         </form>
         </div>
+        <TutorialCenter ready={profileState !== "loading" && walletState !== "loading"} />
         </div>
       </section>
     </main>

@@ -11,12 +11,14 @@ describe("个人资料分区导航", () => {
   });
 
   it("分区顺序稳定，奖励作为默认首屏", () => {
-    expect(PROFILE_SECTION_IDS).toEqual(["profile-rewards", "profile-redeem", "profile-info", "account-security", "profile-security"]);
+    expect(PROFILE_SECTION_IDS).toEqual(["profile-rewards", "profile-redeem", "profile-info", "account-security", "profile-security", "profile-tutorials"]);
+    expect(profileSectionForHash("#profile-tutorials")).toBe("profile-tutorials");
     expect(profileSectionForHash("#profile-wallet")).toBe("profile-rewards");
   });
 
   it("手机钱包分区独立，不改变桌面分区", () => {
-    expect(MOBILE_PROFILE_SECTIONS).toEqual(["profile-rewards", "profile-wallet", "profile-redeem", "profile-info", "account-security", "profile-security"]);
+    expect(MOBILE_PROFILE_SECTIONS).toEqual(["profile-rewards", "profile-wallet", "profile-redeem", "profile-info", "account-security", "profile-security", "profile-tutorials"]);
+    expect(mobileSectionForHash("#profile-tutorials")).toBe("profile-tutorials");
     expect(mobileSectionForHash("#profile-wallet")).toBe("profile-wallet");
     expect(mobileSectionForHash("#unknown")).toBe("profile-rewards");
   });

@@ -17,6 +17,11 @@ type Token = {
   group?: string;
   model_limits_enabled?: boolean;
   model_limits?: string;
+  expired_time?: number;
+  remain_quota?: number;
+  unlimited_quota?: boolean;
+  allow_ips?: string | null;
+  deleted_at?: unknown;
 };
 type ApiResult<T> = { success: boolean; message?: string; data?: T };
 export type Session = NonNullable<Awaited<ReturnType<typeof getSession>>>;
@@ -34,7 +39,27 @@ type TokenCacheEntry = {
   expiresAt: number;
   pending?: Promise<string>;
 };
-const tokenCache = new Map<string, TokenCacheEntry>();
+// Next 的各个路由可能打包出独立模块；缓存与创建锁必须在进程内共享。
+const tokenState = globalThis as typeof globalThis & {
+  lfnNewApiTokens?: Map<string, TokenCacheEntry>;
+  lfnNewApiTokenLocks?: Map<string, Promise<unknown>>;
+};
+const tokenCache = (tokenState.lfnNewApiTokens ??= new Map());
+const tokenLocks = (tokenState.lfnNewApiTokenLocks ??= new Map());
+
+async function withTokenLock<T>(
+  key: string,
+  action: () => Promise<T>,
+): Promise<T> {
+  const previous = tokenLocks.get(key) ?? Promise.resolve();
+  const pending = previous.catch(() => {}).then(action);
+  tokenLocks.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (tokenLocks.get(key) === pending) tokenLocks.delete(key);
+  }
+}
 
 // AFF 支付直连 Gateway：返回 { baseUrl, token }；未配置时返回 null。
 export function affGateway(): { baseUrl: string; token: string } | null {
@@ -43,7 +68,10 @@ export function affGateway(): { baseUrl: string; token: string } | null {
   return baseUrl && token ? { baseUrl, token } : null;
 }
 
-export async function resolvedAffGateway(): Promise<{ baseUrl: string; token: string } | null> {
+export async function resolvedAffGateway(): Promise<{
+  baseUrl: string;
+  token: string;
+} | null> {
   try {
     return await runtimeAffGateway();
   } catch {
@@ -51,7 +79,10 @@ export async function resolvedAffGateway(): Promise<{ baseUrl: string; token: st
   }
 }
 
-export async function resolvedImageUpstream(): Promise<{ baseUrl: string; token: string } | null> {
+export async function resolvedImageUpstream(): Promise<{
+  baseUrl: string;
+  token: string;
+} | null> {
   try {
     const upstream = await runtimeImageUpstream();
     if (upstream) return { baseUrl: upstream.baseUrl, token: upstream.token };
@@ -111,7 +142,10 @@ export async function resolvedNaiImageUpstream(): Promise<NaiNativeUpstream | nu
 }
 
 function genericImageFromEnv(): { baseUrl: string; token: string } | null {
-  const baseUrl = process.env.LFN_IMAGE_PROVIDER_URL?.trim().replace(/\/+$/, "");
+  const baseUrl = process.env.LFN_IMAGE_PROVIDER_URL?.trim().replace(
+    /\/+$/,
+    "",
+  );
   const token = process.env.LFN_IMAGE_PROVIDER_TOKEN?.trim();
   return baseUrl && token ? { baseUrl, token } : null;
 }
@@ -165,11 +199,11 @@ async function readUsableGroups(
     cache: "no-store",
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) return [];
   const result = (await response.json()) as ApiResult<
     Record<string, unknown> | string[]
   >;
-  if (!result.success || !result.data) return [];
+  if (!response.ok || !result.success || !result.data)
+    throw new Error(result.message || "无法读取可用分组，请稍后重试");
   return Array.isArray(result.data)
     ? result.data.filter((item): item is string => typeof item === "string")
     : Object.keys(result.data);
@@ -186,10 +220,12 @@ async function readModelGroups(
     cache: "no-store",
     signal: AbortSignal.timeout(15_000),
   });
-  if (!response.ok) return [];
   const result = (await response.json()) as {
     data?: Array<{ model_name?: string; enable_groups?: string[] }>;
+    message?: string;
   };
+  if (!response.ok || !Array.isArray(result.data))
+    throw new Error(result.message || "无法读取模型分组，请稍后重试");
   const entry = result.data?.find((item) => item.model_name === model);
   return entry?.enable_groups?.filter((item) => typeof item === "string") ?? [];
 }
@@ -208,7 +244,9 @@ export function selectModelGroup(
   const preferred =
     requiredGroup &&
     owned.has(requiredGroup) &&
-    modelGroups.some((item) => item.toLowerCase() === requiredGroup.toLowerCase())
+    modelGroups.some(
+      (item) => item.toLowerCase() === requiredGroup.toLowerCase(),
+    )
       ? requiredGroup
       : undefined;
   return preferred ?? modelGroups.find((item) => owned.has(item));
@@ -219,15 +257,15 @@ async function resolveToken(
   model: string,
   prefix: string,
   requiredGroup?: string,
+  baseUrl = newApiBaseUrl(),
 ): Promise<string> {
-  const baseUrl = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
   const selfResponse = await fetchNewApiSelf(baseUrl, headers);
   const selfResult = (await selfResponse.json()) as ApiResult<{
     group?: string;
     user?: { group?: string };
   }>;
-  if (!selfResult.success)
+  if (!selfResponse.ok || !selfResult.success)
     throw new Error(selfResult.message || "无法读取用户分组");
   const selfGroup = selfResult.data?.user?.group ?? selfResult.data?.group;
 
@@ -239,7 +277,12 @@ async function resolveToken(
   // 渠道）：优先取模型确实开放且用户可用的固定分组，否则在模型可用的
   // 渠道分组里挑一个当前用户有权使用的，保证没有图包余额、走 NewAPI
   // 计费的用户也能正常生图。
-  const group = selectModelGroup(modelGroups, usableGroups, selfGroup, requiredGroup);
+  const group = selectModelGroup(
+    modelGroups,
+    usableGroups,
+    selfGroup,
+    requiredGroup,
+  );
   if (!group) {
     if (!modelGroups.length) throw new Error(`模型 ${model} 当前不可用`);
     throw new Error(
@@ -247,26 +290,72 @@ async function resolveToken(
     );
   }
   const listTokens = async (): Promise<Token[]> => {
-    const response = await fetch(`${baseUrl}/api/token/?p=1&size=100`, {
-      headers,
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
-    const result = (await response.json()) as ApiResult<
-      { items?: Token[] } | Token[]
-    >;
-    if (!result.success) throw new Error(result.message || "无法读取 API 密钥");
-    return Array.isArray(result.data) ? result.data : result.data?.items || [];
+    const tokens = new Map<number, Token>();
+    for (let page = 1; page <= 1000; page++) {
+      const response = await fetch(
+        `${baseUrl}/api/token/?p=${page}&page_size=100&size=100`,
+        {
+          headers,
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        },
+      );
+      const result = (await response.json()) as ApiResult<
+        { items?: Token[]; total?: number } | Token[]
+      >;
+      if (!response.ok || !result.success || !result.data)
+        throw new Error(
+          result.message || "无法读取 API 密钥，请重新登录或稍后重试",
+        );
+      const items = Array.isArray(result.data)
+        ? result.data
+        : result.data.items;
+      if (!Array.isArray(items))
+        throw new Error("API 密钥列表不完整，未创建新密钥");
+      const total = Array.isArray(result.data) ? undefined : result.data.total;
+      const previousSize = tokens.size;
+      for (const item of items) tokens.set(item.id, item);
+      if (typeof total === "number" && tokens.size >= total)
+        return [...tokens.values()];
+      if (!items.length) {
+        if (typeof total === "number" && tokens.size < total)
+          throw new Error("API 密钥列表不完整，未创建新密钥");
+        return [...tokens.values()];
+      }
+      if (tokens.size === previousSize)
+        throw new Error("API 密钥分页异常，未创建新密钥");
+      // 老版本直接返回数组或不带总数；短页表示查询结束。
+      if (total === undefined && items.length < 100)
+        return [...tokens.values()];
+    }
+    throw new Error("API 密钥列表过大，未创建新密钥");
   };
 
-  // 已有同分组可用密钥时直接复用，优先 LFN 自建的那把。
-  const usable = (await listTokens()).filter(
-    (item) =>
-      item.status === 1 &&
-      typeof item.group === "string" &&
-      item.group === group &&
-      !item.model_limits_enabled,
-  );
+  // 助手先检查所有兼容分组的已有密钥，再决定是否创建；不能因为模型
+  // 的第一个分组没有密钥，就忽略另一个兼容分组中用户已经持有的密钥。
+  const compatibleGroups =
+    prefix === LFN_CHAT_TOKEN_PREFIX
+      ? new Set(
+          modelGroups.filter((item) =>
+            [selfGroup, ...usableGroups].includes(item),
+          ),
+        )
+      : new Set([group]);
+  const isUsable = (item: Token) =>
+    item.status === 1 &&
+    !item.deleted_at &&
+    compatibleGroups.has(item.group || selfGroup || "") &&
+    (item.expired_time == null ||
+      item.expired_time === -1 ||
+      item.expired_time > Date.now() / 1000) &&
+    (item.unlimited_quota !== false || (item.remain_quota ?? 0) > 0) &&
+    !item.allow_ips?.trim() &&
+    (!item.model_limits_enabled ||
+      (item.model_limits || "")
+        .split(",")
+        .map((value) => value.trim())
+        .includes(model));
+  const usable = (await listTokens()).filter(isUsable);
   let token: Token | undefined =
     usable.find((item) => item.name.startsWith(prefix)) ?? usable[0];
 
@@ -289,10 +378,13 @@ async function resolveToken(
       signal: AbortSignal.timeout(10_000),
     });
     const result = (await created.json()) as ApiResult<unknown>;
-    if (!result.success)
+    if (!created.ok || !result.success)
       throw new Error(result.message || "无法创建 LFN 专用密钥");
     token = (await listTokens()).find(
-      (item) => item.name === name && item.status === 1,
+      (item) =>
+        item.name === name &&
+        (item.group || selfGroup) === group &&
+        isUsable(item),
     );
   }
   if (!token) throw new Error("LFN 专用密钥创建后未找到");
@@ -303,9 +395,12 @@ async function resolveToken(
     signal: AbortSignal.timeout(10_000),
   });
   const keyResult = (await keyResponse.json()) as ApiResult<{ key?: string }>;
-  if (!keyResult.success || !keyResult.data?.key)
+  if (!keyResponse.ok || !keyResult.success || !keyResult.data?.key)
     throw new Error(keyResult.message || "无法读取 LFN 专用密钥");
-  return keyResult.data.key;
+  const key = keyResult.data.key.trim();
+  if (!key || /[*…\s\u0000-\u001f\u007f]/.test(key))
+    throw new Error("NewAPI 未返回完整密钥，请检查密钥读取权限");
+  return key;
 }
 
 function tokenCacheKey(
@@ -323,7 +418,9 @@ function pruneTokenCache(now: number): void {
     if (!entry.pending && entry.expiresAt <= now) tokenCache.delete(key);
   }
   while (tokenCache.size >= TOKEN_CACHE_MAX_ENTRIES) {
-    const evictable = [...tokenCache.entries()].find(([, entry]) => !entry.pending);
+    const evictable = [...tokenCache.entries()].find(
+      ([, entry]) => !entry.pending,
+    );
     if (!evictable) break;
     tokenCache.delete(evictable[0]);
   }
@@ -346,7 +443,9 @@ async function cachedToken(
 
   pruneTokenCache(now);
   const entry: TokenCacheEntry = { expiresAt: now + TOKEN_CACHE_TTL_MS };
-  const pending = resolveToken(session, model, prefix, requiredGroup);
+  const pending = withTokenLock(`${baseUrl}|${session.userId}`, () =>
+    resolveToken(session, model, prefix, requiredGroup, baseUrl),
+  );
   entry.pending = pending;
   tokenCache.set(key, entry);
   void pending.then(
@@ -370,10 +469,7 @@ export function getImageToken(
   return cachedToken(session, model, LFN_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
-export function getChatToken(
-  session: Session,
-  model: string,
-): Promise<string> {
+export function getChatToken(session: Session, model: string): Promise<string> {
   return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
@@ -382,6 +478,21 @@ export function getStoryToken(
   model: string,
 ): Promise<string> {
   return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
+}
+
+/** 只清除被拒绝的旧密钥；重新查全用户已有密钥，不因一次鉴权错误盲目新建。 */
+export async function refreshChatToken(
+  session: Session,
+  model: string,
+  rejectedKey: string,
+): Promise<string> {
+  const baseUrl = await resolvedNewApiBaseUrl();
+  const scope = `${baseUrl}|${session.userId}|`;
+  for (const [key, entry] of tokenCache) {
+    if (key.startsWith(scope) && entry.token === rejectedKey)
+      tokenCache.delete(key);
+  }
+  return getChatToken(session, model);
 }
 
 // 上游会话过期时消息是英文的，前端需要据此提示重新登录而不是展示原文。

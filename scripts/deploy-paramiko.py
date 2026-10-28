@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deploy a locally built LFN image through credentials in the project's .rsh.py.
 Keeps the previous compose/image and automatically rolls back failed health checks.
-Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge] [--sync-anlas-pricing] [--prepare-only]
+Usage: python scripts/deploy-paramiko.py <image-tag> [--trusted-edge] [--sync-anlas-pricing] [--prepare-only] [--snapshot-rollback]
 """
 import gzip
 import ast
@@ -164,12 +164,12 @@ const fs=require("fs"),path=require("path");
 const file=path.resolve(process.env.LFN_DATA_DIR||"data","daily-billing/policy.json");
 if(!fs.existsSync(file)){console.log(JSON.stringify({changed:false,source:"new-defaults"}));process.exit(0)}
 const current=JSON.parse(fs.readFileSync(file,"utf8"));
-if(current.v45AnlasCny===0.02&&current.v5AnlasCny===0.025&&current.strictApiBilling===false){console.log(JSON.stringify({changed:false}));process.exit(0)}
+if(current.v45AnlasCny===0.01&&current.v5AnlasCny===0.01&&current.strictApiBilling===false){console.log(JSON.stringify({changed:false}));process.exit(0)}
 fs.copyFileSync(file,file+".bak-"+RELEASE_TAG,fs.constants.COPYFILE_EXCL);
-const updated={...current,v45AnlasCny:0.02,v5AnlasCny:0.025,strictApiBilling:false};
+const updated={...current,v45AnlasCny:0.01,v5AnlasCny:0.01,strictApiBilling:false};
 const temporary=file+".pricing-sync.tmp";
 fs.writeFileSync(temporary,JSON.stringify(updated,null,2),{mode:0o600});fs.renameSync(temporary,file);
-console.log(JSON.stringify({changed:true,backupCreated:true,v45AnlasCny:0.02,v5AnlasCny:0.025,newApiFallback:true}));
+console.log(JSON.stringify({changed:true,backupCreated:true,v45AnlasCny:0.01,v5AnlasCny:0.01,newApiFallback:true}));
 '''.replace('RELEASE_TAG', json.dumps(tag))
     return json.loads(run_remote(client, 'docker exec love-for-nai node -e ' + shlex.quote(script), quiet=True))
 
@@ -218,8 +218,8 @@ def sync_edge_request_host(client, tag):
 
 
 def main():
-    if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing', '--resume-upload', '--prepare-only'} for arg in sys.argv[2:]):
-        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing] [--resume-upload] [--prepare-only]')
+    if len(sys.argv) < 2 or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,100}', sys.argv[1]) or any(arg not in {'--trusted-edge', '--sync-anlas-pricing', '--resume-upload', '--prepare-only', '--snapshot-rollback'} for arg in sys.argv[2:]):
+        raise SystemExit('Usage: deploy-paramiko.py <lowercase-image-tag> [--trusted-edge] [--sync-anlas-pricing] [--resume-upload] [--prepare-only] [--snapshot-rollback]')
     if '--prepare-only' in sys.argv and any(arg in sys.argv for arg in ('--trusted-edge', '--sync-anlas-pricing')):
         raise SystemExit('Preparing an image cannot migrate live configuration')
     trusted_edge = '--trusted-edge' in sys.argv
@@ -250,6 +250,7 @@ def main():
     remote_archive = None
     compose = backup = None
     previous = None
+    rollback_image = None
     switched = False
     loaded = False
     try:
@@ -313,7 +314,7 @@ def main():
             if '--sync-anlas-pricing' in sys.argv:
                 migration = sync_daily_anlas_pricing(client, tag)
                 if migration.get('changed'):
-                    print('LFN Anlas rates synchronized: V4.5 CNY 0.02 / V5 CNY 0.025; private backup preserved', flush=True)
+                    print('LFN Anlas rates synchronized: V4.5 CNY 0.01 / V5 CNY 0.01; private backup preserved', flush=True)
             last_progress = [0.0]
             def progress(sent, total):
                 if time.monotonic() - last_progress[0] >= 20 or sent == total:
@@ -360,10 +361,17 @@ def main():
             with sftp.open(compose, 'r') as source:
                 if source.read().decode('utf-8') != original:
                     raise RuntimeError('The compose configuration changed while the image was transferring')
+            if '--snapshot-rollback' in sys.argv:
+                # Preserve hotfixes in the running container's writable layer.
+                # Persistent data stays on its existing volume, outside the snapshot.
+                rollback_image = f'love-for-nai:rollback-{tag}'
+                run_remote(client, f'docker commit --pause=false {shlex.quote(container["Id"])} {shlex.quote(rollback_image)}', timeout=180, quiet=True)
+                print(f'Running-container hotfix snapshot preserved: {rollback_image}', flush=True)
             run_remote(client, f'cp -p {shlex.quote(compose)} {shlex.quote(backup)}')
             staged = compose + '.release-tmp'
             with sftp.open(staged, 'w') as destination:
                 destination.write(updated)
+            sftp.chmod(staged, 0o600)
             run_remote(client, f'mv {shlex.quote(staged)} {shlex.quote(compose)}')
             switched = True
             up = f'cd {shlex.quote(deploy_dir)} && docker compose -f compose.prod.yml up -d --no-build --pull never {shlex.quote(service)}'
@@ -390,8 +398,18 @@ def main():
             client = connect()
             transport = client.get_transport()
             run_remote(client, f'cp -p {shlex.quote(backup)} {shlex.quote(compose)}')
+            if rollback_image:
+                rollback_content, count = re.subn(r'(?m)^(\s*image:\s*)(?:love-for-nai:[^\r\n]+|\$\{LFN_IMAGE[^\r\n]+)', lambda match: match[1] + rollback_image, original)
+                if count != 1:
+                    raise RuntimeError('Cannot restore the hotfixed LFN snapshot configuration')
+                with client.open_sftp() as rollback_sftp:
+                    staged = compose + '.rollback-tmp'
+                    with rollback_sftp.open(staged, 'w') as destination:
+                        destination.write(rollback_content)
+                    rollback_sftp.chmod(staged, 0o600)
+                run_remote(client, f'mv {shlex.quote(staged)} {shlex.quote(compose)}')
             run_remote(client, up, timeout=180)
-            print(f'ROLLED_BACK={previous}', flush=True)
+            print(f'ROLLED_BACK={rollback_image or previous}', flush=True)
         raise
     finally:
         try:

@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 [data-replica-studio] { --input-bg:var(--surface); min-height:0; color:var(--ink); background:var(--paper); font-family:var(--font-sans); }
 [data-replica-studio] .studio-controls-panel { position:relative; min-width:0; overflow:visible; border-radius:0; background:var(--panel); padding:0; border:0; box-shadow:none; }
 [data-replica-studio] .studio-tools-panel { overflow:visible; }
@@ -36,7 +36,7 @@
 [data-aaalice-dock] .replica-dock-content .bg-white { background:var(--surface); }
 .studio-mobile-session { flex:none; max-height:40%; overflow:auto; border-top:1px solid var(--line); background:var(--panel); }
 .studio-mobile-session>summary { min-height:40px; padding:10px 16px; color:var(--muted); font-size:13px; cursor:pointer; }
-@media (min-width:840px) {
+@media (min-width:1024px) {
   [data-aaalice-dock] .studio-layout { transition: grid-template-columns 220ms cubic-bezier(.2,.7,.2,1); }
   [data-aaalice-dock]:not([data-replica-studio]) .studio-layout:has(.studio-nav-rail) { grid-template-columns:var(--lfn-nav-rail,56px) var(--lfn-left) 5px minmax(0,1fr) 5px min(var(--lfn-right),max(200px,calc(100vw - var(--lfn-nav-rail,56px) - var(--lfn-left) - 236px))); }
   [data-replica-studio="nai"] .studio-layout { grid-template-columns:var(--lfn-left) 8px minmax(0,1fr) 8px min(var(--lfn-right),max(200px,calc(100vw - var(--lfn-left) - 236px))); }
@@ -48,7 +48,7 @@
   [data-replica-studio="nlw"][data-left-collapsed="true"] .studio-layout { grid-template-columns:60px 40px 8px minmax(0,1fr) 8px var(--lfn-right); }
 }
 @media (prefers-reduced-motion:reduce) { [data-aaalice-dock] .studio-layout { transition:none; } }
-@media (max-width:839px) {
+@media (max-width:1023px) {
   body:has([data-replica-studio="nai"][data-has-images="false"]) .guide-launcher { top:14px; right:56px; bottom:auto; padding:8px; border:0; background:transparent; box-shadow:none; }
   body:has([data-replica-studio="nai"][data-has-images="false"]) .guide-launcher>span { display:none; }
   [data-replica-studio] .studio-layout { display:flex; flex-direction:column; }

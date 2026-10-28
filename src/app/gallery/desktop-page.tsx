@@ -79,7 +79,7 @@ export default function GalleryPage() {
     } catch { setMessage("分享链接：" + url); }
   }
   return (
-    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main onClickCapture={(event) => { const link = event.target instanceof Element ? event.target.closest("a") : null; if (link?.getAttribute("href")?.startsWith("/gallery/")) gallery.rememberPosition(); }} className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader
         current="gallery"
         actionLabel="进入工作台"

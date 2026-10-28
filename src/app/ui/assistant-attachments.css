@@ -1,0 +1,14 @@
+.assistant-attachments { min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 8px; background: var(--panel, #fff); }
+.assistant-attachments-heading { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.assistant-attachments-heading label { display: inline-flex; position: relative; align-items: center; gap: 5px; min-height: 28px; cursor: pointer; color: var(--rose); }
+.assistant-attachments-heading label[aria-disabled=true] { opacity: .5; cursor: default; }
+.assistant-attachments-heading input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: inherit; }
+.assistant-attachments-heading > span { margin-left: auto; color: var(--muted); }
+.assistant-attachments-heading > button { padding: 4px; color: var(--rose); }
+.assistant-attachments p { margin: 4px 0; font-size: 10px; line-height: 1.6; color: var(--muted); }
+.assistant-attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(54px, 1fr)); gap: 6px; margin-top: 8px; }
+.assistant-attachments-grid > div { position: relative; min-width: 0; }
+.assistant-attachments-grid > div > button:first-child { display: block; width: 100%; aspect-ratio: 1; position: relative; overflow: hidden; border-radius: 5px; background: var(--surface-muted); }
+.assistant-attachments-grid img { width: 100%; height: 100%; object-fit: cover; }
+.assistant-attachments-grid span { position: absolute; left: 2px; bottom: 2px; border-radius: 3px; background: #101826aa; color: white; padding: 0 4px; font-size: 10px; }
+.assistant-attachments-grid > div > button:last-child { position: absolute; right: -3px; top: -3px; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: var(--panel, white); color: var(--ink); border: 1px solid var(--line); }

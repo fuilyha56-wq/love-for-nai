@@ -27,7 +27,6 @@ import {
   type GatewayLogMeta,
 } from "@/lib/gateway-log";
 import { startRequestAudit } from "@/lib/request-audit";
-import { watermarkImages } from "@/lib/image-watermark";
 import {
   resolvedImageUpstream,
   resolvedNaiAccountUpstream,
@@ -182,7 +181,7 @@ export async function proxyNewApi(
 
   try {
     let imageUserId: number | null = null;
-    if (pathname.startsWith("/v1/images/")) {
+    if (pathname.startsWith("/v1/images/") || /^\/ai\/(?:generate-image(?:-stream)?|upscale|augment-image)$/.test(pathname)) {
       const identity = await requireIkunExternalIdentity(authorization);
       if (identity instanceof Response) return withExternalCors(identity);
       imageUserId = identity.userId;
@@ -274,29 +273,15 @@ async function watermarkJsonResponse(
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) return auditedResponse(response, audit);
   try {
-    const payload = (await response.clone().json()) as JsonRecord;
-    const data = Array.isArray(payload.data) ? payload.data : [];
-    let watermarkStatus: "embedded" | "disabled" | "skipped" | "failed" = "skipped";
-    const marked = await Promise.all(data.map(async (item, index) => {
-      if (!isRecord(item) || typeof item.b64_json !== "string") return item;
-      const input = `data:image/png;base64,${item.b64_json.replace(/^data:image\/[^;]+;base64,/, "")}`;
-      const result = await watermarkImages([input], userId, model, {
-        requestId: audit.requestId,
-        requestFingerprint: audit.requestFingerprint,
-        parameters: audit.record.parameters,
-        imageId: `${audit.requestId}-${index + 1}`,
-      });
-      watermarkStatus = watermarkStatus === "failed" || result.status === "failed" ? "failed" : watermarkStatus === "embedded" || result.status === "embedded" ? "embedded" : result.status;
-      return { ...item, b64_json: result.images[0].replace(/^data:image\/[^;]+;base64,/, "") };
-    }));
-    const body = JSON.stringify(data.length ? { ...payload, data: marked } : payload);
-    const headers = audit.responseHeaders(response.headers);
-    // The JSON body may change size after watermark metadata is embedded. Do
-    // not forward entity/framing headers that describe the upstream body.
-    for (const name of droppedResponseHeaders) headers.delete(name);
-    for (const name of ["content-range", "content-md5", "digest", "etag"]) headers.delete(name);
-    headers.set("content-type", "application/json");
-    headers.set("X-LFN-Watermark", watermarkStatus);
+    const marked = await watermarkImageResponse(response, userId, model, {
+      requestId: audit.requestId,
+      requestFingerprint: audit.requestFingerprint,
+      parameters: audit.record.parameters,
+    });
+    const payload = await marked.response.json() as JsonRecord;
+    const watermarkStatus = marked.status();
+    const body = JSON.stringify(payload);
+    const headers = audit.responseHeaders(marked.response.headers);
     const generatedSamples = imageCountFromJson(payload);
     headers.set("X-LFN-Generated-Samples", String(generatedSamples));
     const rawAnlas = response.headers.get("x-anlas-cost");

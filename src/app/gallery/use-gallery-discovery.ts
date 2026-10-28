@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GALLERY_POSITION_KEY, galleryPosition } from "@/lib/gallery-navigation";
 
 export type GallerySort = "newest" | "likes" | "downloads" | "uses";
 export type GalleryItem = {
@@ -28,7 +29,7 @@ type GalleryResponse = {
   message?: string;
 };
 
-const PAGE_SIZE = 24;
+const PAGE_SIZE = 100;
 
 export function useGalleryDiscovery() {
   const [items, setItems] = useState<GalleryItem[]>([]);
@@ -44,6 +45,28 @@ export function useGalleryDiscovery() {
   const [total, setTotal] = useState(0);
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [ready, setReady] = useState(false);
+  const restoreY = useRef<number | null>(null);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => {
+      let url = new URL(window.location.href);
+      try {
+        const saved = galleryPosition(JSON.parse(sessionStorage.getItem(GALLERY_POSITION_KEY) || "null"), Date.now());
+        if (saved && (url.searchParams.has("restore") || url.pathname + url.search === saved.href)) {
+          restoreY.current = saved.scrollY;
+          if (url.searchParams.has("restore")) url = new URL(saved.href, url.origin);
+        }
+      } catch { /* URL state still works when browser storage is unavailable. */ }
+      const params = url.searchParams;
+      setQuery(params.get("q") || ""); setDebouncedQuery((params.get("q") || "").trim());
+      setTagFilter(params.getAll("tag").join(", "));
+      setRating(["general", "r13", "r17", "r18"].includes(params.get("rating") || "") ? params.get("rating")! : "all");
+      setSort(["likes", "downloads", "uses"].includes(params.get("sort") || "") ? params.get("sort") as GallerySort : "newest");
+      setPage(Math.max(1, Math.floor(Number(params.get("page")) || 1)));
+      setReady(true);
+    });
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 250);
@@ -51,6 +74,7 @@ export function useGalleryDiscovery() {
   }, [query]);
 
   useEffect(() => {
+    if (!ready) return;
     const controller = new AbortController();
     const params = new URLSearchParams({
       q: debouncedQuery,
@@ -61,6 +85,14 @@ export function useGalleryDiscovery() {
     });
     const tags = tagFilter.split(/[\n,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 10);
     for (const tag of tags) params.append("tag", tag);
+    const locationParams = new URLSearchParams(params);
+    locationParams.delete("pageSize");
+    if (!debouncedQuery) locationParams.delete("q");
+    if (rating === "all") locationParams.delete("rating");
+    if (sort === "newest") locationParams.delete("sort");
+    if (page === 1) locationParams.delete("page");
+    const search = locationParams.toString();
+    window.history.replaceState(window.history.state, "", `/gallery${search ? `?${search}` : ""}`);
 
     void fetch(`/api/gallery?${params.toString()}`, {
       cache: refreshKey ? "reload" : "no-store",
@@ -83,15 +115,30 @@ export function useGalleryDiscovery() {
         setLoadState("error");
       });
     return () => controller.abort();
-  }, [debouncedQuery, tagFilter, rating, sort, page, refreshKey]);
+  }, [debouncedQuery, tagFilter, rating, sort, page, refreshKey, ready]);
 
-  const prepareLoad = useCallback(() => { setLoadState("loading"); setError(""); }, []);
+  useEffect(() => {
+    if (loadState !== "loaded" || restoreY.current == null) return;
+    const y = restoreY.current;
+    const frame = requestAnimationFrame(() => {
+      window.scrollTo({ top: y, behavior: "instant" });
+      restoreY.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [loadState, items]);
+
+  const rememberPosition = useCallback(() => {
+    try { sessionStorage.setItem(GALLERY_POSITION_KEY, JSON.stringify({ href: window.location.pathname + window.location.search, scrollY: window.scrollY, savedAt: Date.now() })); }
+    catch { /* Navigation is available without storage. */ }
+  }, []);
+
+  const prepareLoad = useCallback(() => { restoreY.current = null; setLoadState("loading"); setError(""); }, []);
   const refresh = useCallback(() => { prepareLoad(); setRefreshKey((value) => value + 1); }, [prepareLoad]);
   const updateQuery = useCallback((value: string) => { prepareLoad(); setQuery(value); setPage(1); }, [prepareLoad]);
   const updateTagFilter = useCallback((value: string) => { prepareLoad(); setTagFilter(value); setPage(1); }, [prepareLoad]);
   const updateRating = useCallback((value: string) => { prepareLoad(); setRating(value); setPage(1); }, [prepareLoad]);
   const updateSort = useCallback((value: GallerySort) => { prepareLoad(); setSort(value); setPage(1); }, [prepareLoad]);
-  const updatePage = useCallback((value: number) => { prepareLoad(); setPage(value); }, [prepareLoad]);
+  const updatePage = useCallback((value: number) => { prepareLoad(); setPage(value); window.scrollTo({ top: 0, behavior: "instant" }); }, [prepareLoad]);
   const resetFilters = useCallback(() => {
     prepareLoad();
     setQuery("");
@@ -122,6 +169,7 @@ export function useGalleryDiscovery() {
     total,
     tagSuggestions,
     refresh,
+    rememberPosition,
     resetFilters,
   };
 }

@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .replica-right-dock { box-sizing: border-box; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex: 1 1 0; overflow: hidden; border-left: 1px solid var(--line); background: var(--paper); color: var(--ink); font-family: var(--font-sans); }
 .replica-right-dock.is-collapsed { width: 40px; }
 .replica-dock-panels { display: flex; width: 100%; height: 100%; min-height: 0; flex-direction: column; }

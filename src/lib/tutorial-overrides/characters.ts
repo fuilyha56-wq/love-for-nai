@@ -1,0 +1,62 @@
+import type { TutorialOverride } from "./types";
+
+export const tutorialOverride: TutorialOverride = {
+  preparation: "选择支持角色提示词的 NAI V4 或 V5 图像模型。教程只练习填写与定位，不会提交生成。",
+  summary: "先写共同场景，再为每个角色填写独立描述；关闭 AI 自动定位后，分别安排角色的水平与垂直位置。",
+  steps: {
+    0: {
+      title: "选择支持角色提示词的模型",
+      body: "在模型菜单中选择支持角色提示词的 NAI V4 或 V5 图像模型。保持模式为文生图；角色提示词也可用于部分图生图和局部重绘模式。",
+      tip: "模型能力决定角色控制项是否出现。若看不到角色区域，先选择支持角色提示词的模型。",
+      area: "model",
+      target: '.studio-model-controls .popup-select-trigger[aria-label="模型"], .replica-model-controls [aria-label="模型"], .mobile-studio-workspace-dialog [aria-label="模型"], [aria-label="模型"], .mobile-studio-mode-selector',
+      keywords: ["模型", "NAI V4", "V5", "角色提示词", "文生图", "图生图", "局部重绘"],
+      screenshot: { src: "/tutorials/characters/step-01.png", alt: "本地图片工作台中角色教程高亮图像模型选择器的实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 选择支持的模型" },
+    },
+    1: {
+      title: "描述共同场景",
+      body: "在主提示词写人物数量、共同环境、构图和画风，例如：两位朋友在花园交谈，午后阳光，半身构图。每个人的发色、服装等独有细节留给下一步的角色框。",
+      tip: "主提示词负责大家共享的画面；角色提示词负责单个人物的特征。",
+      area: "prompt",
+      target: '.replica-prompt textarea, [data-tutorial="prompt"] textarea, [data-layout-module="prompt"] textarea, .mobile-studio-prompt-content textarea',
+      keywords: ["主提示词", "人物数量", "共同环境", "构图", "画风", "角色提示词", "独有细节"],
+      screenshot: { src: "/tutorials/characters/step-02.png", alt: "本地图片工作台中主提示词输入框被角色教程高亮的实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 描述共同场景" },
+    },
+    2: {
+      title: "分别添加并描述角色",
+      body: "展开「角色提示」区域，添加两位角色。分别在「角色 1 提示词」和「角色 2 提示词」写各自特征，例如一位蓝发白裙，另一位棕发绿色外套；需要时为每人填写负向提示词。",
+      tip: "每个角色卡片只描述一个人；角色顺序会对应各自的位置控制。",
+      area: "characters",
+      target: '.replica-character-section, .nai-characters, .mobile-studio-prompt-content .replica-character-section',
+      keywords: ["角色提示", "添加角色", "角色 1 提示词", "角色 2 提示词", "独自特征", "负向提示词", "角色卡片"],
+      screenshot: { src: "/tutorials/characters/step-03.png", alt: "本地图片工作台显示两张独立角色提示卡片的实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 添加并描述角色" },
+    },
+    3: {
+      title: "为每位角色安排位置",
+      body: "让位置滑块出现：如果界面显示「AI 自动定位」，取消勾选；如果界面显示「关闭滑块定位」，也取消勾选。然后分别调整每位角色的「水平位置」与「垂直位置」；例如把角色 1 放在左侧、角色 2 放在右侧，并微调上下位置。",
+      tip: "坐标是画面中的相对位置引导，不保证模型严格按坐标绘制。留出间距能减少人物重叠。",
+      area: "characters",
+      target: '.replica-character-position, .replica-character-section input[aria-label="角色 1 水平位置"], .nai-characters input[type="range"][aria-label="角色 1 水平位置"], .mobile-studio-prompt-content input[aria-label="角色 1 水平位置"]',
+      keywords: ["AI 自动定位", "关闭滑块定位", "取消勾选", "水平位置", "垂直位置", "角色 1", "角色 2", "相对位置", "人物重叠"],
+      screenshot: { src: "/tutorials/characters/step-04.png", alt: "本地图片工作台中角色手动定位开关和每个人物位置滑块的实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 调整角色位置" },
+    },
+    4: {
+      title: "检查角色分工",
+      body: "检查主提示词是否只描述共同场景，每张角色卡片是否只描述对应人物，位置是否分开。需要时可以继续微调提示词或位置。",
+      tip: "坐标是画面位置的引导，实际绘制仍会受模型与提示词影响。",
+      area: "characters",
+      target: '.replica-character-section textarea[aria-label="角色 1 提示词"], .nai-characters textarea[placeholder^="该角色的提示词"]',
+      keywords: ["主提示词", "角色卡片", "对应人物", "位置", "模型", "提示词"],
+      screenshot: { src: "/tutorials/characters/step-05.png", alt: "本地图片工作台中完成填写且角色位置分开的角色提示面板实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 检查角色分工" },
+    },
+    5: {
+      title: "完成角色设置",
+      body: "多角色设置已经完成。之后由你自己检查生成参数与费用，再点击生成按钮；也可以退出教程，稍后回到教程中心继续练习。",
+      tip: "本教程没有替你生成图片，也不会代替你提交任何操作。",
+      area: "characters",
+      target: '.replica-character-section textarea[aria-label="角色 1 提示词"], .nai-characters textarea[placeholder^="该角色的提示词"]',
+      keywords: ["多角色设置", "生成参数", "费用", "生成按钮", "退出教程", "教程中心"],
+      screenshot: { src: "/tutorials/characters/step-06.png", alt: "本地图片工作台中完成多角色设置且可返回教程中心的实际截图", width: 1440, height: 1000, caption: "本机实际操作截图 · 完成教程" },
+    },
+  },
+};

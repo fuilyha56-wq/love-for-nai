@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 /* Shared touch behavior keeps LFN's semantic colors and existing desktop layouts. */
 .lfn-public-mobile-menu { display: none; }
 .model-catalog-search input.field { padding-left: 36px; }

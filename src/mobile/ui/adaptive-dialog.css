@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .lfn-adaptive-backdrop { position:fixed; z-index:30000; top:var(--lfn-viewport-top,0px); left:0; right:0; height:var(--lfn-viewport-height,100dvh); display:flex; align-items:center; justify-content:center; padding:24px; background:rgb(0 0 0 / .45); }
 .lfn-adaptive-dialog { display:flex; width:min(100%,640px); max-height:calc(var(--lfn-viewport-height,100dvh) - 48px); min-height:0; flex-direction:column; overflow:hidden; border:0; border-radius:24px; background:var(--panel); color:var(--ink); box-shadow:0 16px 48px rgb(0 0 0 / .2); }
 .lfn-adaptive-dialog.is-wide { width:min(100%,920px); }

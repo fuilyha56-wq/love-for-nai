@@ -104,7 +104,7 @@ if (require.main === module) (async () => {
             await page.setViewportSize(size);
             await page.waitForTimeout(150);
             await fit(page, `${theme}/${workspaceLayout}/${size.width}`);
-            if (size.width < 840) {
+            if (size.width < 1024) {
               const nav = await page.getByRole('navigation', { name: '移动工作台导航', exact: true }).boundingBox();
               assert(nav && nav.y >= 0 && nav.y + nav.height <= size.height + 1, 'Bottom navigation must fit the viewport');
               assert.equal(await page.locator('.mobile-studio-bottom-nav > :is(a,button)').count(), 5, 'All five mobile branches remain reachable');

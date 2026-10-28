@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 html[data-theme="nai"] [data-studio-layout="nai"] {
   --paper: #13152c;
   --panel: #191b31;
@@ -1455,9 +1455,6 @@ html[data-theme="nai"] [data-studio-layout="nai"] .session-history-thumb { backg
   color: var(--muted);
 }
 .tools-panel-collapse:hover { color: var(--rose); }
-@media (max-width: 1023px) {
-  .studio-tools-panel { transition: none; }
-}
 
 @keyframes nai-settings-in {
   from {
@@ -1523,18 +1520,6 @@ html[data-theme="nai"] [data-studio-layout="nai"] .nai-panel-layout-lfn > .panel
 }
 html[data-theme="nai"] [data-studio-layout="nai"] .nai-panel-layout-lfn > .panel-section:last-child .nai-reference-card {
   min-height: 52px;
-}
-@media (max-width: 1023px) {
-  html[data-theme="nai"] [data-studio-layout="nai"] .studio-controls-panel[role="dialog"] {
-    width: min(100vw, 450px);
-  }
-  html[data-theme="nai"] [data-studio-layout="nai"] .settings-scroll {
-    padding-left: 10px;
-    padding-right: 10px;
-  }
-  html[data-theme="nai"] [data-studio-layout="nai"] .settings-scroll > * {
-    margin-right: 0;
-  }
 }
 @media (max-width: 360px) {
   html[data-theme="nai"] [data-studio-layout="nai"] .nai-reference-grid {

@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .verify-results>dl>div { display:grid; grid-template-columns:minmax(72px,auto) minmax(0,1fr); gap:12px; }
 .verify-results dd { min-width:0; overflow-wrap:anywhere; text-align:right; }
 .verify-results>div:first-child { align-items:flex-start; }

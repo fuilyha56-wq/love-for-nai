@@ -1,4 +1,4 @@
-@media (min-width: 840px) {
+@media (min-width: 1024px) {
 .image-editor-page {
   --editor-stage: color-mix(in srgb, var(--canvas, var(--paper)) 88%, #000);
   --editor-raised: color-mix(in srgb, var(--panel) 92%, var(--ink) 8%);
@@ -12,7 +12,7 @@
   overflow: hidden;
   background: var(--paper);
   color: var(--ink);
-  font-family: var(--font-sans), sans-serif;
+  font-family: var(--font-sans);
 }
 
 .editor-topbar,

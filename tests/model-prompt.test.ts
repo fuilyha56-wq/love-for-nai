@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { composeModelPrompt, transformModelPromptOnBlur } from "@/lib/model-prompt";
 import { composeReplicaPrompt, DEFAULT_REPLICA_PROMPT_CONFIG, type FixedPromptTag, type ReplicaPromptConfig } from "@/lib/replica-prompt";
+import { naiNativeGenerationBody } from "@/lib/nai-native-request";
 
 const config = (overrides: Partial<ReplicaPromptConfig> = {}): ReplicaPromptConfig => ({ ...structuredClone(DEFAULT_REPLICA_PROMPT_CONFIG), ...overrides });
 const fixed = (overrides: Partial<FixedPromptTag> = {}): FixedPromptTag => ({ id: "fixed", name: "构图", content: "Use an eye-level view.", target: "positive", position: "prefix", weight: 1.8, enabled: true, category: "根目录", ...overrides });
@@ -67,5 +68,19 @@ describe("按图像模型保留提示词语义", () => {
   it("NAI 失焦继续按正则、SD 转换、自动格式化顺序处理", () => {
     const settings = config({ settings: { ...DEFAULT_REPLICA_PROMPT_CONFIG.settings, sdConvert: true }, regexRules: [{ id: "hair", pattern: "white hair", replacement: "silver hair", enabled: true }] });
     expect(transformModelPromptOnBlur("(white hair:1.2)，blue eyes\nred hair", settings, false)).toEqual({ text: "1.20::silver_hair::, blue_eyes\nred_hair", error: null });
+  });
+
+  it("正负提示词失焦按 Aaalice 转换，合成和原生请求不再次改写文本", () => {
+    const settings = config({ quality: "none", uc: "none" });
+    const prompt = transformModelPromptOnBlur("1girl，white hair\n{soft light}", settings, false).text;
+    const negative = transformModelPromptOnBlur("bad hands，low quality", settings, false).text;
+    const composed = composeModelPrompt(prompt, negative, "nai-v5-full", settings);
+    const request = naiNativeGenerationBody({ prompt: composed.prompt, negative_prompt: composed.negative, model: "nai-v5-full", characterPrompts: [{ prompt: "long hair", negativePrompt: "bad hands" }] });
+    expect(request.input).toBe("1girl, white_hair\n{soft_light}");
+    expect(request.parameters).toMatchObject({
+      negative_prompt: "bad_hands, low_quality",
+      v4_prompt: { caption: { base_caption: "1girl, white_hair\n{soft_light}", char_captions: [{ char_caption: "long hair" }] } },
+      v4_negative_prompt: { caption: { base_caption: "bad_hands, low_quality", char_captions: [{ char_caption: "bad hands" }] } },
+    });
   });
 });

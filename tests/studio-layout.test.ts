@@ -147,7 +147,7 @@ describe("工作台布局按主题隔离", () => {
     expect(canvas).toContain("<textarea");
     expect(canvas).toContain("描述画面");
     expect(canvas).toContain("排除内容");
-    const generate = elementMarkup(canvas, "div", '<div class="flex shrink-0 items-center gap-3 border-t');
+    const generate = elementMarkup(canvas, "div", '<div class="flex shrink-0 flex-wrap items-center gap-3 border-t');
     expect(generate).toContain("<button");
     expect(generate).toContain("生成 1 张图像");
     // e134 preserves the original destinations in the left icon rail.

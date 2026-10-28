@@ -1,6 +1,12 @@
 import { readTagWeight, splitPromptTags } from "./replica-prompt";
+import { promptTagText } from "./prompt-tag";
 
 export type PromptCompletion = { name: string; displayName?: string; categoryName?: string; postCount?: number; zh?: string; insertion?: string; local?: boolean; occurrences?: number; source?: string; catalogKey?: string; description?: string; descriptionUrl?: string };
+
+/** Aaalice defaults to canonical tag insertion; authored snippets and aliases stay intact. */
+export function promptCompletionText(hit: PromptCompletion): string {
+  return hit.insertion || hit.name;
+}
 
 let wordlistRequest: Promise<string[]> | null = null;
 /** Reuse the bundled NovelAI wordlist so basic suggestions work without the remote tag service. */
@@ -54,7 +60,7 @@ export function localCooccurringTags(selected: string, samples: string[], existi
     }
   }
   return [...frequency].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, maximum)
-    .map(([name, occurrences]) => ({ name, displayName: name.replaceAll("_", " "), categoryName: "历史/词库共现", occurrences, local: true }));
+    .map(([name, occurrences]) => ({ name, displayName: promptTagText(name), categoryName: "历史/词库共现", occurrences, local: true }));
 }
 
 export function matchLocalPromptTags(query: string, names: string[], maximum = 10): PromptCompletion[] {
@@ -62,7 +68,7 @@ export function matchLocalPromptTags(query: string, names: string[], maximum = 1
   if (normalized.length < 2) return [];
   const candidates = [...new Set(names.map(canonicalPromptTag))].filter((name) => name.includes(normalized));
   return candidates.sort((left, right) => Number(right.startsWith(normalized)) - Number(left.startsWith(normalized)) || left.length - right.length || left.localeCompare(right))
-    .slice(0, maximum).map((name) => ({ name, displayName: name.replaceAll("_", " "), categoryName: "本地词表", local: true }));
+    .slice(0, maximum).map((name) => ({ name, displayName: promptTagText(name), categoryName: "本地词表", local: true }));
 }
 
 export const PROMPT_EDITOR_HEIGHTS = { minimum: 96, maximum: 480 } as const;

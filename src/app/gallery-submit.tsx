@@ -41,6 +41,7 @@ export type GallerySubmitForm = {
   source: Source;
   tags: string;
   exposeParameters: boolean;
+  requireLikeForParameters?: boolean;
   file?: File;
   files?: File[];
 };
@@ -100,6 +101,7 @@ export function GallerySubmitDialog({
             source: form.source,
             tags: form.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
             exposeParameters: form.exposeParameters,
+            requireLikeForParameters: form.exposeParameters && form.requireLikeForParameters === true,
           }),
         });
         const result = await readJson<{ message?: string }>(response, "发布失败");
@@ -119,6 +121,7 @@ export function GallerySubmitDialog({
           data.set("negativePrompt", "");
           data.set("parameters", "{}");
           data.set("exposeParameters", String(form.exposeParameters));
+          data.set("requireLikeForParameters", String(form.exposeParameters && form.requireLikeForParameters === true));
           const response = await fetch("/api/gallery", { method: "POST", body: data });
           const result = await readJson<{ message?: string }>(response, "发布失败");
           if (!response.ok) {
@@ -176,7 +179,8 @@ export function GallerySubmitDialog({
           </div>
           {form.source !== "lfn" && <GalleryUploadField files={form.files?.length ? form.files : form.file ? [form.file] : []} onChange={(files) => { setError(""); onChange({ ...form, file: files[0], files }); }} />}
           <label className="block text-sm font-semibold">公开标签<span className="field mt-2 flex h-11 items-center px-4"><input className="w-full bg-transparent outline-none" value={form.tags} onChange={(event) => onChange({ ...form, tags: event.target.value })} placeholder="例如：azure lane, blue hair, night" /></span><small className="mt-1 block font-normal text-[var(--muted)]">使用英文逗号分隔标签。</small></label>
-          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3"><LfnSwitch checked={form.exposeParameters} onChange={(exposeParameters) => onChange({ ...form, exposeParameters })} label="公开提示词与生成参数" /><p className="mt-2 text-xs font-normal leading-5 text-[var(--muted)]">关闭后，其他用户只能查看图片和公开标签。</p></div>
+          <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3"><LfnSwitch checked={form.exposeParameters} onChange={(exposeParameters) => onChange({ ...form, exposeParameters, requireLikeForParameters: exposeParameters && form.requireLikeForParameters })} label="公开提示词与生成参数" /><p className="mt-2 text-xs font-normal leading-5 text-[var(--muted)]">关闭后，其他用户只能查看图片和公开标签。</p></div>
+          {form.exposeParameters && <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-muted)] p-3"><LfnSwitch checked={form.requireLikeForParameters === true} onChange={(requireLikeForParameters) => onChange({ ...form, requireLikeForParameters })} label="点赞后查看提示词与生成参数" /><p className="mt-2 text-xs font-normal leading-5 text-[var(--muted)]">开启后，其他用户需登录并点赞才能查看；图片文件中的提示词元数据也会移除。</p></div>}
         </div>
         <div className="mt-6 flex justify-end gap-3 border-t border-[var(--line)] pt-5"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-[var(--surface)] px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "提交审核"}</button></div>
       </div>

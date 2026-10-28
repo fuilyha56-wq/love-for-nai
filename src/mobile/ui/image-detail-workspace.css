@@ -1,7 +1,15 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .launcher-shell[data-image-viewer="true"] :is(.launcher-titlebar,.launcher-rail) { display:none; }
 .launcher-shell[data-image-viewer="true"] .launcher-content { margin:0; padding:0; }
 .launcher-content .launcher-image-detail-page { display:flex; width:100%; height:var(--lfn-viewport-height,100dvh); min-height:0; flex-direction:column; overflow:hidden; background:#141414; color:var(--ink); }
+.launcher-content .launcher-image-detail-page.is-details { height:auto; min-height:var(--lfn-viewport-height,100dvh); overflow:visible; background:var(--paper); }
+.is-details .launcher-detail-topbar { position:sticky; top:0; z-index:10; }
+.is-details .launcher-detail-body { display:flex; flex:initial; flex-direction:column; }
+.is-details .launcher-detail-stage { flex:none; height:clamp(240px,45dvh,480px); touch-action:pan-y; }
+.is-details .launcher-detail-resizer { display:none; }
+.is-details .launcher-detail-metadata { overflow:visible; }
+.launcher-detail-comments { padding:0 16px 24px; }
+.launcher-detail-comments[hidden] { display:none; }
 .launcher-detail-topbar { display:flex; min-height:64px; flex:0 0 auto; align-items:center; gap:12px; padding: max(8px,env(safe-area-inset-top)) 16px 8px; background:var(--panel); }
 .launcher-detail-topbar h1 { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:16px; font-weight:600; }
 .launcher-detail-topbar :is(a,button) { display:flex; min-height:44px; flex-shrink:0; align-items:center; justify-content:center; gap:8px; padding:8px 12px; border-radius:6px; background:var(--surface-muted); font-size:13px; }

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { ArrowLeft, Check, ChevronDown, Copy, Info, Minus, Plus, X } from "lucide-react";
 import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { copyTextToClipboard } from "@/lib/client-clipboard";
@@ -15,12 +16,17 @@ function subscribeWidth(listener: () => void) {
 }
 
 /** Aaalice DetailImageViewer: content-sized image and adaptive metadata surface. */
-export function ImageDetailWorkspace({ title, backHref, backLabel, image, metadata, notice, loading, error }: {
+export function ImageDetailWorkspace({ title, backHref, backLabel, image, metadata, notice, loading, error, presentation = "viewer", children }: {
   title: string; backHref: string; backLabel: string; image: ReactNode; metadata: ReactNode;
-  notice?: ReactNode; loading?: boolean; error?: string;
+  notice?: ReactNode; loading?: boolean; error?: string; presentation?: "viewer" | "details"; children?: ReactNode;
 }) {
   const wide = useSyncExternalStore(subscribeWidth, () => window.matchMedia(wideQuery).matches, () => false);
   const [metadataOpen, setMetadataOpen] = useState(false);
+  const [imageOpen, setImageOpen] = useState(false);
+  usePanelHistory("lfnImageViewer", imageOpen ? "image" : metadataOpen ? "metadata" : null, next => {
+    setImageOpen(next === "image"); setMetadataOpen(next === "metadata");
+  });
+  const inlineDetails = presentation === "details" && !imageOpen;
   const dialog = useRef<HTMLElement>(null);
   const workspace = useRef<HTMLDivElement>(null);
   useDialogFocus(metadataOpen && !wide, dialog);
@@ -54,26 +60,31 @@ export function ImageDetailWorkspace({ title, backHref, backLabel, image, metada
     handle.addEventListener("pointerup", end);
     handle.addEventListener("pointercancel", end);
   }
-  return <main className="launcher-image-detail-page">
+  return <main className={`launcher-image-detail-page${inlineDetails ? " is-details" : ""}`}>
     <header className="launcher-detail-topbar" inert={metadataOpen && !wide}>
-      <Link href={backHref} aria-label={`返回${backLabel}`}><ArrowLeft size={20} /><span>{backLabel}</span></Link>
+      {presentation === "details" && imageOpen
+        ? <button type="button" aria-label="返回作品详情" onClick={() => { setImageOpen(false); setMetadataOpen(false); resetView(); }}><ArrowLeft size={20} /><span>作品详情</span></button>
+        : <Link replace href={backHref} scroll={!backHref.startsWith("/gallery")} aria-label={`返回${backLabel}`}><ArrowLeft size={20} /><span>{backLabel}</span></Link>}
       <h1>{title}</h1>
-      <button type="button" className="launcher-detail-info-button" disabled={!metadata || loading} aria-haspopup="dialog" aria-expanded={metadataOpen && !wide} onClick={() => setMetadataOpen(true)}><Info size={19} /><span>图片信息</span></button>
+      {inlineDetails
+        ? <button type="button" disabled={!image || loading} onClick={() => setImageOpen(true)}><Plus size={19} /><span>查看大图</span></button>
+        : <button type="button" className="launcher-detail-info-button" disabled={!metadata || loading} aria-haspopup="dialog" aria-expanded={metadataOpen && !wide} onClick={() => setMetadataOpen(true)}><Info size={19} /><span>图片信息</span></button>}
     </header>
     {notice && <div className="launcher-detail-notice" role="status">{notice}</div>}
     <div className="launcher-detail-body" ref={workspace} style={{ "--detail-panel-width": `${panelWidth}px` } as React.CSSProperties} inert={metadataOpen && !wide}>
       <section ref={stage} className="launcher-detail-stage" aria-label="图片预览" tabIndex={0} data-zoomed={zoom > 1} style={{ "--detail-zoom": zoom, "--detail-pan-x": `${pan.x}px`, "--detail-pan-y": `${pan.y}px` } as React.CSSProperties}
-        onDoubleClick={event => { if (event.target instanceof Element && event.target.closest("button,a,summary")) return; if (zoom === 1) setZoom(2); else resetView(); }}
-        onWheel={event => { if (!event.ctrlKey && !loading && !error) setZoom(value => clampZoom(value * (event.deltaY > 0 ? .9 : 1.1))); }}
-        onPointerDown={event => { if (zoom <= 1 || (event.target instanceof Element && event.target.closest("button,a,summary"))) return; event.currentTarget.setPointerCapture(event.pointerId); drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, startX: pan.x, startY: pan.y }; }}
+        onDoubleClick={event => { if (event.target instanceof Element && event.target.closest("button,a,summary")) return; if (inlineDetails) { setImageOpen(true); return; } if (zoom === 1) setZoom(2); else resetView(); }}
+        onWheel={event => { if (!inlineDetails && !event.ctrlKey && !loading && !error) setZoom(value => clampZoom(value * (event.deltaY > 0 ? .9 : 1.1))); }}
+        onPointerDown={event => { if (inlineDetails || zoom <= 1 || (event.target instanceof Element && event.target.closest("button,a,summary"))) return; event.currentTarget.setPointerCapture(event.pointerId); drag.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, startX: pan.x, startY: pan.y }; }}
         onPointerMove={event => { const current = drag.current; if (!current || current.pointer !== event.pointerId) return; event.currentTarget.style.setProperty("--detail-pan-x", `${current.startX + event.clientX - current.x}px`); event.currentTarget.style.setProperty("--detail-pan-y", `${current.startY + event.clientY - current.y}px`); }}
         onPointerUp={endPan} onPointerCancel={endPan}
-        onKeyDown={event => { if (event.target !== event.currentTarget) return; if (event.key === "+" || event.key === "=") { event.preventDefault(); setZoom(value => clampZoom(value * 1.25)); } else if (event.key === "-") { event.preventDefault(); setZoom(value => clampZoom(value / 1.25)); } else if (event.key === "0") { event.preventDefault(); resetView(); } }}>
-        {error ? <p role="alert">{error}</p> : loading ? <p role="status">正在读取图片…</p> : <>{image}<div className="launcher-detail-zoom" role="toolbar" aria-label="图片缩放"><button type="button" aria-label="缩小图片" disabled={zoom <= .5} onClick={() => setZoom(value => clampZoom(value / 1.25))}><Minus size={18} /></button><button type="button" aria-label="适应窗口" title="适应窗口（0）" onClick={resetView}>{Math.round(zoom * 100)}%</button><button type="button" aria-label="放大图片" disabled={zoom >= 4} onClick={() => setZoom(value => clampZoom(value * 1.25))}><Plus size={18} /></button></div></>}
+        onKeyDown={event => { if (inlineDetails || event.target !== event.currentTarget) return; if (event.key === "+" || event.key === "=") { event.preventDefault(); setZoom(value => clampZoom(value * 1.25)); } else if (event.key === "-") { event.preventDefault(); setZoom(value => clampZoom(value / 1.25)); } else if (event.key === "0") { event.preventDefault(); resetView(); } }}>
+        {error ? <p role="alert">{error}</p> : loading ? <p role="status">正在读取图片…</p> : <>{image}{!inlineDetails && <div className="launcher-detail-zoom" role="toolbar" aria-label="图片缩放"><button type="button" aria-label="缩小图片" disabled={zoom <= .5} onClick={() => setZoom(value => clampZoom(value / 1.25))}><Minus size={18} /></button><button type="button" aria-label="适应窗口" title="适应窗口（0）" onClick={resetView}>{Math.round(zoom * 100)}%</button><button type="button" aria-label="放大图片" disabled={zoom >= 4} onClick={() => setZoom(value => clampZoom(value * 1.25))}><Plus size={18} /></button></div>}</>}
       </section>
       <div className="launcher-detail-resizer" role="separator" aria-label="调整图片信息宽度" aria-orientation="vertical" aria-valuemin={300} aria-valuemax={520} aria-valuenow={panelWidth} tabIndex={0} onPointerDown={resize} onKeyDown={event => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); setPanelWidth(value => clampWidth(value + (event.key === "ArrowLeft" ? 16 : -16))); }} />
-      <aside className="launcher-detail-metadata" aria-label="图片信息" hidden={!wide}>{metadata}</aside>
+      <aside className="launcher-detail-metadata" aria-label="图片信息" hidden={!inlineDetails && !wide}>{metadata}</aside>
     </div>
+    {children && <div className="launcher-detail-comments" hidden={!inlineDetails}>{children}</div>}
     {metadataOpen && !wide && <div className="launcher-detail-backdrop" onClick={() => setMetadataOpen(false)} onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); setMetadataOpen(false); } }}>
       <section ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="图片信息" className="launcher-detail-dialog" onClick={event => event.stopPropagation()}><header><h2>图片信息</h2><button type="button" aria-label="关闭图片信息" onClick={() => setMetadataOpen(false)}><X size={20} /></button></header><div className="launcher-detail-dialog-content">{metadata}</div></section>
     </div>}

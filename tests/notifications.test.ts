@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,5 +18,25 @@ describe("站内消息", () => {
     expect(await markUserNotificationRead(8, first!.id)).toEqual({ unreadCount: 0 });
     expect((await listUserNotifications(8)).items[0].readAt).toBeTruthy();
     expect(await markUserNotificationRead(9)).toEqual({ unreadCount: 0 });
+  });
+
+  it("不同路由模块并发创建消息不会覆盖另一设备的已读回执", async () => {
+    const firstRoute = await import("@/lib/notifications");
+    const seen = await firstRoute.createUserNotification({ userId: 8, type: "system", title: "已经查看", body: "", href: "/image" });
+    vi.resetModules();
+    const secondRoute = await import("@/lib/notifications");
+    await Promise.all([
+      firstRoute.markUserNotificationRead(8, seen!.id),
+      ...Array.from({ length: 20 }, (_, i) => (i % 2 ? firstRoute : secondRoute).createUserNotification({
+        userId: 8, type: "system", title: `新消息 ${i}`, body: "", href: "/image", dedupeKey: `concurrent:${i}`,
+      })),
+    ]);
+    const otherDevice = await secondRoute.listUserNotifications(8);
+    expect(otherDevice.items).toHaveLength(21);
+    expect(otherDevice.items.find(item => item.id === seen!.id)?.readAt).toBeTruthy();
+    expect(otherDevice.unreadCount).toBe(20);
+    await firstRoute.markUserNotificationRead(8);
+    expect((await secondRoute.listUserNotifications(8)).unreadCount).toBe(0);
+    expect((await secondRoute.listUserNotifications(8)).items.every(item => item.readAt)).toBe(true);
   });
 });

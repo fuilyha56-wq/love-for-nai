@@ -129,10 +129,12 @@ const DIRECTOR_COSTS: Record<string, number> = {
   emotion: 5,
 };
 
-export function imageCreditCost(generation: ImagePricingGeneration, fixedCostPerSample: number | null = null): number {
+export type LocalAnlasPrices = { v45AnlasCny: number; v5AnlasCny: number };
+
+export function imageCreditCost(generation: ImagePricingGeneration, fixedCostPerSample: number | null = null, prices?: LocalAnlasPrices): number {
   return fixedCostPerSample != null
     ? Math.round(fixedCostPerSample * generation.samples * 10_000) / 10_000
-    : affCost(generation);
+    : affCost(generation, prices);
 }
 
 export function splitImageCreditCost(cost: number, samples: number, packageBalance: number, availablePackageImages: number, sampleCosts?: number[]) {
@@ -351,7 +353,15 @@ export function isInFreeEnvelope(generation: ImagePricingGeneration): boolean {
   );
 }
 
-export function affCost(generation: ImagePricingGeneration): number {
+/** Billable Anlas after the local single-image envelope, without currency conversion. */
+export function billableNaiAnlasCost(generation: ImagePricingGeneration): number {
+  if (generation.sequential && generation.samples > 1)
+    return billableNaiAnlasCost({ ...generation, samples: 1, sequential: false }) * generation.samples;
+  if (generation.operation === "annotate") return 0;
+  return isInFreeEnvelope(generation) ? 0 : officialNaiAnlasCost(generation);
+}
+
+export function affCost(generation: ImagePricingGeneration, prices?: LocalAnlasPrices): number {
   const samples = generation.samples;
   if (!Number.isSafeInteger(samples) || samples < 1 ||
       !Number.isSafeInteger(generation.width) || generation.width < 1 ||
@@ -359,13 +369,15 @@ export function affCost(generation: ImagePricingGeneration): number {
       !Number.isSafeInteger(generation.steps) || generation.steps < 1)
     throw new Error("图像计费参数无效");
   if (generation.sequential && samples > 1)
-    return affCost({ ...generation, samples: 1, sequential: false }) * samples;
+    return Math.round(affCost({ ...generation, samples: 1, sequential: false }, prices) * samples * 10_000) / 10_000;
   const operation = generation.operation ?? "generate";
   if (operation === "annotate") return samples;
   const standalone = operation === "upscale" || operation === "encode-vibe" ||
     operation.replace(/^director-/, "") in DIRECTOR_COSTS;
-  const affPerAnlas = AFF_PER_ANLAS * (modelPointVersion(generation.model) === "V5" ? V5_ANLAS_SALES_MULTIPLIER : 1);
-  if (standalone) return officialNaiAnlasCost(generation) * affPerAnlas;
+  const affPerAnlas = prices
+    ? (modelPointVersion(generation.model) === "V5" ? prices.v5AnlasCny : prices.v45AnlasCny) / CNY_PER_AFF
+    : AFF_PER_ANLAS * (modelPointVersion(generation.model) === "V5" ? V5_ANLAS_SALES_MULTIPLIER : 1);
+  if (standalone) return Math.round(officialNaiAnlasCost(generation) * affPerAnlas * 10_000) / 10_000;
   const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE :
     modelPointVersion(generation.model) === "V5" ? V5_BASE_AFF_PER_IMAGE : 1;
   const anlas = isInFreeEnvelope(generation) ? 0 : officialNaiAnlasCost(generation);

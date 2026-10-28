@@ -1,4 +1,4 @@
-@media (max-width: 839px) {
+@media (max-width: 1023px) {
 .platform-settings { min-width: 0; }
 .platform-back { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 14px; color: var(--muted); font-size: 12px; }
 .platform-back:hover { color: var(--rose); }

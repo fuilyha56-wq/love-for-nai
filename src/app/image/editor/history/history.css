@@ -1,5 +1,5 @@
-@media (min-width: 840px) {
-.redraw-history-page { min-height: 100dvh; background: var(--paper); color: var(--ink); font-family: var(--font-sans), sans-serif; }
+@media (min-width: 1024px) {
+.redraw-history-page { min-height: 100dvh; background: var(--paper); color: var(--ink); font-family: var(--font-sans); }
 .redraw-history-page button, .redraw-history-page a, .redraw-history-page input, .redraw-history-page select { -webkit-tap-highlight-color: transparent; }
 .redraw-history-page button { cursor: pointer; }
 .redraw-history-page button:disabled { opacity: .45; cursor: not-allowed; }

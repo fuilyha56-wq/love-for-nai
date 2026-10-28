@@ -81,7 +81,7 @@ export default function GalleryPage() {
     } catch { setMessage("分享链接：" + url); }
   }
   return (
-    <main className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
+    <main onClickCapture={(event) => { const link = event.target instanceof Element ? event.target.closest("a") : null; if (link?.getAttribute("href")?.startsWith("/gallery/")) gallery.rememberPosition(); }} className="workspace-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader current="gallery" extraActions={<button type="button" className="lfn-button is-primary" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })}><Send size={16} />投稿</button>} />
       <WorkspaceNav />
       <section className="mx-auto max-w-7xl p-4 sm:p-7">

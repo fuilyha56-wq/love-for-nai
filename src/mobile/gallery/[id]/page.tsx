@@ -1,7 +1,9 @@
 "use client";
+import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
 import { Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
 import Image from "@/mobile/cached-image";
+import { DiscussionComments } from "@/app/ui/discussion-comments";
 import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
 import { ImageDetailWorkspace, ImageMetadataParameters, ImagePromptSection } from "@/mobile/ui/image-detail-workspace";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
@@ -21,6 +23,9 @@ type GalleryItem = {
   imageUrl: string;
   thumbnailUrl?: string;
   likes: number;
+  liked?: boolean;
+  parametersLocked?: boolean;
+  requireLikeForParameters?: boolean;
 };
 
 const ratingLabels: Record<string, string> = {
@@ -71,6 +76,7 @@ export default function GalleryItemPage({
   const [originalImageUrl, setOriginalImageUrl] = useState("");
 
   useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
     (async () => {
       const id = (await params).id;
       const query = new URLSearchParams(window.location.search);
@@ -85,6 +91,7 @@ export default function GalleryItemPage({
         const result = await response.json();
         if (!response.ok) throw new Error(result.message || "作品不存在");
         setItem(result.item);
+        setLiked(result.item.liked === true);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "作品读取失败");
       }
@@ -101,7 +108,12 @@ export default function GalleryItemPage({
       setMessage(result.message || "请登录后点赞");
       return;
     }
-    setItem({ ...item, likes: result.likes });
+    if (item.requireLikeForParameters) {
+      const detail = await fetch(`/api/gallery/${item.id}`, { cache: "no-store" });
+      if (!detail.ok) { setMessage("点赞状态已更新，作品详情读取失败，请刷新重试。"); return; }
+      const refreshed = await detail.json();
+      setItem(refreshed.item);
+    } else setItem({ ...item, likes: result.likes });
     setLiked(result.liked);
   }
 
@@ -113,9 +125,10 @@ export default function GalleryItemPage({
     );
   }
 
+  const characterPrompts = readImageCharacterPrompts(item?.parameters || {});
   const isHidden = (item?.rating === "r17" || item?.rating === "r18") && !revealed;
 
-  return <>{importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}<ImageDetailWorkspace title={item?.title || "作品详情"} backHref="/gallery" backLabel="图片广场" loading={!item && !message} error={!item ? message : undefined}
+  return <>{importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}<ImageDetailWorkspace presentation="details" title={item?.title || "作品详情"} backHref="/gallery?restore=1" backLabel="图片广场" loading={!item && !message} error={!item ? message : undefined}
     notice={(rewardNotice || (item && message)) ? <><span>{rewardNotice && <><Trophy size={18} className="inline-block" /> {rewardNotice}</>}</span>{item && message && <p>{message}</p>}</> : undefined}
     image={item && (<div className={`launcher-detail-image ${rewardNotice ? "ring-4 ring-amber-400 shadow-[0_0_0_8px_rgba(245,158,11,.12)]" : ""}`}>
               <Image
@@ -211,12 +224,14 @@ export default function GalleryItemPage({
                   导入图片到工作台
                 </button>
               </div>
-              {Object.keys(item.parameters).length > 0 && (
-                <>
-                  {item.prompt && <ImagePromptSection title="正面提示词" value={item.prompt} />}
-                  {item.negativePrompt && <ImagePromptSection title="负面提示词" value={item.negativePrompt} />}
-                </>
-              )}
-            {Object.keys(item.parameters).length > 0 && <ImageMetadataParameters entries={Object.entries(item.parameters).filter(([key]) => key !== "prompt" && key !== "negative_prompt")} />}
-            </aside>)} /></>;
+              {item.parametersLocked && <div className="rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-4 text-sm"><p>作者设置了点赞后查看提示词与生成参数。</p><button type="button" onClick={like} className="mt-3 flex min-h-11 items-center gap-2 rounded bg-[var(--rose)] px-4 font-semibold text-white"><Heart size={16} />点赞并查看提示词</button></div>}
+              {item.prompt && <ImagePromptSection title="正面提示词" value={item.prompt} />}
+              {item.negativePrompt && <ImagePromptSection title="负面提示词" value={item.negativePrompt} />}
+              {characterPrompts.map((character, index) => <section key={index} aria-label={`角色 ${index + 1} 提示词`} className="space-y-2">
+                <h2 className="text-sm font-semibold">角色 {index + 1}</h2>
+                {character.prompt && <ImagePromptSection title={`角色 ${index + 1} 正面提示词`} value={character.prompt} />}
+                {character.negativePrompt && <ImagePromptSection title={`角色 ${index + 1} 负面提示词`} value={character.negativePrompt} />}
+              </section>)}
+            {Object.keys(item.parameters).length > 0 && <ImageMetadataParameters entries={Object.entries(item.parameters).filter(([key]) => !["prompt", "negative_prompt", "characterPrompts", "characters", "v4_prompt", "v4_negative_prompt"].includes(key))} />}
+            </aside>)}>{item && <DiscussionComments resource="gallery" resourceId={item.id} />}</ImageDetailWorkspace></>;
 }

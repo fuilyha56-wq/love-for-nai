@@ -11,9 +11,14 @@ import {
   listGallery,
   updateGalleryItem,
   publishLocalImage,
+  publishFromHistory,
   galleryImagePath,
+  publicGalleryItem,
+  getGalleryItem,
+  toggleGalleryLike,
 } from "@/lib/gallery";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
+import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
@@ -26,9 +31,9 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function pngWithNaiComment(): Promise<Buffer> {
+async function pngWithNaiComment(parameters: Record<string, unknown> = {}): Promise<Buffer> {
   const base = await sharp({ create: { width: 1, height: 1, channels: 3, background: "white" } }).png().toBuffer();
-  const metadata = Buffer.from(JSON.stringify({ Software: "NovelAI", prompt: "private prompt", uc: "private negative", width: 1, height: 1 }));
+  const metadata = Buffer.from(JSON.stringify({ Software: "NovelAI", prompt: "private prompt", uc: "private negative", width: 1, height: 1, ...parameters }));
   const keyword = Buffer.from("Comment\0");
   const chunkData = Buffer.concat([keyword, metadata]);
   const type = Buffer.from("tEXt");
@@ -155,5 +160,68 @@ describe("gallery admin mutations", () => {
     expect(item.negativePrompt).toBe("");
     expect(item.parameters).toEqual({});
     expect(item.title).toBe("work");
+  });
+
+  it("unlocks gated prompts only for the owner and users who currently like the work", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "lfn-gallery-liked-"));
+    process.env.LFN_DATA_DIR = dir;
+    const item = await publishLocalImage(2, "owner", await pngWithNaiComment(), "liked.png", {
+      title: "liked", authorName: "artist", rating: "general", source: "local", tags: [],
+      prompt: "", negativePrompt: "", parameters: {}, exposeParameters: true, requireLikeForParameters: true,
+    });
+    expect(parseNaiImageMetadata(await readFile(galleryImagePath(item.imageFile)))).toBeNull();
+    expect(publicGalleryItem(item)).toMatchObject({ parametersLocked: true, prompt: "", negativePrompt: "", parameters: {} });
+    expect(publicGalleryItem(item, 7)).toMatchObject({ parametersLocked: true, parameters: {} });
+    expect(publicGalleryItem(item, 2)).toMatchObject({ parametersLocked: false, prompt: "private prompt" });
+    await updateGalleryItem(item.id, { status: "approved" });
+    await toggleGalleryLike(item.id, 7);
+    const liked = (await getGalleryItem(item.id))!;
+    expect(publicGalleryItem(liked, 7)).toMatchObject({ liked: true, parametersLocked: false, prompt: "private prompt" });
+    expect(publicGalleryItem(liked, 8)).toMatchObject({ liked: false, parametersLocked: true, parameters: {} });
+    expect(publicGalleryItem(liked, 7).likedBy).toEqual([]);
+    await toggleGalleryLike(item.id, 7);
+    expect(publicGalleryItem((await getGalleryItem(item.id))!, 7)).toMatchObject({ liked: false, parametersLocked: true, prompt: "", parameters: {} });
+  });
+
+  it("uploads PNG role tags and keeps both role captions behind the like gate", async () => {
+    process.env.LFN_DATA_DIR = await mkdtemp(path.join(os.tmpdir(), "lfn-gallery-roles-"));
+    const parameters = { v4_prompt: { caption: { base_caption: "scene", char_captions: [{ char_caption: "red hair", centers: [{ x: .2, y: .5 }] }] }, use_coords: true }, v4_negative_prompt: { caption: { char_captions: [{ char_caption: "hat" }] } } };
+    const item = await publishLocalImage(2, "owner", await pngWithNaiComment(parameters), "roles.png", {
+      title: "roles", authorName: "artist", rating: "general", source: "local", tags: ["public"], prompt: "", negativePrompt: "", parameters: {}, exposeParameters: true, requireLikeForParameters: true,
+    });
+    expect(readImageCharacterPrompts(item.parameters)).toEqual([{ prompt: "red hair", negativePrompt: "hat", center: { x: .2, y: .5 } }]);
+    expect(JSON.stringify(publicGalleryItem(item, 7))).not.toContain("red hair");
+    expect(publicGalleryItem(item, 2).tags).toEqual(["public"]);
+    expect(parseNaiImageMetadata(await readFile(galleryImagePath(item.imageFile)))).toBeNull();
+    await updateGalleryItem(item.id, { status: "approved" });
+    await toggleGalleryLike(item.id, 7);
+    expect(readImageCharacterPrompts(publicGalleryItem((await getGalleryItem(item.id))!, 7).parameters)).toHaveLength(1);
+    await toggleGalleryLike(item.id, 7);
+    expect(publicGalleryItem((await getGalleryItem(item.id))!, 7).parameters).toEqual({});
+  });
+
+  it("recovers role tags from old history PNGs before metadata is stripped for publication", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "lfn-gallery-old-history-"));
+    process.env.LFN_DATA_DIR = dir;
+    const historyRoot = path.join(dir, "history", "2");
+    await mkdir(historyRoot, { recursive: true });
+    await writeFile(path.join(historyRoot, "old.png"), await pngWithNaiComment({ v4_prompt: { caption: { char_captions: [{ char_caption: "old character" }] } } }));
+    await writeFile(path.join(historyRoot, "index.json"), JSON.stringify([{ id: "old", imagePath: "old.png", parameters: { prompt: "saved main", negative_prompt: "saved negative" } }]));
+    const item = await publishFromHistory(2, "owner", "old", { title: "old", authorName: "artist", rating: "general", source: "lfn", tags: [], exposeParameters: true, requireLikeForParameters: true });
+    expect(item.prompt).toBe("saved main");
+    expect(readImageCharacterPrompts(item.parameters)[0].prompt).toBe("old character");
+    expect(parseNaiImageMetadata(await readFile(galleryImagePath(item.imageFile)))).toBeNull();
+  });
+
+  it("reads missing roles from existing public works without changing the index", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "lfn-gallery-old-work-"));
+    process.env.LFN_DATA_DIR = dir;
+    const folder = path.join(dir, "gallery"); await mkdir(folder, { recursive: true });
+    await writeFile(path.join(folder, "old.png"), await pngWithNaiComment({ v4_prompt: { caption: { char_captions: [{ char_caption: "legacy character" }] } } }));
+    const index = JSON.stringify({ items: [{ id: "old-work", ownerId: 2, title: "old", status: "approved", parameters: { prompt: "saved main" }, imageFile: "old.png", tags: [], likedBy: [] }] });
+    await writeFile(path.join(folder, "index.json"), index);
+    const item = await getGalleryItem("old-work");
+    expect(readImageCharacterPrompts(item!.parameters)[0].prompt).toBe("legacy character");
+    expect(await readFile(path.join(folder, "index.json"), "utf8")).toBe(index);
   });
 });

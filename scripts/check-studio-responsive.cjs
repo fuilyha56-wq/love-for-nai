@@ -19,7 +19,7 @@ async function fullViewport(page, locator, height) {
 (async () => {
   const browser = await chromium.launch({ headless: true, channel: 'msedge' });
   try {
-    for (const width of [320, 390, 600, 808, 839]) await check(`workspaces-${width}`, async () => {
+    for (const width of [320, 390, 600, 808, 839, 840, 1023]) await check(`workspaces-${width}`, async () => {
       const { context, page } = await setup(browser, { theme: 'paper', workspaceLayout: 'lfn' }, { width, height: 884 });
       try {
         await page.goto(`${baseURL}/image`);

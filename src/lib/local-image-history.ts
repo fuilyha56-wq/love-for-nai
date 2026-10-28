@@ -3,6 +3,7 @@ import { cacheImageBlob } from "@/lib/browser-image-cache";
 
 export type LocalImageHistoryItem = {
   id: string;
+  ownerId?: number;
   remoteId?: string;
   requestId?: string;
   createdAt: number;

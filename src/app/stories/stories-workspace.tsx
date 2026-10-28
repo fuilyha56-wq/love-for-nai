@@ -1,4 +1,5 @@
 "use client";
+import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { lfnConfirm } from "@/app/ui/lfn-dialog";
 
 
@@ -147,6 +148,7 @@ export default function StoriesWorkspace({
 }) {
   const router = useRouter();
   const [view, setView] = useState<WorkspaceView>("dashboard");
+  usePanelHistory("lfnStoryPage", view === "dashboard" ? null : view, next => setView(next === "create" || next === "editor" ? next : "dashboard"));
   const [stories, setStories] = useState<Story[]>([]);
   const [models, setModels] = useState<StoryModelOption[]>([]);
   const [modelWarning, setModelWarning] = useState("");

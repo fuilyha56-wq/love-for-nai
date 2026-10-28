@@ -1,4 +1,5 @@
 import { NAI_MAX_DIMENSION, NAI_MAX_PIXELS } from "./nai-image-limits";
+import { hasImageCharacterPrompts, imagePromptText, imageCharacterUseCoords, readImageCharacterPrompts, type ImageCharacterPrompt } from "./image-character-prompts";
 // NAI 图片参数 → 工作台状态的纯映射（客户端安全，无 server-only 依赖）。
 // 别名表与 src/lib/compat-api.ts 的 novelAiModelAliases 保持一致方向：NAI 原名 → LFN id。
 
@@ -93,6 +94,8 @@ export function resolveStudioModel(
 }
 
 export type NaiImportResult = {
+  characterPrompts?: ImageCharacterPrompt[];
+  useCoords?: boolean;
   prompt?: string;
   negativePrompt?: string;
   model?: string;
@@ -118,11 +121,15 @@ export function mapNaiParameters(
   validModels: string[],
 ): NaiImportResult {
   const result: NaiImportResult = {};
+  const prompts = imagePromptText(params);
+  if (hasImageCharacterPrompts(params)) result.characterPrompts = readImageCharacterPrompts(params);
+  const useCoords = imageCharacterUseCoords(params);
+  if (useCoords !== undefined) result.useCoords = useCoords;
 
-  const prompt = optionalText(params.prompt, 10_000);
+  const prompt = optionalText(prompts.prompt, 10_000);
   if (prompt) result.prompt = prompt;
   const negative = optionalText(
-    params.negative_prompt ?? params.uc ?? params.negativePrompt,
+    prompts.negativePrompt,
     10_000,
   );
   if (negative) result.negativePrompt = negative;

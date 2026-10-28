@@ -1,0 +1,38 @@
+/* Local-only character prompt regression; all business writes are mocked. */
+/* eslint-disable @typescript-eslint/no-require-imports */
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+try{process.loadEnvFile('.env.local');process.env.LFN_UI_TEST_SESSION_SECRET ||= process.env.LFN_SESSION_SECRET;}catch{}
+process.env.LFN_UI_BASE_URL ||= 'http://127.0.0.1:3100';process.env.LFN_PLAYWRIGHT_MODULE ||= path.resolve('.tmp/browser-check/node_modules/playwright-core');
+const {setup,chromium,baseURL}=require('./check-mobile-ui.cjs');const results=[],errors=[];const output=path.resolve('.tmp/character-ui');fs.mkdirSync(output,{recursive:true});
+const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=','base64');
+const roles=[{prompt:'red hair, blue eyes',negativePrompt:'hat',center:{x:.2,y:.5}},{prompt:'black hair, green eyes',negativePrompt:'glasses',center:{x:.8,y:.4}}];
+const parameters={operation:'generate',model:'nai-v5-full',prompt:'scene',negative_prompt:'lowres',width:832,height:1216,steps:28,scale:5,use_coords:true,v4_prompt:{caption:{base_caption:'scene',char_captions:roles.map(x=>({char_caption:x.prompt,centers:[x.center]}))},use_coords:true},v4_negative_prompt:{caption:{base_caption:'lowres',char_captions:roles.map(x=>({char_caption:x.negativePrompt}))}}};
+async function run(name,fn){if(process.env.LFN_CHARACTER_FILTER&&!name.includes(process.env.LFN_CHARACTER_FILTER))return;console.log('RUN '+name);try{await fn();results.push({name,passed:true});console.log('PASS '+name);}catch(e){results.push({name,passed:false,error:e.stack});console.error('FAIL '+name+' '+e.message);}}
+async function fixture(browser,width){const result=await setup(browser,{theme:'paper',workspaceLayout:'nlw'},{width,height:884});result.page.on('pageerror',e=>errors.push(e.message));return result;}
+(async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{
+for(const width of [390,1366])await run('gallery-role-display-gate-and-import-'+width,async()=>{const {context,page}=await fixture(browser,width);let liked=false;try{
+ await context.route('**/api/gallery/**',r=>{const p=new URL(r.request().url()).pathname;
+  if(p.endsWith('/image'))return r.fulfill({contentType:'image/png',body:png});
+  if(p.endsWith('/like')){liked=!liked;return r.fulfill({json:{liked,likes:liked?1:0}});}
+  if(p.endsWith('/use'))return r.fulfill({json:{uses:1}});
+  if(p.endsWith('/comments'))return r.fulfill({json:{items:[],viewerId:7777777,canModerate:false,preferences:{hiddenIds:[],blockedAuthorIds:[]}}});
+  return r.fulfill({json:{item:{id:'character-fixture',title:'角色提示词回归',ownerName:'artist',authorName:'artist',rating:'general',source:'local',tags:['public'],prompt:liked?'scene':'',negativePrompt:liked?'lowres':'',parameters:liked?parameters:{},imageUrl:'/api/gallery/character-fixture/image',likes:liked?1:0,liked,requireLikeForParameters:true,parametersLocked:!liked}}});
+ });
+ await page.goto(baseURL+'/gallery/character-fixture');await page.getByText('作者设置了点赞后查看提示词与生成参数。',{exact:true}).waitFor();assert.equal(await page.getByText(roles[0].prompt,{exact:true}).count(),0);
+ const like=()=>width<1024?page.getByRole('button',{name:liked?'已点赞':'点赞作品',exact:true}):page.locator('aside button').first();await like().click();
+ for(let i=0;i<roles.length;i++){const region=page.getByRole('region',{name:`角色 ${i+1} 提示词`,exact:true});await region.waitFor();assert((await region.innerText()).includes(roles[i].prompt));assert((await region.innerText()).includes(roles[i].negativePrompt));}
+ assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await page.screenshot({path:path.join(output,'gallery-characters-'+width+'.png'),fullPage:false});
+ await page.getByRole('button',{name:'导入图片到工作台',exact:true}).click();await page.getByRole('dialog',{name:'导入到画布',exact:true}).getByRole('link',{name:/文生图/}).click();
+ await page.waitForFunction(()=>{try{const f=JSON.parse(localStorage.getItem('lfn-image-studio-form-v1'));return f?.prompt==='scene'&&f.charactersEnabled&&f.characters.length===2&&f.characters[0].prompt==='red hair, blue eyes';}catch{return false;}});
+ const form=await page.evaluate(()=>JSON.parse(localStorage.getItem('lfn-image-studio-form-v1')));for(let i=0;i<roles.length;i++)assert.deepEqual({prompt:form.characters[i].prompt,negative:form.characters[i].negative,x:form.characters[i].centerX,y:form.characters[i].centerY},{prompt:roles[i].prompt,negative:roles[i].negativePrompt,x:roles[i].center.x,y:roles[i].center.y});
+ await page.goto(baseURL+'/gallery/character-fixture');await page.getByRole('region',{name:'角色 1 提示词',exact:true}).waitFor();await like().click();await page.getByText('作者设置了点赞后查看提示词与生成参数。',{exact:true}).waitFor();assert.equal(await page.getByRole('region',{name:'角色 1 提示词',exact:true}).count(),0);
+}finally{await context.close();}});
+for(const [width,layout] of [[390,'lfn'],[1366,'lfn'],[1366,'nlw']])await run('generated-role-text-persists-locally-'+width+'-'+layout,async()=>{const {context,page,requests}=await fixture(browser,width);try{
+ await page.goto(baseURL+'/tags');await page.evaluate(({roles,layout})=>{localStorage.setItem('lfn-ui-preferences-v1',JSON.stringify({version:1,theme:'paper',workspaceLayout:layout}));localStorage.setItem('lfn-image-history-mode-v1','local');localStorage.setItem('lfn-image-studio-form-v1',JSON.stringify({version:1,model:'nai-v5-full',prompt:'scene',charactersEnabled:true,characters:roles.map(x=>({prompt:x.prompt,negative:x.negativePrompt,centerX:x.center.x,centerY:x.center.y}))}));},{roles,layout});
+ await page.goto(baseURL+'/image');await page.waitForFunction(()=>document.documentElement.dataset.viewportReady==='true');await page.waitForTimeout(1200);
+ try{await Promise.all([page.waitForRequest(r=>new URL(r.url()).pathname==='/api/images/operate'&&r.method()==='POST',{timeout:15000}),page.locator(layout==='nlw'?'.replica-run-button:visible':'[data-studio-generate]:visible').click()]);}catch(e){await page.screenshot({path:path.join(output,'generation-failure-'+width+'.png')});throw new Error(e.message+'; UI: '+(await page.locator('body').innerText()));}
+ let found=false;for(let attempt=0;attempt<40;attempt++){found=await page.evaluate(()=>new Promise(resolve=>{const req=indexedDB.open('lfn-local-image-history-v1',1);req.onupgradeneeded=()=>req.result.createObjectStore('images',{keyPath:'id'});req.onsuccess=()=>{const db=req.result;const read=db.transaction('images','readonly').objectStore('images').getAll();read.onsuccess=()=>{const exists=read.result.some(x=>x.parameters?.characterPrompts?.length===2);db.close();resolve(exists);};};}));if(found)break;await page.waitForTimeout(100);}assert(found,'Generated character prompts reach IndexedDB');
+ const request=requests.find(x=>x.path==='/api/images/operate'&&x.method==='POST');assert(request,JSON.stringify(requests.map(x=>({path:x.path,method:x.method}))));assert.equal(request.body.characterPrompts.length,2);assert.equal(request.body.characterPrompts[0].negativePrompt,'hat');
+ const saved=await page.evaluate(()=>new Promise(resolve=>{const req=indexedDB.open('lfn-local-image-history-v1',1);req.onsuccess=()=>{const db=req.result;const read=db.transaction('images','readonly').objectStore('images').getAll();read.onsuccess=()=>{db.close();resolve(read.result[0].parameters.characterPrompts);};};}));assert.deepEqual(saved,roles);
+}finally{await context.close();}});
+}finally{await browser.close();fs.writeFileSync(path.join(output,'results.json'),JSON.stringify({results,errors},null,2));}if(results.some(x=>!x.passed)||errors.length)process.exitCode=1;})();

@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
+import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
 import { tagZh } from "@/lib/tag-translations";
 
 export type TagHit = PromptCompletion;
@@ -98,8 +98,9 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
     const element = textareaRef.current;
     if (!element) return;
     cancelPending();
-    const next = related ? { text: element.value.trimEnd() + (/[,，\n]\s*$/.test(element.value) ? " " : element.value.trim() ? ", " : "") + hit.name, cursor: 0 }
-      : insertPromptCompletion(element.value, element.selectionStart, hit.insertion || hit.name);
+    const insertion = promptCompletionText(hit);
+    const next = related ? { text: element.value.trimEnd() + (/[,，\n]\s*$/.test(element.value) ? " " : element.value.trim() ? ", " : "") + insertion, cursor: 0 }
+      : insertPromptCompletion(element.value, element.selectionStart, insertion);
     onChange(next.text); setOpen(false);
     const caret = related ? next.text.length : next.cursor;
     requestAnimationFrame(() => { element.focus(); element.setSelectionRange(caret, caret); });

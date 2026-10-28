@@ -5,6 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { GUIDE_KEY, GUIDE_OPEN_EVENT, guideLauncherVisible, setGuideActive, setGuideLauncherVisible, subscribeGuideVisibility } from "@/mobile/lib/guide-preferences";
 import "./onboarding-guide.css";
+import { TutorialText } from "@/app/tutorials/tutorial-text";
+import { FEATURE_TUTORIAL_EVENT, readTutorialResult, readTutorialSession } from "@/lib/feature-tutorial-session";
 
 type Step = { title: string; body: string; path: string; target?: string; action?: string };
 
@@ -42,7 +44,13 @@ export function OnboardingGuide() {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/sign-in") return;
+    const closeForFeature = () => { if (readTutorialSession()) { setOpen(false); setResuming(false); } };
+    window.addEventListener(FEATURE_TUTORIAL_EVENT, closeForFeature);
+    return () => window.removeEventListener(FEATURE_TUTORIAL_EVENT, closeForFeature);
+  }, []);
+
+  useEffect(() => {
+    if (pathname === "/sign-in" || readTutorialSession() || readTutorialResult()) return;
     const stored = window.localStorage.getItem(GUIDE_KEY);
     if (!stored) queueMicrotask(() => { setGuideActive(true); setOpen(true); });
   }, [pathname]);
@@ -132,7 +140,7 @@ export function OnboardingGuide() {
         <div className="guide-content">
           <p className="guide-count">{String(stepIndex + 1).padStart(2, "0")} / {steps.length}</p>
           <h2 id="guide-title">{step.title}</h2>
-          <p>{step.body}</p>
+          <p><TutorialText>{step.body}</TutorialText></p>
           {stepIndex === 0 && <div className="guide-sources" aria-label="选择创作来源">
             <button type="button" aria-pressed={source === "newapi"} onClick={() => setSource("newapi")}><b>使用 NewAPI 账号</b><small>图片与故事；登录后按账号权限和余额使用</small></button>
             <button type="button" aria-pressed={source === "custom"} onClick={() => setSource("custom")}><b>使用自带 API</b><small>OpenAI 兼容图像接口或 NovelAI Key，用于图片生成</small></button>
