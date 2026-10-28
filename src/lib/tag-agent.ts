@@ -6,6 +6,8 @@ import { assistantNativeTools } from "@/lib/assistant-native-tools";
 import { ASSISTANT_MODEL_TIMEOUT_MS } from "@/lib/assistant-timing";
 import { boundedAssistantHistory, MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
 import { assistantReasoningProfile } from "@/lib/assistant-reasoning";
+import { randomUUID } from "node:crypto";
+import { modelUsageReceipt, type AssistantCallUsage } from "./assistant-usage";
 import {
   buildAssistantModelPrompt,
   resolveAssistantImageTarget,
@@ -31,6 +33,7 @@ type Message = {
   extra_content?: Record<string, unknown>;
 };
 type ChatResponse = {
+  usage?: unknown;
   choices?: Array<{ finish_reason?: string; message?: Partial<Message> & { refusal?: string | null } }>;
   error?: { message?: string; code?: string; type?: string };
 };
@@ -83,6 +86,7 @@ async function callModel(
   signal?: AbortSignal,
   toolChoice: "auto" | "required" | "none" = "auto",
   protocol: { native: boolean; parallel?: boolean } = { native: true },
+  onUsage?: (usage: AssistantCallUsage) => void,
 ): Promise<{ content: string; toolCalls: NativeToolCall[]; replay: Message }> {
   const response = await fetchAssistantModel(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
@@ -100,18 +104,19 @@ async function callModel(
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(ASSISTANT_MODEL_TIMEOUT_MS)]) : AbortSignal.timeout(ASSISTANT_MODEL_TIMEOUT_MS),
   }, auth);
   const result = await response.json().catch(() => { throw new Error(`助手上游返回了无法解析的响应（HTTP ${response.status}），请稍后重试。`); }) as ChatResponse;
+  if (response.ok || result.usage) onUsage?.(modelUsageReceipt(randomUUID(), response.headers.get("x-oneapi-request-id"), result.usage));
   assertAssistantModelNotBlocked(result);
   const protocolError = result.error?.message || "";
   if (!response.ok && response.status === 400 && protocol.native && protocol.parallel !== false &&
       /parallel_tool_calls/i.test(protocolError) && /not.supported|unsupported|unknown.parameter|unrecognized|不支持/i.test(protocolError)) {
     protocol.parallel = false;
-    return callModel(baseUrl, auth, model, messages, signal, toolChoice, protocol);
+    return callModel(baseUrl, auth, model, messages, signal, toolChoice, protocol, onUsage);
   }
   if (!response.ok && response.status === 400 && protocol.native && !messages.some((message) => message.role === "tool") &&
       /(?:tools|tool_choice|parallel_tool_calls|function.calling)/i.test(protocolError) &&
       /not.supported|unsupported|unknown.parameter|unrecognized|不支持/i.test(protocolError)) {
     protocol.native = false;
-    return callModel(baseUrl, auth, model, messages, signal, toolChoice, protocol);
+    return callModel(baseUrl, auth, model, messages, signal, toolChoice, protocol, onUsage);
   }
   if (!response.ok || result.error) {
     if (/context.{0,30}(?:length|window|limit)|maximum.{0,20}tokens|too many tokens|上下文.{0,12}(?:超|长)/i.test(protocolError))
@@ -216,6 +221,7 @@ export async function runTagAgent(
   maxRounds = 8,
   options?: {
     onStep?: (step: AgentStep) => void;
+    onUsage?: (usage: AssistantCallUsage) => void;
     // 兼容旧调用方的单图字段；新调用方可传最多 4 张图。
     image?: string;
     images?: string[];
@@ -252,6 +258,7 @@ export async function runTagAgent(
       accessMode: context.accessMode || "approval",
       goal: context.goal || "",
       goalIteration: context.goalIteration || 0,
+      goalMaxRounds: context.goalMaxRounds,
     } : {}),
     ...(context.localTags?.length ? { localTaggerCandidates: context.localTags.slice(0, 256) } : {}),
   });
@@ -337,7 +344,7 @@ export async function runTagAgent(
   };
 
   for (let round = 0; round < maxRounds && steps.length < maxRounds; round += 1) {
-    const reply = await callModel(baseUrl, auth, model, messages, options?.signal, researchRequired && !steps.length ? "required" : "auto", protocol);
+    const reply = await callModel(baseUrl, auth, model, messages, options?.signal, researchRequired && !steps.length ? "required" : "auto", protocol, options?.onUsage);
     const { content } = reply;
     if (reply.toolCalls.length) {
       messages.push(reply.replay);
@@ -440,7 +447,7 @@ export async function runTagAgent(
       ? "工具调用已达上限，请基于当前需求、图片和已有结果立即输出自然语言提示词的最终 JSON；只使用当前图像模型支持的参数。"
       : "工具调用已达上限，请基于已确认的标签立即输出最终 JSON。",
   });
-  const final = await callModel(baseUrl, auth, model, messages, options?.signal, "none", protocol);
+  const final = await callModel(baseUrl, auth, model, messages, options?.signal, "none", protocol, options?.onUsage);
   if (final.toolCalls.length) throw new Error("工具预算已用尽，但模型没有返回最终建议；本次建议未应用。");
   const decision = parseDecision(final.content);
   return {

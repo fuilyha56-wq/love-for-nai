@@ -1,0 +1,17 @@
+.assistant-round-control,.assistant-round-control *,.assistant-usage-panel,.assistant-usage-panel *{font-family:"Noto Sans SC",sans-serif}
+.assistant-round-control{margin:8px 0 0;padding:0;border:0;min-width:0}
+.assistant-round-control label{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px}
+.assistant-round-control small{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+.assistant-round-control .field{width:80px;min-height:36px;text-align:center}
+.assistant-usage-panel{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card,var(--paper));font-size:10px;line-height:1.7;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.assistant-usage-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;background:transparent;box-shadow:none}
+.assistant-usage-panel button{color:var(--rose);font-size:10px;min-height:28px}
+.assistant-usage-panel button:disabled{opacity:.5}
+.assistant-usage-panel dl{margin:6px 0}
+.assistant-usage-panel dl>div{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.assistant-usage-panel dt{color:var(--muted);flex-shrink:0}
+.assistant-usage-panel dd{margin:0;text-align:right;font-weight:600}
+.assistant-usage-panel details{border-top:1px solid var(--line);padding-top:6px}
+.assistant-usage-panel summary{cursor:pointer;color:var(--muted)}
+.assistant-usage-panel details p,.assistant-usage-note{color:var(--muted);margin:5px 0 0}
+@media(max-width:1023px){.assistant-round-control .field{min-height:44px}.assistant-usage-panel{font-size:11px}.assistant-usage-panel button{min-height:36px}}

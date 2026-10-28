@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentStep } from "@/lib/tag-agent";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import type { AssistantErrorInfo } from "@/lib/assistant-model-error";
+import type { AssistantCallUsage } from "./assistant-usage";
 
 // 助手任务存内存：单容器部署下进程常驻，重启丢失可接受（客户端提示重试）。
 // 用轮询代替一次长连接，避免移动端 WebView 在长等待中掐断请求。
@@ -40,6 +41,9 @@ export type AssistantJob = {
   createdAt: number;
   status: "running" | "done" | "error";
   steps: AgentStep[];
+  usage: AssistantCallUsage[];
+  usageCheckedAt?: number;
+  usageRefresh?: Promise<void>;
   result?: AssistantJobResult;
   message?: string;
   error?: AssistantErrorInfo;
@@ -73,6 +77,7 @@ export function createAssistantJob(userId: number): AssistantJob {
     createdAt: Date.now(),
     status: "running",
     steps: [],
+    usage: [],
   };
   jobs.set(job.id, job);
   return job;

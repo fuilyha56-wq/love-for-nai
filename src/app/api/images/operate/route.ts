@@ -83,8 +83,11 @@ async function handleUpscale(
 ): Promise<Response> {
   const audit = await startRequestAudit({ request, source: "lfn", endpoint: "/api/images/operate", userId: session.userId, username: session.username,
     model: typeof body.upscale_model === "string" ? body.upscale_model : "nai-diffusion-5-curated", operation: "upscale", parameters: body });
+  let credits: ImageCreditCharge | null = null;
+  let refunded = false;
   const finish = async (response: Response, patch: Record<string, unknown> = {}): Promise<Response> => {
-    await audit.finish({ status: response.status, ...patch });
+    const billing = { ...audit.record.billing, ...(patch.billing && typeof patch.billing === "object" ? patch.billing : {}), ...(credits ? { lfnChargedAff: refunded ? 0 : credits.cost } : {}) };
+    await audit.finish({ status: response.status, ...patch, ...(Object.keys(billing).length ? { billing } : {}) });
     return new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) });
   };
   const nativeImage = await resolvedNaiImageUpstream();
@@ -132,7 +135,6 @@ async function handleUpscale(
     samples: 1,
     operation: "upscale",
   };
-  let credits: ImageCreditCharge | null;
   try { credits = nativeImage ? await trySpendImageCredits(session.userId, generation, audit.requestId) : null; }
   catch (error) { const admission = riskAdmissionResponse(error); if (admission) return finish(admission); throw error; }
   if (!credits && (await dailyImagePolicy()).strictApiBilling !== false) return finish(Response.json({ message: nativeImage ? "本站 AFF 或图包余额不足" : "未配置本地计费执行通道" }, { status: nativeImage ? 402 : 503 }));
@@ -146,7 +148,6 @@ async function handleUpscale(
         ? "package"
         : "personal"
     : "newapi";
-  let refunded = false;
   const refund = async () => {
     if (credits && !refunded) {
       refunded = true;
@@ -184,6 +185,7 @@ async function handleUpscale(
       throw error;
     });
     finishGatewayLog(upstream.status);
+    if (payment === "newapi") audit.record.upstreamRequestId = upstream.headers.get("x-oneapi-request-id") || undefined;
     const anlasHeader = upstream.headers.get("x-anlas-cost");
     const anlas = anlasHeader?.trim() ? Number(anlasHeader) : NaN;
     const billing = Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : undefined;
@@ -409,6 +411,10 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
   await audit.finish();
   let recordedAnlas: number | undefined;
   const recordUpstream = async (response: Response): Promise<void> => {
+    const upstreamId = response.headers.get("x-oneapi-request-id");
+    if (payment === "newapi" && upstreamId && /^[a-zA-Z0-9_-]{1,128}$/.test(upstreamId)) {
+      audit.record.billing = { ...audit.record.billing, newApiRequestIds: [...new Set([...(audit.record.billing?.newApiRequestIds || []), upstreamId])] };
+    }
     const header = response.headers.get("x-anlas-cost");
     const amount = header?.trim() ? Number(header) : NaN;
     if (response.ok && Number.isFinite(amount) && amount >= 0) recordedAnlas = (recordedAnlas ?? 0) + amount;

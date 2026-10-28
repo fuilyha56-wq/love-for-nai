@@ -36,6 +36,7 @@ export type RequestAuditSettlement = {
 };
 
 export type RequestAuditBilling = {
+  newApiRequestIds?: string[];
   lfnChargedAff?: number;
   gatewayAnlasCost?: number;
   gatewayUsage?: JsonRecord;

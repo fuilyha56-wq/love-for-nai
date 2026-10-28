@@ -26,6 +26,7 @@ vi.mock("@/lib/assistant-conversations", () => ({
   appendConversationTurn: mocks.appendConversationTurn,
   clearConversation: vi.fn(),
   MODEL_HISTORY_TURNS: 8,
+  updateConversationUsage: vi.fn(),
 }));
 
 function postRequest(route: string, body: Record<string, unknown>) {
@@ -51,6 +52,18 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("image model context in assistant routes", () => {
+  it("accepts custom full-access limits beyond five and rejects out-of-range values before credential lookup", async () => {
+    const route = await import("@/app/api/assistant/tags/route");
+    for (const goalMaxRounds of [0, 101, 2.5, "10"]) {
+      expect((await route.POST(postRequest("tags", { model: "vision-chat", request: "plan", goalMode: true, goal: "blue sky", goalMaxRounds }))).status).toBe(400);
+    }
+    expect(mocks.getChatToken).not.toHaveBeenCalled();
+    const response = await route.POST(postRequest("tags", { model: "vision-chat", request: "review", goalMode: true, accessMode: "full", goal: "blue sky", goalIteration: 10, goalMaxRounds: 10 }));
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(mocks.runTagAgent).toHaveBeenCalled());
+    expect(mocks.runTagAgent.mock.calls[0][3]).toMatchObject({ goalIteration: 10, goalMaxRounds: 10 });
+    expect((await route.POST(postRequest("tags", { model: "vision-chat", request: "review", accessMode: "full", goalIteration: 11, goalMaxRounds: 10 }))).status).toBe(400);
+  });
   it("accepts ten references, rejects eleven and validates prompt context types", async () => {
     const route = await import("@/app/api/assistant/tags/route");
     const images = Array(10).fill("data:image/png;base64,YWJj");

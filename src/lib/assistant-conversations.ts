@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentStep } from "@/lib/tag-agent";
+import type { AssistantCallUsage } from "./assistant-usage";
 import { isImageProviderProtocol, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 
 // 助手对话标签的展示信息（与 Danbooru 校验结果一致）。
@@ -33,6 +34,7 @@ export type ConversationTurn = {
   rejectedTags: string[];
   unverifiedTags: string[];
   steps: AgentStep[];
+  usage?: AssistantCallUsage[];
 };
 
 export type AssistantConversation = {
@@ -162,5 +164,16 @@ export async function appendConversationTurn(
 export async function clearConversation(userId: number): Promise<void> {
   return withLock(async () => {
     await writeConversationFile(userId, { turns: [], tagPool: [] });
+  });
+}
+
+/** Update a delayed bill without recreating a conversation the user has cleared. */
+export async function updateConversationUsage(userId: number, id: string, usage: AssistantCallUsage[]): Promise<void> {
+  return withLock(async () => {
+    const conversation = await readConversationFile(userId);
+    const turn = conversation.turns.find(turn => turn.id === id);
+    if (!turn) return;
+    turn.usage = usage;
+    await writeConversationFile(userId, conversation);
   });
 }

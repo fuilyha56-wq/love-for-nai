@@ -33,6 +33,6 @@ export function ReplicaGenerationFooter({ variant, settings, generating, disable
     {variant === "nlw" && <div className="replica-generation-meta"><span title="账户可用额度"><Diamond size={14} />{balance}</span><span className="replica-generation-meta-spacer" /><span>{count}</span><button type="button" onClick={() => onBatchModeChange(batchMode === "once" ? "sequential" : "once")} title={batchMode === "once" ? "单次请求生成全部图片，点击切换分批" : "每张独立请求，点击切换一次性生成"}>×{count}</button><span className="replica-batch-label">{batchMode === "once" ? "一次性" : "分批"}</span></div>}
     {seedControl}
     {pricingControl}
-    <button type="button" className="replica-run-button" disabled={disabled || generating} onClick={onRun}><Sparkles size={22} /><span>{generating ? progress || "生成中…" : operationLabel}</span>{!generating && cost && <small title="预估费用，以实际账单为准">{cost}</small>}</button>
+    <button type="button" data-studio-generate className="replica-run-button" disabled={disabled || generating} onClick={onRun}><Sparkles size={22} /><span>{generating ? progress || "生成中…" : operationLabel}</span>{!generating && cost && <small title="预估费用，以实际账单为准">{cost}</small>}</button>
   </footer>;
 }

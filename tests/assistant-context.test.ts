@@ -10,6 +10,18 @@ afterEach(() => vi.unstubAllGlobals());
 const call = { id: "call_fixture", type: "function", function: { name: "search_danbooru_tags", arguments: '{"query":"cloud"}' }, extra_content: { google: { thought_signature: "fixture-signature" } } };
 
 describe("assistant context compatibility", () => {
+  it("reports each tool round's usage, including a final filtered response", async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ usage: { prompt_tokens: 100, completion_tokens: 20 }, choices: [{ message: { tool_calls: [call] } }] }, { headers: { "x-oneapi-request-id": "req-first" } }))
+      .mockResolvedValueOnce(Response.json({ usage: { prompt_tokens: 160, completion_tokens: 10 }, choices: [{ finish_reason: "content_filter", message: { content: "" } }] }, { headers: { "x-oneapi-request-id": "req-second" } }));
+    vi.stubGlobal("fetch", fetcher);
+    const onUsage = vi.fn();
+    const { runTagAgent } = await import("@/lib/tag-agent");
+    await expect(runTagAgent("fixture", "model", "cloud", { goalMode: true, goalMaxRounds: 12 }, 2, { onUsage })).rejects.toThrow("拒绝");
+    expect(onUsage).toHaveBeenCalledTimes(2);
+    expect(onUsage.mock.calls[1][0]).toMatchObject({ inputTokens: 160, outputTokens: 10, requestId: "req-second" });
+    const request = JSON.parse(fetcher.mock.calls[0][1].body);
+    expect(JSON.parse(request.messages.at(-1).content).goalMaxRounds).toBe(12);
+  });
   it("bounds complete history turns without reversing or slicing JSON", () => {
     const history = [0, 1, 2, 3].map(index => ({ request: String(index).repeat(4000), answer: "a".repeat(6000) }));
     expect(boundedAssistantHistory(history)).toEqual(history.slice(-2));

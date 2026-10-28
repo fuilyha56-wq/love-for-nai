@@ -16,6 +16,7 @@ export type AssistantImageContext = {
   accessMode?: "approval" | "full";
   goal?: string;
   goalIteration?: number;
+  goalMaxRounds?: number;
   goalRunId?: string;
 };
 

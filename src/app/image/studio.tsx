@@ -105,6 +105,8 @@ import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
 import { AssistantReasoningControl, storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
 import { AssistantAttachments } from "@/app/ui/assistant-attachments";
 import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
+import { AssistantUsagePanel, GoalRoundControl, useAssistantUsage, useGoalRoundLimit } from "@/app/ui/assistant-usage";
+import type { AssistantCallUsage } from "@/lib/assistant-usage";
 import { CreditPricingButton, useCreditPricing } from "@/app/ui/credit-pricing";
 import { formatAff } from "@/lib/credit-pricing";
 import { roundAffAmount } from "@/lib/daily-image-pricing";
@@ -318,12 +320,12 @@ type AssistantSuggestion = {
   };
 };
 type AgentStep = { tool: string; query: string; ok: boolean; summary?: string };
-type GoalAgentRun = { referenceImages?: string[]; id: string; goal: string; accessMode: "approval" | "full"; completedGenerations: number; status: "running" | "complete" | "stopped" | "limit" | "needs-attention" };
-const MAX_GOAL_AGENT_GENERATIONS = 5;
+type GoalAgentRun = { referenceImages?: string[]; id: string; goal: string; accessMode: "approval" | "full"; completedGenerations: number; maxGenerations: number; status: "running" | "complete" | "stopped" | "limit" | "needs-attention" };
 
 // 持久化对话：历史轮次（新→旧）与跨轮次累积的标签池。
 type ConversationTurnUi = {
   id: string;
+  usage?: AssistantCallUsage[];
   request: string;
   createdAt: string;
   message?: string;
@@ -783,6 +785,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [agentInput, setAgentInput] = useState("");
   const [assistantMode, setAssistantMode] = useState<"tags" | "goal">("tags");
   const [autonomyMode, setAutonomyMode] = useState<"approval" | "full">("approval");
+  const [goalMaxRounds, setGoalMaxRounds] = useGoalRoundLimit();
+  const assistantUsage = useAssistantUsage();
+  const restoreAssistantUsage = assistantUsage.restore;
   const [goalRun, setGoalRun] = useState<GoalAgentRun | null>(null);
   const goalRunRef = useRef<GoalAgentRun | null>(null);
   const goalReviewImageRef = useRef<string | null>(null);
@@ -2350,6 +2355,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       .catch(() => undefined);
   }, [signedIn]);
 
+  useEffect(() => {
+    const latest = conversation.turns[0];
+    if (latest?.usage) restoreAssistantUsage(latest.id, latest.usage);
+  }, [conversation.turns, restoreAssistantUsage]);
+
   async function refreshConversation() {
     try {
       const response = await fetch("/api/assistant/tags", { cache: "no-store" });
@@ -2414,7 +2424,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   function inputImagesForAgent(): string[] {
     return [...agentImagesRef.current];
   }
-  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalRunId?: string }) {
+  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalMaxRounds?: number; goalRunId?: string }) {
     await agentImageUploadQueue.current;
     if (!assistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
@@ -2435,6 +2445,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     setAssistantTaskError("");
     setAssistantSuggestion(null);
     setAgentSteps([]);
+    const usageScope = options?.goalRunId || createBrowserRequestId();
+    if (!options?.goalMode) assistantUsage.start(usageScope);
     try {
       // 任务化轮询：避免长连接被移动端 WebView 掐断，同时让检索步骤实时可见。
       const response = await fetch("/api/assistant/tags", {
@@ -2451,15 +2463,19 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           currentPrompt: prompt,
           currentNegativePrompt: negative,
           images: options?.images ?? (options?.image ? [options.image] : inputImagesForAgent()),
-          ...(options?.goalMode ? { goalMode: true, accessMode: options.accessMode || "approval", goal: options.goal || "", goalIteration: options.goalIteration || 0, goalRunId: options.goalRunId } : {}),
+          ...(options?.goalMode ? { goalMode: true, accessMode: options.accessMode || "approval", goal: options.goal || "", goalIteration: options.goalIteration || 0, goalMaxRounds: options.goalMaxRounds, goalRunId: options.goalRunId } : {}),
           image: undefined,
         }),
-        signal: controller.signal,
+        // Keep the already-sent creation request alive to learn its job ID even
+        // if the user stops polling; the server may still incur model charges.
+        signal: AbortSignal.timeout(45_000),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "智能助手调用失败");
       const jobId = String(result.jobId || "");
       if (!jobId) throw new Error("智能助手未返回任务编号");
+      assistantUsage.recordJob(usageScope, jobId, []);
+      if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
       for (let pollCount = 0; pollCount < ASSISTANT_MAX_POLLS; pollCount += 1) {
         await waitForAssistantPoll(ASSISTANT_POLL_INTERVAL_MS, controller.signal);
         const poll = await fetch(
@@ -2469,6 +2485,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         const progress = await poll.json();
         if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
         if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
+        if (Array.isArray(progress.usage)) assistantUsage.recordJob(usageScope, jobId, progress.usage, progress.status);
         if (Array.isArray(progress.steps) && progress.steps.length)
           setAgentSteps(progress.steps);
         if (progress.status === "done") {
@@ -2746,19 +2763,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setNotice("目标 Agent 需要登录并选择可用的 NewAPI 文本模型。");
       return;
     }
-    const current: GoalAgentRun = { id: createBrowserRequestId(), goal, accessMode: autonomyMode, completedGenerations: 0, status: "running" };
+    const current: GoalAgentRun = { id: createBrowserRequestId(), goal, accessMode: autonomyMode, completedGenerations: 0, maxGenerations: goalMaxRounds, status: "running" };
     updateGoalRun(current);
+    assistantUsage.start(current.id);
     if (current.accessMode === "full") setCount(1);
     const referenceImage = source && ["img2img", "inpainting", "edits", "outpainting", "character-reference", "precise-reference", "vibe-transfer"].includes(operation) ? source.data : undefined;
     const referenceImages = agentImagesRef.current.length ? [...agentImagesRef.current] : referenceImage ? [referenceImage] : [];
     current.referenceImages = referenceImages;
     const suggestion = await askTagAssistant("请根据用户目标和当前工作台配置，提出第一轮最有效的提示词与参数建议。此时尚无本次目标的生成结果。", {
-      goalMode: true, accessMode: current.accessMode, goal, goalIteration: 0, goalRunId: current.id,
+      goalMode: true, accessMode: current.accessMode, goal, goalIteration: 0, goalMaxRounds: current.maxGenerations, goalRunId: current.id,
       images: referenceImages,
     });
     const active = goalRunRef.current;
     if (!active || active.id !== current.id || active.status !== "running") return;
-    if (!suggestion) { updateGoalRun({ ...current, status: "needs-attention" }); return; }
+    if (!suggestion) { updateGoalRun({ ...active, status: "needs-attention" }); return; }
     if (current.accessMode === "full") {
       applySuggestionValues(suggestion, false);
       setCount(1);
@@ -2774,13 +2792,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     updateGoalRun(reviewedRun);
     const suggestion = await askTagAssistant(
       `请检查刚生成的结果是否符合目标；若未满足，给出下一轮最小有效修改。当前已完成 ${completedGenerations} 轮生成。`,
-      { goalMode: true, accessMode: current.accessMode, goal: current.goal, goalIteration: completedGenerations, goalRunId: current.id, images: [...(current.referenceImages || []).slice(0, MAX_ASSISTANT_IMAGES - 1), image] },
+      { goalMode: true, accessMode: current.accessMode, goal: current.goal, goalIteration: completedGenerations, goalMaxRounds: current.maxGenerations, goalRunId: current.id, images: [...(current.referenceImages || []).slice(0, MAX_ASSISTANT_IMAGES - 1), image] },
     );
     const active = goalRunRef.current;
     if (!active || active.id !== current.id || active.status !== "running") return;
-    if (!suggestion) { updateGoalRun({ ...reviewedRun, status: "needs-attention" }); return; }
+    if (!suggestion) { updateGoalRun({ ...active, status: "needs-attention" }); return; }
     if (suggestion.goalComplete) {
-      updateGoalRun({ ...reviewedRun, status: "complete" });
+      updateGoalRun({ ...active, status: "complete" });
       setNotice("Agent 评估本轮图像已达到目标。");
       return;
     }
@@ -2788,9 +2806,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setNotice(`Agent 已评估第 ${completedGenerations} 轮结果并提出下一步建议；请自行选择是否应用。`);
       return;
     }
-    if (completedGenerations >= MAX_GOAL_AGENT_GENERATIONS) {
-      updateGoalRun({ ...reviewedRun, status: "limit" });
-      setNotice(`已达到完全访问模式的 ${MAX_GOAL_AGENT_GENERATIONS} 轮上限，保留最后一份建议供你检查。`);
+    if (completedGenerations >= current.maxGenerations) {
+      updateGoalRun({ ...active, status: "limit" });
+      setNotice(`已达到完全访问模式的 ${current.maxGenerations} 轮上限，保留最后一份建议供你检查。`);
       return;
     }
     applySuggestionValues(suggestion, false);
@@ -4004,6 +4022,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         return;
       }
     }
+    const usageGoalId = goalRunRef.current?.status === "running" ? goalRunRef.current.id : undefined;
+    const fetchGoalImage = async (url: string, init: RequestInit) => {
+      const response = await fetch(url, init);
+      if (usageGoalId) assistantUsage.recordImage(usageGoalId, response.headers.get("x-lfn-request-id"));
+      return response;
+    };
     generationInFlight.current = true;
     setGenerating(true);
     setImages([]);
@@ -4182,7 +4206,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         let nextChunk = 0;
         const runChunk = async (chunkIndex: number) => {
           const size = chunkSizes[chunkIndex];
-          const response = await fetch("/api/images/operate", {
+          const response = await fetchGoalImage("/api/images/operate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -4273,7 +4297,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         }
         await addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat());
       } else {
-        const response = await fetch("/api/images/operate", {
+        const response = await fetchGoalImage("/api/images/operate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(base),
@@ -4362,6 +4386,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setBatchProgress("");
       setStreamProgress("");
       setGenerating(false);
+      if (usageGoalId) void assistantUsage.refresh();
       const goalImage = goalReviewImageRef.current;
       goalReviewImageRef.current = null;
       if (goalImage && goalRunRef.current?.status === "running")
@@ -4540,16 +4565,18 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 <button type="button" aria-pressed={autonomyMode === "approval"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("approval")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "approval" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>请求批准（默认）</button>
                 <button type="button" aria-pressed={autonomyMode === "full"} disabled={goalRun?.status === "running" || assistantLoading} onClick={() => setAutonomyMode("full")} className={`rounded-md border px-2 py-2 text-[10px] font-semibold transition ${autonomyMode === "full" ? "border-[var(--rose)] bg-[#f9edef] text-[var(--rose)]" : "border-[var(--line)] text-[var(--muted)]"}`}>完全访问</button>
               </div>
-              <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">{autonomyMode === "approval" ? "每轮生成后 Agent 会评估并提出调整；提示词、标签与参数都由你决定是否应用。" : `LLM 会自动应用调整并继续生成，最多 ${MAX_GOAL_AGENT_GENERATIONS} 轮，每轮 1 张；生成费用由当前账号承担。`}</p>
+              <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">{autonomyMode === "approval" ? "每轮生成后 Agent 会评估并提出调整；提示词、标签与参数都由你决定是否应用。" : `LLM 会自动应用调整并继续生成，最多 ${goalMaxRounds} 轮，每轮 1 张；生成费用由当前账号承担。`}</p>
             </>}
+            {assistantMode === "goal" && autonomyMode === "full" && <GoalRoundControl value={goalMaxRounds} onChange={setGoalMaxRounds} disabled={goalRun?.status === "running" || assistantLoading} />}
             {goalRun && <div className="mt-2 rounded border border-[var(--line)] bg-white p-2.5 text-[10px] leading-4">
-              <div className="flex items-center justify-between gap-2"><b>目标 Agent · 已生成 {goalRun.completedGenerations} 轮</b>{goalRun.status === "running" ? <button type="button" onClick={stopGoalAgent} className="font-semibold text-[var(--rose)]">停止</button> : <button type="button" onClick={() => updateGoalRun(null)} className="font-semibold text-[var(--muted)]">清除</button>}</div>
+              <div className="flex items-center justify-between gap-2"><b>目标 Agent · 已生成 {goalRun.completedGenerations}{goalRun.accessMode === "full" ? ` / ${goalRun.maxGenerations}` : ""} 轮</b>{goalRun.status === "running" ? <button type="button" onClick={stopGoalAgent} className="font-semibold text-[var(--rose)]">停止</button> : <button type="button" onClick={() => updateGoalRun(null)} className="font-semibold text-[var(--muted)]">清除</button>}</div>
               <p className="mt-1 text-[var(--muted)]">{goalRun.status === "running" ? goalRun.accessMode === "full" ? "Agent 正在迭代，生成后的图片会自动送回模型评估。" : "等待建议或下一张结果；所有改动都需要你手动应用。" : goalRun.status === "complete" ? "Agent 判断图像已达到目标。" : goalRun.status === "limit" ? "已达到完全访问轮数上限，最后建议仍可手动应用。" : goalRun.status === "stopped" ? "Agent 已停止。" : "Agent 暂停，请检查当前设置或重新发起目标。"}</p>
             </div>}
             {signedIn && (<>
               <AssistantModelPicker value={assistantModel} options={assistantModels} onChange={setAssistantModel} pending={assistantModelsPending}
                 error={assistantModelsError} disabled={assistantLoading} onRefresh={() => void refreshAssistantModels(new AbortController().signal)} />
               <AssistantReasoningControl model={assistantModel} />
+              <AssistantUsagePanel usage={assistantUsage} goal={assistantMode === "goal" && Boolean(goalRun)} />
             </>)}
             {assistantTaskError && <p role="alert" className="mt-2 rounded border border-[#e2c38c] bg-[#fff8e8] p-2.5 text-[11px] leading-5 text-[#86551c]">{assistantTaskError}</p>}
             {conversationOpen && (conversation.turns.length > 0 || conversation.tagPool.length > 0) && (
@@ -5042,7 +5069,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     generating={generating} disabled={layoutEditorOpen || !model} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
-    count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={() => void runOperation()}
+    count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={handleStudioGenerationClick}
   /> : legacyGenerationFooter;
   function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
     if (nextOperation === "reuse-parameters") {

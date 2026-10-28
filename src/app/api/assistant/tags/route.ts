@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { getChatToken, refreshChatToken, type Session } from "@/lib/newapi";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
-import { MAX_ASSISTANT_IMAGES, MAX_ASSISTANT_IMAGE_BYTES, MAX_ASSISTANT_TOTAL_IMAGE_BYTES } from "@/lib/assistant-limits";
+import { MAX_ASSISTANT_IMAGES, MAX_ASSISTANT_IMAGE_BYTES, MAX_ASSISTANT_TOTAL_IMAGE_BYTES, DEFAULT_GOAL_GENERATIONS, MAX_GOAL_GENERATIONS, validGoalGenerations } from "@/lib/assistant-limits";
+import { refreshAssistantJobUsage } from "@/lib/assistant-usage-billing";
 import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
 import { readCatalogTag } from "@/lib/tag-catalog";
 import { isAssistantChatModel, assistantModelIds } from "@/lib/assistant-models";
@@ -58,6 +59,7 @@ type AssistantPayload = {
   accessMode?: unknown;
   goal?: unknown;
   goalIteration?: unknown;
+  goalMaxRounds?: unknown;
   goalRunId?: unknown;
 };
 type DanbooruTag = { name: string; category: number; post_count: number };
@@ -238,6 +240,7 @@ async function runJob(
       onStep: (step) => {
         job.steps.push(step);
       },
+      onUsage: (usage) => { job.usage.push(usage); },
       images,
       history,
       reasoningEffort: context.reasoningEffort,
@@ -278,6 +281,7 @@ async function runJob(
         .filter((item) => item.result.status === "unavailable")
         .map((item) => item.candidate),
     };
+    await refreshAssistantJobUsage(job, true);
     job.status = "done";
 
     // 落盘本轮对话；失败不影响返回结果（下次对话少一段历史而已）。
@@ -309,12 +313,14 @@ async function runJob(
         rejectedTags: job.result.rejectedTags,
         unverifiedTags: job.result.unverifiedTags,
         steps: job.steps,
+        usage: job.usage,
       };
       await appendConversationTurn(userId, turn);
     } catch {
       // 持久化失败静默处理。
     }
   } catch (error) {
+    await refreshAssistantJobUsage(job, true);
     if (error instanceof AssistantModelBlockedError) job.error = error.info;
     job.message = jobSignal.aborted
       ? "助手处理超过时限，请减少标签数量后重试。"
@@ -369,7 +375,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "Agent 权限模式无效" }, { status: 400 });
   if (body.goalMode === true && (typeof body.goal !== "string" || !body.goal.trim() || body.goal.length > ASSISTANT_INPUT_MAX_LENGTH))
     return NextResponse.json({ message: "目标 Agent 需要不超过 10000 字的明确目标" }, { status: 400 });
-  if (body.goalIteration !== undefined && (typeof body.goalIteration !== "number" || !Number.isInteger(body.goalIteration) || body.goalIteration < 0 || body.goalIteration > 5))
+  if (body.goalMaxRounds !== undefined && !validGoalGenerations(body.goalMaxRounds))
+    return NextResponse.json({ message: `自动生成轮次必须为 1～${MAX_GOAL_GENERATIONS} 的整数` }, { status: 400 });
+  if (body.goalIteration !== undefined && (typeof body.goalIteration !== "number" || !Number.isInteger(body.goalIteration) || body.goalIteration < 0 || body.goalIteration > MAX_GOAL_GENERATIONS ||
+      (body.accessMode === "full" && body.goalIteration > (typeof body.goalMaxRounds === "number" ? body.goalMaxRounds : DEFAULT_GOAL_GENERATIONS))))
     return NextResponse.json({ message: "Agent 轮次超出范围" }, { status: 400 });
   if (body.localTags !== undefined && (
     !Array.isArray(body.localTags) || body.localTags.length > 256 ||
@@ -471,6 +480,7 @@ export async function POST(request: Request) {
           accessMode: body.accessMode === "full" ? "full" as const : "approval" as const,
           goal: String(body.goal),
           goalIteration: typeof body.goalIteration === "number" ? body.goalIteration : 0,
+          goalMaxRounds: typeof body.goalMaxRounds === "number" ? body.goalMaxRounds : DEFAULT_GOAL_GENERATIONS,
           ...(typeof body.goalRunId === "string" ? { goalRunId: body.goalRunId } : {}),
         } : {}),
         ...(Array.isArray(body.localTags) ? { localTags: body.localTags as string[] } : {}),
@@ -513,14 +523,15 @@ export async function GET(request: Request) {
       { message: "任务不存在或已过期，请重新发起" },
       { status: 404 },
     );
+  await refreshAssistantJobUsage(job);
   if (job.status === "running")
-    return NextResponse.json({ status: "running", steps: job.steps });
+    return NextResponse.json({ status: "running", steps: job.steps, usage: job.usage });
   if (job.status === "error")
     return NextResponse.json(
-      { status: "error", message: job.message, error: job.error, steps: job.steps },
+      { status: "error", message: job.message, error: job.error, steps: job.steps, usage: job.usage },
       { status: 200 },
     );
-  return NextResponse.json({ status: "done", steps: job.steps, ...job.result });
+  return NextResponse.json({ status: "done", steps: job.steps, ...job.result, usage: job.usage });
 }
 
 // 清空当前用户的助手对话记录（历史轮次 + 累积标签池）。
