@@ -59,7 +59,7 @@ import { recordIpEvidence } from "@/lib/risk-ip";
 import { isNaiMediumModel, naiUsageModel } from "@/lib/nai-native-request";
 import { imagePricingStrength, isInFreeEnvelope, upscaleAnlasCost } from "@/lib/image-pricing";
 import { isNaiLimitModel } from "@/lib/nai-image-limits";
-import { observeNativeImageCompletion } from "@/lib/nai-stream-completion";
+import { observeNativeImageCompletion, sanitizeNativeImageStream } from "@/lib/nai-stream-completion";
 import { roundAffAmount } from "@/lib/daily-image-pricing";
 import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
@@ -225,13 +225,17 @@ export async function proxyNewApi(
       cache: "no-store",
       signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
     });
-    if (imageUserId != null && upstream.ok) {
+    const protectedUpstream = await safeImageUpstreamResponse(upstream, upstreamPrivacy);
+    const publicUpstream = pathname.endsWith("-stream") && protectedUpstream.ok && /(?:msgpack|octet-stream)/i.test(protectedUpstream.headers.get("content-type") || "")
+      ? sanitizeNativeImageStream(protectedUpstream, upstreamPrivacy)
+      : protectedUpstream;
+    if (imageUserId != null && protectedUpstream.ok) {
       let model = "external-image";
       try { model = String(body instanceof FormData ? body.get("model") || model : typeof body === "string" ? JSON.parse(body).model || model : model); } catch { /* Optional attribution only. */ }
-      const marked = await watermarkImageResponse(upstream, imageUserId, model, { requestId: randomUUID() });
+      const marked = await watermarkImageResponse(publicUpstream, imageUserId, model, { requestId: randomUUID() });
       return withExternalCors(forwardResponse(marked.response));
     }
-    return withExternalCors(forwardResponse(await safeUpstreamErrorResponse(upstream, upstreamPrivacy)));
+    return withExternalCors(forwardResponse(publicUpstream));
   } catch (error) {
     return withExternalCors(Response.json(
       {
@@ -1198,7 +1202,7 @@ export async function proxyNaiNativeWithCredits(
         audit.record.billing = { ...audit.record.billing, lfnChargedAff: actualCost };
         if (audit.record.settlement) Object.assign(audit.record.settlement, { chargedAmount: actualCost, refundedAmount: roundAffAmount(reservedCharge.cost - actualCost), status: produced === reservedCharge.samples ? "succeeded" : produced ? "partially-refunded" : "refunded" });
         await audit.finish({ status: error ? produced ? 206 : 502 : 200, paymentSource: source, generatedSamples: produced, watermarkStatus: markedNative.status(), ...(error ? { error } : {}) });
-      });
+      }, upstreamPrivacy);
       const response = paymentResponse(observed, source);
       return withExternalCors(new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) }));
     }

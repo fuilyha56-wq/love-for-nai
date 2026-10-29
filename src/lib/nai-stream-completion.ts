@@ -1,4 +1,5 @@
 import { decode, encode } from "@msgpack/msgpack";
+import { safeUpstreamMessage, type UpstreamErrorPrivacy } from "./upstream-error";
 
 /** Observe frames once, copying each payload once rather than concatenating on every network chunk. */
 export class NaiStreamCompletion {
@@ -8,8 +9,8 @@ export class NaiStreamCompletion {
   private payloadBytes = 0;
   readonly samples = new Set<number>();
   error?: string;
-  constructor(private expected: number) {}
-  feed(chunk: Uint8Array) {
+  constructor(private expected: number, private privacy: UpstreamErrorPrivacy = {}) {}
+  feed(chunk: Uint8Array, emit?: (frame: Uint8Array) => void) {
     let offset = 0;
     while (offset < chunk.length) {
       if (!this.payload) {
@@ -39,11 +40,14 @@ export class NaiStreamCompletion {
       offset += count;
       if (this.payloadBytes === this.payload.length) {
         const value = decode(this.payload) as Record<string, unknown>;
+        let publicPayload = this.payload;
         if (value && typeof value === "object") {
-          if (value.event_type === "error" || value.error)
-            this.error = String(
-              value.message || value.error || "上游生成失败",
-            ).slice(0, 500);
+          if (value.event_type === "error" || value.error) {
+            this.error = safeUpstreamMessage(value, { ...this.privacy, fallback: "上游生成失败" });
+            // Error frames may carry arbitrary nested headers/configuration.
+            // Return only the protocol error envelope, never that diagnostic object.
+            publicPayload = encode({ event_type: "error", message: this.error });
+          }
           const index = Number(value.samp_ix ?? 0);
           const image = value.image ?? value.data;
           if (
@@ -55,6 +59,12 @@ export class NaiStreamCompletion {
               (typeof image === "string" && image.length > 0))
           )
             this.samples.add(index);
+        }
+        if (emit) {
+          const frame = new Uint8Array(4 + publicPayload.length);
+          new DataView(frame.buffer).setUint32(0, publicPayload.length, false);
+          frame.set(publicPayload, 4);
+          emit(frame);
         }
         this.headerBytes = 0;
         this.payload = null;
@@ -81,49 +91,55 @@ export function observeNativeImageCompletion(
   response: Response,
   expected: number,
   onComplete: (result: { samples: number; error?: string }) => Promise<void>,
+  privacy: UpstreamErrorPrivacy = {},
 ): Response {
   if (!response.body) throw new Error("上游响应没有图片流");
   const reader = response.body.getReader(),
-    observer = new NaiStreamCompletion(expected);
+    observer = new NaiStreamCompletion(expected, privacy);
   let cancelled = false,
     completion: Promise<void> | undefined;
   const finish = (error?: string) => {
-    if (error) observer.error = error;
+    if (error) observer.error = safeUpstreamMessage(error, privacy);
     return (completion ??= onComplete(observer.result()));
   };
   const stream = new ReadableStream<Uint8Array>({
     async pull(controller) {
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          const result = observer.result();
-          await finish();
-          if (!cancelled) {
-            if (result.error && !observer.error) {
-              const message = encode({
-                event_type: "error",
-                message: result.error,
-              });
-              const frame = new Uint8Array(4 + message.length);
-              new DataView(frame.buffer).setUint32(0, message.length, false);
-              frame.set(message, 4);
-              controller.enqueue(frame);
+        // A network chunk can contain only part of a frame. Keep reading until
+        // there is a complete public frame instead of leaving the consumer waiting.
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            const result = observer.result();
+            await finish();
+            if (!cancelled) {
+              if (result.error && !observer.error) {
+                const message = encode({
+                  event_type: "error",
+                  message: result.error,
+                });
+                const frame = new Uint8Array(4 + message.length);
+                new DataView(frame.buffer).setUint32(0, message.length, false);
+                frame.set(message, 4);
+                controller.enqueue(frame);
+              }
+              controller.close();
             }
-            controller.close();
+            reader.releaseLock();
+            return;
           }
-          reader.releaseLock();
-          return;
+          let emitted = false;
+          observer.feed(value, (frame) => { if (!cancelled) { emitted = true; controller.enqueue(frame); } });
+          if (emitted || cancelled) return;
         }
-        observer.feed(value);
-        if (!cancelled) controller.enqueue(value);
       } catch (error) {
         const message =
-          error instanceof Error ? error.message : "上游图片流读取失败";
+          safeUpstreamMessage(error, { ...privacy, fallback: "上游图片流读取失败" });
         await reader.cancel().catch(() => undefined);
         await finish(message).catch((failure) =>
           console.error("[lfn] 原生流结算失败", failure),
         );
-        if (!cancelled) controller.error(error);
+        if (!cancelled) controller.error(new Error(message));
       }
     },
     async cancel() {
@@ -138,7 +154,7 @@ export function observeNativeImageCompletion(
         }
         await finish();
       } catch (error) {
-        await finish(error instanceof Error ? error.message : "上游流中断");
+        await finish(safeUpstreamMessage(error, { ...privacy, fallback: "上游流中断" }));
       } finally {
         try {
           reader.releaseLock();
@@ -155,4 +171,9 @@ export function observeNativeImageCompletion(
     statusText: response.statusText,
     headers,
   });
+}
+
+/** The transparent fallback has no local charge to settle, but shares frame privacy. */
+export function sanitizeNativeImageStream(response: Response, privacy: UpstreamErrorPrivacy): Response {
+  return observeNativeImageCompletion(response, 0, async () => {}, privacy);
 }
