@@ -54,6 +54,7 @@ export function PopupSelect({
   id?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -73,10 +74,8 @@ export function PopupSelect({
             .includes(query.trim().toLowerCase()),
         )
       : options;
-  const selectedIndex = Math.max(
-    0,
-    visible.findIndex((option) => option.value === value),
-  );
+  const firstEnabledIndex = visible.findIndex((option) => !option.disabled);
+  const selectedIndex = visible.findIndex((option) => option.value === value && !option.disabled);
 
   const positionMenu = useCallback(() => {
     const trigger = rootRef.current?.getBoundingClientRect();
@@ -168,12 +167,14 @@ export function PopupSelect({
     };
     window.addEventListener("scroll", onScroll, true);
     window.visualViewport?.addEventListener("resize", positionMenu);
+    window.visualViewport?.addEventListener("scroll", positionMenu);
     return () => {
       document.removeEventListener("pointerdown", close);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("resize", positionMenu);
       window.removeEventListener("scroll", onScroll, true);
       window.visualViewport?.removeEventListener("resize", positionMenu);
+      window.visualViewport?.removeEventListener("scroll", positionMenu);
       cancelAnimationFrame(frame);
     };
   }, [open, positionMenu]);
@@ -187,7 +188,7 @@ export function PopupSelect({
   }
 
   function resetActiveIndex() {
-    setActiveIndex(selectedIndex);
+    setActiveIndex(selectedIndex < 0 ? firstEnabledIndex : selectedIndex);
   }
 
   function moveActive(direction: number) {
@@ -218,12 +219,12 @@ export function PopupSelect({
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       moveActive(-1);
-    } else if (event.key === "Home") {
+    } else if (event.key === "Home" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(Math.max(0, visible.findIndex(option => !option.disabled)));
-    } else if (event.key === "End") {
+      setActiveIndex(firstEnabledIndex);
+    } else if (event.key === "End" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(Math.max(0, visible.findLastIndex(option => !option.disabled)));
+      setActiveIndex(visible.findLastIndex(option => !option.disabled));
     } else if (event.key === "Enter" && visible[activeIndex]) {
       event.preventDefault();
       select(visible[activeIndex]);
@@ -244,7 +245,10 @@ export function PopupSelect({
         aria-expanded={open}
         disabled={disabled}
         onClick={() => {
-          if (!open) positionMenu();
+          if (!open) {
+            setPortalTarget(rootRef.current?.closest("dialog[open]") || document.body);
+            positionMenu();
+          }
           setOpen((current) => !current);
           setQuery("");
           resetActiveIndex();
@@ -253,6 +257,7 @@ export function PopupSelect({
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           if (!options.length) return;
           event.preventDefault();
+          setPortalTarget(rootRef.current?.closest("dialog[open]") || document.body);
           positionMenu();
           setOpen(true);
           setQuery("");
@@ -329,7 +334,7 @@ export function PopupSelect({
               )}
             </div>
           </div>,
-          document.body,
+          portalTarget || document.body,
         )}
     </div>
   );

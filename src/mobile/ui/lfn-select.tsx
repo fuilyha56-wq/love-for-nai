@@ -67,6 +67,7 @@ export function LfnSelect({
         id={id}
         value={selected}
         options={options}
+        menuMinWidth={160}
         disabled={disabled}
         ariaLabel={props["aria-label"] || props.title || name || "选择选项"}
         onChange={(next) => {

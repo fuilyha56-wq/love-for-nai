@@ -42,7 +42,7 @@
 .token-quota-input-wrap .field { width: 100%; min-width: 0; }
 .token-quota-input-wrap .field:disabled { visibility: hidden; pointer-events: none; }
 
-@keyframes settings-section-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes settings-section-enter { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 760px) {
   .settings-header { min-height: 60px; padding: 10px 16px; }
   .settings-brand span { display: none; }

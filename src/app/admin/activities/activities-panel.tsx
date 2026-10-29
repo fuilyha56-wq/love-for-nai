@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 import { clientUuid } from "@/lib/client-uuid";
+import { LfnSelect } from "@/app/ui/lfn-select";
 import { LfnSwitch } from "@/app/ui/lfn-switch";
 import { LfnDateInput } from "@/app/ui/lfn-date-input";
 import { lfnConfirm } from "@/app/ui/lfn-dialog";
@@ -536,11 +537,11 @@ export default function ActivitiesPanel() {
                     {numberField("活动投稿奖励总次数上限", "submissionRewardLimit")}
                     <label className="block text-xs font-semibold">
                       周榜统计指标
-                      <select className="field mt-1.5 w-full p-2.5" value={draft.weeklyMetric || "likes"} onChange={(event) => edit({ weeklyMetric: event.target.value as CreatorRewardCampaign["weeklyMetric"] })}>
+                      <LfnSelect aria-label="周榜统计指标" className="field mt-1.5 w-full p-2.5" value={draft.weeklyMetric || "likes"} onChange={(event) => edit({ weeklyMetric: event.target.value as CreatorRewardCampaign["weeklyMetric"] })}>
                         <option value="likes">点赞数</option>
                         <option value="downloads">下载数</option>
                         <option value="uses">导入使用数</option>
-                      </select>
+                      </LfnSelect>
                     </label>
                     {numberField("周榜最低指标值", "minWeeklyMetric")}
                   </div>

@@ -87,17 +87,20 @@ export function useAssistantConversations(signedIn: boolean) {
   }, [begin, commit, end]);
 
   useEffect(() => {
+    const generationRef = generation;
+    const effectControllers = controllers.current;
+    const effectPendingTokens = pendingTokens.current;
     mounted.current = true;
     let alive = true;
     void Promise.resolve().then(() => {
       if (!alive) return;
       if (signedIn) void refresh();
-      else { generation.current++; ownerKey.current = null; active.current = "default"; setActiveId("default"); setSessions([]); setOwnerId(null); setError(""); }
+      else { generation.current++; ownerKey.current = null; active.current = "default"; setActiveId("default"); setSessions([]); setOwnerId(null); setPending(false); setError(""); }
     });
     return () => {
-      alive = false; mounted.current = false; generation.current++;
-      for (const controller of controllers.current) controller.abort();
-      controllers.current.clear(); pendingTokens.current.clear();
+      alive = false; mounted.current = false; generationRef.current++;
+      for (const controller of effectControllers) controller.abort();
+      effectControllers.clear(); effectPendingTokens.clear();
     };
   }, [signedIn, refresh]);
 

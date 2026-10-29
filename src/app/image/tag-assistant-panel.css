@@ -1,4 +1,4 @@
-.tag-assistant-panel,.tag-assistant-panel *,.assistant-model-menu,.assistant-model-menu *{box-sizing:border-box;font-family:"Noto Sans SC",sans-serif}
+.tag-assistant-panel,.tag-assistant-panel *,.assistant-model-menu,.assistant-model-menu *{box-sizing:border-box;font-family:var(--font-sans)}
 .tag-assistant-panel{position:relative;isolation:isolate;display:grid;grid-template-rows:auto minmax(0,1fr) auto;width:100%;height:100%;min-width:0;min-height:0;margin:0;padding:0;border:0;overflow:hidden;background:var(--panel,var(--paper));color:var(--ink);font-size:12px;line-height:1.65;container-type:size}
 .tag-assistant-panel button{cursor:pointer;font:inherit;color:inherit}
 .tag-assistant-panel button:disabled{cursor:default;opacity:.42}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { GenerationParameters } from "@/lib/history";
 import { listLocalImageHistory } from "@/lib/local-image-history";
 import { localStudioHistory, remoteStudioHistory } from "@/lib/studio-history";
@@ -33,10 +33,11 @@ async function historyOwnerScope(signal: AbortSignal) {
   return value.scope;
 }
 
-export function useGalleryHistory() {
+export function useGalleryHistory(onIdentityChange?: () => void) {
   const [revision, setRevision] = useState(0);
   const [identityRevision, setIdentityRevision] = useState(0);
   const identityScopeRef = useRef<string | null>(null);
+  const notifyIdentityChanged = useEffectEvent(() => onIdentityChange?.());
   const [state, setState] = useState<{ items: GalleryHistoryImage[]; loading: boolean; error: string; warning: string }>({ items: [], loading: true, error: "", warning: "" });
 
   useEffect(() => {
@@ -48,9 +49,11 @@ export function useGalleryHistory() {
       if (!alive || controller.signal.aborted) return;
       const previous = identityScopeRef.current;
       identityScopeRef.current = scope;
-      if (force || (previous !== null && previous !== scope)) setIdentityRevision(value => value + 1);
+      if (force || (previous !== null && previous !== scope)) {
+        setIdentityRevision(value => value + 1);
+        notifyIdentityChanged();
+      }
     };
-    setState({ items: [], loading: true, error: "", warning: "" });
     void (async () => {
       try {
         const beforeScope = await historyOwnerScope(controller.signal);
@@ -98,5 +101,5 @@ export function useGalleryHistory() {
     return () => { alive = false; controller.abort(); window.removeEventListener("focus", verifyOwner); document.removeEventListener("visibilitychange", verifyOwner); urls.forEach(url => URL.revokeObjectURL(url)); };
   }, [revision]);
 
-  return { ...state, identityRevision, refresh: () => setRevision(value => value + 1) };
+  return { ...state, identityRevision, refresh: () => { setState({ items: [], loading: true, error: "", warning: "" }); setRevision(value => value + 1); } };
 }

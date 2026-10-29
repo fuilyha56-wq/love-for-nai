@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useEffectEvent, useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, History, Images, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
 import { useGalleryHistory, type GalleryHistoryImage } from "./use-gallery-history";
 import styles from "./gallery-history-field.module.css";
@@ -17,7 +17,6 @@ export function GalleryHistoryField({ historyId, file, title, disabled, onSelect
   onSelect: (image: GalleryHistoryImage) => void;
   onClear: () => void;
 }) {
-  const history = useGalleryHistory();
   const searchId = useId();
   const [browsing, setBrowsing] = useState(!historyId && !file);
   const [query, setQuery] = useState("");
@@ -25,18 +24,19 @@ export function GalleryHistoryField({ historyId, file, title, disabled, onSelect
   const [page, setPage] = useState(1);
   const [candidate, setCandidate] = useState("");
   const [filePreview, setFilePreview] = useState("");
-  const clearForOwnerChange = useEffectEvent(() => { onClear(); setCandidate(""); setBrowsing(true); });
-  useEffect(() => { if (history.identityRevision > 0) clearForOwnerChange(); }, [history.identityRevision]);
+  const history = useGalleryHistory(() => { onClear(); setCandidate(""); setBrowsing(true); });
   useEffect(() => {
-    if (!file) { setFilePreview(""); return; }
+    if (!file) return;
     const url = URL.createObjectURL(file);
+    // The URL belongs to the committed file lifecycle and must be revoked on cleanup.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setFilePreview(url);
     return () => URL.revokeObjectURL(url);
   }, [file]);
   const selected = history.items.find(item => historyId ? item.historyId === historyId : file && item.file === file);
   const missingSelection = Boolean(historyId && !history.loading && !history.error && !selected);
   const showBrowser = browsing || (!historyId && !file) || missingSelection;
-  const preview = selected?.thumbnail || (historyId ? `/api/history/${encodeURIComponent(historyId)}/image?variant=thumbnail` : filePreview);
+  const preview = selected?.thumbnail || (historyId ? `/api/history/${encodeURIComponent(historyId)}/image?variant=thumbnail` : file ? filePreview : "");
   const filtered = history.items.filter(item => (origin === "all" || item.origin === origin) && `${item.prompt} ${item.model} ${dateLabel(item.createdAt)}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, pages);

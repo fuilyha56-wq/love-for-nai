@@ -1,4 +1,4 @@
-.assistant-round-control,.assistant-round-control *,.assistant-usage-panel,.assistant-usage-panel *{font-family:"Noto Sans SC",sans-serif}
+.assistant-round-control,.assistant-round-control *,.assistant-usage-panel,.assistant-usage-panel *{font-family:var(--font-sans)}
 .assistant-round-control{margin:8px 0 0;padding:0;border:0;min-width:0}
 .assistant-round-control label{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px}
 .assistant-round-control small{display:block;color:var(--muted);font-size:10px;margin-top:3px}

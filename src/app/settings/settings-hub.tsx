@@ -24,7 +24,8 @@ function subscribeHash(listener: () => void) {
 }
 
 export default function SettingsHub() {
-  const active = useSyncExternalStore(subscribeHash, () => settingsSectionForHash(window.location.hash), () => "appearance" as SettingsSection);
+  const hash = useSyncExternalStore(subscribeHash, () => window.location.hash, () => "");
+  const active: SettingsSection = settingsSectionForHash(hash);
   const navigation = useRef<HTMLElement>(null);
   const current = sections.find((item) => item.id === active)!;
   useEffect(() => {
@@ -38,7 +39,7 @@ export default function SettingsHub() {
     }
     const timer = window.setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" }), 100);
     return () => window.clearTimeout(timer);
-  }, [active]);
+  }, [active, hash]);
 
   return <main className="settings-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
     <header className="settings-header">

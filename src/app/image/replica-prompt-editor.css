@@ -36,7 +36,7 @@
 .replica-prompt[data-variant="nlw"] .replica-preset-button {width:40px;height:40px}
 .replica-prompt[data-variant="nlw"] .replica-preset-button.quality.is-enabled {color:var(--rp-quality);background:color-mix(in srgb, var(--rose) 8%, var(--surface))}
 .replica-prompt[data-variant="nlw"] .replica-preset-button.uc.is-enabled {color:var(--rp-uc);background:color-mix(in srgb, var(--rose) 8%, var(--surface))}
-.replica-prompt[data-variant="nlw"] .replica-prompt-footer {display:flex;align-items:center;gap:4px;min-height:40px;flex-wrap:nowrap;margin-top:3px}
+.replica-prompt[data-variant="nlw"] .replica-prompt-footer {display:flex;align-items:center;gap:4px;min-height:40px;flex-wrap:wrap;margin-top:3px}
 .replica-prompt[data-variant="nlw"] .replica-prompt-footer>button {min-width:32px;min-height:32px}
 .replica-prompt[data-variant="nlw"] .replica-transparent-toggle {padding:5px 10px;border-radius:20px;background:var(--surface);font-size:11px;white-space:nowrap}
 .replica-prompt[data-variant="nlw"] .replica-transparent-toggle[aria-pressed="true"] {background:color-mix(in srgb, var(--rose) 12%, var(--surface))}
@@ -94,7 +94,9 @@
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-nai-editor-tools>button {width:30px;height:30px}
 .replica-prompt:is([data-variant="nai"],[data-variant="nlw"]) .replica-nai-editor-tools>.replica-prompt-tag-count {margin-left:auto;width:auto;font-size:11px;white-space:nowrap}
 .replica-prompt[data-variant="nlw"] {container-type:inline-size;container-name:replica-prompt}
-@container replica-prompt (max-width:300px) {
+@container replica-prompt (max-width:420px) {
+  .replica-prompt[data-variant="nlw"] .replica-prompt-toolbar {flex-wrap:wrap}
+  .replica-prompt[data-variant="nlw"] .replica-prompt-tabs {flex:1 0 100%}
   .replica-prompt[data-variant="nlw"] .replica-prompt-footer {gap:1px}
   .replica-prompt[data-variant="nlw"] .replica-prompt-footer>button {min-width:26px;min-height:30px}
   .replica-prompt[data-variant="nlw"] .replica-transparent-toggle {font-size:10px;padding:4px 6px}

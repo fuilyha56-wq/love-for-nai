@@ -140,8 +140,14 @@ export default function AdminPage() {
   const [sessionFocusUserId, setSessionFocusUserId] = useState<number | null>(null);
   const [modules, setModules] = useState<AdminModule[]>([]);
   const [capabilities, setCapabilities] = useState<PlatformCapabilities | null>(null);
-  const navigateTab = (id: Tab) => {
-    if (!window.dispatchEvent(new Event("platform-before-navigate", { cancelable: true }))) return;
+  const navigateTab = async (id: Tab) => {
+    if (id === tab) return;
+    const event = new CustomEvent("platform-before-navigate", {
+      cancelable: true,
+      detail: { confirmations: [] as Promise<boolean>[] },
+    });
+    if (!window.dispatchEvent(event)) return;
+    if ((await Promise.all(event.detail.confirmations)).some((confirmed) => !confirmed)) return;
     setTab(id);
     window.history.replaceState(null, "", `/admin?tab=${id}`);
     setMessage("");

@@ -14,10 +14,12 @@ export function useComicProjects(owner: string) {
   const pendingWrites = useRef(0);
   const refresh = useCallback(async () => { if (pendingWrites.current > 0) return; const token = ++revision.current; try { const items = await listComicProjects(owner); if (token === revision.current && pendingWrites.current === 0) { setProjects(items); setLoadedOwner(owner); setError(""); setReady(true); } } catch (failure) { if (token === revision.current) { setProjects([]); setLoadedOwner(owner); setError(failure instanceof Error ? failure.message : "无法读取分镜。"); setReady(true); } } }, [owner]);
   useEffect(() => {
-    void Promise.resolve().then(() => { setActiveId(null); return refresh(); }); const focus = () => void refresh(); const event = (value: Event) => { if ((value as CustomEvent).detail === owner) void refresh(); };
+    const revisionRef = revision;
+    let alive = true;
+    void Promise.resolve().then(() => { if (!alive) return; setActiveId(null); return refresh(); }); const focus = () => void refresh(); const event = (value: Event) => { if ((value as CustomEvent).detail === owner) void refresh(); };
     window.addEventListener("focus", focus); window.addEventListener("lfn-comic-updated", event);
     const channel = typeof BroadcastChannel === "undefined" ? null : new BroadcastChannel("lfn-comic-updates"); if (channel) channel.onmessage = (message) => { if (message.data === owner) void refresh(); };
-    return () => { revision.current++; window.removeEventListener("focus", focus); window.removeEventListener("lfn-comic-updated", event); channel?.close(); };
+    return () => { alive = false; revisionRef.current++; window.removeEventListener("focus", focus); window.removeEventListener("lfn-comic-updated", event); channel?.close(); };
   }, [owner, refresh]);
   const save = useCallback((project: ComicProject) => {
     setProjects((items) => [project, ...items.filter((item) => item.id !== project.id)]);

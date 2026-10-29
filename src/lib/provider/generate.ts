@@ -12,11 +12,12 @@ import { safeProviderFetch } from "./http";
 import { providerAllowsModel } from "./models";
 import { generateNovelaiImage } from "./novelai";
 import { getNovelaiKey, getProvider } from "./store";
-import { ProviderInputError, validateModelId } from "./validation";
+import { validateModelId } from "./validation";
 import { resolveProviderImageProtocol } from "@/lib/image-model-capabilities";
 import { withModelConcurrencySlot } from "@/lib/model-concurrency";
 import { handleImageModelGeneration } from "./image-generation";
 import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 
 const nativeOperations = new Set(["generate", "img2img", "inpainting", "edits", "outpainting", "vibe-transfer", "character-reference", "precise-reference"]);
 
@@ -32,9 +33,14 @@ export async function handlePersonalProviderGeneration(request: Request, session
       if (!(await isNaiModelEnabled(model))) return NextResponse.json({ message: "该 NAI 模型已被管理员停用" }, { status: 403 });
     }
     catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "模型 ID 无效" }, { status: 400 }); }
-    if (!await providerAllowsModel(session.userId, provider, model)) return NextResponse.json({ message: "该模型未在此第三方 API 的模型列表中" }, { status: 400 });
+    try {
+      if (!await providerAllowsModel(session.userId, provider, model)) return NextResponse.json({ message: "该模型未在此第三方 API 的模型列表中" }, { status: 400 });
+    } catch (error) {
+      return NextResponse.json({ message: safeUpstreamMessage(error, { secrets: [provider.apiKey], urls: [provider.baseUrl], fallback: "无法读取第三方 API 模型列表" }) }, { status: 502 });
+    }
     return handleImageModelGeneration(request, session, { ...body, model }, {
       apiKey: provider.apiKey,
+      upstreamUrl: provider.baseUrl,
       protocol: resolveProviderImageProtocol(provider.protocol, provider.baseUrl),
       paymentSource: "personal-key",
       rateChecked: true,
@@ -89,7 +95,7 @@ export async function handlePersonalProviderGeneration(request: Request, session
     await audit.finish({ historyIds, status: 200, paymentSource: "personal-key", watermarkStatus: marked.status });
     return NextResponse.json({ images, image: images[0], historyIds, requestId: audit.requestId, usage, payment: "personal-key", paymentSource: "personal-key", aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": "personal-key" }) });
   } catch (error) {
-    const message = error instanceof ProviderInputError ? error.message : error instanceof Error ? error.message : "个人 API 生图失败";
+    const message = safeUpstreamMessage(error, { secrets: [key], urls: ["https://image.novelai.net"], fallback: "个人 API 生图失败" });
     await audit.finish({ status: images.length ? 207 : 502, error: message });
     return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, requestId: audit.requestId, ...(images.length ? { images, image: images[0], partial: true } : {}) }, { status: images.length ? 207 : 502, headers: audit.responseHeaders() });
   }

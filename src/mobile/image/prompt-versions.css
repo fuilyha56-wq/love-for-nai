@@ -1,6 +1,6 @@
 .mobile-prompt-history-trigger { display:inline-grid; place-items:center; width:26px; height:26px; border:1px solid var(--line); border-radius:4px; color:var(--muted); background:var(--panel); }
 .mobile-prompt-history-trigger:hover { color:var(--rose); border-color:var(--rose); }
-.mobile-prompt-versions-backdrop { position:fixed; inset:0; z-index:46000; display:flex; align-items:center; justify-content:center; padding:24px; background:#161b225e; backdrop-filter:blur(3px); }
+.mobile-prompt-versions-backdrop { position:fixed; left:0; right:0; top:var(--lfn-viewport-top,0px); height:var(--lfn-viewport-height,100dvh); z-index:46000; display:flex; align-items:center; justify-content:center; padding:24px; background:#161b225e; backdrop-filter:blur(3px); }
 .mobile-prompt-versions-dialog { display:flex; flex-direction:column; width:min(980px,100%); max-height:min(800px,90dvh); border:1px solid var(--line); border-radius:16px; background:var(--panel); color:var(--ink); box-shadow:0 20px 80px #0003; overflow:hidden; outline:none; }
 .mobile-prompt-versions-dialog > header { display:flex; align-items:flex-start; justify-content:space-between; gap:18px; padding:20px; border-bottom:1px solid var(--line); }
 .mobile-prompt-versions-dialog h2 { margin:0 0 6px; font-size:20px; font-weight:700; }
@@ -25,7 +25,7 @@
 .mobile-prompt-versions-empty { color:var(--muted); font-size:13px; padding:20px 8px; line-height:1.8; }
 @media(max-width:1023px) {
   .mobile-prompt-versions-backdrop { padding:12px; align-items:flex-end; }
-  .mobile-prompt-versions-dialog { max-height:calc(100dvh - 24px); width:100%; }
+  .mobile-prompt-versions-dialog { max-height:calc(var(--lfn-viewport-height,100dvh) - 24px); width:100%; }
   .mobile-prompt-versions-dialog > header { padding:16px; }
   .mobile-prompt-versions-dialog header button { min-width:44px; height:44px; }
   .mobile-prompt-versions-body { display:flex; flex-direction:column; overflow:auto; }

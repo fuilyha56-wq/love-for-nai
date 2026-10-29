@@ -3,7 +3,7 @@
 .credit-pricing-trigger:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
 .credit-pricing-trigger.credit-pricing-summary { display: block; border-color: transparent; text-align: right; padding: 2px 5px; font-size: 10px; line-height: 1.6; }
 .credit-pricing-summary > small { display: block; color: var(--rose); font-size: 10px; }
-.credit-pricing-backdrop { position: fixed; inset: 0; z-index: 260; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 24px; background: #11182766; font-family: "Noto Sans SC", sans-serif; color: var(--ink, #182435); }
+.credit-pricing-backdrop { position: fixed; inset: 0; z-index: 30000; display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; padding: 24px; background: #11182766; font-family: var(--font-sans); color: var(--ink, #182435); }
 .credit-pricing-dialog { width: min(920px, 100%); max-width: 100%; min-width: 0; max-height: min(90dvh, 100%); display: flex; flex-direction: column; min-height: 0; background: var(--panel, #fffefa); border: 1px solid var(--line, #dedbd5); border-radius: 16px; box-shadow: 0 20px 70px #10182633; text-align: left; }
 .credit-pricing-dialog > header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--line); }
 .credit-pricing-dialog header span { font-size: 11px; color: var(--rose); }

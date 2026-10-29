@@ -10,6 +10,7 @@ import { userCanGenerateWithNewApiModel } from "./newapi-models";
 import { validateModelId } from "./validation";
 import { checkImageRateLimit } from "@/lib/image-request";
 import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 
 /** Non-NAI models use the account's actual upstream protocol and never spend NAI AFF packages. */
 export async function handleNewApiImageModelGeneration(request: Request, session: LfnSession, body: Record<string, unknown>, saveToHistory = true): Promise<NextResponse> {
@@ -26,6 +27,7 @@ export async function handleNewApiImageModelGeneration(request: Request, session
     const baseUrl = await resolvedNewApiBaseUrl();
     return handleImageModelGeneration(request, session, { ...body, model }, {
       apiKey: key,
+      upstreamUrl: baseUrl,
       protocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto",
       paymentSource: "newapi",
       rateChecked: true,
@@ -39,5 +41,5 @@ export async function handleNewApiImageModelGeneration(request: Request, session
         } catch (error) { finishLog(0); throw error; }
       },
     });
-  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "无法验证模型来源" }, { status: 502 }); }
+  } catch (error) { return NextResponse.json({ message: safeUpstreamMessage(error, { fallback: "无法验证模型来源" }) }, { status: 502 }); }
 }

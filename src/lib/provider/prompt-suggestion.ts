@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { checkImageRateLimit } from "@/lib/image-request";
-import { resolveAssistantSource, AssistantSourceError } from "@/lib/assistant-source";
+import { resolveAssistantSource, AssistantSourceError, type AssistantSource } from "@/lib/assistant-source";
 import { isImageProviderProtocol, isKnownImageModel } from "@/lib/image-model-capabilities";
 import { runImagePromptSuggestion } from "@/lib/image-prompt-suggestion";
 import { inlineRaster } from "@/lib/image-transport";
 import type { LfnSession } from "@/lib/session";
 import { validateModelId } from "./validation";
 import { resolveAssistantReasoning } from "@/lib/assistant-reasoning";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 
 export async function handleNaturalImagePromptSuggestion(request: Request, session: LfnSession, body: Record<string, unknown>): Promise<NextResponse> {
   const rate = checkImageRateLimit(request, `session:${session.userId}`);
@@ -26,8 +27,9 @@ export async function handleNaturalImagePromptSuggestion(request: Request, sessi
     if (images.length > 4) throw new Error("最多使用 4 张提示词建议参考图");
     images = images.map((image) => { const raster = inlineRaster(image); return `data:${raster.mime};base64,${raster.data}`; });
   } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议参数无效" }, { status: 400 }); }
+  let source: AssistantSource | undefined;
   try {
-    const source = await resolveAssistantSource(session, chatModel, body.assistantProviderId, body.assistantGroup);
+    source = await resolveAssistantSource(session, chatModel, body.assistantProviderId, body.assistantGroup);
     return NextResponse.json(await runImagePromptSuggestion({ ...source, chatModel, reasoningEffort, imageModel, modelProtocol: isImageProviderProtocol(body.imageProtocol) ? body.imageProtocol : "auto", prompt: body.prompt as string, images, signal: request.signal }));
-  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "提示词建议失败" }, { status: error instanceof AssistantSourceError ? 400 : 502 }); }
+  } catch (error) { return NextResponse.json({ message: safeUpstreamMessage(error, { secrets: source ? [source.key] : [], urls: source ? [source.baseUrl] : [], fallback: "提示词建议失败" }) }, { status: error instanceof AssistantSourceError ? 400 : 502 }); }
 }

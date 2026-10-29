@@ -1,6 +1,7 @@
 import { resolvedNewApiBaseUrl, userHeaders, type Session } from "@/lib/newapi";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 
 export type AvailableModel = { id: string; kind: "图像模型" | "助手模型"; groups?: string[] };
 
@@ -31,9 +32,10 @@ function inspect(value: unknown, into: Map<string, boolean>): void {
 export async function loadNewApiModels(session: Session, includeGroups = false): Promise<AvailableModel[]> {
   const base = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
-  const response = await fetch(`${base}/api/user/models`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
-  const payload = await response.json() as { success?: boolean; message?: string; data?: unknown };
-  if (!response.ok || payload.success === false) throw new Error(payload.message || "无法读取可用模型");
+  const privacy = { secrets: [session.accessToken || "", session.systemToken || "", session.upstreamCookie || ""], urls: [base], fallback: "无法读取可用模型" };
+  const response = await fetch(`${base}/api/user/models`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) }).catch((error) => { throw new Error(safeUpstreamMessage(error, privacy)); });
+  const payload = await response.json().catch(() => { throw new Error("模型列表返回格式无效，请稍后重试"); }) as { success?: boolean; message?: string; data?: unknown };
+  if (!response.ok || payload.success === false) throw new Error(safeUpstreamMessage(payload.message, privacy));
   const models = new Map<string, boolean>();
   inspect(payload.data ?? payload, models);
   const groups = new Map<string, string[]>();

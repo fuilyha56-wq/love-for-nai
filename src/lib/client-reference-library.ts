@@ -12,7 +12,9 @@ export function subscribeReferenceLibrary(owner: string, refresh: () => void) {
   window.addEventListener(LIBRARY_CHANGED, listener);
   return () => window.removeEventListener(LIBRARY_CHANGED, listener);
 }
-function notifyLibrary(owner: string) { window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED, { detail: owner })); }
+function notifyLibrary(owner: string) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED, { detail: owner }));
+}
 let database: Promise<IDBDatabase> | undefined;
 function openDatabase() {
   if (!database) database = new Promise<IDBDatabase>((resolve, reject) => {

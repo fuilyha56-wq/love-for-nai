@@ -18,6 +18,7 @@ import { AdminButton, AdminEmptyState } from "./ui/admin-primitives";
 import { RiskBadge, RiskSearch, familyLabels, riskDate } from "./risk-ui";
 import { LfnSwitch } from "@/app/ui/lfn-switch";
 import { LfnSelect } from "@/app/ui/lfn-select";
+import { LfnColorPicker } from "@/app/ui/lfn-color-picker";
 import RiskGradeUsers from "./risk-grade-users";
 import type {
   RiskField,
@@ -683,12 +684,11 @@ export default function LightRiskPanel({ onAccessChange }: { onAccessChange?: (e
               )}
               <label className="risk-input-label">
                 显示颜色
-                <input
-                  type="color"
-                  className="field"
+                <LfnColorPicker
+                  ariaLabel="风险等级显示颜色"
                   value={selectedGrade.color}
-                  onChange={(e) =>
-                    level(selectedGrade.id, { color: e.target.value })
+                  onChange={(color) =>
+                    level(selectedGrade.id, { color })
                   }
                 />
               </label>

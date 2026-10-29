@@ -63,7 +63,19 @@ import { observeNativeImageCompletion } from "@/lib/nai-stream-completion";
 import { roundAffAmount } from "@/lib/daily-image-pricing";
 import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
+import { safeUpstreamErrorResponse, safeUpstreamMessage } from "@/lib/upstream-error";
 import { pngDimensions } from "@/lib/png-dims";
+
+// Some gateways encode an upstream rejection in a successful JSON response.
+// Normalize only that error envelope; successful binary streams stay untouched.
+async function safeImageUpstreamResponse(response: Response, privacy: { secrets: string[]; urls: string[] }): Promise<Response> {
+  if (response.ok && (response.headers.get("content-type") || "").includes("application/json")) {
+    const payload: unknown = await response.clone().json().catch(() => null);
+    if (isRecord(payload) && (payload.error || payload.detail))
+      return safeUpstreamErrorResponse(Response.json(payload, { status: 502, headers: response.headers }), privacy);
+  }
+  return safeUpstreamErrorResponse(response, privacy);
+}
 
 const droppedResponseHeaders = new Set([
   "connection",
@@ -178,6 +190,7 @@ export async function proxyNewApi(
 ): Promise<Response> {
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
+  const upstreamPrivacy = { secrets: [authorization.replace(/^Bearer\s+/i, "")], urls: [] as string[] };
 
   try {
     let imageUserId: number | null = null;
@@ -200,7 +213,9 @@ export async function proxyNewApi(
     const requestContentType = contentType ?? request.headers.get("content-type");
     if (requestContentType && !isFormDataBody)
       headers.set("Content-Type", requestContentType);
-    const upstream = await fetchWithModelConcurrency(`${await resolvedNewApiBaseUrl()}${pathname}`, {
+    const baseUrl = await resolvedNewApiBaseUrl();
+    upstreamPrivacy.urls.push(baseUrl);
+    const upstream = await fetchWithModelConcurrency(`${baseUrl}${pathname}`, {
       method: request.method,
       headers,
       body:
@@ -216,12 +231,12 @@ export async function proxyNewApi(
       const marked = await watermarkImageResponse(upstream, imageUserId, model, { requestId: randomUUID() });
       return withExternalCors(forwardResponse(marked.response));
     }
-    return withExternalCors(forwardResponse(upstream));
+    return withExternalCors(forwardResponse(await safeUpstreamErrorResponse(upstream, upstreamPrivacy)));
   } catch (error) {
     return withExternalCors(Response.json(
       {
         error: {
-          message: error instanceof Error ? error.message : "Upstream request failed",
+          message: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "Upstream request failed" }),
           type: "api_error",
           code: "upstream_unavailable",
         },
@@ -341,6 +356,7 @@ async function settleExternalCharge(
   settlementId: string,
   requestId: string,
   audit?: Awaited<ReturnType<typeof startRequestAudit>>,
+  privacy: { secrets: string[]; urls: string[] } = { secrets: [], urls: [] },
 ): Promise<Response> {
   const anlasHeader = response.headers.get("x-anlas-cost");
   const tokensHeader = response.headers.get("x-prompt-tokens");
@@ -386,7 +402,7 @@ async function settleExternalCharge(
   const paymentSource = paymentSourceForCharge(charge);
   if (!response.ok) {
     await refundImageCredits(userId, charge, 0, { settlementId, requestId });
-    return paymentResponse(response, paymentSource);
+    return paymentResponse(await safeUpstreamErrorResponse(response, privacy), paymentSource);
   }
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
@@ -407,6 +423,12 @@ async function settleExternalCharge(
         code: "lfn_image_invalid_response",
       },
     }, { status: 502 }), paymentSource);
+  }
+  if (isRecord(payload) && (payload.error || payload.detail)) {
+    await refundImageCredits(userId, charge, 0, { settlementId, requestId });
+    if (audit) audit.record.generatedSamples = 0;
+    recordBilling(0);
+    return paymentResponse(await safeUpstreamErrorResponse(Response.json(payload, { status: 502, headers: response.headers }), privacy), paymentSource);
   }
   await settleLocal(imageCountFromJson(payload));
   return paymentResponse(response, paymentSource);
@@ -505,6 +527,7 @@ export async function proxyImageWithCredits(
   // 尝试从适配器获取图像服务
   const imageAdapter = await registry.getImageAdapter();
   const platformUpstream = await resolvedImageUpstream();
+  const upstreamPrivacy = { secrets: [authorization.replace(/^Bearer\s+/i, ""), ...(platformUpstream ? [platformUpstream.token] : [])], urls: platformUpstream ? [platformUpstream.baseUrl] : [] };
   if (!imageAdapter && !platformUpstream) {
     if (strictBilling) return auditedResponse(localBillingError("没有可用的本地计费执行通道", 503), audit);
     gatewayLogStart(
@@ -542,6 +565,9 @@ export async function proxyImageWithCredits(
         imageRequest.generation.model,
       ).catch(() => null);
       if (managedKey) {
+        upstreamPrivacy.secrets.push(managedKey, `sk-${managedKey}`);
+        const managedBaseUrl = await resolvedNewApiBaseUrl();
+        upstreamPrivacy.urls.push(managedBaseUrl);
         const managedHeaders = new Headers({
           Authorization: `Bearer sk-${managedKey}`,
           "Content-Type": imageRequest.contentType || "application/json",
@@ -550,7 +576,7 @@ export async function proxyImageWithCredits(
           externalLogMeta(logUser, imageRequest, pathname),
         );
         const managedUpstream = await fetchWithModelConcurrency(
-          `${await resolvedNewApiBaseUrl()}${pathname}`,
+          `${managedBaseUrl}${pathname}`,
           {
             method: request.method,
             headers: managedHeaders,
@@ -563,7 +589,7 @@ export async function proxyImageWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return watermarkJsonResponse(await auditedResponse(paymentResponse(forwardResponse(managedUpstream), "newapi"), audit, { paymentSource: "newapi" }), userId, imageRequest.generation.model, audit);
+        return watermarkJsonResponse(await auditedResponse(paymentResponse(forwardResponse(await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy)), "newapi"), audit, { paymentSource: "newapi" }), userId, imageRequest.generation.model, audit);
       }
       return auditedResponse(
         paymentResponse(
@@ -659,7 +685,7 @@ export async function proxyImageWithCredits(
       });
       finishUpstreamLog(upstream.status);
       settled = true;
-      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge, settlementId, audit.requestId, audit), userId, imageRequest.generation.model, audit);
+      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge, settlementId, audit.requestId, audit, upstreamPrivacy), userId, imageRequest.generation.model, audit);
     }
 
     throw new Error("No image service available");
@@ -670,14 +696,14 @@ export async function proxyImageWithCredits(
     const response = Response.json(
       {
         error: {
-          message: error instanceof Error ? error.message : "LFN 图像请求失败",
+          message: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "LFN 图像请求失败" }),
           type: "api_error",
           code: "lfn_image_upstream_error",
         },
       },
       { status: 502 },
     );
-    return auditedResponse(response, audit, { error: error instanceof Error ? error.message : "LFN 图像请求失败" });
+    return auditedResponse(response, audit, { error: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "LFN 图像请求失败" }) });
   }
 }
 
@@ -955,6 +981,7 @@ export async function proxyNaiNativeWithCredits(
     return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
   }
 
+  const upstreamPrivacy = { secrets: [nativeUpstream.token, authorization.replace(/^Bearer\s+/i, "")], urls: [nativeUpstream.baseUrl] };
   // 走 NewAPI 透明回退时实际到达 Gateway 的端点（可能映射为 /v1/images/*）。
   const fallbackEndpoint =
     newApiFallback && newApiFallback !== "unsupported"
@@ -995,6 +1022,9 @@ export async function proxyNaiNativeWithCredits(
         imageRequest.generation.model,
       ).catch(() => null);
       if (managedKey) {
+        upstreamPrivacy.secrets.push(managedKey, `sk-${managedKey}`);
+        const managedBaseUrl = await resolvedNewApiBaseUrl();
+        upstreamPrivacy.urls.push(managedBaseUrl);
         const target = newApiFallback && newApiFallback !== "unsupported"
           ? newApiFallback
           : { pathname, body: imageRequest.body, contentType: imageRequest.contentType };
@@ -1008,7 +1038,7 @@ export async function proxyNaiNativeWithCredits(
           nativeLogMeta(logUser, imageRequest, target.pathname),
         );
         const managedUpstream = await fetchWithModelConcurrency(
-          `${await resolvedNewApiBaseUrl()}${target.pathname}`,
+          `${managedBaseUrl}${target.pathname}`,
           {
             method: request.method,
             headers: managedHeaders,
@@ -1021,7 +1051,7 @@ export async function proxyNaiNativeWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        const marked = await watermarkImageResponse(managedUpstream, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
+        const marked = await watermarkImageResponse(await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy), userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
         return auditedResponse(paymentResponse(await nativeResponseForPath(marked.response, pathname), "newapi"), audit, { paymentSource: "newapi", watermarkStatus: marked.status() });
       }
       return auditedResponse(
@@ -1065,12 +1095,16 @@ export async function proxyNaiNativeWithCredits(
       throw error;
     });
     finishNativeLog(upstream.status);
-    if (!upstream.ok) {
-      if ((upstream.headers.get("content-type") || "").includes("application/json")) {
+    if (!upstream.ok && (upstream.headers.get("content-type") || "").includes("application/json")) {
+      try { audit.record.moderation = await moderationFromUpstream(await upstream.clone().json()); } catch { /* Unknown result remains unaudited. */ }
+    }
+    const protectedUpstream = await safeImageUpstreamResponse(upstream, upstreamPrivacy);
+    if (!protectedUpstream.ok) {
+      if (upstream.ok && (upstream.headers.get("content-type") || "").includes("application/json")) {
         try { audit.record.moderation = await moderationFromUpstream(await upstream.clone().json()); } catch { /* Unknown result remains unaudited. */ }
       }
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
-      return auditedResponse(paymentResponse(forwardResponse(upstream), paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
+      return auditedResponse(paymentResponse(protectedUpstream, paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge) });
     }
     const upstreamContentType = (upstream.headers.get("content-type") || "").toLowerCase();
     if (pathname === "/ai/encode-vibe") {
@@ -1094,7 +1128,7 @@ export async function proxyNaiNativeWithCredits(
       const response = Response.json(
         {
           error: {
-            message: `原生上游返回了不支持的响应格式：${upstreamContentType || "未知"}`,
+            message: safeUpstreamMessage(`原生上游返回了不支持的响应格式：${upstreamContentType || "未知"}`, upstreamPrivacy),
             type: "api_error",
             code: "lfn_native_invalid_response_format",
           },
@@ -1176,7 +1210,7 @@ export async function proxyNaiNativeWithCredits(
     return withExternalCors(Response.json(
       {
         error: {
-          message: error instanceof Error ? error.message : "LFN 图像请求失败",
+          message: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "LFN 图像请求失败" }),
           type: "api_error",
           code: "lfn_image_upstream_error",
         },

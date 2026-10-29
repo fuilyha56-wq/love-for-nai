@@ -54,6 +54,7 @@ export function PopupSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const optionsRef = useRef<HTMLDivElement>(null);
@@ -71,10 +72,8 @@ export function PopupSelect({
             .includes(query.trim().toLowerCase()),
         )
       : options;
-  const selectedIndex = Math.max(
-    0,
-    visible.findIndex((option) => option.value === value),
-  );
+  const selectedIndex = visible.findIndex((option) => option.value === value && !option.disabled);
+  const firstEnabledIndex = visible.findIndex((option) => !option.disabled);
 
   const positionMenu = useCallback(() => {
     const trigger = rootRef.current?.getBoundingClientRect();
@@ -185,7 +184,7 @@ export function PopupSelect({
   }
 
   function resetActiveIndex() {
-    setActiveIndex(selectedIndex);
+    setActiveIndex(selectedIndex < 0 ? firstEnabledIndex : selectedIndex);
   }
 
   function moveActive(direction: number) {
@@ -216,12 +215,12 @@ export function PopupSelect({
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       moveActive(-1);
-    } else if (event.key === "Home") {
+    } else if (event.key === "Home" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(0);
-    } else if (event.key === "End") {
+      setActiveIndex(firstEnabledIndex);
+    } else if (event.key === "End" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(Math.max(0, visible.length - 1));
+      setActiveIndex(visible.findLastIndex((option) => !option.disabled));
     } else if (event.key === "Enter" && visible[activeIndex]) {
       event.preventDefault();
       select(visible[activeIndex]);
@@ -242,6 +241,7 @@ export function PopupSelect({
         aria-expanded={open}
         disabled={disabled}
         onClick={() => {
+          setPortalTarget(rootRef.current?.closest("dialog[open]") || document.body);
           if (!open) positionMenu();
           setOpen((current) => !current);
           setQuery("");
@@ -251,6 +251,7 @@ export function PopupSelect({
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
           if (!options.length) return;
           event.preventDefault();
+          setPortalTarget(rootRef.current?.closest("dialog[open]") || document.body);
           positionMenu();
           setOpen(true);
           setQuery("");
@@ -327,7 +328,7 @@ export function PopupSelect({
               )}
             </div>
           </div>,
-          document.body,
+          portalTarget || document.body,
         )}
     </div>
   );

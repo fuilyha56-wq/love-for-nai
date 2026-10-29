@@ -2,7 +2,7 @@
 .assistant-reasoning-control *,
 .assistant-reasoning-menu,
 .assistant-reasoning-menu * {
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: var(--font-sans);
 }
 .assistant-reasoning-control {
   display: flex;

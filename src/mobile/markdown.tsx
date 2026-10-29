@@ -202,6 +202,7 @@ export function MarkdownView({ content }: { content: string }) {
                   width={1200}
                   height={720}
                   unoptimized
+                  referrerPolicy="no-referrer"
                   className="h-auto max-h-[70vh] w-full rounded-lg border border-[var(--line)] object-contain"
                 />
                 {block.alt && <figcaption className="text-center text-xs text-[var(--muted)]">{block.alt}</figcaption>}

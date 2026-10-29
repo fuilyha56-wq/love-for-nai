@@ -54,6 +54,7 @@ export function LfnDialogHost() {
     value: string;
   }>({ value: "" });
   const ref = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const current = requests[0];
   const input =
@@ -74,15 +75,30 @@ export function LfnDialogHost() {
   useEffect(() => {
     if (!current) return;
     const previous = document.activeElement as HTMLElement | null;
+    const modal = modalRef.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    if (modal && !modal.open) modal.showModal();
     ref.current
       ?.querySelector<HTMLElement>(current.prompt ? "input,textarea" : "button")
       ?.focus({ preventScroll: true });
-    return () => previous?.focus?.({ preventScroll: true });
+    return () => {
+      if (modal?.open) modal.close();
+      document.body.style.overflow = previousOverflow;
+      if (previous?.isConnected) previous.focus({ preventScroll: true });
+    };
   }, [current]);
   if (!current) return null;
   return createPortal(
-    <div
+    <dialog
+      ref={modalRef}
       className="lfn-dialog-backdrop"
+      aria-modal="true"
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault();
+        finish(current.prompt ? null : false);
+      }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget)
           finish(current.prompt ? null : false);
@@ -90,9 +106,6 @@ export function LfnDialogHost() {
     >
       <div
         ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
         className="lfn-dialog"
         onKeyDown={(event) => {
           if (
@@ -104,6 +117,7 @@ export function LfnDialogHost() {
             finish(input);
           }
           if (event.key === "Escape") {
+            event.preventDefault();
             event.stopPropagation();
             finish(current.prompt ? null : false);
           }
@@ -178,7 +192,7 @@ export function LfnDialogHost() {
           </footer>
         </form>
       </div>
-    </div>,
+    </dialog>,
     document.body,
   );
 }

@@ -59,7 +59,7 @@ npm run dev
 
 访问 `http://localhost:3000`。
 
-需要 Node.js 20.18.1 或更高版本。
+需要 Node.js 22.13.0 或更高版本（与 `package.json` 的 `engines` 要求一致）。
 
 ## Docker 部署
 

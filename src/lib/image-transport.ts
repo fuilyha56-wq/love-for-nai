@@ -1,4 +1,6 @@
 import sharp from "sharp";
+import { isIP } from "node:net";
+import { isPublicIp } from "@/lib/provider/validation";
 import { ImageRequestValidationError, MAX_IMAGE_BODY_BYTES, normalizeDimension, normalizeSteps, validateImageShape, validateReferenceCount } from "@/lib/image-request";
 import { nearestImageAspectRatio, normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { naiGatewayGenerationBody } from "@/lib/nai-native-request";
@@ -222,7 +224,14 @@ export async function buildImageTransportRequest(body: Record<string, unknown>, 
 function validImageUrl(value: unknown): string | null {
   if (typeof value !== "string") return null;
   if (/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=\r\n]+$/.test(value)) return value;
-  try { const url = new URL(value); return url.protocol === "https:" || url.protocol === "http:" ? value : null; } catch { return null; }
+  try {
+    const url = new URL(value);
+    if (value.length > 8192 || !["https:", "http:"].includes(url.protocol) || url.username || url.password) return null;
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    if (isIP(hostname)) return isPublicIp(hostname) ? value : null;
+    if (!hostname.includes(".") || [".localhost", ".local", ".internal"].some((suffix) => hostname.endsWith(suffix))) return null;
+    return value;
+  } catch { return null; }
 }
 
 export function parseImageTransportResult(result: Record<string, unknown>): ImageTransportResult {

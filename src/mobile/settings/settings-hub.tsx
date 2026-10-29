@@ -40,7 +40,7 @@ export default function SettingsHub() {
     }
     const timer = window.setTimeout(() => document.getElementById(hash.slice(1))?.scrollIntoView({ block: "start" }), 100);
     return () => window.clearTimeout(timer);
-  }, [active]);
+  }, [active, hash]);
 
   return <main className="settings-page min-h-screen bg-[var(--paper)] text-[var(--ink)]" data-settings-detail={showDetail}>
     <header className="settings-header">

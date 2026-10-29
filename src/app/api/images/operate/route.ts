@@ -25,6 +25,7 @@ import { watermarkImageResponse } from "@/lib/image-response-watermark";
 import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 import { IMAGE_UPSTREAM_TIMEOUT_MS } from "@/lib/image-timeouts";
 import { gatewayLogStart } from "@/lib/gateway-log";
 import { fetchWithModelConcurrency, ModelConcurrencyQueueAbortError } from "@/lib/model-concurrency";
@@ -91,6 +92,7 @@ async function handleUpscale(
     return new Response(response.body, { status: response.status, headers: audit.responseHeaders(response.headers) });
   };
   const nativeImage = await resolvedNaiImageUpstream();
+  const upstreamPrivacy = { secrets: nativeImage ? [nativeImage.token] : [], urls: nativeImage ? [nativeImage.baseUrl] : [] };
 
   const rawImage = typeof body.image === "string" ? body.image : "";
   if (!rawImage)
@@ -159,6 +161,8 @@ async function handleUpscale(
     const billingModel = upscaleBillingModel(upscaleModel);
     const baseUrl = credits && nativeImage ? nativeImage.baseUrl : await resolvedNewApiBaseUrl();
     const token = credits && nativeImage ? nativeImage.token : await getImageToken(session, billingModel);
+    upstreamPrivacy.secrets.push(token);
+    upstreamPrivacy.urls.push(baseUrl);
     const endpoint = credits ? "/ai/upscale" : "/v1/images/generations";
     const payload = credits
       ? { image, model: upscaleModel, declared_blur_sigma: 0 }
@@ -191,7 +195,7 @@ async function handleUpscale(
     const billing = Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : undefined;
     if (!upstream.ok) {
       await refund();
-      const raw = (await upstream.text()).slice(0, 300);
+      const raw = safeUpstreamMessage(await upstream.text(), { ...upstreamPrivacy, fallback: `上游超分失败（${upstream.status}）` });
       return finish(NextResponse.json(
         { message: raw || `上游超分失败（${upstream.status}）` },
         { status: upstream.status || 502 },
@@ -236,9 +240,9 @@ async function handleUpscale(
   } catch (error) {
     await refund();
     return finish(NextResponse.json(
-      { message: error instanceof Error ? error.message : "上游超分失败" },
+      { message: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "上游超分失败" }) },
       { status: 502 },
-    ), { risk, paymentSource, generatedSamples: 0, error: error instanceof Error ? error.message : "上游超分失败" });
+    ), { risk, paymentSource, generatedSamples: 0, error: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "上游超分失败" }) });
   }
 }
 
@@ -457,6 +461,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       billing: { ...audit.record.billing, ...(chargedAff != null ? { lfnChargedAff: Math.round(chargedAff * 10000) / 10000 } : {}) },
     });
   };
+  const upstreamPrivacy = { secrets: [] as string[], urls: [] as string[] };
   let baseUrlOverride = "";
   let settlementId: string | undefined;
   let upstreamAttempted = false;
@@ -526,7 +531,10 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       token = await getImageToken(session, model);
     }
 
+    upstreamPrivacy.secrets.push(token);
+    if (baseUrlOverride) upstreamPrivacy.urls.push(baseUrlOverride);
     const nativeImage = nativeNaiModel ? await resolvedNaiImageUpstream() : null;
+    if (nativeImage) { upstreamPrivacy.secrets.push(nativeImage.token); upstreamPrivacy.urls.push(nativeImage.baseUrl); }
     const canStreamNative =
       Boolean(nativeImage) &&
       unifiedOperations.has(operation) &&
@@ -616,7 +624,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
               if (event.eventType === "error") {
                 // 先不发 error 事件：留出缓冲兜底机会，兜底失败才统一上报
                 // （客户端见到 error 即判失败，后续 final/done 会被丢弃）。
-                errorMessage = event.message || "流式生成失败";
+                errorMessage = safeUpstreamMessage(event.message, { ...upstreamPrivacy, fallback: "流式生成失败" });
                 break;
               }
               if (!event.image?.length) continue;
@@ -800,7 +808,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             }
           } catch (error) {
             errorMessage =
-              error instanceof Error ? error.message : "流式生成中断";
+              safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "流式生成中断" });
             send("error", { message: errorMessage });
           } finally {
             const clientCancelled = streamCancelled || request.signal.aborted;
@@ -833,6 +841,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
     }
 
     const baseUrl = baseUrlOverride || (await resolvedNewApiBaseUrl());
+    upstreamPrivacy.urls.push(baseUrl);
     const endpoint =
       operation === "suggest-tags"
         ? "/v1/images/suggest-tags"
@@ -929,24 +938,22 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
           result = JSON.parse(text);
         } catch {
           lastStatus = upstream.ok ? 502 : upstream.status;
-          lastRaw = explainUpstreamFailure(text.slice(0, 200), upstream.status, body);
+          lastRaw = explainUpstreamFailure(safeUpstreamMessage(text, upstreamPrivacy), upstream.status, body);
           break;
         }
       }
       if (!upstream.ok || result.error || result.detail) {
-        const raw =
-          result.error?.message ||
-          result.detail ||
-          result.message ||
-          (text.trim() ? text.slice(0, 200) : `上游返回空响应（${upstream.status}）`);
+        const raw = safeUpstreamMessage(
+          result.error?.message || result.detail || result.message ||
+          (text.trim() ? text : `上游返回空响应（${upstream.status}）`), upstreamPrivacy);
         const limit = parseSamplesLimit(raw);
         if (limit && limit >= 1 && limit < batch) {
           remaining.unshift(...splitImageBatches(batch, limit));
           perRequest = Math.min(perRequest, limit);
           continue;
         }
-        lastStatus = upstream.status || 502;
-        lastRaw = explainUpstreamFailure(raw, upstream.status, body);
+        lastStatus = upstream.ok ? 502 : upstream.status || 502;
+        lastRaw = explainUpstreamFailure(safeUpstreamMessage(raw, upstreamPrivacy), upstream.status, body);
         break;
       }
       const batchImages = imageFromResult(result);
@@ -1026,7 +1033,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
     }
     await finishGenerationAudit(queueAborted ? 503 : 502);
     return NextResponse.json(
-      { message: queueAborted ? "图像请求排队超时，尚未发送到上游。请稍后重试。" : error instanceof Error ? error.message : "NAI 操作失败" },
+      { message: queueAborted ? "图像请求排队超时，尚未发送到上游。请稍后重试。" : safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "NAI 操作失败" }) },
       { status: queueAborted ? 503 : 502 },
     );
   }

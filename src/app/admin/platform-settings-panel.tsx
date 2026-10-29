@@ -10,6 +10,7 @@ import {
 } from "@/lib/platform-settings-sections";
 import type { RuntimeSettings } from "@/lib/runtime-config";
 import { PopupSelect } from "@/app/ui/popup-select";
+import { lfnConfirm } from "@/app/ui/lfn-dialog";
 import "./platform-settings.css";
 
 export default function PlatformSettingsPanel({
@@ -67,8 +68,9 @@ export default function PlatformSettingsPanel({
       event.preventDefault();
     };
     const navigate = (event: Event) => {
-      if (!window.confirm("当前页面有未保存的设置，确定离开？"))
-        event.preventDefault();
+      const confirmations = (event as CustomEvent<{ confirmations: Promise<boolean>[] }>).detail?.confirmations;
+      if (confirmations) confirmations.push(lfnConfirm("当前页面有未保存的设置，确定离开？"));
+      else event.preventDefault();
     };
     window.addEventListener("beforeunload", warn);
     window.addEventListener("platform-before-navigate", navigate);

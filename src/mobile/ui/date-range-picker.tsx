@@ -36,6 +36,7 @@ function sameDay(a: Date | null, b: Date | null): boolean {
 
 export function DateRangePicker({ value, onChange, min, max, quickRanges = [], ariaLabel = "日期范围", single = false, disabled = false }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
+  const [portalTarget, setPortalTarget] = useState<Element | null>(null);
   const [selectingEnd, setSelectingEnd] = useState(false);
   const [month, setMonth] = useState(() => parseDate(value.start) || new Date());
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -74,7 +75,8 @@ export function DateRangePicker({ value, onChange, min, max, quickRanges = [], a
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); setOpen(false); triggerRef.current?.focus({ preventScroll: true }); } };
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape); window.addEventListener("resize", position); window.addEventListener("scroll", position, true);
     window.visualViewport?.addEventListener("resize", position);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); window.removeEventListener("resize", position); window.removeEventListener("scroll", position, true); window.visualViewport?.removeEventListener("resize", position); };
+    window.visualViewport?.addEventListener("scroll", position);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); window.removeEventListener("resize", position); window.removeEventListener("scroll", position, true); window.visualViewport?.removeEventListener("resize", position); window.visualViewport?.removeEventListener("scroll", position); };
   }, [open, position]);
   function choose(date: Date) {
     const iso = toIso(date);
@@ -87,7 +89,7 @@ export function DateRangePicker({ value, onChange, min, max, quickRanges = [], a
   const display = single ? value.start || "选择日期" : value.start && value.end ? `${value.start} ~ ${value.end}` : value.start || "选择日期范围";
   const mobileDisplay = single ? display : value.start && value.end ? `${value.start.slice(5)}–${value.end.slice(5)}` : "选择日期";
   return <div className="date-range-picker">
-    <button ref={triggerRef} disabled={disabled} type="button" className="date-range-trigger" aria-label={ariaLabel} aria-controls={id} aria-expanded={open} onClick={() => { setOpen((current) => !current); setSelectingEnd(false); setMonth(parseDate(value.start) || new Date()); }}>
+    <button ref={triggerRef} disabled={disabled} type="button" className="date-range-trigger" aria-label={ariaLabel} aria-controls={id} aria-expanded={open} onClick={() => { setPortalTarget(triggerRef.current?.closest("dialog[open]") || document.body); setOpen((current) => !current); setSelectingEnd(false); setMonth(parseDate(value.start) || new Date()); }}>
       <CalendarDays size={15} aria-hidden="true" /><span className="date-range-label-wide">{display}</span><span className="date-range-label-narrow">{mobileDisplay}</span>
     </button>
     {open && createPortal(<div ref={popoverRef} tabIndex={-1} id={id} role="dialog" aria-label={ariaLabel} className="date-range-popover" style={style} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setOpen(false); } }}>
@@ -96,6 +98,6 @@ export function DateRangePicker({ value, onChange, min, max, quickRanges = [], a
       <div className="date-range-weekdays">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>{day}</span>)}</div>
       <div className="date-range-grid">{cells.map((date, index) => date ? (() => { const iso = toIso(date); const inRange = Boolean(start && end && date >= start && date <= end); const disabled = Boolean(minDate && date < minDate || maxDate && date > maxDate); return <button key={iso} type="button" disabled={disabled} className={`date-range-day ${sameDay(date, start) ? "is-start" : ""} ${sameDay(date, end) ? "is-end" : ""} ${inRange ? "is-range" : ""}`} onClick={() => choose(date)}>{sameDay(date, start) || sameDay(date, end) ? <Check size={11} aria-hidden="true" /> : null}{date.getDate()}</button>; })() : <span key={`empty-${index}`} />)}</div>
       <div className="date-range-quick">{quickRanges.map((range) => <button type="button" key={range.label} onClick={() => { onChange(range.getValue()); setOpen(false); }}>{range.label}</button>)}</div>
-    </div>, document.body)}
+    </div>, portalTarget || document.body)}
   </div>;
 }

@@ -2,7 +2,7 @@
 .mobile-assistant-reasoning-control *,
 .mobile-assistant-reasoning-menu,
 .mobile-assistant-reasoning-menu * {
-  font-family: "Noto Sans SC", sans-serif;
+  font-family: var(--font-sans);
 }
 .mobile-assistant-reasoning-control {
   display: flex;

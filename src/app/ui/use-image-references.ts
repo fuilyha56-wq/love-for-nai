@@ -23,9 +23,10 @@ export function useImageReferences(owner: string, model: string, onNotice: (mess
   }, [owner, onNotice]);
   useEffect(() => subscribeReferenceLibrary(owner, () => { void refreshLibrary(); }), [owner, refreshLibrary]);
   useEffect(() => {
+    const cacheEpochRef = cacheEpoch;
     let alive = true;
     void Promise.resolve().then(() => { if (!alive) return; setBaskets(empty()); setBasketOwner(owner); setLibrary([]); setEncodings({}); setEncodingId(null); return refreshLibrary(); });
-    return () => { alive = false; cacheEpoch.current++; controller.current?.abort(); };
+    return () => { alive = false; cacheEpochRef.current++; controller.current?.abort(); };
   }, [owner, refreshLibrary]);
   useEffect(() => {
     let alive = true;

@@ -13,10 +13,12 @@ import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from 
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { ProviderInputError, validateModelId } from "./validation";
 import { downloadProviderImage } from "./http";
+import { safeUpstreamMessage } from "@/lib/upstream-error";
 
 type ProviderImageOptions = {
   protocol: ImageProviderProtocol;
   apiKey: string;
+  upstreamUrl?: string;
   paymentSource: "personal-key" | "newapi";
   send: (upstream: ImageTransportRequest) => Promise<Response>;
   rateChecked?: boolean;
@@ -79,6 +81,7 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
   let warning = "";
   const save = options.saveToHistory !== false && body.editor_composite !== true;
   const partial = async (message: string, status: number): Promise<NextResponse> => {
+    const publicMessage = safeUpstreamMessage(message, { secrets: [options.apiKey], urls: options.upstreamUrl ? [options.upstreamUrl] : [], fallback: "图像请求失败，请稍后重试" });
     let historyIds: string[] = [];
     if (images.length && save) {
       try {
@@ -90,7 +93,7 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
     } else {
       await audit.finish({ status: images.length ? 207 : status, paymentSource: options.paymentSource });
     }
-    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
+    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${publicMessage}` : publicMessage, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   };
   try {
     const batches = splitImageBatches(samples, resolveImageModelCapabilities(model, options.protocol).maxBatch);
@@ -117,10 +120,10 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
         if (image.startsWith("data:")) inlineImages.push(image);
         else {
           try { inlineImages.push(await downloadProviderImage(image, request.signal)); }
-          catch (error) {
-            if (typeof body.mask === "string" && body.mask || body.operation === "upscale") throw error;
-            inlineImages.push(image);
-            warning = "图片已生成，但无法取回图片文件；当前可查看上游链接，暂不能保存或再次编辑";
+          catch {
+            // A failed download may have rejected a private address or redirect.
+            // Returning its URL would make the browser bypass that protection.
+            throw new Error("无法安全下载上游图片，请稍后重试或更换图像服务");
           }
         }
       }

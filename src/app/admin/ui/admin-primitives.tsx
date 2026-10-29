@@ -1,7 +1,8 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
 
 export type AdminButtonVariant = "primary" | "secondary" | "quiet" | "danger" | "icon";
 
@@ -122,23 +123,31 @@ export function AdminDialog({
   wide?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
+  useDialogFocus(true, dialogRef);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.defaultPrevented || event.key !== "Escape") return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest('[role="listbox"], .date-range-popover, dialog[open]')) return;
+      event.preventDefault();
+      closeRef.current();
     };
     document.addEventListener("keydown", onKeyDown);
-    const previous = document.activeElement as HTMLElement | null;
-    dialogRef.current?.focus();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKeyDown);
-      previous?.focus?.();
+      document.body.style.overflow = previousOverflow;
     };
-  }, [onClose]);
+  }, []);
   return (
     <div className="admin-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="admin-dialog-title" className={`admin-dialog ${wide ? "admin-dialog-wide" : ""}`}>
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} className={`admin-dialog ${wide ? "admin-dialog-wide" : ""}`}>
         <header className="admin-dialog-header">
-          <div className="min-w-0"><h2 id="admin-dialog-title" className="admin-card-title">{title}</h2>{description && <p className="admin-card-description">{description}</p>}</div>
+          <div className="min-w-0"><h2 id={titleId} className="admin-card-title">{title}</h2>{description && <p className="admin-card-description">{description}</p>}</div>
           <AdminButton variant="icon" onClick={onClose} aria-label="关闭"><X size={16} /></AdminButton>
         </header>
         <div className="admin-dialog-body">{children}</div>
