@@ -19,6 +19,15 @@ export type SelectOption = {
   disabled?: boolean;
 };
 
+function pixels(value?: string): number { return Number.parseFloat(value || "") || 0; }
+function outerHeight(element: Element): number {
+  const style = getComputedStyle(element);
+  return element.getBoundingClientRect().height + pixels(style.marginTop) + pixels(style.marginBottom);
+}
+function verticalBox(style?: CSSStyleDeclaration): number {
+  return pixels(style?.paddingTop) + pixels(style?.paddingBottom) + pixels(style?.borderTopWidth) + pixels(style?.borderBottomWidth);
+}
+
 // 全站统一下拉控件：触发按钮 + Portal 菜单（fixed 定位，避免被
 // overflow 容器裁剪），支持键盘上下切换、滚动跟随、可选搜索。
 // 搜索占位词按场景传入（如“搜索模型”）。
@@ -53,7 +62,7 @@ export function PopupSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeValue, setActiveValue] = useState<string | null>(value);
   const [portalTarget, setPortalTarget] = useState<Element | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -72,8 +81,13 @@ export function PopupSelect({
             .includes(query.trim().toLowerCase()),
         )
       : options;
-  const selectedIndex = visible.findIndex((option) => option.value === value && !option.disabled);
   const firstEnabledIndex = visible.findIndex((option) => !option.disabled);
+  const visibleLayoutKey = JSON.stringify(visible);
+  const selectedIndex = visible.findIndex((option) => option.value === value && !option.disabled);
+  const rememberedIndex = visible.findIndex((option) => option.value === activeValue && !option.disabled);
+  // Catalogs can load or reorder while the menu is open. Keep keyboard focus
+  // attached to the option identity, and derive a usable fallback if it vanished.
+  const activeIndex = rememberedIndex >= 0 ? rememberedIndex : selectedIndex >= 0 ? selectedIndex : firstEnabledIndex;
 
   const positionMenu = useCallback(() => {
     const trigger = rootRef.current?.getBoundingClientRect();
@@ -85,7 +99,18 @@ export function PopupSelect({
     const gap = 6;
     const availableBelow = Math.max(0, viewportTop + viewportHeight - trigger.bottom - gap - 8);
     const availableAbove = Math.max(0, trigger.top - viewportTop - gap - 8);
-    const contentHeight = (optionsRef.current?.scrollHeight || Math.max(1, visible.length) * 38) + (searchable ? 44 : 0) + 10;
+    const list = optionsRef.current;
+    const children = list ? Array.from(list.children) : [];
+    const listStyle = list ? getComputedStyle(list) : undefined;
+    const menuStyle = menuRef.current ? getComputedStyle(menuRef.current) : undefined;
+    const search = searchable ? searchRef.current?.parentElement : null;
+    // The flex list stretches to the previous menu height. Measure its children,
+    // so a shorter directory or search result can shrink the menu again.
+    const contentHeight = list && children.length
+      ? children.reduce((height, child) => height + outerHeight(child), 0) +
+        Math.max(0, children.length - 1) * pixels(listStyle?.rowGap) + verticalBox(listStyle) +
+        (search ? outerHeight(search) : 0) + verticalBox(menuStyle)
+      : Math.max(1, visible.length) * 38 + (searchable ? 44 : 0) + 10;
     const desiredHeight = Math.min(400, contentHeight);
     const openAbove = availableBelow < desiredHeight && availableAbove > availableBelow;
     const available = openAbove ? availableAbove : availableBelow;
@@ -105,13 +130,16 @@ export function PopupSelect({
   }, [searchable, visible.length, menuMinWidth]);
 
   useLayoutEffect(() => {
+    if (open) positionMenu();
+  }, [open, positionMenu, visibleLayoutKey]);
+
+  useLayoutEffect(() => {
     if (open) {
-      positionMenu();
       // Touch devices must be able to scroll the list without opening the IME.
       if (searchable && window.matchMedia("(pointer: fine)").matches) searchRef.current?.focus({ preventScroll: true });
       else menuRef.current?.focus({ preventScroll: true });
     }
-  }, [open, searchable, positionMenu]);
+  }, [open, searchable]);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -121,7 +149,7 @@ export function PopupSelect({
     if (active.offsetTop < list.scrollTop) list.scrollTop = active.offsetTop;
     else if (active.offsetTop + active.offsetHeight > list.scrollTop + list.clientHeight)
       list.scrollTop = active.offsetTop + active.offsetHeight - list.clientHeight;
-  }, [open, activeIndex]);
+  }, [open, activeIndex, visible]);
 
   // 首次点击时按钮宽度可能与菜单渲染时不同（字体加载、面板布局），
   // 用 ResizeObserver 持续对齐菜单与触发按钮。
@@ -183,19 +211,15 @@ export function PopupSelect({
     rootRef.current?.querySelector("button")?.focus({ preventScroll: true });
   }
 
-  function resetActiveIndex() {
-    setActiveIndex(selectedIndex < 0 ? firstEnabledIndex : selectedIndex);
+  function resetActiveValue() {
+    setActiveValue(value);
   }
 
   function moveActive(direction: number) {
-    if (!visible.length) return;
-    setActiveIndex((current) => {
-      for (let step = 1; step <= visible.length; step++) {
-        const next = (current + direction * step + visible.length) % visible.length;
-        if (!visible[next].disabled) return next;
-      }
-      return current;
-    });
+    for (let step = 1; step <= visible.length; step++) {
+      const next = (activeIndex + direction * step + visible.length) % visible.length;
+      if (!visible[next].disabled) { setActiveValue(visible[next].value); return; }
+    }
   }
 
   function handleMenuKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
@@ -217,10 +241,10 @@ export function PopupSelect({
       moveActive(-1);
     } else if (event.key === "Home" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(firstEnabledIndex);
+      setActiveValue(visible[firstEnabledIndex]?.value ?? null);
     } else if (event.key === "End" && event.target !== searchRef.current) {
       event.preventDefault();
-      setActiveIndex(visible.findLastIndex((option) => !option.disabled));
+      setActiveValue(visible.findLast((option) => !option.disabled)?.value ?? null);
     } else if (event.key === "Enter" && visible[activeIndex]) {
       event.preventDefault();
       select(visible[activeIndex]);
@@ -245,7 +269,7 @@ export function PopupSelect({
           if (!open) positionMenu();
           setOpen((current) => !current);
           setQuery("");
-          resetActiveIndex();
+          resetActiveValue();
         }}
         onKeyDown={(event) => {
           if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -255,7 +279,7 @@ export function PopupSelect({
           positionMenu();
           setOpen(true);
           setQuery("");
-          resetActiveIndex();
+          resetActiveValue();
         }}
       >
         <span>{selected?.label || value || "请选择"}</span>
@@ -284,8 +308,10 @@ export function PopupSelect({
                   ref={searchRef}
                   value={query}
                   onChange={(event) => {
-          setQuery(event.target.value);
-          setActiveIndex(0);
+          const nextQuery = event.target.value;
+          setQuery(nextQuery);
+          setActiveValue(options.find((option) => !option.disabled &&
+            `${option.label} ${option.value} ${option.description || ""}`.toLowerCase().includes(nextQuery.trim().toLowerCase()))?.value ?? null);
         }}
                   placeholder={searchPlaceholder}
                   aria-label={searchPlaceholder}
@@ -306,7 +332,7 @@ export function PopupSelect({
                     disabled={option.disabled}
                     className={`popup-select-option ${option.value === visible[activeIndex]?.value ? "is-active" : ""}`}
                     key={option.value}
-                    onMouseEnter={() => setActiveIndex(visible.findIndex((item) => item.value === option.value))}
+                    onMouseEnter={() => { if (!option.disabled) setActiveValue(option.value); }}
                     onClick={() => select(option)}
                   >
                     <Check
