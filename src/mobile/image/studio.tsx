@@ -835,7 +835,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const restoreAssistantUsage = assistantUsage.restore;
   const [goalRun, setGoalRun] = useState<GoalAgentRun | null>(null);
   const goalRunRef = useRef<GoalAgentRun | null>(null);
-  const goalReviewImageRef = useRef<string | null>(null);
+  const goalReviewImageRef = useRef<{ goalId: string; image: string } | null>(null);
   const autonomousGenerationRef = useRef(false);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [assistantTaskError, setAssistantTaskError] = useState("");
@@ -1191,7 +1191,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     if (caps.seed) setSeed(parameters.seed == null || parameters.seed === 0 ? "" : String(parameters.seed));
   }
 
-  async function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> & EditorHistoryReference = {}, requestIds: string[] = []) {
+  async function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> & EditorHistoryReference = {}, requestIds: string[] = [], originGoalId?: string) {
     if (!nextImages.length || sourceOperation === "suggest-tags") return;
     const now = Date.now();
     const results: SessionResult[] = nextImages.map((image, index) => ({
@@ -1257,8 +1257,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       }));
       setRedrawHistoryError(failures.find(Boolean) || "");
     }
-    if (goalRunRef.current?.status === "running")
-      goalReviewImageRef.current = results.at(-1)?.image || null;
+    if (originGoalId && goalRunRef.current?.id === originGoalId && goalRunRef.current?.status === "running")
+      goalReviewImageRef.current = results.at(-1)?.image ? { goalId: originGoalId, image: results.at(-1)!.image } : null;
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
@@ -4026,12 +4026,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   function runOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal): Promise<void> {
     if (!queueRequested && generationInFlight.current) return imageActiveRequestRef.current ?? Promise.resolve();
     if (!queueRequested && !queueSignal) queuedGenerationApprovalRef.current = null;
-    const request = performImageOperation(approvedConfirmation, allowAutonomousCost, queueRequested, queueSignal);
+    const originGoalId = !queueSignal && !queueRequested && goalRunRef.current?.status === "running" ? goalRunRef.current.id : undefined;
+    const request = performImageOperation(approvedConfirmation, allowAutonomousCost, queueRequested, queueSignal, originGoalId);
     if (!queueRequested) { imageActiveRequestRef.current = request; const release = () => { if (imageActiveRequestRef.current === request) imageActiveRequestRef.current = null; }; void request.then(release, release); }
     return request;
   }
 
-  async function performImageOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal) {
+  async function performImageOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal, originGoalId?: string) {
     if (generationInFlight.current && !queueRequested) return;
     if (!model) {
       setNotice("请先选择当前接口可用的图像模型。");
@@ -4138,12 +4139,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         signal.throwIfAborted();
         if (imageOwnerRef.current !== capturedScope || !studioMountedRef.current) throw new Error("账号已切换，此任务已停止。");
         await runOperation(approvedConfirmation, allowAutonomousCost, false, signal);
-      }, () => imageActiveRequestRef.current); setNotice("已加入图片队列；提示词、模型、参考图与生成参数已固定。"); }
+      }, () => goalRunRef.current?.status === "running" ? new Promise<void>(resolve => window.setTimeout(resolve, 250)) : imageActiveRequestRef.current); setNotice("已加入图片队列；提示词、模型、参考图与生成参数已固定。"); }
       catch (error) {
       if (queueSignal?.aborted) throw error; setNotice(error instanceof Error ? error.message : "图片队列已满。"); }
       return;
     }
-    const usageGoalId = goalRunRef.current?.status === "running" ? goalRunRef.current.id : undefined;
+    const usageGoalId = originGoalId && goalRunRef.current?.id === originGoalId && goalRunRef.current?.status === "running" ? originGoalId : undefined;
     const fetchGoalImage = async (url: string, init: RequestInit) => {
       generationAbortRef.current?.signal.throwIfAborted();
       queueSignal?.throwIfAborted();
@@ -4411,7 +4412,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             `分批生成完成 ${collected.length}/${count} 张${lastError ? `：${lastError}` : ""}。`,
           );
         }
-        await addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat());
+        await addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat(), usageGoalId);
       } else {
         const response = await fetchGoalImage("/api/images/operate", {
           method: "POST",
@@ -4442,7 +4443,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           setImages(batchImages);
           setSelectedImageIndex(0);
           setPreviewDrafts([]);
-          await addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : []);
+          await addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : [], usageGoalId);
         } else {
           const result = await readImageOperationResponse(response);
           if (!response.ok && !result.images)
@@ -4466,13 +4467,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           const references = imageHistoryReferences(newImages, result.historyIds, result.requestId);
           setImages(newImages);
           setSelectedImageIndex(0);
-          await addSessionResults(
-            newImages,
-            references.historyIds,
-            operation,
-            {},
-            references.requestIds,
-          );
+          await addSessionResults(newImages, references.historyIds, operation, {}, references.requestIds, usageGoalId);
           if (result.payment === "newapi") usedNewApi = true;
           if (result.partial)
             partialMessage = result.message || "部分批次生成失败。";
@@ -4507,10 +4502,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setStreamProgress("");
       setGenerating(false);
       if (usageGoalId) void assistantUsage.refresh();
-      const goalImage = goalReviewImageRef.current;
-      goalReviewImageRef.current = null;
-      if (!generationWasCancelled && goalImage && goalRunRef.current?.status === "running")
-        window.setTimeout(() => void reviewGoalResult(goalImage), 0);
+      const goalReview = goalReviewImageRef.current;
+      const goalImage = usageGoalId && goalReview?.goalId === usageGoalId && goalRunRef.current?.id === usageGoalId ? goalReview.image : null;
+      if (usageGoalId && goalReview?.goalId === usageGoalId) goalReviewImageRef.current = null;
+      if (!generationWasCancelled && goalImage && usageGoalId && goalRunRef.current?.id === usageGoalId && goalRunRef.current?.status === "running") window.setTimeout(() => { if (goalRunRef.current?.id === usageGoalId && goalRunRef.current?.status === "running") void reviewGoalResult(goalImage); }, 0);
     }
   }
 
