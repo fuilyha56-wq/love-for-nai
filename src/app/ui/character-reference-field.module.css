@@ -1,0 +1,28 @@
+.field { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); min-width: 0; }
+.heading, .heading > span, .actions, .selected { display: flex; align-items: center; gap: 7px; }
+.heading { flex-wrap: wrap; justify-content: space-between; font-size: 12px; font-weight: 650; }
+.heading svg { color: var(--accent-text,var(--rose)); }
+.heading small, .field p { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.65; }
+.field p { margin: 8px 0 0; }
+.actions { margin-top: 10px; }
+.field button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 12px; }
+.field button:disabled { opacity: .5; cursor: not-allowed; }
+.field button:focus-visible, .field input:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.actions > button { flex: 1; }
+.selected { margin-top: 10px; }
+.selected img { width: 55px; height: 70px; object-fit: contain; border-radius: 7px; background: var(--paper); }
+.selected > span { flex: 1; min-width: 0; font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.selected button { flex: none; }
+.library { margin-top: 10px; }
+.library > input { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 9px; background: var(--paper); font-size: 13px; color: var(--ink); }
+.grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); max-height: 260px; overflow-y: auto; gap: 6px; margin-top: 8px; }
+.grid button { flex-direction: column; padding: 5px; min-width: 0; }
+.grid img { width: 100%; height: 64px; object-fit: contain; }
+.grid span { width: 100%; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grid button[aria-pressed=true] { border-color: var(--rose); }
+.sliders { display: grid; gap: 8px; margin-top: 10px; }
+.sliders label > span { display: flex; justify-content: space-between; font-size: 11px; }
+.sliders input { width: 100%; accent-color: var(--rose); }
+.field .edit { width: 100%; margin-top: 10px; border-color: var(--rose); color: var(--accent-text,var(--rose)); }
+.field .error { color: var(--rose); }
+@media(max-width:1023px) { .field button { min-height:44px; } .library > input { font-size:16px; } }

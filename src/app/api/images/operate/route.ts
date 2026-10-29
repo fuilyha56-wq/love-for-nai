@@ -276,8 +276,8 @@ function referenceImageCount(
   body: Record<string, unknown>,
   operation: string,
 ): number {
-  if (operation === "precise-reference")
-    return Array.isArray(body.references) ? body.references.length : 0;
+  if (Array.isArray(body.references) && body.references.length) return body.references.length;
+  if (operation === "precise-reference") return 0;
   if (operation === "character-reference")
     return Array.isArray(body.characters) ? body.characters.length : 0;
   return imageCount(body.reference_images) || imageCount(body.reference_image);

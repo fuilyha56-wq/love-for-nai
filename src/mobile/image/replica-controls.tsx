@@ -15,9 +15,10 @@ import { mergeTaggerPrompt, type TaggerPrediction } from "@/lib/tagger-core";
 import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import "./replica-controls.css";
 
-export type ReplicaCharacter = { id: string; prompt: string; negative?: string; centerX: number; centerY: number };
+export type ReplicaCharacter = { reference?: import("@/lib/character-reference").CharacterReferenceBinding; id: string; prompt: string; negative?: string; centerX: number; centerY: number };
 type Source = { data: string; name: string } | null;
 type Props = {
+  renderCharacterReference?: (character: ReplicaCharacter) => ReactNode;
   referenceLibrary?: Partial<Record<"vibe-transfer" | "precise-reference", ReactNode>>;
   variant: "nai" | "nlw";
   mobileSection?: "prompt" | "reference" | "size" | "tools";
@@ -62,7 +63,7 @@ function SourcePreview({ source, onRemove }: { source: Source; onRemove: () => v
 
 export type ReplicaCharactersProps = Pick<Props,
   "variant" | "model" | "imageProtocol" | "characters" | "setCharacters" | "charactersEnabled" |
-  "setCharactersEnabled" | "aiAutoPosition" | "setAiAutoPosition"
+  "setCharactersEnabled" | "aiAutoPosition" | "setAiAutoPosition" | "renderCharacterReference"
 >;
 
 export function ReplicaCharacters(p: ReplicaCharactersProps) {
@@ -92,6 +93,7 @@ export function ReplicaCharacters(p: ReplicaCharactersProps) {
         <div><b>角色 {index + 1}</b><button type="button" onClick={() => { const next = p.characters.filter(item => item.id !== character.id); p.setCharacters(next.length ? next : [{ id: "char-1", prompt: "", centerX: 0.5, centerY: 0.5 }]); if (!next.length) p.setCharactersEnabled(false); }} aria-label={`删除角色 ${index + 1}`}><X size={16} /></button></div>
         <label>提示词<textarea aria-label={`角色 ${index + 1} 提示词`} value={character.prompt} onChange={event => updateCharacter(character.id, { prompt: event.target.value })} /></label>
         <label hidden={!capabilities.acceptsNegative}>负向提示词<textarea aria-label={`角色 ${index + 1} 负向提示词`} value={character.negative || ""} onChange={event => updateCharacter(character.id, { negative: event.target.value })} /></label>
+        {p.renderCharacterReference?.(character)}
         {!p.aiAutoPosition && <div className="replica-character-position">{([['水平位置', 'centerX'], ['垂直位置', 'centerY']] as const).map(([label, axis]) => <label key={axis}>{label}<output>{character[axis].toFixed(2)}</output><input type="range" aria-label={`角色 ${index + 1} ${label}`} min={0} max={1} step={0.05} value={character[axis]} onChange={event => updateCharacter(character.id, { [axis]: Number(event.target.value) })} /></label>)}</div>}
       </div>)}
       <button type="button" className="replica-add-character" onClick={() => addCharacter()} disabled={!supportsCharacters || (p.charactersEnabled && p.characters.length >= 6)}><Plus size={16} />添加角色</button>
@@ -224,7 +226,7 @@ export function ReplicaControls(p: Props) {
       {p.variant === "nai" && visible("prompt") && <div className="replica-model-controls">{p.modelControls}</div>}
       {p.variant === "nlw" && visible("size") && <><ReplicaImageSize model={p.model} variant="nlw" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />{capabilities.seed && <div className="replica-seed"><b>种子</b><div><input aria-label="种子" value={p.seed} inputMode="numeric" placeholder="随机" onChange={event => p.setSeed(event.target.value.replace(/[^0-9]/g, ""))} />{p.seed && <><button type="button" onClick={() => void navigator.clipboard.writeText(p.seed)} aria-label="复制种子"><Copy size={17} /></button><button type="button" onClick={() => p.setSeed("")} aria-label="清空种子"><X size={17} /></button></>}<button type="button" onClick={() => p.setSeed(seedLocked ? "" : String(randomNaiSeed()))} aria-label={seedLocked ? "解锁种子" : "锁定种子"} aria-pressed={seedLocked}>{seedLocked ? <LockKeyhole size={20} /> : <UnlockKeyhole size={20} />}</button></div></div>}</>}
       {visible("prompt") && prompt}
-      {visible("prompt") && <ReplicaCharacters variant={p.variant} model={p.model} imageProtocol={p.imageProtocol} characters={p.characters} setCharacters={p.setCharacters} charactersEnabled={p.charactersEnabled} setCharactersEnabled={p.setCharactersEnabled} aiAutoPosition={p.aiAutoPosition} setAiAutoPosition={p.setAiAutoPosition} />}
+      {visible("prompt") && <ReplicaCharacters variant={p.variant} model={p.model} imageProtocol={p.imageProtocol} characters={p.characters} setCharacters={p.setCharacters} charactersEnabled={p.charactersEnabled} setCharactersEnabled={p.setCharactersEnabled} aiAutoPosition={p.aiAutoPosition} setAiAutoPosition={p.setAiAutoPosition} renderCharacterReference={p.renderCharacterReference} />}
       {p.variant === "nai" ? <>
         {visible("reference") && <ReplicaNaiReference model={p.model} imageProtocol={p.imageProtocol} operation={p.operation} source={p.source} onRemoveSource={p.onRemoveSource} onSelectOperation={p.onSelectOperation} onUpload={p.onUpload} onOpenEditor={p.onOpenEditor} strength={p.strength} setStrength={p.setStrength} />}
         {visible("size") && <ReplicaImageSize model={p.model} variant="nai" width={p.width} height={p.height} count={p.count} setWidth={p.setWidth} setHeight={p.setHeight} setCount={p.setCount} />}

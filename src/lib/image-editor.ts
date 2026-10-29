@@ -1,3 +1,5 @@
+import type { CharacterEditReference } from "./character-reference";
+
 export type Point = { x: number; y: number };
 export type Size = { width: number; height: number };
 export type WorldRect = Point & Size;
@@ -41,6 +43,7 @@ export type EditorGenerationSettings = {
 };
 
 export type EditorDocument = {
+  characterReference?: CharacterEditReference;
   version: 1;
   image: RgbaImage;
   worldRect: WorldRect;

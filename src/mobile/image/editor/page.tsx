@@ -6,5 +6,5 @@ export const revalidate = 0;
 
 export default async function ImageEditorPage() {
   const session = await getSession();
-  return <EditorClient authenticated={Boolean(session)} />;
+  return <EditorClient authenticated={Boolean(session)} userId={session?.userId} />;
 }

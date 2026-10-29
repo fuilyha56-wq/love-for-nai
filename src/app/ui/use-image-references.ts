@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { buildImageReferenceParameters, createImageReference, MAX_STUDIO_REFERENCES, referenceEncodingKey, type EncodedImageReference, type ImageReferenceAsset, type ImageReferenceKind, type ImageReferenceSelection } from "@/lib/image-references";
-import { clearReferenceEncodings, listReferenceAssets, readReferenceEncoding, removeReferenceAsset, saveReferenceAsset, saveReferenceEncoding } from "@/lib/client-reference-library";
+import { subscribeReferenceLibrary, clearReferenceEncodings, listReferenceAssets, readReferenceEncoding, removeReferenceAsset, saveReferenceAsset, saveReferenceEncoding } from "@/lib/client-reference-library";
 
 type Baskets = Record<ImageReferenceKind, ImageReferenceSelection[]>;
 const empty = (): Baskets => ({ "vibe-transfer": [], "precise-reference": [] });
@@ -21,6 +21,7 @@ export function useImageReferences(owner: string, model: string, onNotice: (mess
     try { const items = await listReferenceAssets(owner); if (current.current.owner === owner) setLibrary(items); }
     catch (error) { onNotice(error instanceof Error ? error.message : "无法读取参考图库。"); }
   }, [owner, onNotice]);
+  useEffect(() => subscribeReferenceLibrary(owner, () => { void refreshLibrary(); }), [owner, refreshLibrary]);
   useEffect(() => {
     let alive = true;
     void Promise.resolve().then(() => { if (!alive) return; setBaskets(empty()); setBasketOwner(owner); setLibrary([]); setEncodings({}); setEncodingId(null); return refreshLibrary(); });

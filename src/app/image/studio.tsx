@@ -1,4 +1,7 @@
 "use client";
+import { CharacterReferenceField } from "@/app/ui/character-reference-field";
+import { supportsCharacterReferenceEdit, type CharacterReferenceBinding } from "@/lib/character-reference";
+import { readReferenceAsset } from "@/lib/client-reference-library";
 import "./parameter-utilities.css";
 import { assistantImageFileWithType } from "@/lib/assistant-image-resource";
 import { useAssistantImageSources } from "@/app/ui/use-assistant-image-sources";
@@ -302,6 +305,7 @@ type SessionResult = ReplicaHistoryItem & EditorHistoryReference & {
 };
 // 多角色：每角色独立 prompt + 负向提示词 + 画面中心坐标（对齐 NAI Character Prompts）。
 type CharacterPromptUi = {
+  reference?: CharacterReferenceBinding;
   id: string;
   prompt: string;
   negative?: string;
@@ -1212,7 +1216,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       goalReviewImageRef.current = results.at(-1)?.image ? { goalId: originGoalId, image: results.at(-1)!.image } : null;
   }
 
-  async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data) {
+  async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data, character?: CharacterPromptUi) {
     if (!image && mode === "canvas") {
       const blank = document.createElement("canvas");
       blank.width = width; blank.height = height;
@@ -1223,7 +1227,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
     if (!image) { setNotice("请先导入或生成一张图片。"); return; }
     try {
-      if (source?.editorDraftId && image === source.data) {
+      if (character) {
+        if (!signedIn || !userId || character.reference?.owner !== String(userId)) throw new Error("请登录保存此参考图的账号后重试。");
+        if (!supportsCharacterReferenceEdit(model, imageProtocol)) throw new Error("角色参考重绘需要支持精准参考的 NAI V4.5 / V5 非 Medium 模型。");
+        if (!await readReferenceAsset(String(userId), character.reference.assetId)) throw new Error("角色参考图已从本机图库移除，请重新选择。");
+      }
+      if (!character && source?.editorDraftId && image === source.data) {
         if (source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId)) {
           router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: source.editorNodeId, branchId: source.editorBranchId || "", mode }).toString()}`);
           return;
@@ -1246,8 +1255,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         createRgbaImage(canvas.width, canvas.height, pixels.data),
         { x: 0, y: 0, width: canvas.width, height: canvas.height },
         {
-          prompt,
-          negativePrompt: negative,
+          prompt: character ? character.prompt : prompt,
+          negativePrompt: character ? character.negative || "" : negative,
+          ...(character?.reference ? { characterReference: { ...character.reference, label: `角色 ${characters.findIndex(item => item.id === character.id) + 1}` } } : {}),
           seed: seed || null,
           source: { name: source?.name || "工作区图片.png", mimeType: "image/png" },
           generation: { model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
@@ -1256,9 +1266,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       const random = new Uint32Array(2);
       crypto.getRandomValues(random);
       const draftId = `editor-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
-      syncEditorPromptToStudioForm(draftId, prompt, negative);
+      if (!character) syncEditorPromptToStudioForm(draftId, prompt, negative);
       await saveEditorDraft(createEditorDraft(draftId, mode, editorDocument));
-      if (source && image === source.data) {
+      if (!character && source && image === source.data) {
         setSource({ ...source, editorDraftId: draftId, editorNodeId: undefined, editorBranchId: undefined });
         await sourcePersistenceTaskRef.current;
       }
@@ -1653,9 +1663,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         controlModel,
         upscaleModel,
         charactersEnabled,
-        characters: characters.map(({ prompt: characterPrompt, negative: characterNegative, centerX, centerY }) => ({
+        characters: characters.map(({ prompt: characterPrompt, negative: characterNegative, centerX, centerY, reference }) => ({
           prompt: characterPrompt,
           ...(characterNegative ? { negative: characterNegative } : {}),
+          ...(reference ? { reference } : {}),
           centerX,
           centerY,
         })),
@@ -1933,6 +1944,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const displayedImages = previewFrozen ? frozenPreviewImages : incomingPreviewImages;
   const [comicDestination, setComicDestination] = useState<{ projectId: string; panelId: string } | null>(null);
   const imageReferences = useImageReferences(signedIn && userId ? String(userId) : "guest", model, setNotice);
+  function renderCharacterReference(character: CharacterPromptUi) {
+    const image = displayedImages[Math.max(0, selectedImageIndex - 1)] || source?.data;
+    const supported = supportsCharacterReferenceEdit(model, imageProtocol);
+    return <CharacterReferenceField owner={signedIn && userId ? String(userId) : "guest"} value={character.reference}
+      onChange={reference => setCharacters(current => current.map(item => item.id === character.id ? { ...item, reference } : item))}
+      onEdit={() => void openImageEditor("inpaint", image, character)}
+      canEdit={Boolean(signedIn && userId && image && supported && character.prompt.trim())}
+      editHint={!signedIn ? "登录后可进行角色参考重绘。" : !supported ? "请选择支持精准参考的 NAI V4.5 / V5 非 Medium 模型。" : !image ? "请先导入或生成底图。" : !character.prompt.trim() ? "请先填写该角色的提示词。" : "打开编辑器后涂选此角色，生成候选图并确认应用。"} />;
+  }
   function referenceSelections(kind: ImageReferenceKind) {
     if (imageReferences.baskets[kind].length || !source) return imageReferences.baskets[kind];
     return [{ ...createImageReference({ id: "source", data: source.data, name: source.name, createdAt: 0 }), strength: kind === "vibe-transfer" ? vibeStrength : 1, information: vibeInformationExtracted, referenceType: referenceType === "style" ? "style" as const : referenceType === "character" ? "character" as const : "character&style" as const }];
@@ -2206,9 +2226,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       .then(async (resultDraft) => {
         if (!active || !resultDraft) throw new Error("编辑器结果已过期，请重新打开编辑器。");
         const result = editorImageDataUrl(resultDraft.document.image);
-        setPrompt(resultDraft.document.prompt || "");
-        setNegative(resultDraft.document.negativePrompt || "");
-        restoreGenerationParameters({ operation: "inpainting", ...resultDraft.document.generation, prompt: resultDraft.document.prompt, negative_prompt: resultDraft.document.negativePrompt });
+        if (!resultDraft.document.characterReference) {
+          setPrompt(resultDraft.document.prompt || "");
+          setNegative(resultDraft.document.negativePrompt || "");
+          restoreGenerationParameters({ operation: "inpainting", ...resultDraft.document.generation, prompt: resultDraft.document.prompt, negative_prompt: resultDraft.document.negativePrompt });
+        }
         applyImageAsSource(result, "inpainting");
         const reference = { editorDraftId: resultId, editorNodeId: params.get("editorNodeId") || resultDraft.historyNodeId, editorBranchId: params.get("editorBranchId") || resultDraft.historyBranchId };
         setSource({ data: result, name: "编辑器结果.png", ...reference });
@@ -3194,6 +3216,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                     event.preventDefault();
                 }}
               />
+              {renderCharacterReference(character)}
               {!aiAutoPosition && (
               <div className="mt-2 space-y-1.5">
                 {(
@@ -3662,9 +3685,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
                 collapsed={customPromptCollapsed} onCollapsedChange={setCustomPromptCollapsed}
                 onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }} />
-              {modelCapabilities.characters && ["generate", "img2img", "inpainting"].includes(operation) && <ReplicaCharacters variant="nai" model={model}
+              {modelCapabilities.characters && ["generate", "img2img", "inpainting"].includes(operation) && <ReplicaCharacters variant="nai" model={model} imageProtocol={imageProtocol}
                 characters={characters} setCharacters={setCharacters} charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
-                aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition} />}
+                aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition} renderCharacterReference={renderCharacterReference} />}
             </> : <PanelSection title="提示词" icon={<Paintbrush size={16} />}>
               {promptFields}
               {characterControls}
@@ -4823,7 +4846,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount}
     seed={seed} setSeed={setSeed} characters={characters} setCharacters={setCharacters}
     charactersEnabled={charactersEnabled} setCharactersEnabled={setCharactersEnabled}
-    aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition}
+    aiAutoPosition={aiAutoPosition} setAiAutoPosition={setAiAutoPosition} renderCharacterReference={renderCharacterReference}
     source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
     reverseSource={agentImage ? { data: agentImage, name: "反推图片" } : null} onRemoveReverseSource={() => setAgentImage("")}
     onUpload={(file, nextOperation) => {

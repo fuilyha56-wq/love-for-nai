@@ -1,4 +1,6 @@
 "use client";
+import { CharacterEditReferenceCard, characterReferencePayload } from "@/app/ui/character-edit-reference";
+import { supportsCharacterReferenceEdit } from "@/lib/character-reference";
 import { waitWithAbort } from "@/lib/abortable";
 
 import { prepareInpaintMasks } from "@/lib/inpaint-mask";
@@ -83,7 +85,7 @@ import {
 } from "@/lib/image-editor-store";
 import "./editor.css";
 
-type EditorClientProps = { authenticated: boolean };
+type EditorClientProps = { authenticated: boolean; userId?: number };
 type EditorMode = "inpaint" | "canvas" | "tiled-upscale";
 type Tool = "pan" | "brush" | "eraser" | "rectangle";
 type EditorStroke = MaskStroke & { shape?: "freehand" | "rectangle" };
@@ -426,7 +428,7 @@ async function readGenerationResponse(response: Response): Promise<string> {
   return result;
 }
 
-export default function EditorClient({ authenticated }: EditorClientProps) {
+export default function EditorClient({ authenticated, userId }: EditorClientProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const draftId = searchParams.get("draftId");
@@ -728,7 +730,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         setViewportSize({ width: outputWidth, height: outputHeight });
         setPrompt(nextDocument.prompt || "");
         setNegative(nextDocument.negativePrompt || "");
-        syncEditorPromptToStudioForm(loaded.id, nextDocument.prompt || "", nextDocument.negativePrompt || "");
+        if (!nextDocument.characterReference) syncEditorPromptToStudioForm(loaded.id, nextDocument.prompt || "", nextDocument.negativePrompt || "");
         const nextModel = inpaintModelFor(generation?.model || "nai-v5-full", generation?.imageProtocol);
         if (!nextModel) throw new Error(`当前模型 ${generation?.model} 没有对应的重绘模型，请返回工作台选择支持重绘的模型。`);
         setModel(nextModel);
@@ -1363,12 +1365,12 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
 
   const updatePrompt = (value: string) => {
     setPrompt(value);
-    if (draftId) syncEditorPromptToStudioForm(draftId, value, negative);
+    if (draftId && !document?.characterReference) syncEditorPromptToStudioForm(draftId, value, negative);
   };
 
   const updateNegative = (value: string) => {
     setNegative(value);
-    if (draftId) syncEditorPromptToStudioForm(draftId, prompt, value);
+    if (draftId && !document?.characterReference) syncEditorPromptToStudioForm(draftId, prompt, value);
   };
 
   const updateOutputSize = (next: { width?: number; height?: number }) => {
@@ -1394,6 +1396,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
     const sourceViewport = restore?.viewport || viewport;
     const sourceCamera = restore?.camera || camera;
     if (!sourceDocument || !sourceViewport) return;
+    if (sourceDocument.characterReference) { setNotice("角色参考草稿仅用于蒙版重绘。请返回工作台另行打开分块超分。"); return; }
     if (!authenticated) { setNotice("请先登录后使用编辑器。"); return; }
 
     const targetModel = generationModelFor(model);
@@ -1668,12 +1671,19 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
     const runController = new AbortController(); editorGenerationAbortRef.current = runController;
     setGenerating(true); setNotice("");
     try {
+      const reference = document.characterReference;
+      if (reference && (mode !== "inpaint" || !supportsCharacterReferenceEdit(model, imageProtocol))) throw new Error("角色参考仅支持 NAI V4.5 / V5 非 Medium 模型的蒙版重绘，请恢复兼容的模型与模式。");
+      if (reference && !strokes.some(stroke => stroke.mode !== "erase" && stroke.points.length)) throw new Error("请先涂选要重绘的角色区域。");
       const prepared = viewportImage(document, viewport, outputSize);
+      // A role edit never auto-selects transparent or out-of-canvas pixels.
+      if (reference) prepared.mask.fill(0);
       applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
       const { requestMask, compositeMask } = prepareInpaintMasks(prepared.mask, prepared.image.width, prepared.image.height, featherRadius);
       if (!prepared.mask.some((value) => value > 0))
         throw new Error("请先绘制重绘蒙版，或把生成框移动到原图外扩展画布。");
+      const references = reference ? await characterReferencePayload(reference, userId, runController.signal) : undefined;
       const body = {
+        ...(references ? { references } : {}),
         operation: mode === "canvas" ? "outpainting" : "inpainting",
         editor_composite: true,
         providerId: document.generation?.providerId || "newapi",
@@ -1721,7 +1731,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
   };
 
   const returnToStudio = () => {
-    if (draftId && document) syncEditorPromptToStudioForm(draftId, prompt, negative);
+    if (draftId && document && !document.characterReference) syncEditorPromptToStudioForm(draftId, prompt, negative);
     router.replace(returnHref);
   };
 
@@ -1766,7 +1776,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       if (imageHistoryMode === "local") {
         try {
           const localId = crypto.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          await saveLocalImageHistory({ id: localId, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: resultModel, operation: "editor-composite" });
+          await saveLocalImageHistory({ id: localId, ownerId: userId ?? 0, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: resultModel, operation: "editor-composite" });
         } catch (error) {
           setNotice(`${error instanceof Error ? error.message : "本地历史保存失败"}，结果仍会返回工作台。`);
         }
@@ -1785,7 +1795,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
         }
       }
       const historyQuery = historyId ? `&editorHistory=${encodeURIComponent(historyId)}` : "";
-      syncEditorPromptToStudioForm(nextDraft.id, prompt, negative);
+      if (!nextDraft.document.characterReference) syncEditorPromptToStudioForm(nextDraft.id, prompt, negative);
       tiledRestoreRef.current = null;
       setTileSourceState(null);
       router.push(`/image?editorResult=${encodeURIComponent(nextDraft.id)}&editorNodeId=${encodeURIComponent(currentHistoryNodeIdRef.current)}&editorBranchId=${encodeURIComponent(activeHistoryBranchIdRef.current)}${historyQuery}`);
@@ -1897,6 +1907,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
 
   const standardGenerationPanel = (
     <>
+      {document?.characterReference && <CharacterEditReferenceCard reference={document.characterReference} userId={userId} />}
       <div className="editor-panel-heading"><span><Settings2 size={15} />生成设置</span><small>{outputSize.width} × {outputSize.height}</small></div>
       <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={naturalImageModel ? [{ value: model, label: model }] : filteredInpaintModels} ariaLabel="重绘模型" /></label>
       {!naturalImageModel && !v45InpaintAvailable && <p className="editor-tip is-warning">V4.5 支持局部重绘；当前平台模型开关或上游公开目录未开放 V4.5 局部重绘模型。</p>}
@@ -1917,7 +1928,7 @@ export default function EditorClient({ authenticated }: EditorClientProps) {
       </>}
       <label className="editor-field"><span>描述画面</span><textarea value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="描述要生成或补全的内容…" /></label>
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
-      <p className="editor-tip">生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。</p>
+      <p className="editor-tip">{document?.characterReference ? "仅重绘手动涂选的角色区域。参考图不关联上游角色编号，区域隔离由本地蒙版合成保证。" : "生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。"}</p>
     </>
   );
 

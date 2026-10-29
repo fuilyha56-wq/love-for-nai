@@ -6,6 +6,13 @@ type StoredAsset = ImageReferenceAsset & { owner: string };
 type StoredEncoding = EncodedImageReference & { owner: string };
 const DATABASE = "lfn-image-reference-library-v1";
 const MAX_ASSETS = 64;
+const LIBRARY_CHANGED = "lfn-reference-library-changed";
+export function subscribeReferenceLibrary(owner: string, refresh: () => void) {
+  const listener = (event: Event) => { if ((event as CustomEvent<string>).detail === owner) refresh(); };
+  window.addEventListener(LIBRARY_CHANGED, listener);
+  return () => window.removeEventListener(LIBRARY_CHANGED, listener);
+}
+function notifyLibrary(owner: string) { window.dispatchEvent(new CustomEvent(LIBRARY_CHANGED, { detail: owner })); }
 let database: Promise<IDBDatabase> | undefined;
 function openDatabase() {
   if (!database) database = new Promise<IDBDatabase>((resolve, reject) => {
@@ -34,6 +41,10 @@ export async function listReferenceAssets(owner: string) {
   const assets = await transact<StoredAsset[]>("assets", "readonly", (store) => store.getAll(IDBKeyRange.bound([owner, ""], [owner, "\uffff"])));
   return assets.sort((a, b) => b.createdAt - a.createdAt).map((asset) => ({ id: asset.id, name: asset.name, data: asset.data, createdAt: asset.createdAt }));
 }
+export async function readReferenceAsset(owner: string, id: string): Promise<ImageReferenceAsset | undefined> {
+  const asset = await transact<StoredAsset | undefined>("assets", "readonly", store => store.get([owner, id]));
+  return asset?.owner === owner ? { id: asset.id, name: asset.name, data: asset.data, createdAt: asset.createdAt } : undefined;
+}
 export async function saveReferenceAsset(owner: string, asset: ImageReferenceAsset) {
   const db = await openDatabase();
   return new Promise<ImageReferenceAsset>((resolve, reject) => {
@@ -46,11 +57,11 @@ export async function saveReferenceAsset(owner: string, asset: ImageReferenceAss
       if (assets.length >= MAX_ASSETS) { error = `参考图库最多保存 ${MAX_ASSETS} 张，请先删除不再使用的图片。`; tx.abort(); return; }
       store.put({ ...asset, owner });
     };
-    tx.oncomplete = () => resolve(saved);
+    tx.oncomplete = () => { notifyLibrary(owner); resolve(saved); };
     tx.onabort = tx.onerror = () => reject(new Error(error));
   });
 }
-export async function removeReferenceAsset(owner: string, id: string) { await transact("assets", "readwrite", (store) => store.delete([owner, id])); }
+export async function removeReferenceAsset(owner: string, id: string) { await transact("assets", "readwrite", (store) => store.delete([owner, id])); notifyLibrary(owner); }
 export async function readReferenceEncoding(owner: string, key: string): Promise<EncodedImageReference | undefined> {
   const value = await transact<StoredEncoding | undefined>("encodings", "readonly", (store) => store.get([owner, key]));
   return value?.owner === owner ? value : undefined;

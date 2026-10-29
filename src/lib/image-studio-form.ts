@@ -1,3 +1,4 @@
+import { parseCharacterReference, type CharacterReferenceBinding } from "./character-reference";
 import { NAI_MAX_DIMENSION } from "./nai-image-limits";
 import { resolveImageModelCapabilities } from "./image-model-capabilities";
 import { NAI_UPSCALE_MODEL_IDS, isNaiCatalogImageModel } from "./nai-model-catalog";
@@ -15,6 +16,7 @@ export type ImageEditorPromptHandoff = {
 };
 
 export type ImageStudioCharacterSnapshot = {
+  reference?: CharacterReferenceBinding;
   prompt: string;
   // 每角色负向提示词（NAI v4_negative_prompt 的 char_caption）。
   negative?: string;
@@ -153,6 +155,7 @@ export function parseImageStudioForm(
     const negative = stringValue(character.negative, "", 4_000);
     return {
       prompt: stringValue(character.prompt, "", 4_000),
+      reference: parseCharacterReference(character.reference),
       ...(negative ? { negative } : {}),
       centerX: numberValue(character.centerX, 0.5, 0, 1),
       centerY: numberValue(character.centerY, 0.5, 0, 1),
