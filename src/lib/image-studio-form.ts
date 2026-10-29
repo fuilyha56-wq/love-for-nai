@@ -3,7 +3,10 @@ import { NAI_MAX_DIMENSION } from "./nai-image-limits";
 import { resolveImageModelCapabilities } from "./image-model-capabilities";
 import { NAI_UPSCALE_MODEL_IDS, isNaiCatalogImageModel } from "./nai-model-catalog";
 
-export const IMAGE_STUDIO_FORM_STORAGE_KEY = "lfn-image-studio-form-v1";
+// Older open tabs normalize away role references. Migrate once into a new key
+// so their background autosave cannot erase the new association.
+export const IMAGE_STUDIO_FORM_STORAGE_KEY = "lfn-image-studio-form-v2";
+const LEGACY_IMAGE_STUDIO_FORM_STORAGE_KEY = "lfn-image-studio-form-v1";
 export const IMAGE_EDITOR_PROMPT_HANDOFF_KEY = "lfn-image-editor-prompt-handoff-v1";
 export const IMAGE_STUDIO_FORM_VERSION = 1 as const;
 
@@ -199,8 +202,13 @@ export function loadImageStudioForm(
 ): ImageStudioFormSnapshot {
   if (typeof window === "undefined") return parseImageStudioForm(null, options);
   try {
-    const raw = window.localStorage.getItem(IMAGE_STUDIO_FORM_STORAGE_KEY);
-    return raw ? parseImageStudioForm(JSON.parse(raw), options) : parseImageStudioForm(null, options);
+    const current = window.localStorage.getItem(IMAGE_STUDIO_FORM_STORAGE_KEY);
+    const raw = current ?? window.localStorage.getItem(LEGACY_IMAGE_STUDIO_FORM_STORAGE_KEY);
+    const snapshot = raw ? parseImageStudioForm(JSON.parse(raw), options) : parseImageStudioForm(null, options);
+    if (current === null) {
+      try { window.localStorage.setItem(IMAGE_STUDIO_FORM_STORAGE_KEY, JSON.stringify(snapshot)); } catch { /* The studio can still work without persistence. */ }
+    }
+    return snapshot;
   } catch {
     return parseImageStudioForm(null, options);
   }
@@ -286,6 +294,6 @@ export function clearEditorPromptHandoff(): void {
 
 export function clearImageStudioForm(): void {
   if (typeof window !== "undefined") {
-    try { window.localStorage.removeItem(IMAGE_STUDIO_FORM_STORAGE_KEY); } catch { /* Ignore private-mode storage errors. */ }
+    try { window.localStorage.removeItem(IMAGE_STUDIO_FORM_STORAGE_KEY); window.localStorage.removeItem(LEGACY_IMAGE_STUDIO_FORM_STORAGE_KEY); } catch { /* Ignore private-mode storage errors. */ }
   }
 }
