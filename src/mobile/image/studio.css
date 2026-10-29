@@ -1,0 +1,6 @@
+
+.mobile-studio-comic-handoff{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px}.mobile-studio-comic-handoff button,.mobile-studio-comic-handoff a{min-height:44px;display:inline-flex;align-items:center}
+
+.mobile-studio-preview-follow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}.mobile-studio-preview-follow button,.mobile-studio-preview-follow a{min-height:44px;display:inline-flex;align-items:center}.mobile-studio-preview-follow span{font-size:12px;opacity:.75}
+
+.mobile-studio-image-queue{padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:12px;min-width:0}.mobile-studio-image-queue summary{cursor:pointer}.mobile-studio-image-queue p{font-size:12px;opacity:.75}.mobile-studio-image-queue button{min-height:44px;margin:4px}.mobile-studio-image-queue ol{padding-left:22px;max-height:240px;overflow:auto}.mobile-studio-image-queue li{overflow-wrap:anywhere;font-size:12px;line-height:1.5}.mobile-studio-image-queue li>span{margin-right:6px}

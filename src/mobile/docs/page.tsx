@@ -5,8 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { MarkdownView } from "@/mobile/markdown";
 import { PublicHeader } from "@/mobile/public-header";
 import { PopupSelect } from "@/mobile/ui/popup-select";
-import { DocsFilters, documentBody } from "@/app/docs/docs-filters";
-import styles from "@/app/ui/discovery-controls.module.css";
+import { DocsFilters, documentBody } from "@/mobile/docs/docs-filters";
+import styles from "@/mobile/ui/discovery-controls.module.css";
 import "./docs.css";
 
 type PublicDocument = {

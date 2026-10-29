@@ -23,9 +23,11 @@ export async function consumeImageStream(
     onPreview: (images: string[]) => void;
     onProgress: (label: string) => void;
     onComplete?: (historyIds: string[], requestId?: string) => void;
+    onInterrupted?: (message: string) => void;
   },
 ): Promise<string[]> {
   if (!response.body) throw new Error("上游未返回流式响应");
+  if (!Number.isSafeInteger(options.expected) || options.expected < 1 || options.expected > 256) throw new RangeError("流式图片数量需要在 1–256 之间");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let leftover = "";
@@ -34,9 +36,7 @@ export async function consumeImageStream(
   let errorMessage = "";
   let ended = false;
   const applySlot = (target: string[], sampleIndex: number, image: string) => {
-    const index = Math.max(0, sampleIndex);
-    while (target.length <= index) target.push("");
-    target[index] = image;
+    target[sampleIndex] = image;
   };
   try {
     while (true) {
@@ -63,7 +63,7 @@ export async function consumeImageStream(
         if (event === "preview" || event === "final") {
           const image = typeof payload.image === "string" ? payload.image : "";
           const sampleIndex = typeof payload.sampleIndex === "number" ? payload.sampleIndex : 0;
-          if (!image) continue;
+          if (!image || !Number.isSafeInteger(sampleIndex) || sampleIndex < 0 || sampleIndex >= 256) continue;
           if (event === "final") applySlot(finals, sampleIndex, image);
           else applySlot(previews, sampleIndex, image);
           const visible = (event === "final" ? finals : previews).filter(Boolean);
@@ -86,10 +86,20 @@ export async function consumeImageStream(
       }
       if (done) break;
     }
+  } catch (error) {
+    const completed = finals.filter(Boolean);
+    if (!completed.length) throw error;
+    options.onInterrupted?.(error instanceof Error ? error.message : "流式连接已中断");
+    options.onPreview(completed);
+    return completed;
   } finally {
     if (!ended) void reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
-  if (errorMessage) throw new Error(errorMessage);
-  return finals.filter(Boolean);
+  const completed = finals.filter(Boolean);
+  if (errorMessage) {
+    if (!completed.length) throw new Error(errorMessage);
+    options.onInterrupted?.(errorMessage);
+  }
+  return completed;
 }

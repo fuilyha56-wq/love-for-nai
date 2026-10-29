@@ -163,7 +163,9 @@ export function splitImageCreditCost(cost: number, samples: number, packageBalan
 
 export function imagePricingStrength(body: Record<string, unknown>, operation: string): number | undefined {
   if (["inpainting", "edits", "outpainting", "infill"].includes(operation))
-    return typeof body.inpaintImg2ImgStrength === "number" ? body.inpaintImg2ImgStrength : 1;
+    return typeof body.inpaintImg2ImgStrength === "number"
+      ? body.inpaintImg2ImgStrength
+      : typeof body.strength === "number" ? body.strength : 1;
   if (operation === "img2img")
     return typeof body.strength === "number" ? body.strength : 0.7;
   return undefined;

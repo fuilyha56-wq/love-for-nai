@@ -89,7 +89,7 @@
 .mobile-studio-history-scroll > [data-replica-history]:has(.replica-history-empty) .replica-history-empty { width: 100%; min-height: 300px; }
 .mobile-studio-history-scroll .replica-history-card { min-width: 0; overflow: hidden; border-radius: 12px; background: var(--panel); }
 .mobile-studio-history-scroll .replica-history-preview { width: 100%; }
-.mobile-studio-history-scroll .replica-history-preview img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; object-fit: cover; }
+.mobile-studio-history-scroll .replica-history-preview img { display: block; width: 100%; height: auto; aspect-ratio: auto; object-fit: contain; }
 .mobile-studio-empty-page { display: grid; grid-column: 1 / -1; min-height: 300px; place-items: center; align-content: center; gap: 8px; color: var(--muted); text-align: center; }
 .mobile-studio-empty-page b { color: var(--ink); font-size: 16px; }
 .mobile-studio-empty-page span { font-size: 11px; }
@@ -245,3 +245,18 @@ html[data-motion="reduced"] :is(.mobile-studio-sheet-backdrop, .mobile-studio-sh
 @media (prefers-reduced-motion: reduce) { .mobile-studio-sheet-backdrop, .mobile-studio-sheet, .mobile-studio-prompt-backdrop, .mobile-studio-prompt-dialog, .mobile-studio-generate-scroll > :is(.mobile-studio-preview-section, .mobile-studio-reference-panel) { animation: none; transition: none; } }
 
 }
+
+/* A body portal isolates the workspace from transformed studio/layout ancestors. */
+.mobile-studio-prompt-backdrop { z-index: 1000; overflow: hidden; }
+.mobile-studio-workspace-dialog[data-active-pane="assistant"] > .mobile-studio-prompt-actions { display: none; }
+.mobile-studio-workspace-content.is-assistant:not([hidden]) { display: flex; min-height: 0; padding: 0; overflow: hidden; }
+.mobile-studio-workspace-content.is-assistant .mobile-studio-assistant-content { display: flex; min-width: 0; min-height: 0; flex: 1; height: 100%; overflow: hidden; }
+.mobile-studio-workspace-content.is-assistant .mobile-tag-assistant-panel { display: grid; flex: 1; min-height: 0; height: 100%; margin: 0; padding: 0; border: 0; overflow: hidden; }
+
+.mobile-studio-launcher .replica-generation-footer .replica-cancel-generation { width: auto; flex: 0 0 auto; margin: 0; min-height: 44px; padding-inline: 10px; font-size: 11px; }
+
+/* Busy legacy actions must shrink inside the fixed mobile footer. */
+.mobile-studio-launcher .nai-generation-action:has([data-studio-cancel]) { min-width: 0; max-width: 100%; flex: 1 1 0; }
+.mobile-studio-launcher .nai-generation-action [data-studio-cancel] { min-width: 0; width: 100%; max-width: 100%; height: auto; min-height: 44px; padding: 5px 8px; overflow: hidden; }
+.mobile-studio-launcher .nai-generation-action [data-studio-cancel] > span { min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 2px 4px; white-space: normal; overflow-wrap: anywhere; font-size: 11px; line-height: 1.3; }
+.mobile-studio-launcher .nai-generation-action [data-studio-cancel] > span > span { min-width: 0; white-space: normal; }

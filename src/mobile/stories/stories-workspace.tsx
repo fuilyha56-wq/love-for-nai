@@ -1,4 +1,6 @@
 "use client";
+
+import { createImageGenerationIntentUrl as imageGenerationIntentUrl } from "@/lib/client-image-generation-intent";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { lfnConfirm } from "@/mobile/ui/lfn-dialog";
 
@@ -451,7 +453,7 @@ export default function StoriesWorkspace({
     const selected = activeBranch.content.slice(selection.start, selection.end).trim();
     const fallback = activeBranch.content.slice(-600).trim();
     const prompt = selected || fallback;
-    router.push(`/image?prompt=${encodeURIComponent(prompt)}`);
+    router.push(imageGenerationIntentUrl({ prompt, operation: "generate", origin: "story" }));
   }
 
   function importFile(event: ChangeEvent<HTMLInputElement>) {

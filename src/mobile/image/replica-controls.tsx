@@ -18,6 +18,7 @@ import "./replica-controls.css";
 export type ReplicaCharacter = { id: string; prompt: string; negative?: string; centerX: number; centerY: number };
 type Source = { data: string; name: string } | null;
 type Props = {
+  referenceLibrary?: Partial<Record<"vibe-transfer" | "precise-reference", ReactNode>>;
   variant: "nai" | "nlw";
   mobileSection?: "prompt" | "reference" | "size" | "tools";
   prompt: string; negative: string; model: string; operation: string;
@@ -128,14 +129,15 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
   const [predictions, setPredictions] = useState<TaggerPrediction[]>([]);
   const [predictionSource, setPredictionSource] = useState("");
   const controller = useRef<AbortController | null>(null);
+  const handedOff = useRef(false);
   const latestPrompt = useRef(p.prompt);
   useEffect(() => { latestPrompt.current = p.prompt; }, [p.prompt]);
-  useEffect(() => () => controller.current?.abort(), [p.source?.data, p.model, p.imageProtocol]);
+  useEffect(() => () => { if (!handedOff.current) controller.current?.abort(); }, [p.source?.data, p.model, p.imageProtocol]);
   useEffect(() => {
     let active = true;
     const refresh = () => { setPreferences(readTaggerPreferences()); void listTaggerModels().then(items => { if (active) setModels(items); }).catch(reason => { if (active) setError(reason instanceof Error ? reason.message : "无法读取本地模型。"); }); };
     refresh(); const unsubscribe = subscribeTaggerChanges(refresh);
-    return () => { active = false; controller.current?.abort(); unsubscribe(); };
+    return () => { active = false; if (!handedOff.current) controller.current?.abort(); unsubscribe(); };
   }, []);
   const working = busy || p.reverseBusy;
   const visiblePredictions = predictionSource === p.source?.data ? predictions : [];
@@ -152,6 +154,7 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
   async function reverse() {
     if (!p.source || working || (!preferences.onnx && !preferences.llm)) return;
     const abort = new AbortController(); controller.current = abort;
+    handedOff.current = false;
     setBusy(true); setError(""); setStatus(""); setPredictions([]);
     try {
       let localTags: string[] | undefined;
@@ -161,7 +164,9 @@ export function ReplicaReverseTagger(p: Pick<Props, "source" | "prompt" | "model
         setPredictions(result); setPredictionSource(p.source.data); localTags = result.map(item => item.name);
         if (!preferences.llm) applyTags(localTags);
       }
-      if (preferences.llm) { setStatus("正在通过视觉模型反推…"); await p.onReverse({ localTags, signal: abort.signal }); }
+      if (preferences.llm) { setStatus("正在通过视觉模型反推…"); if (abort.signal.aborted) return;
+        handedOff.current = true;
+        await p.onReverse({ localTags, signal: abort.signal }); }
       if (!abort.signal.aborted) setStatus(preferences.llm ? "已完成视觉反推。" : localTags?.length ? `识别出 ${localTags.length} 个标签，已加入提示词。` : "没有标签达到当前阈值，可降低阈值后重试。");
     } catch (reason) { if (reason instanceof Error && reason.name === "AbortError") setStatus("反推已取消。"); else { setStatus(""); setError(reason instanceof Error ? reason.message : "图片反推失败。"); } }
     finally { if (controller.current === abort) controller.current = null; setBusy(false); }
@@ -231,12 +236,12 @@ export function ReplicaControls(p: Props) {
           {capabilities.sampling && activeSource("img2img") && <label className="replica-slider-label">变化强度 <output>{p.strength}</output><input type="range" min={0} max={1} step={0.05} aria-label="变化强度" value={p.strength} onChange={event => p.setStrength(Number(event.target.value))} /></label>}
         </Section>}
         {capabilities.edit && <Section title="风格迁移" icon={<WandSparkles size={20} />}>
-          <p className="replica-hint">改变图像，保留视觉风格</p><SourcePreview source={activeSource("vibe-transfer")} onRemove={p.onRemoveSource} />
+          <p className="replica-hint">改变图像，保留视觉风格</p>{p.referenceLibrary?.["vibe-transfer"] || <SourcePreview source={activeSource("vibe-transfer")} onRemove={p.onRemoveSource} />}
           <div className="replica-reference-actions"><button type="button" onClick={() => upload("vibe-transfer")}><ImagePlus size={42} /><b>从文件添加</b><small>PNG、JPG、WebP</small></button><button type="button" onClick={() => p.onGallery("vibe-transfer")}><Folder size={42} /><b>从库导入</b><small>从图片库中选择</small></button></div>
-          {capabilities.vibe && activeSource("vibe-transfer") && <><label className="replica-slider-label">参考强度 <output>{p.vibeStrength}</output><input aria-label="参考强度" type="range" min={0} max={1} step={0.05} value={p.vibeStrength} onChange={event => p.setVibeStrength(Number(event.target.value))} /></label><label className="replica-slider-label">信息提取 <output>{p.vibeInformationExtracted}</output><input aria-label="信息提取" type="range" min={0} max={1} step={0.05} value={p.vibeInformationExtracted} onChange={event => p.setVibeInformationExtracted(Number(event.target.value))} /></label></>}
+          {capabilities.vibe && !p.referenceLibrary?.["vibe-transfer"] && activeSource("vibe-transfer") && <><label className="replica-slider-label">参考强度 <output>{p.vibeStrength}</output><input aria-label="参考强度" type="range" min={0} max={1} step={0.05} value={p.vibeStrength} onChange={event => p.setVibeStrength(Number(event.target.value))} /></label><label className="replica-slider-label">信息提取 <output>{p.vibeInformationExtracted}</output><input aria-label="信息提取" type="range" min={0} max={1} step={0.05} value={p.vibeInformationExtracted} onChange={event => p.setVibeInformationExtracted(Number(event.target.value))} /></label></>}
         </Section>}
         {capabilities.edit && <Section title="精准参考" icon={<UserRound size={20} />}>
-          <p className="replica-hint">添加参考图并设置类型和参数。</p><SourcePreview source={activeSource("precise-reference")} onRemove={p.onRemoveSource} />
+          <p className="replica-hint">添加参考图并设置类型和参数。</p>{p.referenceLibrary?.["precise-reference"] || <SourcePreview source={activeSource("precise-reference")} onRemove={p.onRemoveSource} />}
           <button type="button" className="replica-tonal-button" onClick={() => upload("precise-reference")}><Plus size={19} />添加参考图</button>
           <label className="replica-reference-type">参考类型<LfnSelect value={p.referenceType} onChange={event => p.setReferenceType(event.target.value)}><option value="character&style">角色与风格</option><option value="character">角色</option><option value="style">风格</option></LfnSelect></label>
           <button type="button" className="replica-library-button" onClick={() => p.onGallery("precise-reference")}><Folder size={18} />从库导入</button>

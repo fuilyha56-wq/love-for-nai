@@ -11,8 +11,8 @@ import { useState } from "react";
 import { AdaptiveDialog } from "@/mobile/ui/adaptive-dialog";
 import { PopupSelect } from "@/mobile/ui/popup-select";
 import { LfnSwitch } from "@/mobile/ui/lfn-switch";
-import styles from "@/app/ui/discovery-controls.module.css";
-import { GalleryUploadField } from "@/app/ui/gallery-upload-field";
+import styles from "@/mobile/ui/discovery-controls.module.css";
+import { GalleryUploadField } from "@/mobile/gallery/gallery-upload-field";
 import { readJson, SessionExpiredError } from "@/mobile/session-notice";
 
 type Rating = "general" | "r13" | "r17" | "r18";

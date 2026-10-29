@@ -1,6 +1,6 @@
 "use client";
-import { TutorialCenter } from "@/app/tutorials/tutorial-center";
-import { AvatarEditor } from "@/app/ui/avatar-editor";
+import { TutorialCenter } from "@/mobile/tutorials/tutorial-center";
+import { AvatarEditor } from "@/mobile/profile/avatar-editor";
 import RiskSecurity from "./risk-security";
 import { lfnConfirm } from "@/mobile/ui/lfn-dialog";
 

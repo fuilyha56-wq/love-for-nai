@@ -34,7 +34,7 @@ export async function runImagePromptSuggestion(options: {
     images.length
       ? "根据参考图片及现有提示词，给出适用于当前图像模型的完整自然语言描述。保留用户已有意图和指定文字。仅生成可应用的提示词，不生成图片，不进行网络检索。"
       : "完善并补写现有提示词，保持原意，补充清晰的场景、构图及视觉细节，返回可以直接替换原文的完整自然语言提示词。仅生成提示词，不生成图片，不进行网络检索。",
-    { currentPrompt: options.prompt, imageModel: target.imageModel, modelProtocol: target.modelProtocol, operation: "generate" },
+    { currentPrompt: options.prompt, imageModel: target.imageModel, modelProtocol: target.modelProtocol, operation: "generate", allowExternalTools: false, allowWikipedia: false },
     1,
     { images, reasoningEffort: options.reasoningEffort, baseUrl: options.baseUrl, signal: options.signal, ...(options.transport ? { transport: options.transport } : {}), ...(options.refreshKey ? { refreshKey: options.refreshKey } : {}) },
   );

@@ -24,7 +24,8 @@ import {
   TOKENS_PER_POINT,
   type ImagePricingGeneration,
 } from "@/lib/image-pricing";
-import { CreditPriceTables, useCreditPricing } from "@/app/ui/credit-pricing";
+import { useCreditPricing } from "@/lib/client-credit-pricing";
+import { CreditPriceTables } from "@/mobile/pricing/credit-pricing";
 import { formatAff, formatCny, quoteCredits } from "@/lib/credit-pricing";
 import { naiDimensionLimit } from "@/lib/nai-image-limits";
 import type { PublicCatalog, PublicModel } from "@/lib/public-catalog";
@@ -160,7 +161,7 @@ export default function PricingPage() {
           <h2 className="mt-7 text-xl font-semibold">本站 AFF / 图包定价</h2>
           {creditPricing.data && <CreditPriceTables pricing={creditPricing.data} />}
           {creditPricing.error && <p className="credit-price-warning">{creditPricing.error}</p>}
-          <button type="button" className="credit-pricing-trigger" disabled={creditPricing.loading} onClick={() => void creditPricing.refresh()}><RefreshCw size={14} />{creditPricing.loading ? "读取中" : "刷新本站价格"}</button>
+          <button type="button" className="mobile-credit-pricing-trigger" disabled={creditPricing.loading} onClick={() => void creditPricing.refresh()}><RefreshCw size={14} />{creditPricing.loading ? "读取中" : "刷新本站价格"}</button>
         </section>
         <div className="mt-7 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
           <span className={`rounded-full px-2.5 py-1 ${catalog?.stale ? "bg-[#fff3d6] text-[#8a6116]" : "bg-[#e6f3ed] text-[#28664f]"}`}>

@@ -23,6 +23,11 @@ SERVER_CONNECTION_GUIDE.md
 .vscode
 .idea
 .mimosa
+.kilo
+.codex
+.claude
+.cursor
+.agents
 .venv
 scripts/.tmp
 .tmp
@@ -45,3 +50,25 @@ docs/LFN-USER-REQUESTS-20261025.md
 docs/anlas-policy-2026-10-26.json
 %SystemDrive%
 public/tutorials/**/audit*.json
+# Local credentials and verification artifacts never belong in a runtime image.
+**/.ssh
+**/known_hosts*
+**/*.key
+**/*.pem
+**/*.p8
+**/*.p12
+**/*.pfx
+**/*.crt
+**/*.cer
+**/*.jks
+coverage
+test-results
+playwright-report
+.nyc_output
+**/__tests__
+**/*.test.*
+**/*.spec.*
+vitest.config.mts
+scripts/check-*.cjs
+scripts/audit-*
+scripts/tutorial-test-support.cjs

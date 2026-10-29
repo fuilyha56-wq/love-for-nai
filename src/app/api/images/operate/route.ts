@@ -179,7 +179,7 @@ async function handleUpscale(
       }),
       body: JSON.stringify(payload),
       cache: "no-store",
-      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]),
     }).catch((error: unknown) => {
       finishGatewayLog(0);
       throw error;
@@ -571,7 +571,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
           }),
           body: JSON.stringify(nativeBody),
           cache: "no-store",
-          signal: abort.signal,
+          signal: AbortSignal.any([request.signal, abort.signal]),
         },
       ).catch((error: unknown) => {
         finishGatewayLog(0);
@@ -590,10 +590,16 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       }
 
       if (streamReady) {
+      let streamCancelled = false;
+      let streamCompletionHandled = false;
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
-          const send = (event: string, data: unknown) =>
-            controller.enqueue(encoder.encode(sseEvent(event, data)));
+          const send = (event: string, data: unknown) => {
+            if (event === "done") streamCompletionHandled = true;
+            if (streamCancelled || request.signal.aborted) return;
+            try { controller.enqueue(encoder.encode(sseEvent(event, data))); }
+            catch { streamCancelled = true; abort.abort(new DOMException("客户端已断开", "AbortError")); }
+          };
           const finals = new Map<number, string>();
           const latestImages = new Map<number, string>();
           let errorMessage = "";
@@ -635,6 +641,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                 });
               }
             }
+            if (streamCancelled || request.signal.aborted) throw new DOMException("用户已取消生成", "AbortError");
             // NAI 已返回请求数量对应的最终图片时，不再等待上游迟迟不关闭连接。
             await nativeResponse.body?.cancel().catch(() => undefined);
             if (!errorMessage && finals.size === 0 && latestImages.size > 0) {
@@ -688,7 +695,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             } else if (!errorMessage) {
               errorMessage = "上游未返回最终图片";
             }
-            if (errorMessage && finals.size === 0) {
+            if (errorMessage && finals.size === 0 && !streamCancelled && !request.signal.aborted && !abort.signal.aborted) {
               // 流式上游失败（如 NAI 流式管线内部错误）：同笔扣费回退到
               // 缓冲端点再试一次，成功照常下发 final/done，失败才退款报错。
               const fallbackBase = baseUrlOverride;
@@ -725,7 +732,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                       }),
                       body: JSON.stringify(payload),
                       cache: "no-store",
-                      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+                      signal: AbortSignal.any([request.signal, abort.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]),
                     },
                   ).catch((error: unknown) => {
                     finishFallbackLog(0);
@@ -796,14 +803,27 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
               error instanceof Error ? error.message : "流式生成中断";
             send("error", { message: errorMessage });
           } finally {
+            const clientCancelled = streamCancelled || request.signal.aborted;
+            if (clientCancelled && !errorMessage) errorMessage = "用户已取消生成";
+            if (clientCancelled && !streamCompletionHandled && finals.size && !deferPatchHistory && body._lfnSkipServerHistory !== true) {
+              const completedImages = [...finals.entries()].sort(([a], [b]) => a - b).map(([, image]) => image);
+              const historyIds = reserveHistoryImageIds(completedImages);
+              void saveHistory(session.userId, body, completedImages, null, { imageIds: historyIds, requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined }).catch((error) => console.error("[lfn] 保存中断任务的已完成图片失败", error));
+            }
             clearTimeout(timeout);
             if (errorMessage && creditCharge && !affRefunded) {
               affRefunded = true;
               await refundImageCredits(session.userId, creditCharge, generatedSamples);
             }
             await finishGenerationAudit(errorMessage ? generatedSamples ? 207 : 502 : 200);
-            controller.close();
+            if (!streamCancelled && !request.signal.aborted) { try { controller.close(); } catch { /* Already closed by the client. */ } }
           }
+        },
+        cancel(reason) {
+          streamCancelled = true;
+          clearTimeout(timeout);
+          abort.abort(reason);
+          void nativeResponse.body?.cancel(reason).catch(() => undefined);
         },
       });
       return sseResponse(stream, {
@@ -882,7 +902,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
               : payload.seed,
         } : { ...payload, n: batch }),
         cache: "no-store",
-        signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]),
       }).catch((error: unknown) => {
         finishGatewayLog(0);
         throw error;
@@ -1000,7 +1020,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
     const admission = riskAdmissionResponse(error);
     if (admission) { await audit.finish({ status: admission.status }); return new Response(admission.body, { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
-    if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
+    if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted || request.signal.aborted)) {
       affRefunded = true;
       await refundImageCredits(session.userId, creditCharge, generatedSamples);
     }

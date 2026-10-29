@@ -1,4 +1,5 @@
 "use client";
+import { saveImageBlobAs } from "@/lib/client-file-save";
 
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
@@ -108,7 +109,7 @@ export function ImageDownloadMenu({ src, getImage, filename, className, label, t
     };
   }, [open, close, positionMenu]);
 
-  async function download(cleanMetadata: boolean) {
+  async function download(cleanMetadata: boolean, saveAs = false) {
     if (busy || disabled) return;
     setBusy(true);
     setError("");
@@ -132,6 +133,7 @@ export function ImageDownloadMenu({ src, getImage, filename, className, label, t
         }
         blob = await response.blob();
       }
+      if (saveAs) { if (await saveImageBlobAs(blob, `${safeFilename(filename)}.${extensionFor(blob)}`)) { try { onDownloaded?.(); } catch { /* Analytics are optional. */ } close(); } return; }
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -170,6 +172,7 @@ export function ImageDownloadMenu({ src, getImage, filename, className, label, t
         <button type="button" role="menuitem" disabled={busy} onClick={() => void download(false)}>
           下载原图
         </button>
+        <button type="button" role="menuitem" disabled={busy || disabled} onClick={() => void download(false, true)}>另存为…</button>
         <button type="button" role="menuitem" disabled={busy} onClick={() => void download(true)}>
           抹除 NAI 数据后下载
         </button>

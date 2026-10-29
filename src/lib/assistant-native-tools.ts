@@ -7,7 +7,7 @@ const fn = (name: string, description: string, properties: Record<string, Schema
 });
 
 /** The same server tools are available through native function calls and the text compatibility protocol. */
-export function assistantNativeTools() {
+export function assistantNativeTools(options: { wikipediaEnabled?: boolean; externalEnabled?: boolean } = {}) {
   return [
     fn("search_tag_catalog", "检索本地完整 Danbooru/QuickTagCloud 标签库；query 与 queries 二选一，多概念用 queries。搜索摘要不等于完整词条。", { query: text, queries: texts(8), source: { type: "string", enum: ["danbooru", "quicktagcloud"] } }),
     fn("read_tag_catalog", "读取已选本地词条的完整介绍和原始内容，key 与 keys 二选一。", { key: text, keys: texts(6) }),
@@ -19,5 +19,5 @@ export function assistantNativeTools() {
     fn("search_quicktagcloud_tags", "在线搜索所选 QuickTagCloud 目录，返回相关候选和 entryId。命中后优先读取完整词条。", { codexId: text, query: text }, ["codexId", "query"]),
     fn("read_quicktagcloud_entry", "读取所选在线 QuickTagCloud 词条的完整原文、组合提示词及来源链接。", { codexId: text, entryId: text }, ["codexId", "entryId"]),
     fn("web_search", "检索 Wikipedia 概念，将中文或罕见概念转为英文检索词。", { query: text }, ["query"]),
-  ];
+  ].filter((tool) => (options.externalEnabled !== false || ["search_tag_catalog", "read_tag_catalog", "tag_catalog_status"].includes(tool.function.name)) && (options.wikipediaEnabled !== false || tool.function.name !== "web_search"));
 }

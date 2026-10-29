@@ -1,5 +1,8 @@
 # 手机端布局与交互
 
+> 验证文件说明：文中的单元测试、浏览器检查和审计脚本保留在开发者本机，按发布要求不包含在当前 GitHub 文件中。干净检出可运行 `npm run lint` 和 `npm run build`；历史测试路径与命令仅供拥有本机验证文件的开发环境参考。
+
+
 > 本文仅保留早期优化记录，其中抽屉位置和更多菜单等描述已经过后续调整。当前要求是恢复桌面、仅优化手机；实际设备边界和验收结果见 [手机布局与桌面恢复验收](LAUNCHER_LAYOUT_PARITY.md)。
 
 手机工作台采用 Aaalice NAI Launcher 的内容优先、参数抽屉、提示词编辑层、历史与返回层级；保留 LFN 的品牌、主题变量、强调色、AFF 钱包、模型来源及站内功能。参考的是 [v4.3.0 源码](https://github.com/Aaalice233/Aaalice_NAI_Launcher/tree/v4.3.0) 和本机参考仓库的当前实现，没有安装或运行 APK。
@@ -34,7 +37,7 @@
 
 ## 验证与复跑
 
-浏览器回归脚本：[scripts/check-mobile-ui.cjs](../scripts/check-mobile-ui.cjs)。使用独立浏览器上下文与模拟 API；模拟生成只返回测试图片，删除只操作模拟响应，不调用真实付费接口。
+浏览器回归脚本：`scripts/check-mobile-ui.cjs`（本机验证文件）。使用独立浏览器上下文与模拟 API；模拟生成只返回测试图片，删除只操作模拟响应，不调用真实付费接口。
 
 先在一个终端启动使用独立数据目录的开发服务器，临时密钥需至少 32 个字符。不要将这套测试配置用于线上服务。
 
@@ -48,7 +51,7 @@ npm run dev -- --hostname 127.0.0.1 --port 3000
 
 ```powershell
 $env:LFN_UI_TEST_SESSION_SECRET = '<与开发服务器相同的临时测试密钥>'
-node scripts/check-mobile-ui.cjs
+# 仅本机保留的验证环境：node scripts/check-mobile-ui.cjs
 ```
 
 默认使用 Edge；`LFN_UI_BROWSER_CHANNEL` 可指定已安装的其他 Chromium 通道。`LFN_UI_BASE_URL` 可指定本机端口，脚本拒绝远程地址。`LFN_UI_SCENARIO` 可按名称筛选场景。

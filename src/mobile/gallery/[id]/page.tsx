@@ -3,8 +3,8 @@ import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
 import { Eye, Heart, Link2, RotateCcw, Trophy } from "lucide-react";
 import Image from "@/mobile/cached-image";
-import { DiscussionComments } from "@/app/ui/discussion-comments";
-import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
+import { DiscussionComments } from "@/mobile/gallery/discussion-comments";
+import { GalleryImportDialog } from "@/mobile/gallery/gallery-import-dialog";
 import { ImageDetailWorkspace, ImageMetadataParameters, ImagePromptSection } from "@/mobile/ui/image-detail-workspace";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
 import { useEffect, useState } from "react";

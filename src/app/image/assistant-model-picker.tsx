@@ -10,12 +10,12 @@ export type AssistantModelControl = {
   group?: string; groups?: SelectOption[]; onGroupChange?: (group: string) => void;
 };
 export function AssistantSourceControl(p: AssistantModelControl) {
-  const custom = (p.sources || []).filter(source => source.value !== "newapi");
+  const sources = p.sources?.length ? p.sources : [{ value: "newapi", label: "NewAPI" }];
+  const groups = p.groups?.length ? p.groups : [{ value: "", label: "自动（账号默认）" }];
+  const isNewApi = !p.providerId || p.providerId === "newapi";
   return <div className="assistant-source-control">
-    <div role="group" aria-label="助手模型来源"><button type="button" aria-pressed={!p.providerId || p.providerId === "newapi"} disabled={p.disabled} onClick={() => p.onSourceChange?.("newapi")}>NewAPI</button>
-      {custom.length > 0 && <button type="button" aria-pressed={p.providerId !== "newapi"} disabled={p.disabled} onClick={() => p.onSourceChange?.(p.providerId !== "newapi" ? p.providerId! : custom[0].value)}>自定义模型</button>}</div>
-    {p.providerId && p.providerId !== "newapi" ? <PopupSelect value={p.providerId} options={custom} onChange={id => p.onSourceChange?.(id)} ariaLabel="助手自定义模型源" disabled={p.disabled} menuClassName="assistant-model-menu" menuMinWidth={200} />
-      : p.groups?.length ? <><span className="assistant-source-group-label">分组</span><PopupSelect value={p.group || ""} options={p.groups} onChange={group => p.onGroupChange?.(group)} ariaLabel="助手 NewAPI 分组" disabled={p.disabled} menuClassName="assistant-model-menu" menuMinWidth={160} /></> : <span className="assistant-source-group">分组由上游匹配</span>}
+    <label className="assistant-source-field"><span>模型来源</span><PopupSelect value={p.providerId || "newapi"} options={sources} onChange={id => p.onSourceChange?.(id)} ariaLabel="助手模型来源" disabled={p.disabled} menuClassName="assistant-model-menu" menuMinWidth={200} /></label>
+    {isNewApi && <label className="assistant-source-field"><span>NewAPI 分组</span><PopupSelect value={p.group || ""} options={groups} onChange={group => p.onGroupChange?.(group)} ariaLabel="助手 NewAPI 分组" disabled={p.disabled} menuClassName="assistant-model-menu" menuMinWidth={160} /></label>}
   </div>;
 }
 export function AssistantModelPicker({ value, options, pending, error, disabled, onChange, onRefresh, compact = false, sourceName = "NewAPI" }: AssistantModelControl) {

@@ -1,0 +1,10 @@
+.assistant-session-manager { min-width: 0; }
+.assistant-session-manager header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.assistant-session-manager p, .assistant-session-manager label { font-size: 11px; line-height: 1.7; color: var(--muted); }
+.assistant-session-manager input { display: block; width: 100%; min-width: 0; margin-block: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; }
+.assistant-session-manager ul { list-style: none; margin: 8px 0 12px; padding: 0; max-height: 200px; overflow: auto; }
+.assistant-session-manager li button { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; text-align: left; }
+.assistant-session-manager li strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-session-manager button[aria-current=true] { color: var(--rose); border-color: var(--rose); }
+.assistant-session-manager button { min-height: 36px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.assistant-session-manager > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

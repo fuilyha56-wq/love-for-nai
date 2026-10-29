@@ -1,5 +1,8 @@
 # 图像模型与本地反推支持
 
+> 验证文件说明：文中的单元测试、浏览器检查和审计脚本保留在开发者本机，按发布要求不包含在当前 GitHub 文件中。干净检出可运行 `npm run lint` 和 `npm run build`；历史测试路径与命令仅供拥有本机验证文件的开发环境参考。
+
+
 本文说明 LFN 当前实现的协议与功能边界。模型名称、账号权限和上游实际接口都必须匹配；加入模型 ID 并不意味着该上游支持所有功能。
 
 ## 协议与配置
@@ -61,8 +64,8 @@ LFN 蒙版约定为白色编辑、黑色保护。GPT / DALL·E 2 转换为原生
 ## 验证范围
 
 ```sh
-npm test
-npx vitest run tests/browser-tagger.test.ts tests/browser-tagger-runtime.test.ts
+# 仅本机保留的验证环境：npm test
+# 仅本机保留的验证环境：npx vitest run tests/browser-tagger.test.ts tests/browser-tagger-runtime.test.ts
 ```
 
 协议、助手和路由测试使用 mock 上游，覆盖请求格式、功能限制、蒙版处理及权限等逻辑。WASM 测试实际运行 ONNX Runtime Web 1.30.0，通过依赖像素输入的 220 字节测试模型验证 BGR、输出与阈值，并非完整 WD 模型的识别质量或大型模型性能测试。

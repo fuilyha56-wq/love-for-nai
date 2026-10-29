@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, type RefObject } from "react";
+import { useLayoutEffect, type RefObject } from "react";
 
 /** Keep keyboard navigation inside a modal while allowing its portalled menus. */
 export function useDialogFocus(open: boolean, ref: RefObject<HTMLElement | null>) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     const dialog = ref.current;
     if (!open || !dialog) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -29,7 +29,9 @@ export function useDialogFocus(open: boolean, ref: RefObject<HTMLElement | null>
     document.addEventListener("keydown", trap);
     return () => {
       document.removeEventListener("keydown", trap);
-      if (previous?.isConnected) previous.focus({ preventScroll: true });
+      requestAnimationFrame(() => {
+        if (previous?.isConnected && !previous.closest("[inert], [hidden]")) previous.focus({ preventScroll: true });
+      });
     };
   }, [open, ref]);
 }

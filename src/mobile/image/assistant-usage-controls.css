@@ -1,0 +1,17 @@
+.mobile-assistant-round-control,.mobile-assistant-round-control *,.mobile-assistant-usage-panel,.mobile-assistant-usage-panel *{font-family:"Noto Sans SC",sans-serif}
+.mobile-assistant-round-control{margin:8px 0 0;padding:0;border:0;min-width:0}
+.mobile-assistant-round-control label{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:11px}
+.mobile-assistant-round-control small{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+.mobile-assistant-round-control .field{width:80px;min-height:36px;text-align:center}
+.mobile-assistant-usage-panel{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card,var(--paper));font-size:10px;line-height:1.7;min-width:0;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.mobile-assistant-usage-panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;background:transparent;box-shadow:none}
+.mobile-assistant-usage-panel button{color:var(--rose);font-size:10px;min-height:28px}
+.mobile-assistant-usage-panel button:disabled{opacity:.5}
+.mobile-assistant-usage-panel dl{margin:6px 0}
+.mobile-assistant-usage-panel dl>div{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.mobile-assistant-usage-panel dt{color:var(--muted);flex-shrink:0}
+.mobile-assistant-usage-panel dd{margin:0;text-align:right;font-weight:600}
+.mobile-assistant-usage-panel details{border-top:1px solid var(--line);padding-top:6px}
+.mobile-assistant-usage-panel summary{cursor:pointer;color:var(--muted)}
+.mobile-assistant-usage-panel details p,.mobile-assistant-usage-note{color:var(--muted);margin:5px 0 0}
+@media(max-width:1023px){.mobile-assistant-round-control .field{min-height:44px}.mobile-assistant-usage-panel{font-size:11px}.mobile-assistant-usage-panel button{min-height:36px}}

@@ -245,6 +245,14 @@ function paymentResponse(response: Response, source: "package" | "personal" | "m
   }));
 }
 
+async function finishAuditSafely(
+  audit: Awaited<ReturnType<typeof startRequestAudit>>,
+  patch: Parameters<Awaited<ReturnType<typeof startRequestAudit>>["finish"]>[0],
+): Promise<boolean> {
+  try { await audit.finish(patch); return true; }
+  catch { console.warn("Image request audit finalization failed", { requestId: audit.requestId }); return false; }
+}
+
 async function auditedResponse(
   response: Response,
   audit: Awaited<ReturnType<typeof startRequestAudit>>,
@@ -255,12 +263,14 @@ async function auditedResponse(
   if (Number.isFinite(cost) && cost >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: cost };
   const countHeader = response.headers.get("x-lfn-generated-samples");
   const generatedSamples = countHeader?.trim() ? Number(countHeader) : undefined;
-  await audit.finish({ ...patch, status: response.status, ...(generatedSamples != null && Number.isInteger(generatedSamples) ? { generatedSamples } : {}) });
+  const auditFinished = await finishAuditSafely(audit, { ...patch, status: response.status, ...(generatedSamples != null && Number.isInteger(generatedSamples) ? { generatedSamples } : {}) });
   const forwarded = forwardResponse(response);
+  const responseHeaders = audit.responseHeaders(forwarded.headers);
+  if (!auditFinished) responseHeaders.set("X-LFN-Audit-Status", "failed");
   return withExternalCors(new Response(forwarded.body, {
     status: forwarded.status,
     statusText: forwarded.statusText,
-    headers: audit.responseHeaders(forwarded.headers),
+    headers: responseHeaders,
   }));
 }
 
@@ -272,13 +282,17 @@ async function watermarkJsonResponse(
 ): Promise<Response> {
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) return auditedResponse(response, audit);
+  let recoveredBody: string | undefined;
+  let recoveredHeaders: Headers | undefined;
   try {
     const marked = await watermarkImageResponse(response, userId, model, {
       requestId: audit.requestId,
       requestFingerprint: audit.requestFingerprint,
       parameters: audit.record.parameters,
     });
-    const payload = await marked.response.json() as JsonRecord;
+    recoveredHeaders = new Headers(marked.response.headers);
+    recoveredBody = await marked.response.text();
+    const payload = JSON.parse(recoveredBody) as JsonRecord;
     const watermarkStatus = marked.status();
     const body = JSON.stringify(payload);
     const headers = audit.responseHeaders(marked.response.headers);
@@ -287,9 +301,12 @@ async function watermarkJsonResponse(
     const rawAnlas = response.headers.get("x-anlas-cost");
     const reportedAnlas = rawAnlas?.trim() ? Number(rawAnlas) : NaN;
     if (Number.isFinite(reportedAnlas) && reportedAnlas >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: reportedAnlas };
-    await audit.finish({ status: response.status, watermarkStatus, generatedSamples });
+    const auditFinished = await finishAuditSafely(audit, { status: response.status, watermarkStatus, generatedSamples });
+    if (!auditFinished) headers.set("X-LFN-Audit-Status", "failed");
     return withExternalCors(new Response(body, { status: response.status, statusText: response.statusText, headers }));
   } catch {
+    if (recoveredBody !== undefined) return auditedResponse(new Response(recoveredBody, { status: response.status, statusText: response.statusText, headers: recoveredHeaders }), audit, { watermarkStatus: "failed" });
+    if (response.bodyUsed || response.body?.locked) return auditedResponse(Response.json({ error: { message: "图像响应读取中断，请检查生成记录", code: "lfn_image_response_interrupted" } }, { status: 502 }), audit, { watermarkStatus: "failed" });
     return auditedResponse(response, audit, { watermarkStatus: "failed" });
   }
 }
@@ -569,6 +586,7 @@ export async function proxyImageWithCredits(
 
     // 使用适配器生成图像
     if (imageAdapter) {
+      let adapterGenerated = false;
       const finishAdapterLog = gatewayLogStart(
         externalLogMeta(logUser, imageRequest, "adapter"),
       );
@@ -601,6 +619,7 @@ export async function proxyImageWithCredits(
         adapterRequest.extra = bodyJson;
 
         const result = await imageAdapter.generate(adapterRequest);
+        adapterGenerated = true;
 
         settled = true;
         finishAdapterLog(200);
@@ -612,6 +631,7 @@ export async function proxyImageWithCredits(
         });
         return watermarkJsonResponse(await settleExternalCharge(response, userId, charge, settlementId, audit.requestId, audit), userId, imageRequest.generation.model, audit);
       } catch (error) {
+        if (adapterGenerated) throw error;
         console.error("Adapter image generation failed, falling back:", error);
         finishAdapterLog(0);
         // 失败时回退到原始方式
@@ -838,10 +858,13 @@ export async function proxyNaiNativeWithCredits(
   pathname: string,
   imageRequest: ExternalImageRequest,
   newApiFallback?: { pathname: string; body: BodyInit; contentType: string } | "unsupported",
+  appSession?: { userId: number; username: string },
 ): Promise<Response> {
-  const authorization = bearerAuthorization(request);
+  // This server-only identity is supplied only by the authenticated app encoding route.
+  if (appSession && (pathname !== "/ai/encode-vibe" || imageRequest.generation.operation !== "encode-vibe" || !Number.isSafeInteger(appSession.userId) || appSession.userId <= 0)) return Response.json({ error: { message: "无效的编码请求" } }, { status: 400 });
+  const authorization = appSession ? "app-session" : bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
-  const identity = authorization;
+  const identity = appSession ? `app-user:${appSession.userId}` : authorization;
   if (!(await isNaiModelEnabled(imageRequest.generation.model)))
     return withExternalCors(Response.json({ error: { message: "该 NAI 模型已被管理员停用", code: "model_disabled" } }, { status: 403 }));
   const rate = checkImageRateLimit(request, identity);
@@ -853,7 +876,7 @@ export async function proxyNaiNativeWithCredits(
 
   let apiIdentity: Awaited<ReturnType<typeof requireIkunExternalIdentity>>;
   try {
-    apiIdentity = await requireIkunExternalIdentity(authorization);
+    apiIdentity = appSession ? { userId: appSession.userId, username: appSession.username, group: "" } : await requireIkunExternalIdentity(authorization);
   } catch {
     return withExternalCors(Response.json(
       { error: { message: "暂时无法连接账号服务，请稍后重试", code: "lfn_account_service_unavailable" } },
@@ -863,9 +886,10 @@ export async function proxyNaiNativeWithCredits(
   if (apiIdentity instanceof Response) return apiIdentity;
   if (apiIdentity.allowedModels && !apiIdentity.allowedModels.some(m => naiUsageModel(m) === naiUsageModel(imageRequest.generation.model))) return withExternalCors(Response.json({ error: { message: "此 API Key 未授权当前模型", code: "lfn_key_model_forbidden" } }, { status: 403 }));
   const logUser = apiIdentity.username || maskKeyForLog(authorization);
+  function nativeLogMeta(...args: Parameters<typeof externalLogMeta>) { return { ...externalLogMeta(...args), source: appSession ? "lfn" as const : "api" as const }; }
   const audit = await startRequestAudit({
     request,
-    source: "api",
+    source: appSession ? "lfn" : "api",
     endpoint: pathname,
     userId: apiIdentity.userId ?? undefined,
     username: logUser,
@@ -876,7 +900,7 @@ export async function proxyNaiNativeWithCredits(
 
   const userId = apiIdentity.userId;
   let risk: Awaited<ReturnType<typeof evaluateImageRisk>> | null = null;
-  const strictBilling = userId == null || (isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false);
+  const strictBilling = Boolean(appSession) || userId == null || (isNaiExternalModel(imageRequest.generation.model) && (await dailyImagePolicy()).strictApiBilling !== false);
   if (userId != null) {
     try {
       risk = await evaluateImageRisk({
@@ -926,7 +950,7 @@ export async function proxyNaiNativeWithCredits(
         ? newApiFallback.pathname
         : pathname;
     gatewayLogStart(
-      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+      nativeLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
     return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
   }
@@ -940,7 +964,7 @@ export async function proxyNaiNativeWithCredits(
     // key 无法归属站内用户：按设计退回透明代理，仅按 NewAPI 余额计费。
     if (strictBilling) return auditedResponse(localBillingError("暂时无法确认 API Key 对应账号，请稍后重试", 503), audit);
     gatewayLogStart(
-      externalLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
+      nativeLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
     return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
   }
@@ -959,7 +983,7 @@ export async function proxyNaiNativeWithCredits(
     charge = await trySpendImageCredits(userId, imageRequest.generation, audit.requestId);
     if (!charge) {
       gatewayLogStart(
-        externalLogMeta(logUser, imageRequest, fallbackEndpoint),
+        nativeLogMeta(logUser, imageRequest, fallbackEndpoint),
       )(-1);
       if (strictBilling) return auditedResponse(localBillingError("本站 AFF 或图包余额不足，本次未改用其他钱包扣费", 402), audit);
       // NewAPI 执行并结算自己的真实请求，不使用 LFN 每日阶梯价格。
@@ -981,7 +1005,7 @@ export async function proxyNaiNativeWithCredits(
         const accept = request.headers.get("accept");
         if (accept) managedHeaders.set("Accept", accept);
         const finishManagedLog = gatewayLogStart(
-          externalLogMeta(logUser, imageRequest, target.pathname),
+          nativeLogMeta(logUser, imageRequest, target.pathname),
         );
         const managedUpstream = await fetchWithModelConcurrency(
           `${await resolvedNewApiBaseUrl()}${target.pathname}`,
@@ -990,7 +1014,7 @@ export async function proxyNaiNativeWithCredits(
             headers: managedHeaders,
             body: target.body,
             cache: "no-store",
-            signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+            signal: AbortSignal.any([request.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]),
           },
         ).catch((error: unknown) => {
           finishManagedLog(0);
@@ -1028,14 +1052,14 @@ export async function proxyNaiNativeWithCredits(
     const accept = request.headers.get("accept");
     if (accept) headers.set("Accept", accept);
     const finishNativeLog = gatewayLogStart(
-      externalLogMeta(logUser, imageRequest, pathname),
+      nativeLogMeta(logUser, imageRequest, pathname),
     );
     const upstream = await fetchWithModelConcurrency(`${nativeUpstream.baseUrl}${pathname}`, {
       method: request.method,
       headers,
       body: imageRequest.body,
       cache: "no-store",
-      signal: AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS),
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(IMAGE_UPSTREAM_TIMEOUT_MS)]),
     }).catch((error: unknown) => {
       finishNativeLog(0);
       throw error;

@@ -5,14 +5,14 @@ import { WorkspaceNav } from "@/mobile/workspace-nav";
 import { Eye, EyeOff, Heart, Link2, RotateCcw, SearchX, Send } from "lucide-react";
 import Image from "@/mobile/cached-image";
 import Link from "next/link";
-import { GalleryImportDialog } from "@/app/gallery/gallery-import-dialog";
+import { GalleryImportDialog } from "@/mobile/gallery/gallery-import-dialog";
 import { useState } from "react";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/mobile/gallery-submit";
 import { CollectionPagination, ImageCardMenu } from "@/mobile/ui/collection-workspace";
 import { PublicHeader } from "@/mobile/public-header";
 import { PopupSelect } from "@/mobile/ui/popup-select";
-import styles from "@/app/ui/discovery-controls.module.css";
-import { GalleryFilters } from "@/app/gallery/gallery-filters";
+import styles from "@/mobile/ui/discovery-controls.module.css";
+import { GalleryFilters } from "@/mobile/gallery/gallery-filters";
 import { useGalleryDiscovery, type GalleryItem } from "@/app/gallery/use-gallery-discovery";
 
 const ratingLabels: Record<string, string> = { general: "全年龄", r13: "R13", r17: "R17", r18: "R18", sensitive: "R13" };

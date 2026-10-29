@@ -1,5 +1,10 @@
 > 2026-10-22 已上线价格：官方超分按输入面积消耗 1–4 Anlas；本站保留 V5 的 1.25 倍销售价后为 5/10/15/20 AFF（¥0.025/0.05/0.075/0.10）。2026-10-23 新增的 UI 报价及 1 Anlas 超分 NewAPI 分支修复尚未发布，见[全模式对照报表](nai-mode-pricing-comparison-2026-10-23.md)。以下为接入时的历史记录，旧的 Anlas 与 AFF 1:1 换算不再适用。
 
+> 历史验证记录中的测试数量与产物路径描述当时的本机结果；当前版本的整合范围和验证边界见 [创作工作区整合记录](./creative-workspace-integration.md)。
+
+> 验证文件说明：文中的单元测试、浏览器检查和审计脚本保留在开发者本机，按发布要求不包含在当前 GitHub 文件中。干净检出可运行 `npm run lint` 和 `npm run build`；历史测试路径与命令仅供拥有本机验证文件的开发环境参考。
+
+
 # NAI 新超分（Standalone Upscale）接入文档
 
 > 调研方式：抓取 novelai.net 生产 webui JS bundle（buildId 3102745-production）逆向 + 持久 token 实测上游。

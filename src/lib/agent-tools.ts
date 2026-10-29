@@ -1,3 +1,4 @@
+import { waitWithAbort } from "@/lib/abortable";
 import { outboundFetch } from "@/lib/outbound";
 import { readCatalogTag, searchTagCatalog, tagCatalogStatus } from "@/lib/tag-catalog";
 import { runQuickTagCloudTool } from "@/lib/quicktagcloud";
@@ -21,12 +22,12 @@ type AutocompleteItem = {
 type DanbooruTag = { name: string; category: number; post_count: number };
 type WikiPage = { title?: string; body?: string; other_names?: string[] };
 
-async function danbooru(path: string, params: URLSearchParams): Promise<unknown> {
+async function danbooru(path: string, params: URLSearchParams, signal?: AbortSignal): Promise<unknown> {
   const response = await outboundFetch(
     `https://danbooru.donmai.us/${path}?${params}`,
     {
       headers: { "User-Agent": "Love-for-NAI/0.1 (tag agent)" },
-      signal: AbortSignal.timeout(15_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     },
   );
   if (!response.ok) throw new Error(`Danbooru 返回 ${response.status}`);
@@ -34,7 +35,7 @@ async function danbooru(path: string, params: URLSearchParams): Promise<unknown>
 }
 
 // autocomplete 支持词级模糊匹配，比 name_matches 更贴近人工检索习惯。
-async function searchDanbooruTags(query: string): Promise<ToolResult> {
+async function searchDanbooruTags(query: string, signal?: AbortSignal): Promise<ToolResult> {
   const keyword = query.trim().toLowerCase().replaceAll(" ", "_");
   if (!keyword) return { ok: false, data: "关键词为空" };
   try {
@@ -45,6 +46,7 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
         "search[type]": "tag_query",
         limit: "12",
       }),
+      signal,
     )) as AutocompleteItem[];
     const tags = items
       .filter((item) => typeof item.value === "string")
@@ -57,6 +59,7 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
       return { ok: true, data: { query: keyword, tags: [], source: "danbooru_online", note: "无匹配标签" } };
     return { ok: true, data: { query: keyword, tags, source: "danbooru_online" } };
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       ok: false,
       data: error instanceof Error ? error.message : "Danbooru 检索失败",
@@ -64,13 +67,14 @@ async function searchDanbooruTags(query: string): Promise<ToolResult> {
   }
 }
 
-async function verifyDanbooruTag(name: string): Promise<ToolResult> {
+async function verifyDanbooruTag(name: string, signal?: AbortSignal): Promise<ToolResult> {
   const normalized = name.trim().toLowerCase().replaceAll(" ", "_");
   if (!normalized) return { ok: false, data: "标签名为空" };
   try {
     const [tag] = (await danbooru(
       "tags.json",
       new URLSearchParams({ "search[name]": normalized, limit: "1" }),
+      signal,
     )) as DanbooruTag[];
     if (!tag || tag.name !== normalized)
       return { ok: true, data: { name: normalized, exists: false, source: "danbooru_online" } };
@@ -85,6 +89,7 @@ async function verifyDanbooruTag(name: string): Promise<ToolResult> {
       },
     };
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       ok: false,
       data: error instanceof Error ? error.message : "Danbooru 校验失败",
@@ -92,13 +97,14 @@ async function verifyDanbooruTag(name: string): Promise<ToolResult> {
   }
 }
 
-async function readDanbooruWiki(title: string): Promise<ToolResult> {
+async function readDanbooruWiki(title: string, signal?: AbortSignal): Promise<ToolResult> {
   const normalized = title.trim().toLowerCase().replaceAll(" ", "_");
   if (!normalized) return { ok: false, data: "词条名为空" };
   try {
     const pages = (await danbooru(
       "wiki_pages.json",
       new URLSearchParams({ "search[title]": normalized, limit: "1" }),
+      signal,
     )) as WikiPage[];
     const page = pages[0];
     if (!page) return { ok: true, data: { title: normalized, found: false, source: "danbooru_online" } };
@@ -113,6 +119,7 @@ async function readDanbooruWiki(title: string): Promise<ToolResult> {
       },
     };
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       ok: false,
       data: error instanceof Error ? error.message : "Danbooru 词条读取失败",
@@ -126,6 +133,7 @@ type WikipediaResult = [string, string[], string[], string[]];
 async function wikipediaSearch(
   language: string,
   query: string,
+  signal?: AbortSignal,
 ): Promise<Array<{ title: string; url: string }>> {
   const response = await outboundFetch(
     `https://${language}.wikipedia.org/w/api.php?${new URLSearchParams({
@@ -136,7 +144,7 @@ async function wikipediaSearch(
     })}`,
     {
       headers: { "User-Agent": "Love-for-NAI/0.1 (concept lookup)" },
-      signal: AbortSignal.timeout(15_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     },
   );
   if (!response.ok) throw new Error(`Wikipedia 返回 ${response.status}`);
@@ -147,7 +155,7 @@ async function wikipediaSearch(
   }));
 }
 
-async function webSearch(query: string): Promise<ToolResult> {
+async function webSearch(query: string, signal?: AbortSignal): Promise<ToolResult> {
   const keyword = query.trim();
   if (!keyword) return { ok: false, data: "查询为空" };
   const languages = /[\u4e00-\u9fa5]/.test(keyword) ? ["zh", "en"] : ["en"];
@@ -156,11 +164,12 @@ async function webSearch(query: string): Promise<ToolResult> {
 
   for (const language of languages) {
     try {
-      const hits = await wikipediaSearch(language, keyword);
+      const hits = await wikipediaSearch(language, keyword, signal);
       results.push(
         ...hits.map((hit) => ({ ...hit, source: `${language}.wikipedia` })),
       );
     } catch (error) {
+    signal?.throwIfAborted();
       failures.push(error instanceof Error ? error.message : "查询失败");
     }
   }
@@ -229,7 +238,7 @@ export function summarizeToolResult(name: string, data: unknown): string {
 }
 
 /** 返回给文本协议 agent 的可调用工具说明。 */
-export function toolCatalog(): string {
+export function toolCatalog(options: { wikipediaEnabled?: boolean; externalEnabled?: boolean } = {}): string {
   return [
     "- search_tag_catalog: 参数 {query: string, source?: 'danbooru'|'quicktagcloud'} 或 {queries: string[], source?: 'danbooru'|'quicktagcloud'}。检索本地完整数据库，可指定来源；queries 一次最多 8 项，每项最多 6 条。返回候选摘要和 catalogKey，不会自动附上整套组合提示词；选中后再 read_tag_catalog 读取。精确独立标签优先，组合提示词须核对与任务的相关性。",
     "- read_tag_catalog: 参数 {key: string} 或 {keys: string[]}。按 catalogKey 或标签名读取完整介绍、来源、原始记录和全部词条；keys 一次最多 6 个。需要解释多个标签时必须一次批量读取。原站没有介绍时明确返回 missing，不得编造为官方定义。",
@@ -241,20 +250,26 @@ export function toolCatalog(): string {
     "- search_quicktagcloud_tags: 参数 {codexId: string, query: string}。联网搜索所选 QuickTagCloud 目录的全部词条，返回候选标题、路径、entryId、匹配词及原站链接，最多展示 12 条；不附上未选中的组合提示词。",
     "- read_quicktagcloud_entry: 参数 {codexId: string, entryId: string}。读取已选在线 QuickTagCloud 词条的完整原始内容、提示词和来源；发布文件按原站清单校验。",
     "- web_search: 参数 {query: string}。检索 Wikipedia 概念结果，用于把中文或小众概念转换为英文检索词。",
-  ].join("\n");
+  ].filter((line) => (options.externalEnabled !== false || ["- search_tag_catalog:", "- read_tag_catalog:", "- tag_catalog_status:"].some((prefix) => line.startsWith(prefix))) && (options.wikipediaEnabled !== false || !line.startsWith("- web_search:"))).join("\n");
 }
+
+export type ToolExecutionOptions = { signal?: AbortSignal; wikipediaEnabled?: boolean; externalEnabled?: boolean };
 
 export async function runTool(
   name: string,
   args: Record<string, unknown>,
+  options: ToolExecutionOptions = {},
 ): Promise<ToolResult> {
+  options.signal?.throwIfAborted();
+  if (options.externalEnabled === false && !["search_tag_catalog", "read_tag_catalog", "tag_catalog_status"].includes(name)) return { ok: false, data: "本次请求仅允许使用本地标签工具" };
+  if (name === "web_search" && options.wikipediaEnabled === false) return { ok: false, data: "本次请求已关闭 Wikipedia 概念检索" };
   const text = (key: string) =>
     typeof args[key] === "string" ? (args[key] as string) : "";
   switch (name) {
     case "list_quicktagcloud_codexes":
     case "search_quicktagcloud_tags":
     case "read_quicktagcloud_entry":
-      return runQuickTagCloudTool(name, args);
+      return waitWithAbort(runQuickTagCloudTool(name, args), options.signal);
     case "search_tag_catalog": {
       if (args.source !== undefined && args.source !== "danbooru" && args.source !== "quicktagcloud")
         return { ok: false, data: "本地来源必须是 danbooru 或 quicktagcloud" };
@@ -308,13 +323,13 @@ export async function runTool(
     case "tag_catalog_status":
       return { ok: true, data: tagCatalogStatus() };
     case "search_danbooru_tags":
-      return searchDanbooruTags(text("query"));
+      return searchDanbooruTags(text("query"), options.signal);
     case "verify_danbooru_tag":
-      return verifyDanbooruTag(text("name"));
+      return verifyDanbooruTag(text("name"), options.signal);
     case "read_danbooru_wiki":
-      return readDanbooruWiki(text("title"));
+      return readDanbooruWiki(text("title"), options.signal);
     case "web_search":
-      return webSearch(text("query"));
+      return webSearch(text("query"), options.signal);
     default:
       return { ok: false, data: `未知工具 ${name}` };
   }

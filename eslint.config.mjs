@@ -15,6 +15,11 @@ const eslintConfig = defineConfig([
     "public/onnx/ort*.mjs",
     ".tmp/**",
     "scripts/.tmp/**",
+    "tests/**",
+    "scripts/check-*.cjs",
+    "scripts/audit-*",
+    "scripts/tutorial-test-support.cjs",
+    "vitest.config.mts",
   ]),
 ]);
 

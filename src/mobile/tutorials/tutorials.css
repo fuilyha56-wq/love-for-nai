@@ -1,0 +1,109 @@
+.mobile-tutorial-center { scroll-margin-top: 100px; outline: none; }
+.mobile-tutorial-center-heading { display: flex; gap: 14px; align-items: flex-start; }
+.mobile-tutorial-center-icon { display: grid; place-items: center; width: 46px; height: 46px; flex: 0 0 auto; border-radius: 13px; background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); }
+.mobile-tutorial-eyebrow { color: var(--rose); font-size: 11px; font-weight: 650; line-height: 1.5; }
+.mobile-tutorial-center h2 { margin: 4px 0 7px; font-size: 20px; font-weight: 750; }
+.mobile-tutorial-center-heading > div > p:last-child { max-width: 48em; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.mobile-tutorial-center button, .mobile-feature-tutorial-panel button { cursor: pointer; }
+.mobile-tutorial-center button:focus-visible, .mobile-tutorial-center a:focus-visible, .mobile-feature-tutorial-panel button:focus-visible { outline: 2px solid var(--rose); outline-offset: 3px; }
+.mobile-tutorial-expand { display: flex; width: 100%; align-items: center; gap: 10px; padding: 14px; margin-top: 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); text-align: left; font-size: 13px; font-weight: 650; }
+.mobile-tutorial-expand > svg:first-child { color: var(--rose); flex-shrink: 0; }
+.mobile-tutorial-expand > span { flex: 1; }
+.mobile-tutorial-expand small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+.mobile-tutorial-expand .mobile-is-open { transform: rotate(180deg); }
+.mobile-tutorial-list-title { margin: 24px 0 12px; font-size: 16px; font-weight: 700; }
+.mobile-tutorial-search { display: flex; align-items: center; gap: 9px; padding: 0 12px; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); background: var(--surface); }
+.mobile-tutorial-search input { width: 100%; min-width: 0; min-height: 44px; background: transparent; outline: none; font-size: 13px; color: var(--ink); }
+.mobile-tutorial-search:focus-within { outline: 2px solid var(--rose); outline-offset: 2px; }
+.mobile-tutorial-categories { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.mobile-tutorial-categories button { padding: 7px 10px; border-radius: 999px; border: 1px solid var(--line); font-size: 11px; color: var(--muted); background: var(--panel); }
+.mobile-tutorial-categories button[aria-pressed="true"] { color: var(--rose); border-color: var(--rose); background: color-mix(in srgb, var(--rose) 8%, var(--panel)); }
+.mobile-tutorial-list-count { margin: 12px 0; font-size: 11px; color: var(--muted); }
+.mobile-tutorial-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.mobile-tutorial-card { display: flex; flex-direction: column; min-width: 0; padding: 17px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.mobile-tutorial-card-top { display: flex; gap: 8px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 10px; }
+.mobile-tutorial-card h4 { margin: 12px 0 8px; font-size: 15px; line-height: 1.6; font-weight: 700; }
+.mobile-tutorial-card h4 > span { margin-right: 8px; color: var(--rose); font-size: 11px; font-variant-numeric: tabular-nums; }
+.mobile-tutorial-card > p { flex: 1; font-size: 12px; line-height: 1.8; color: var(--muted); }
+.mobile-tutorial-card > small { display: block; margin-top: 12px; font-size: 10px; color: var(--muted); }
+.mobile-tutorial-card-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 12px; }
+.mobile-tutorial-card-actions button, .mobile-tutorial-article button, .mobile-tutorial-empty button { display: inline-flex; gap: 6px; align-items: center; justify-content: center; min-height: 39px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 11px; font-weight: 650; }
+.mobile-tutorial-primary { border-color: var(--rose) !important; background: var(--rose) !important; color: #fff !important; }
+.mobile-tutorial-completed { display: inline-flex; align-items: center; gap: 3px; color: var(--rose); white-space: nowrap; }
+.mobile-tutorial-empty { padding: 30px 12px; text-align: center; color: var(--muted); font-size: 13px; }
+.mobile-tutorial-empty button { margin-top: 10px; }
+.mobile-tutorial-return-notice { display: flex; gap: 9px; padding: 13px; margin-top: 16px; border: 1px solid color-mix(in srgb, var(--rose) 35%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--rose) 6%, var(--panel)); font-size: 12px; line-height: 1.7; }
+.mobile-tutorial-return-notice svg { flex-shrink: 0; margin-top: 2px; color: var(--rose); }
+.mobile-tutorial-return-notice small { display: block; color: var(--muted); font-size: 11px; }
+.mobile-tutorial-article-toolbar { display: flex; gap: 10px; justify-content: space-between; margin: 20px 0; flex-wrap: wrap; }
+.mobile-tutorial-article h3 { margin-top: 8px; font-size: 24px; font-weight: 750; scroll-margin-top: 110px; }
+.mobile-tutorial-article > p:not(.mobile-tutorial-eyebrow) { margin-top: 8px; color: var(--muted); font-size: 13px; line-height: 1.8; }
+.mobile-tutorial-preparation { padding: 14px; margin: 20px 0; border-radius: 8px; background: var(--surface-muted); font-size: 12px; line-height: 1.8; }
+.mobile-tutorial-preparation b { color: var(--rose); }
+.mobile-tutorial-preparation p { margin-top: 5px; }
+.mobile-tutorial-article-index { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: 0 0 20px; border-bottom: 1px solid var(--line); }
+.mobile-tutorial-article-index a { font-size: 12px; color: var(--rose); text-decoration: underline; text-underline-offset: 3px; }
+.mobile-tutorial-article-step { margin: 24px 0 30px; scroll-margin-top: 110px; }
+.mobile-tutorial-article-step h4 { display: flex; gap: 10px; align-items: center; font-size: 17px; font-weight: 700; }
+.mobile-tutorial-article-step h4 span { font-size: 12px; color: var(--rose); }
+.mobile-tutorial-article-step > p { margin-top: 13px; font-size: 13px; line-height: 1.9; }
+.mobile-tutorial-article-step aside, .mobile-feature-tutorial-body aside { margin-top: 12px; border-left: 3px solid var(--rose); padding: 8px 12px; font-size: 12px; line-height: 1.8; color: var(--muted); background: var(--surface-muted); }
+.mobile-tutorial-illustration { margin-top: 14px; }
+.mobile-tutorial-illustration a { display: block; }
+.mobile-tutorial-illustration img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 9px; }
+.mobile-tutorial-illustration svg { display: block; width: 100%; max-width: 700px; }
+.mobile-tutorial-illustration text { font: 12px var(--font-sans), sans-serif; }
+.mobile-tutorial-illustration text:not([fill]) { fill: var(--ink); }
+.mobile-tutorial-illustration .mobile-tutorial-svg-title { font-size: 13px; font-weight: 650; }
+.mobile-tutorial-illustration .mobile-tutorial-svg-small { font-size: 9px; }
+.mobile-tutorial-illustration figcaption { margin-top: 6px; color: var(--muted); font-size: 10px; line-height: 1.7; }
+.mobile-feature-tutorial-layer { position: fixed; inset: 0; z-index: 50000; pointer-events: none; }
+.mobile-feature-tutorial-spotlight { position: fixed; border: 2px solid var(--rose); border-radius: 9px; box-shadow: 0 0 0 9999px rgb(12 16 24 / 22%); pointer-events: none; }
+.mobile-feature-tutorial-target-label { position: fixed; max-width: calc(100vw - 24px); padding: 6px 10px; border-radius: 6px; background: var(--rose); color: #fff; font-size: 12px; line-height: 1.5; font-weight: 750; pointer-events: none; }
+html[data-feature-tutorial] [data-feature-tutorial-target] { outline: 3px solid var(--rose) !important; outline-offset: 3px; }
+.mobile-tutorial-step-action { display: flex; flex-shrink: 0; align-items: center; justify-content: center; gap: 8px; min-height: 42px; margin: 0 16px 10px; padding: 8px 12px; border-radius: 7px; font-size: 12px; font-weight: 750; }
+.mobile-feature-tutorial-panel { position: fixed; right: 18px; bottom: 18px; width: min(420px, calc(100vw - 36px)); max-height: calc(100dvh - 36px); display: flex; flex-direction: column; pointer-events: auto; overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--ink); box-shadow: 0 12px 60px rgb(0 0 0 / 22%); }
+.mobile-feature-tutorial-panel.mobile-is-docked-top { top: 18px; bottom: auto; }
+.mobile-feature-tutorial-panel header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 16px; background: var(--surface-muted); }
+.mobile-feature-tutorial-panel header > span { display: flex; gap: 8px; align-items: center; font-size: 11px; font-weight: 650; }
+.mobile-feature-tutorial-panel header button { display: grid; place-items: center; min-width: 32px; min-height: 32px; border-radius: 6px; border: 1px solid var(--line); }
+.mobile-feature-tutorial-progress { height: 3px; flex-shrink: 0; background: var(--line); }
+.mobile-feature-tutorial-progress > span { display: block; height: 100%; background: var(--rose); }
+.mobile-feature-tutorial-body { overflow-y: auto; min-height: 0; padding: 16px 18px; overscroll-behavior: contain; }
+.mobile-feature-tutorial-body h2 { margin: 7px 0 10px; font-size: 20px; font-weight: 700; line-height: 1.5; outline: none; }
+.mobile-feature-tutorial-body > p:not(.mobile-tutorial-eyebrow) { font-size: 13px; line-height: 1.9; }
+.mobile-feature-tutorial-body .mobile-feature-tutorial-preparation { padding: 9px; margin-bottom: 12px; border-radius: 7px; background: var(--surface-muted); font-size: 11px; color: var(--muted); }
+.mobile-feature-tutorial-body .mobile-feature-tutorial-status { margin-top: 12px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.mobile-feature-tutorial-locate { display: flex; flex-wrap: wrap; gap: 8px 14px; padding: 0 18px 12px; }
+.mobile-feature-tutorial-locate button { display: inline-flex; gap: 5px; align-items: center; min-height: 32px; font-size: 11px; color: var(--rose); text-decoration: underline; text-underline-offset: 3px; }
+.mobile-feature-tutorial-panel footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.mobile-feature-tutorial-panel footer button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; font-size: 11px; }
+.mobile-feature-tutorial-panel button:disabled { opacity: .4; cursor: default; }
+.mobile-feature-tutorial-exit { display: flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; min-height: 44px; padding: 10px 14px; border-top: 1px solid var(--line); color: var(--rose); background: color-mix(in srgb, var(--rose) 5%, var(--panel)); font-size: 11px; font-weight: 650; }
+html[data-feature-tutorial] .mobile-guide-launcher-group, html[data-feature-tutorial] .mobile-guide-backdrop { display: none !important; }
+@media (max-width: 1023px) {
+  .mobile-tutorial-center { padding: 16px; scroll-margin-top: 72px; }
+  .mobile-tutorial-card-grid { grid-template-columns: 1fr; }
+  .mobile-tutorial-center-heading { gap: 10px; }
+  .mobile-tutorial-center-icon { width: 38px; height: 38px; border-radius: 10px; }
+  .mobile-tutorial-center h2 { font-size: 18px; }
+  .mobile-tutorial-card-actions button { min-height: 44px; }
+  .mobile-tutorial-article h3 { font-size: 21px; }
+  .mobile-tutorial-article-toolbar button { min-height: 44px; }
+  .mobile-feature-tutorial-panel { right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); width: calc(100vw - 16px); max-height: min(52dvh, 440px); border-radius: 12px; }
+  .mobile-feature-tutorial-panel.mobile-is-docked-top { top: max(8px, env(safe-area-inset-top)); bottom: auto; }
+  .mobile-feature-tutorial-panel header { padding: 7px 12px; }
+  .mobile-feature-tutorial-body { padding: 12px 14px; }
+  .mobile-feature-tutorial-body h2 { font-size: 17px; }
+  .mobile-feature-tutorial-panel footer { padding: 8px 12px; }
+  .mobile-feature-tutorial-locate { padding: 0 14px 6px; gap: 3px 12px; }
+  .mobile-feature-tutorial-exit { min-height: 42px; font-size: 11px; }
+  .mobile-feature-tutorial-panel.mobile-is-collapsed { max-height: 120px; }
+}
+@media (max-width: 350px) {
+  .mobile-tutorial-center { padding: 12px; }
+  .mobile-tutorial-card { padding: 13px; }
+  .mobile-tutorial-card-actions { grid-template-columns: 1fr; }
+  .mobile-feature-tutorial-panel footer { gap: 5px; }
+  .mobile-feature-tutorial-panel footer button { padding: 8px; font-size: 10px; }
+}

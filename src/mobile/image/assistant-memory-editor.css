@@ -1,0 +1,12 @@
+.mobile-assistant-memory-editor { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.mobile-assistant-memory-editor > summary { cursor: pointer; min-height: 36px; }
+.mobile-assistant-memory-editor p { line-height: 1.7; color: var(--muted); font-size: 11px; }
+.mobile-assistant-memory-editor .mobile-assistant-memory-enable { display: flex; align-items: center; gap: 8px; margin-block: 10px; }
+.mobile-assistant-memory-editor fieldset { display: grid; min-width: 0; gap: 8px; border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; padding: 10px; }
+.mobile-assistant-memory-editor input:not([type=checkbox]), .mobile-assistant-memory-editor textarea { width: 100%; min-width: 0; padding: 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.mobile-assistant-memory-editor textarea { resize: vertical; min-height: 72px; }
+.mobile-assistant-memory-editor > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.mobile-assistant-memory-editor button { min-height: 36px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+
+.mobile-assistant-memory-editor input:not([type=checkbox]), .mobile-assistant-memory-editor textarea { font-size: 16px; }
+.mobile-assistant-memory-editor button { min-height: 44px; }

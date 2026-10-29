@@ -1,5 +1,10 @@
 # 平台配置与注册策略
 
+> 历史验证记录中的测试数量与产物路径描述当时的本机结果；当前版本的整合范围和验证边界见 [创作工作区整合记录](./creative-workspace-integration.md)。
+
+> 验证文件说明：文中的单元测试、浏览器检查和审计脚本保留在开发者本机，按发布要求不包含在当前 GitHub 文件中。干净检出可运行 `npm run lint` 和 `npm run build`；历史测试路径与命令仅供拥有本机验证文件的开发环境参考。
+
+
 管理入口为 `/admin?tab=platform`。基础站点只保留公开地址与源码链接，其他设置分别进入：
 
 | 页面 | 地址参数 | 内容 |
@@ -38,7 +43,7 @@ NewAPI 账号未配置本站 SMTP 时，沿用 NewAPI 发送和验证验证码�
 
 注册后的登录结果会直接建立 LFN 会话，桌面和手机均直接进入工作台，并沿用“保持登录”的选择。登录或会话建立失败时仍返回注册成功，改为提示使用新账号登录；不会把已创建的账号当成注册失败。两步验证挑战不能直接变成正式会话。
 
-本地验证：`node scripts/check-registration-bridge-ui.cjs`，设置 `LFN_UI_BASE_URL` 为本地开发地址，并通过 `LFN_PLAYWRIGHT_MODULE` 指定 Playwright。该脚本使用浏览器接口夹具，不会创建线上账号；接口验证见 `tests/newapi-registration.test.ts`。修改需部署到 LFN 后才会改变线上行为，线上验收还需一次有效邮箱验证码。
+本地验证：本机界面检查（未随发布提供），设置 `LFN_UI_BASE_URL` 为本地开发地址，并通过 `LFN_PLAYWRIGHT_MODULE` 指定 Playwright。该脚本使用浏览器接口夹具，不会创建线上账号；接口验证见 `tests/newapi-registration.test.ts`。修改需部署到 LFN 后才会改变线上行为，线上验收还需一次有效邮箱验证码。
 
 SMTP 支持直接 TLS 与 STARTTLS，使用 Nodemailer 发送一次性验证码。验证码有效期 10 分钟，最多尝试 5 次，只保存随机盐和哈希，成功使用后不能重放。数据位于 `LFN_DATA_DIR/registration-email/`。上游发送验证码仍保留原有限流。
 
@@ -51,10 +56,10 @@ SMTP 支持直接 TLS 与 STARTTLS，使用 Nodemailer 发送一次性验证码�
 认证策略、设置持久化、验证码与现有认证回归测试：
 
 ```powershell
-npx vitest run tests/auth-policy.test.ts tests/auth-policy-routes.test.ts tests/registration-email.test.ts tests/register-rate-limit.test.ts tests/auth-login-conflict.test.ts tests/platform-batch-api.test.ts tests/admin-local-ops.test.ts tests/rewards-runtime.test.ts tests/platform-capabilities.test.ts
+# 仅本机保留的验证环境：npx vitest run tests/auth-policy.test.ts tests/auth-policy-routes.test.ts tests/registration-email.test.ts tests/register-rate-limit.test.ts tests/auth-login-conflict.test.ts tests/platform-batch-api.test.ts tests/admin-local-ops.test.ts tests/rewards-runtime.test.ts tests/platform-capabilities.test.ts
 ```
 
-界面验收脚本 `scripts/check-admin-auth-ui.cjs` 使用独立的浏览器 API fixtures，在 1056px 与 390px 下验证分类布局、按页保存、重新加载回显，以及邮箱/邀请码/关闭注册等组合，不写入实际设置。需要本地开发服务和 Playwright，可通过 `LFN_PLAYWRIGHT_MODULE` 指定已安装的 Playwright。
+界面验收脚本 本机界面检查（未随发布提供） 使用独立的浏览器 API fixtures，在 1056px 与 390px 下验证分类布局、按页保存、重新加载回显，以及邮箱/邀请码/关闭注册等组合，不写入实际设置。需要本地开发服务和 Playwright，可通过 `LFN_PLAYWRIGHT_MODULE` 指定已安装的 Playwright。
 
 
 ## 全局邀请码注册门槛（2026-10-24）

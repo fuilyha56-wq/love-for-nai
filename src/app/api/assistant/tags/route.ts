@@ -1,3 +1,6 @@
+import { isAssistantConversationId } from "@/lib/assistant-conversations";
+import { assistantJobSignal, cancelAssistantJob, cancelConversationJobs } from "@/lib/assistant-jobs";
+import { parseAssistantCreativeMemory, type AssistantCreativeMemory } from "@/lib/assistant-memory";
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
@@ -46,6 +49,9 @@ type AssistantPayload = {
   request?: string;
   currentPrompt?: string;
   currentNegativePrompt?: string;
+  creativeMemory?: unknown;
+  allowWikipedia?: unknown;
+  conversationId?: unknown;
   imageModel?: unknown;
   targetImageModel?: unknown;
   modelProtocol?: unknown;
@@ -221,15 +227,15 @@ async function runJob(
   source: AssistantSource,
   model: string,
   request: string,
-  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[]; reasoningEffort?: string } & AssistantImageContext,
+  context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[]; reasoningEffort?: string; creativeMemory?: AssistantCreativeMemory[]; allowWikipedia?: boolean } & AssistantImageContext,
   images: string[],
   target: AssistantImageTarget,
 ) {
   const userId = session.userId;
-  const jobSignal = AbortSignal.timeout(ASSISTANT_JOB_TIMEOUT_MS);
+  const jobSignal = AbortSignal.any([assistantJobSignal(job), AbortSignal.timeout(ASSISTANT_JOB_TIMEOUT_MS)]);
   try {
     // 取最近几轮历史注入模型，让 agent 看到之前的上下文。
-    const conversation = await readConversation(userId);
+    const conversation = await readConversation(userId, job.conversationId || "default");
     const history = conversation.turns
       .filter((turn) => assistantHistoryMatchesTarget(turn, target))
       .filter((turn) => context.goalMode
@@ -286,7 +292,7 @@ async function runJob(
         .map((item) => item.candidate),
     };
     await refreshAssistantJobUsage(job, true);
-    job.status = "done";
+    jobSignal.throwIfAborted();
 
     // 落盘本轮对话；失败不影响返回结果（下次对话少一段历史而已）。
     try {
@@ -319,12 +325,16 @@ async function runJob(
         steps: job.steps,
         usage: job.usage,
       };
-      await appendConversationTurn(userId, turn);
-    } catch {
-      // 持久化失败静默处理。
+      await appendConversationTurn(userId, turn, job.conversationId || "default", jobSignal);
+    } catch (error) {
+      if (jobSignal.aborted) throw error;
+      // 普通持久化失败不丢弃已经生成的结果。
     }
+    jobSignal.throwIfAborted();
+    job.status = "done";
   } catch (error) {
     await refreshAssistantJobUsage(job, true);
+    if (assistantJobSignal(job).aborted) { job.status = "cancelled"; job.message = "已取消助手任务"; return; }
     if (error instanceof AssistantModelBlockedError) job.error = error.info;
     job.message = jobSignal.aborted
       ? "助手处理超过时限，请减少标签数量后重试。"
@@ -391,6 +401,16 @@ export async function POST(request: Request) {
 
   if ([body.currentPrompt, body.currentNegativePrompt].some(value => value !== undefined && (typeof value !== "string" || value.length > 40_000)))
     return NextResponse.json({ message: "助手读取的当前正向或负向提示词必须为不超过 40000 字符的文本，请精简后重试" }, { status: 400 });
+  if (body.allowWikipedia !== undefined && typeof body.allowWikipedia !== "boolean") return NextResponse.json({ message: "百科检索权限必须是布尔值" }, { status: 400 });
+  const conversationId = body.conversationId ?? "default";
+  if (!isAssistantConversationId(conversationId)) return NextResponse.json({ message: "会话 ID 无效" }, { status: 400 });
+  try { await readConversation(session.userId, conversationId); }
+  catch { return NextResponse.json({ message: "会话不存在或已删除" }, { status: 404 }); }
+  let creativeMemory: AssistantCreativeMemory[] | undefined;
+  if (body.creativeMemory !== undefined) {
+    try { creativeMemory = parseAssistantCreativeMemory(body.creativeMemory); }
+    catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "创作记忆无效" }, { status: 400 }); }
+  }
 
   if (body.historyIds !== undefined && !Array.isArray(body.historyIds))
     return NextResponse.json(
@@ -464,7 +484,7 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     const source = await resolveAssistantSource(session, body.model, body.assistantProviderId, body.assistantGroup);
-    const job = createAssistantJob(session.userId);
+    const job = createAssistantJob(session.userId, conversationId);
     void runJob(
       job,
       session,
@@ -474,7 +494,9 @@ export async function POST(request: Request) {
       {
         currentPrompt: body.currentPrompt,
         reasoningEffort,
+        allowWikipedia: body.allowWikipedia !== false,
         currentNegativePrompt: body.currentNegativePrompt,
+        ...(creativeMemory?.length ? { creativeMemory } : {}),
         imageModel: target.imageModel,
         modelProtocol: target.modelProtocol,
         operation: target.operation,
@@ -514,7 +536,11 @@ export async function GET(request: Request) {
   const jobId = url.searchParams.get("job");
   // 无 job 参数：返回持久化对话（历史轮次 + 累积标签池）。
   if (!jobId) {
-    const conversation = await readConversation(session.userId);
+    const conversationId = url.searchParams.get("conversationId") ?? "default";
+    if (!isAssistantConversationId(conversationId)) return NextResponse.json({ message: "会话 ID 无效" }, { status: 400 });
+    let conversation;
+    try { conversation = await readConversation(session.userId, conversationId); }
+    catch { return NextResponse.json({ message: "会话不存在或已删除" }, { status: 404 }); }
     return NextResponse.json({
       turns: [...conversation.turns].reverse(),
       tagPool: conversation.tagPool,
@@ -527,6 +553,7 @@ export async function GET(request: Request) {
       { status: 404 },
     );
   await refreshAssistantJobUsage(job);
+  if (job.status === "cancelled") return NextResponse.json({ status: "cancelled", message: job.message, steps: job.steps, usage: job.usage });
   if (job.status === "running")
     return NextResponse.json({ status: "running", steps: job.steps, usage: job.usage });
   if (job.status === "error")
@@ -538,7 +565,7 @@ export async function GET(request: Request) {
 }
 
 // 清空当前用户的助手对话记录（历史轮次 + 累积标签池）。
-export async function DELETE() {
+export async function DELETE(request?: Request) {
   const session = await getSession();
   if (!session)
     return NextResponse.json(
@@ -546,7 +573,19 @@ export async function DELETE() {
       { status: 401 },
     );
   try {
-    await clearConversation(session.userId);
+    const jobId = request ? new URL(request.url).searchParams.get("job") : null;
+    if (request && new URL(request.url).searchParams.has("job") && !jobId) return NextResponse.json({ message: "任务 ID 不能为空" }, { status: 400 });
+    if (jobId) {
+      const job = findAssistantJob(session.userId, jobId);
+      if (!job || !cancelAssistantJob(session.userId, jobId)) return NextResponse.json({ message: "任务不存在或已过期" }, { status: 404 });
+      await refreshAssistantJobUsage(job, true);
+      return NextResponse.json({ success: true, status: job.status });
+    }
+    const conversationId = request ? new URL(request.url).searchParams.get("conversationId") ?? "default" : "default";
+    if (!isAssistantConversationId(conversationId)) return NextResponse.json({ message: "会话 ID 无效" }, { status: 400 });
+    try { await readConversation(session.userId, conversationId); } catch { return NextResponse.json({ message: "会话不存在或已删除" }, { status: 404 }); }
+    cancelConversationJobs(session.userId, conversationId);
+    await clearConversation(session.userId, conversationId);
     return NextResponse.json({ success: true });
   } catch {
     return NextResponse.json({ message: "对话记录清空失败" }, { status: 500 });

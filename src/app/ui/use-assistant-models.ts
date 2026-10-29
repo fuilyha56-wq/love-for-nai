@@ -2,18 +2,13 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { AssistantCatalogSource } from "@/lib/assistant-catalog";
+import { assistantModelsForGroup, assistantSourceGroups, reconcileAssistantSelection } from "@/lib/assistant-selection";
 import { isAssistantChatModel } from "@/lib/assistant-models";
 
 type Selection = { providerId: string; model: string; group: string };
 const storageKey = "lfn-assistant-source-v1";
 const initial: Selection = { providerId: "newapi", model: "", group: "" };
-function reconcile(sources: AssistantCatalogSource[], selection: Selection): Selection {
-  // A removed source never silently turns a custom request into a paid NewAPI call.
-  const source = sources.find(source => source.id === selection.providerId);
-  if (!source) return { ...selection, model: "", group: "" };
-  const model = source.models.find(model => model.id === selection.model) || source.models[0];
-  return { providerId: source.id, model: model?.id || "", group: model?.groups.includes(selection.group) ? selection.group : model?.groups[0] || "" };
-}
+const reconcile = reconcileAssistantSelection;
 function remember(selection: Selection) {
   try { localStorage.setItem(storageKey, JSON.stringify(selection)); } catch { /* Private browsing may disable storage. */ }
 }
@@ -48,7 +43,6 @@ export function useAssistantModels() {
     finally { if (loading.current === signal) { loading.current = null; setPending(false); } }
   }, []);
   const source = sources.find(source => source.id === selection.providerId);
-  const selected = source?.models.find(model => model.id === selection.model);
   function update(next: Selection) {
     choices.current.set(selection.providerId, selection);
     const value = reconcile(sources, next); setSelection(value); remember(value);
@@ -57,12 +51,12 @@ export function useAssistantModels() {
     model: selection.model, providerId: selection.providerId, group: selection.group || undefined, refresh,
     control: {
       value: selection.model, pending, error: error || (!source && sources.length ? "原模型源已移除，请选择可用来源" : ""),
-      options: (source?.models || []).map(model => ({ value: model.id, label: model.id, description: source?.id === "newapi" ? `NewAPI · 分组：${model.groups.join(" / ") || "上游未提供"}` : `自定义 · ${source?.name}` })),
+      options: assistantModelsForGroup(source, selection.group).map(model => ({ value: model.id, label: model.id, description: source?.id === "newapi" ? `NewAPI · 分组：${model.groups.join(" / ") || "上游未提供"}` : `自定义 · ${source?.name}` })),
       onChange: (model: string) => update({ ...selection, model }), onRefresh: () => void refresh(new AbortController().signal),
       providerId: selection.providerId, sourceName: source?.name || "来源已移除",
       sources: sources.map(source => ({ value: source.id, label: source.name })),
-      onSourceChange: (providerId: string) => update(choices.current.get(providerId) || { providerId, model: selection.model, group: selection.group }),
-      group: selection.group, groups: (selected?.groups || []).map(group => ({ value: group, label: group })),
+      onSourceChange: (providerId: string) => update(choices.current.get(providerId) || { providerId, model: "", group: "" }),
+      group: selection.group, groups: [{ value: "", label: "自动（账号默认）" }, ...assistantSourceGroups(source).map(group => ({ value: group, label: group }))],
       onGroupChange: (group: string) => update({ ...selection, group }),
     },
   };

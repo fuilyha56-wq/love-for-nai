@@ -280,3 +280,8 @@
 }
 
 }
+
+/* Tabs keep a complete touch row; saved/preset actions wrap below them. */
+.mobile-studio-workspace-content .replica-prompt[data-variant="nlw"] .replica-prompt-toolbar { flex-wrap: wrap; }
+.mobile-studio-workspace-content .replica-prompt[data-variant="nlw"] .replica-prompt-tabs { flex: 1 1 100%; width: 100%; min-width: 0; }
+.mobile-studio-workspace-content .replica-prompt[data-variant="nlw"] .replica-prompt-toolbar > button { flex-shrink: 0; }

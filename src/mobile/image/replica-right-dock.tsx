@@ -18,6 +18,7 @@ export type ReplicaRightDockProps = {
   expansionRequest?: ReplicaDockExpansionRequest;
   storageKey?: string | null;
   onCollapsedChange?: (allCollapsed: boolean) => void;
+  onUserInteraction?: () => void;
 };
 
 type DockStore = {
@@ -62,7 +63,7 @@ function createDockStore(initial: ReplicaDockState, storageKey: string | null): 
 
 function paneLabel(pane: ReplicaDockPane) { return pane === "history" ? "历史记录" : "聊天"; }
 
-export function ReplicaRightDock({ history, assistant, historyEnabled = true, assistantEnabled = true, initialHistoryOpen = false, assistantOpenRequest = 0, expansionRequest, storageKey = "lfn-mobile-replica-right-dock", onCollapsedChange }: ReplicaRightDockProps): ReactElement {
+export function ReplicaRightDock({ history, assistant, historyEnabled = true, assistantEnabled = true, initialHistoryOpen = false, assistantOpenRequest = 0, expansionRequest, storageKey = "lfn-mobile-replica-right-dock", onCollapsedChange, onUserInteraction }: ReplicaRightDockProps): ReactElement {
   const [initial] = useState(() => createReplicaDockState(initialHistoryOpen, assistantOpenRequest > 0));
   const store = useMemo(() => {
     if (typeof window === "undefined" || !storageKey) return createDockStore(initial, null);
@@ -147,7 +148,7 @@ export function ReplicaRightDock({ history, assistant, historyEnabled = true, as
     return () => observer.disconnect();
   }, [allCollapsed]);
 
-  function update(action: ReplicaDockAction, persist = true) { store.update(action, persist, availability); }
+  function update(action: ReplicaDockAction, persist = true) { onUserInteraction?.(); store.update(action, persist, availability); }
   function reveal(pane: ReplicaDockPane) { update({ type: "reveal", pane }); }
   function collapse(pane: ReplicaDockPane) { update({ type: "collapse", pane }); }
   function resize(requestedExtent: number, persist = false) {

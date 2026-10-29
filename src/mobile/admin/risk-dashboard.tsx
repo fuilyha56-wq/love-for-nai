@@ -24,7 +24,7 @@ import {
   riskLabels,
 } from "./risk-ui";
 import "./risk.css";
-import "@/app/admin/risk-ip-accounts.css";
+import "./risk-ip-accounts.css";
 import { groupIpEvidence } from "@/lib/ip-evidence-groups";
 
 const LightRiskPanel = dynamic(() => import("./light-risk-panel"));
@@ -475,17 +475,17 @@ export default function RiskDashboard() {
             <option value="unqueried">尚未查询归属地</option>
           </LfnSelect>
         </div>
-        <div className="risk-ip-account-groups">
+        <div className="mobile-risk-ip-account-groups">
               {groupedIps.slice((currentIpPage - 1) * size, currentIpPage * size).map(group => (
-                  <details key={group.key} className="risk-ip-account-group">
+                  <details key={group.key} className="mobile-risk-ip-account-group">
                     <summary>
                       <RiskIdentity name={group.username} id={group.userId} />
-                      <div className="risk-ip-account-stats">
+                      <div className="mobile-risk-ip-account-stats">
                         <span><strong>{group.items.length}</strong> 个 IP</span>
                         <span><strong>{group.requestCount.toLocaleString()}</strong> 次请求</span>
                       </div>
-                      <time className="risk-ip-account-last-seen" dateTime={group.lastSeenAt}><span>最近活动</span><b>{riskDate(group.lastSeenAt)}</b></time>
-                      <span className="risk-ip-account-toggle"><span className="risk-ip-account-expand">展开明细</span><span className="risk-ip-account-collapse">收起明细</span><ChevronDown size={16} aria-hidden="true" /></span>
+                      <time className="mobile-risk-ip-account-last-seen" dateTime={group.lastSeenAt}><span>最近活动</span><b>{riskDate(group.lastSeenAt)}</b></time>
+                      <span className="mobile-risk-ip-account-toggle"><span className="mobile-risk-ip-account-expand">展开明细</span><span className="mobile-risk-ip-account-collapse">收起明细</span><ChevronDown size={16} aria-hidden="true" /></span>
                     </summary>
                     <div className="risk-table-wrap"><table className="risk-table"><thead><tr><th>IP 来源</th><th>证据与请求</th><th>归属地快照</th><th>最近出现</th><th>操作</th></tr></thead><tbody>
                       {group.items.map((item, index) => (

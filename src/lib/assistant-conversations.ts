@@ -1,5 +1,8 @@
+import { isAssistantConversationId, MAX_ASSISTANT_CONVERSATIONS, type AssistantConversationSession } from "@/lib/assistant-conversation-types";
+export { isAssistantConversationId, MAX_ASSISTANT_CONVERSATIONS } from "@/lib/assistant-conversation-types";
+export type { AssistantConversationSession } from "@/lib/assistant-conversation-types";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentStep } from "@/lib/tag-agent";
 import type { AssistantCallUsage } from "./assistant-usage";
@@ -55,8 +58,10 @@ const root = () =>
     "assistant",
     "conversations",
   );
-const conversationPath = (userId: number) =>
-  path.join(root(), `${userId}.json`);
+const conversationPath = (userId: number, conversationId = "default") => {
+  if (!isAssistantConversationId(conversationId)) throw new Error("会话 ID 无效");
+  return conversationId === "default" ? path.join(root(), `${userId}.json`) : path.join(root(), String(userId), `${conversationId}.json`);
+};
 
 let lock: Promise<unknown> = Promise.resolve();
 
@@ -113,11 +118,11 @@ function normalize(value: unknown): AssistantConversation {
 }
 
 async function readConversationFile(
-  userId: number,
+  userId: number, conversationId = "default",
 ): Promise<AssistantConversation> {
   try {
     return normalize(
-      JSON.parse(await readFile(conversationPath(userId), "utf8")),
+      JSON.parse(await readFile(conversationPath(userId, conversationId), "utf8")),
     );
   } catch {
     return { turns: [], tagPool: [] };
@@ -127,27 +132,34 @@ async function readConversationFile(
 async function writeConversationFile(
   userId: number,
   conversation: AssistantConversation,
+  conversationId = "default",
 ): Promise<void> {
   await mkdir(root(), { recursive: true });
-  const target = conversationPath(userId);
+  const target = conversationPath(userId, conversationId);
+  await mkdir(path.dirname(target), { recursive: true });
   const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(conversation), "utf8");
   await rename(temp, target);
 }
 
 export async function readConversation(
-  userId: number,
+  userId: number, conversationId = "default",
 ): Promise<AssistantConversation> {
-  return readConversationFile(userId);
+  await requireConversationSession(userId, conversationId);
+  return readConversationFile(userId, conversationId);
 }
 
 // 追加一轮对话，并把本轮校验过的标签并入累积标签池。
 export async function appendConversationTurn(
   userId: number,
   turn: ConversationTurn,
+  conversationId = "default", signal?: AbortSignal,
 ): Promise<AssistantConversation> {
   return withLock(async () => {
-    const conversation = await readConversationFile(userId);
+    signal?.throwIfAborted();
+    await requireConversationSession(userId, conversationId);
+    const conversation = await readConversationFile(userId, conversationId);
+    signal?.throwIfAborted();
     conversation.turns.push(turn);
     if (conversation.turns.length > MAX_TURNS)
       conversation.turns = conversation.turns.slice(-MAX_TURNS);
@@ -156,24 +168,106 @@ export async function appendConversationTurn(
     );
     for (const tag of turn.tags) byName.set(tag.name, tag);
     conversation.tagPool = [...byName.values()];
-    await writeConversationFile(userId, conversation);
+    await writeConversationFile(userId, conversation, conversationId);
+    if (conversationId !== "default") await touchConversationSession(userId, conversationId);
     return conversation;
   });
 }
 
-export async function clearConversation(userId: number): Promise<void> {
+export async function clearConversation(userId: number, conversationId = "default"): Promise<void> {
   return withLock(async () => {
-    await writeConversationFile(userId, { turns: [], tagPool: [] });
+    await requireConversationSession(userId, conversationId);
+    await writeConversationFile(userId, { turns: [], tagPool: [] }, conversationId);
   });
 }
 
 /** Update a delayed bill without recreating a conversation the user has cleared. */
-export async function updateConversationUsage(userId: number, id: string, usage: AssistantCallUsage[]): Promise<void> {
+export async function updateConversationUsage(userId: number, id: string, usage: AssistantCallUsage[], conversationId = "default"): Promise<void> {
   return withLock(async () => {
-    const conversation = await readConversationFile(userId);
+    try { await requireConversationSession(userId, conversationId); } catch { return; }
+    const conversation = await readConversationFile(userId, conversationId);
     const turn = conversation.turns.find(turn => turn.id === id);
     if (!turn) return;
     turn.usage = usage;
-    await writeConversationFile(userId, conversation);
+    await writeConversationFile(userId, conversation, conversationId);
+  });
+}
+
+const sessionIndexPath = (userId: number) => path.join(root(), String(userId) + ".sessions.json");
+function defaultConversationSession(): AssistantConversationSession {
+  const timestamp = new Date().toISOString();
+  return { id: "default", title: "默认会话", createdAt: timestamp, updatedAt: timestamp };
+}
+async function readSessionIndex(userId: number): Promise<AssistantConversationSession[]> {
+  let text: string;
+  try { text = await readFile(sessionIndexPath(userId), "utf8"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return [defaultConversationSession()]; throw error; }
+  const saved: unknown = JSON.parse(text);
+  if (!Array.isArray(saved) || saved.length > MAX_ASSISTANT_CONVERSATIONS) throw new Error("会话目录格式无效");
+  const ids = new Set<string>();
+  const sessions = saved.map((entry): AssistantConversationSession => {
+    if (!entry || typeof entry !== "object") throw new Error("会话目录格式无效");
+    const item = entry as Partial<AssistantConversationSession>;
+    if (!isAssistantConversationId(item.id) || ids.has(item.id) || typeof item.title !== "string" || !item.title.trim() || item.title.length > 80 || typeof item.createdAt !== "string" || typeof item.updatedAt !== "string") throw new Error("会话目录格式无效");
+    ids.add(item.id);
+    return { id: item.id, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt };
+  });
+  if (!ids.has("default")) {
+    if (sessions.length >= MAX_ASSISTANT_CONVERSATIONS) throw new Error("会话目录缺少默认会话且已达到上限");
+    sessions.unshift(defaultConversationSession());
+  }
+  return sessions;
+}
+async function writeSessionIndex(userId: number, sessions: AssistantConversationSession[]) {
+  await mkdir(root(), { recursive: true });
+  const target = sessionIndexPath(userId), temporary = target + "." + randomUUID() + ".tmp";
+  await writeFile(temporary, JSON.stringify(sessions), "utf8");
+  await rename(temporary, target);
+}
+async function requireConversationSession(userId: number, id: string) {
+  if (!isAssistantConversationId(id)) throw new Error("会话 ID 无效");
+  if (id !== "default" && !(await readSessionIndex(userId)).some((entry) => entry.id === id)) throw new Error("会话不存在或已删除");
+}
+async function touchConversationSession(userId: number, id: string) {
+  const sessions = await readSessionIndex(userId);
+  const session = sessions.find((entry) => entry.id === id);
+  if (session) { session.updatedAt = new Date().toISOString(); await writeSessionIndex(userId, sessions); }
+}
+export async function listConversationSessions(userId: number) {
+  const sessions = await readSessionIndex(userId);
+  return sessions.sort((a, b) => a.id === "default" ? -1 : b.id === "default" ? 1 : b.updatedAt.localeCompare(a.updatedAt));
+}
+export async function createConversationSession(userId: number, title = "新会话") {
+  const name = title.trim();
+  if (!name || name.length > 80 || /[\u0000-\u001f]/.test(name)) throw new Error("会话名称需要 1–80 字");
+  return withLock(async () => {
+    const sessions = await readSessionIndex(userId);
+    if (sessions.length >= MAX_ASSISTANT_CONVERSATIONS) throw new Error("最多保留 20 个会话，请先删除不需要的会话");
+    const now = new Date().toISOString();
+    const session = { id: randomUUID(), title: name, createdAt: now, updatedAt: now };
+    await writeConversationFile(userId, { turns: [], tagPool: [] }, session.id);
+    await writeSessionIndex(userId, [...sessions, session]);
+    return session;
+  });
+}
+export async function renameConversationSession(userId: number, id: string, title: string) {
+  const name = title.trim();
+  if (!name || name.length > 80 || /[\u0000-\u001f]/.test(name)) throw new Error("会话名称需要 1–80 字");
+  return withLock(async () => {
+    await requireConversationSession(userId, id);
+    const sessions = await readSessionIndex(userId);
+    const session = sessions.find((entry) => entry.id === id)!;
+    session.title = name; session.updatedAt = new Date().toISOString();
+    await writeSessionIndex(userId, sessions);
+    return session;
+  });
+}
+export async function deleteConversationSession(userId: number, id: string) {
+  return withLock(async () => {
+    await requireConversationSession(userId, id);
+    if (id === "default") { await writeConversationFile(userId, { turns: [], tagPool: [] }); return; }
+    const sessions = await readSessionIndex(userId);
+    await writeSessionIndex(userId, sessions.filter((entry) => entry.id !== id));
+    try { await unlink(conversationPath(userId, id)); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   });
 }

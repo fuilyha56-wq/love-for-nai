@@ -23,10 +23,10 @@ export function ReplicaNavigation({ onMenu, onAssistant }: { onMenu: () => void;
   </nav>;
 }
 
-export function ReplicaGenerationFooter({ variant, settings, generating, disabled, progress, operationLabel, balance, cost, count, batchMode, onBatchModeChange, onRun, seedControl, pricingControl }: {
+export function ReplicaGenerationFooter({ variant, settings, generating, disabled, progress, operationLabel, balance, cost, count, batchMode, onBatchModeChange, onRun, onCancel, seedControl, pricingControl }: {
   variant: "nai" | "nlw"; settings: ReactNode; seedControl?: ReactNode; pricingControl?: ReactNode; generating: boolean; disabled: boolean;
   progress: string; operationLabel: string; balance: string; cost: string; count: number;
-  batchMode: "once" | "sequential"; onBatchModeChange: (value: "once" | "sequential") => void; onRun: () => void;
+  batchMode: "once" | "sequential"; onBatchModeChange: (value: "once" | "sequential") => void; onRun: () => void; onCancel?: () => void;
 }) {
   return <footer className="replica-generation-footer" data-replica-footer={variant} data-layout-module="generate">
     {settings}
@@ -34,5 +34,7 @@ export function ReplicaGenerationFooter({ variant, settings, generating, disable
     {seedControl}
     {pricingControl}
     <button type="button" data-studio-generate className="replica-run-button" disabled={disabled || generating} onClick={onRun}><Sparkles size={22} /><span>{generating ? progress || "生成中…" : operationLabel}</span>{!generating && cost && <small title="预估费用，以实际账单为准">{cost}</small>}</button>
-  </footer>;
+
+      {generating && onCancel && <button type="button" className="replica-cancel-generation" onClick={onCancel}>取消当前生成</button>}
+    </footer>;
 }

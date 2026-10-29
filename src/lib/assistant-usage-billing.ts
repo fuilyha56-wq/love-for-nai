@@ -15,7 +15,7 @@ export async function refreshAssistantJobUsage(job: AssistantJob, force = false)
     // Model tool rounds can append while the ledger query is in flight.
     job.usage = job.usage.map(call => settled.get(call.id) ?? call);
     if (job.status === "done" && previous !== JSON.stringify(job.usage))
-      await updateConversationUsage(job.userId, job.id, job.usage).catch(() => undefined);
+      await updateConversationUsage(job.userId, job.id, job.usage, job.conversationId || "default").catch(() => undefined);
   })();
   try { await job.usageRefresh; } finally { job.usageRefresh = undefined; }
 }

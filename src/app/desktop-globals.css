@@ -2207,3 +2207,5 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
 .char-color-3 { --char-color: #b7791f; }
 .char-color-4 { --char-color: #6b46c1; }
 .char-color-5 { --char-color: #b83280; }
+
+.replica-cancel-generation { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; margin-top: 6px; padding: 8px 12px; border: 1px solid var(--rose); border-radius: 8px; background: var(--panel); color: var(--rose); cursor: pointer; font: inherit; }

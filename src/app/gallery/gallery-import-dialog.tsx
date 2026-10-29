@@ -17,14 +17,17 @@ export function GalleryImportDialog({ item, onClose }: {
   useEffect(() => {
     const previous = document.activeElement;
     const panel = dialog.current;
-    panel?.focus({ preventScroll: true });
+    const trigger = Array.from(document.querySelectorAll<HTMLButtonElement>("button[aria-label]")).find(button => button.getAttribute("aria-label") === `作品操作：${item.title}`);
+    const focusFrame = window.requestAnimationFrame(() => panel?.focus({ preventScroll: true }));
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = overflow;
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
+      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      else if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true });
     };
-  }, []);
+  }, [item.id, item.title]);
   if (typeof document === "undefined") return null;
   return createPortal(
     <div className={styles.backdrop} onClick={event => { if (event.target === event.currentTarget) onClose(); }}>

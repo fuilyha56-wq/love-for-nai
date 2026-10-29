@@ -38,8 +38,9 @@ export type AssistantJobResult = {
 export type AssistantJob = {
   id: string;
   userId: number;
+  conversationId?: string;
   createdAt: number;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   steps: AgentStep[];
   usage: AssistantCallUsage[];
   usageCheckedAt?: number;
@@ -60,16 +61,17 @@ const JOB_LIMIT = 100;
 function pruneJobs() {
   const now = Date.now();
   for (const [id, job] of jobs) {
-    if (now - job.createdAt > JOB_TTL_MS) jobs.delete(id);
+    if (now - job.createdAt > JOB_TTL_MS) { abortAssistantJob(job, "助手任务已过期"); jobs.delete(id); }
   }
   while (jobs.size >= JOB_LIMIT) {
     const oldest = [...jobs.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
     if (!oldest) break;
+    abortAssistantJob(oldest, "助手任务已被清理");
     jobs.delete(oldest.id);
   }
 }
 
-export function createAssistantJob(userId: number): AssistantJob {
+export function createAssistantJob(userId: number, conversationId = "default"): AssistantJob {
   pruneJobs();
   const job: AssistantJob = {
     id: randomUUID(),
@@ -79,6 +81,7 @@ export function createAssistantJob(userId: number): AssistantJob {
     steps: [],
     usage: [],
   };
+  job.conversationId = conversationId;
   jobs.set(job.id, job);
   return job;
 }
@@ -91,8 +94,37 @@ export function findAssistantJob(
   const job = jobs.get(id);
   if (!job || job.userId !== userId) return null;
   if (Date.now() - job.createdAt > JOB_TTL_MS) {
-    jobs.delete(id);
-    return null;
+    abortAssistantJob(job, "助手任务已过期"); jobs.delete(id); return null;
   }
   return job;
+}
+
+// Controllers stay server-only and survive development module reloads.
+const cancellationStore = globalThis as typeof globalThis & { __lfnAssistantCancellation?: WeakMap<AssistantJob, AbortController> };
+const jobControllers = (cancellationStore.__lfnAssistantCancellation ??= new WeakMap<AssistantJob, AbortController>());
+export function assistantJobSignal(job: AssistantJob): AbortSignal {
+  let controller = jobControllers.get(job);
+  if (!controller) { controller = new AbortController(); jobControllers.set(job, controller); }
+  return controller.signal;
+}
+function abortAssistantJob(job: AssistantJob, message: string) {
+  if (job.status !== "running") return;
+  assistantJobSignal(job);
+  job.status = "cancelled";
+  job.message = message;
+  jobControllers.get(job)!.abort(new DOMException(message, "AbortError"));
+}
+export function cancelAssistantJob(userId: number, id: string): boolean {
+  const job = findAssistantJob(userId, id);
+  if (!job) return false;
+  abortAssistantJob(job, "已取消助手任务");
+  return true;
+}
+
+export function cancelConversationJobs(userId: number, conversationId: string): number {
+  let cancelled = 0;
+  for (const job of jobs.values()) {
+    if (job.userId === userId && (job.conversationId || "default") === conversationId && job.status === "running") { abortAssistantJob(job, "会话已关闭或清空"); cancelled++; }
+  }
+  return cancelled;
 }

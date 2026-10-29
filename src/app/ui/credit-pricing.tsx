@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Calculator, RefreshCw, X } from "lucide-react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
@@ -8,31 +8,8 @@ import { usePanelHistory } from "./use-panel-history";
 import { dailyImageDay, roundAffAmount, type DailyImageBillingState } from "@/lib/daily-image-pricing";
 import { CNY_PER_AFF, splitImageCreditCost, type ImagePricingGeneration } from "@/lib/image-pricing";
 import { formatAff, formatCny, quoteCredits, type CreditPricing } from "@/lib/credit-pricing";
+import type { useCreditPricing } from "@/lib/client-credit-pricing";
 import "./credit-pricing.css";
-
-export function useCreditPricing() {
-  const [data, setData] = useState<CreditPricing | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/public/credit-pricing", { cache: "no-store" });
-      const result = await response.json();
-      if (!response.ok || !result.policy || !result.fixedCosts || result.cnyPerAff !== CNY_PER_AFF)
-        throw new Error(result.message || "暂时无法读取本站计价");
-      setData(result); setError("");
-    } catch (error) { setError(error instanceof Error ? error.message : "价格读取失败"); }
-    finally { setLoading(false); }
-  }, []);
-  useEffect(() => {
-    void Promise.resolve().then(refresh);
-    const onFocus = () => { void refresh(); };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [refresh]);
-  return { data, error, loading, refresh };
-}
 
 export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; state?: DailyImageBillingState }) {
   const { policy } = pricing;
@@ -121,3 +98,5 @@ export function CreditPricingButton({ children, className = "", pricing, generat
     </div>, document.body)}
   </>;
 }
+
+export { useCreditPricing } from "@/lib/client-credit-pricing";

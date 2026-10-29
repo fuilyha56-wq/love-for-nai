@@ -1,5 +1,5 @@
 "use client";
-import { AnnouncementFeed } from "@/app/announcements/announcement-feed";
+import { AnnouncementFeed } from "@/mobile/announcements/announcement-feed";
 import { PublicHeader } from "@/mobile/public-header";
 import { WorkspaceNav } from "@/mobile/workspace-nav";
 import { MarkdownView } from "@/mobile/markdown";

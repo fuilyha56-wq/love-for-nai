@@ -1,4 +1,6 @@
 "use client";
+
+import { createImageGenerationIntentUrl as imageGenerationIntentUrl } from "@/lib/client-image-generation-intent";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { lfnConfirm } from "@/app/ui/lfn-dialog";
 
@@ -396,7 +398,7 @@ export default function StoriesWorkspace({
     const selected = activeBranch.content.slice(selection.start, selection.end).trim();
     const fallback = activeBranch.content.slice(-600).trim();
     const prompt = selected || fallback;
-    router.push(`/image?prompt=${encodeURIComponent(prompt)}`);
+    router.push(imageGenerationIntentUrl({ prompt, operation: "generate", origin: "story" }));
   }
 
   function importFile(event: ChangeEvent<HTMLInputElement>) {
@@ -787,7 +789,7 @@ export default function StoriesWorkspace({
       <header className="story-dashboard-header">
         <div className="story-dashboard-brand"><span className="stories-brand-mark"><BookOpen size={21} /></span><b>Stories</b></div>
         <nav aria-label="Stories 页面导航">
-          <Link href="/image"><ImagePlus size={17} /> 图片生成</Link>
+          <Link href="/comic">漫画分镜</Link><Link href="/image"><ImagePlus size={17} /> 图片生成</Link>
           <Link href="/settings"><Settings size={17} /> 设置</Link>
           <Link href="/profile"><UserRound size={17} /> {userName}</Link>
         </nav>

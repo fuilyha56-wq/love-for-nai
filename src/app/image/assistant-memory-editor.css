@@ -1,0 +1,9 @@
+.assistant-memory-editor { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.assistant-memory-editor > summary { cursor: pointer; min-height: 36px; }
+.assistant-memory-editor p { line-height: 1.7; color: var(--muted); font-size: 11px; }
+.assistant-memory-editor .assistant-memory-enable { display: flex; align-items: center; gap: 8px; margin-block: 10px; }
+.assistant-memory-editor fieldset { display: grid; min-width: 0; gap: 8px; border: 1px solid var(--line); border-radius: 8px; margin: 10px 0; padding: 10px; }
+.assistant-memory-editor input:not([type=checkbox]), .assistant-memory-editor textarea { width: 100%; min-width: 0; padding: 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+.assistant-memory-editor textarea { resize: vertical; min-height: 72px; }
+.assistant-memory-editor > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.assistant-memory-editor button { min-height: 36px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }

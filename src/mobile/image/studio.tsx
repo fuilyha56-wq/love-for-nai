@@ -1,15 +1,34 @@
 "use client";
+import { useMetadataRestorePreferences } from "@/lib/client-metadata-restore";
+import { MetadataRestoreControl } from "./metadata-restore-control";
+import { appendComicCandidates } from "@/lib/client-comic-projects";
+import { useImageReferences } from "@/app/ui/use-image-references";
+import { ReferenceLibrary, type ReferenceLibraryProps } from "./reference-library";
+import { createImageReference, type ImageReferenceKind } from "@/lib/image-references";
+
+
+import { imageGenerationIntentParams } from "@/lib/client-image-generation-intent";
+
+import { wikipediaLookupEnabled } from "@/lib/client-assistant-web";
+
+import { useOperationQueue } from "@/app/ui/use-operation-queue";
+import type { AssistantRequestSnapshot } from "@/lib/assistant-request-snapshot";
+
+import { useAssistantConversations } from "@/app/ui/use-assistant-conversations";
+
+import { requestCreativeMemory } from "@/lib/client-assistant-memory";
 import { useAssistantModels } from "@/app/ui/use-assistant-models";
 
-import { TagAssistantPanel } from "@/app/image/tag-assistant-panel";
-import { SeedModeNotice } from "@/app/image/seed-mode-notice";
+import { TagAssistantPanel } from "./tag-assistant-panel";
+import { SeedModeNotice } from "@/mobile/image/seed-mode-notice";
 
 import { useStudioSessionHistory } from "@/app/image/use-studio-session-history";
 import { localStudioHistory, remoteStudioHistory } from "@/lib/studio-history";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { hasImageCharacterPrompts, imageCharacterUseCoords, readImageCharacterPrompts } from "@/lib/image-character-prompts";
 import { UserAvatar } from "@/app/ui/user-avatar";
-import { PromptHistoryButton, PromptVersionProvider } from "@/app/ui/prompt-versions";
+import { PromptVersionProvider } from "@/lib/client-prompt-version-context";
+import { PromptHistoryButton } from "@/mobile/image/prompt-versions";
 import "./studio-mode-indicator.css";
 import "./mobile-parameter-panel.css";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/mobile/gallery-submit";
@@ -101,11 +120,13 @@ import {
   type UcPresetType,
 } from "@/lib/nai-quality";
 import { NaiImageSettings, MAX_NAI_IMAGE_COUNT } from "./nai-image-settings";
-import { storedAssistantReasoning } from "@/app/ui/assistant-reasoning-control";
+import { storedAssistantReasoning } from "./assistant-reasoning-control";
 import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
-import { useAssistantUsage, useGoalRoundLimit } from "@/app/ui/assistant-usage";
+import { useAssistantUsage, useGoalRoundLimit } from "@/lib/client-assistant-usage";
+
 import type { AssistantCallUsage } from "@/lib/assistant-usage";
-import { CreditPricingButton, useCreditPricing } from "@/app/ui/credit-pricing";
+import { useCreditPricing } from "@/lib/client-credit-pricing";
+import { CreditPricingButton } from "@/mobile/pricing/credit-pricing";
 import { formatAff } from "@/lib/credit-pricing";
 import { roundAffAmount } from "@/lib/daily-image-pricing";
 import { NaiBalanceMeter } from "./nai-balance-meter";
@@ -675,6 +696,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [gatewayImageCapacityChecked, setGatewayImageCapacityChecked] = useState(false);
   const [generationConfirmation, setGenerationConfirmation] = useState<string | null>(null);
   const generationInFlight = useRef(false);
+  const generationAbortRef = useRef<AbortController | null>(null);
   const galleryUseRecorded = useRef(new Set<string>());
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [schedule, setSchedule] = useState("native");
@@ -791,6 +813,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     contextAfter: string;
   } | null>(null);
   const [inlineChat, setInlineChat] = useState<InlineChatSession | null>(null);
+  const customDockInteractionRevision = useRef(0);
   const [replicaDockCollapsed, setReplicaDockCollapsed] = useState(true);
   const [customDockExpansionRequest, setCustomDockExpansionRequest] = useState({ revision: 0, expanded: false });
   const [replicaAssistantOpenRequest, setReplicaAssistantOpenRequest] = useState(0);
@@ -837,6 +860,17 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   });
   const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
+  const assistantActiveRequestRef = useRef<Promise<unknown> | null>(null);
+  const studioMountedRef = useRef(true);
+  useEffect(() => {
+    studioMountedRef.current = true;
+    return () => {
+      studioMountedRef.current = false;
+      goalRunRef.current = null;
+      assistantAbortRef.current?.abort("unmounted"); assistantActiveRequestRef.current = null;
+      generationAbortRef.current?.abort(new DOMException("工作台已关闭", "AbortError"));
+    };
+  }, []);
   const assistantTimeoutRef = useRef<number | null>(null);
   const mobileSheetRef = useRef<HTMLElement>(null);
   const mobileReferenceFileRef = useRef<HTMLInputElement>(null);
@@ -1288,6 +1322,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       setNotice("当前模型不支持这个操作，请先选择支持图像编辑的模型。");
       return;
     }
+    if (nextOperation === "vibe-transfer" || nextOperation === "precise-reference") imageReferences.add(nextOperation, { id: crypto.randomUUID(), data: image, name: "工作区图片.png", createdAt: Date.now() });
     const saved = sessionHistory.find((item) => item.image === image);
     setSource({ data: image, name: "工作区图片.png", editorDraftId: saved?.editorDraftId, editorNodeId: saved?.editorNodeId, editorBranchId: saved?.editorBranchId });
     setMask(null);
@@ -1776,11 +1811,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   useEffect(() => {
     if (naiLayout || (!layoutEditorOpen && preferences.workspaceLayout !== "custom")) return;
     const saved = loadCustomLayout();
+    const interactionRevision = customDockInteractionRevision.current;
     const timer = window.setTimeout(() => {
       setCustomLayout(saved);
       setClassicLeftWidth(clampPanel(saved.leftWidth, 240, 520));
       setClassicRightWidth(clampPanel(saved.rightWidth, 200, 460));
-      if (!layoutEditorOpen) setCustomDockExpansionRequest(current => ({ revision: current.revision + 1, expanded: !saved.rightCollapsed }));
+      if (!layoutEditorOpen && customDockInteractionRevision.current === interactionRevision) setCustomDockExpansionRequest(current => ({ revision: current.revision + 1, expanded: !saved.rightCollapsed }));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [layoutEditorOpen, naiLayout, preferences.workspaceLayout]);
@@ -1928,6 +1964,26 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
   const signedIn = authenticated && sessionValid;
+  const metadataRestore = useMetadataRestorePreferences();
+  const imageQueueScope = signedIn && userId ? `image:${userId}` : "image:guest";
+  const imageOperationQueue = useOperationQueue(imageQueueScope, 10);
+  const imageActiveRequestRef = useRef<Promise<void> | null>(null);
+  const queuedGenerationApprovalRef = useRef<(() => void) | null>(null);
+  const imageOwnerRef = useRef(imageQueueScope);
+  useEffect(() => { imageOwnerRef.current = imageQueueScope; queuedGenerationApprovalRef.current = null; }, [imageQueueScope]);
+  const [previewFrozen, setPreviewFrozen] = useState(false);
+  const [frozenPreviewImages, setFrozenPreviewImages] = useState<string[]>([]);
+  const incomingPreviewImages = images.length ? images : previewDrafts;
+  const displayedImages = previewFrozen ? frozenPreviewImages : incomingPreviewImages;
+  const [comicDestination, setComicDestination] = useState<{ projectId: string; panelId: string } | null>(null);
+  const imageReferences = useImageReferences(signedIn && userId ? String(userId) : "guest", model, setNotice);
+  function referenceSelections(kind: ImageReferenceKind) {
+    if (imageReferences.baskets[kind].length || !source) return imageReferences.baskets[kind];
+    return [{ ...createImageReference({ id: "source", data: source.data, name: source.name, createdAt: 0 }), strength: kind === "vibe-transfer" ? vibeStrength : 1, information: vibeInformationExtracted, referenceType: referenceType === "style" ? "style" as const : referenceType === "character" ? "character" as const : "character&style" as const }];
+  }
+  const activeReferenceSelections = operation === "vibe-transfer" || operation === "precise-reference" ? referenceSelections(operation).filter(item => item.enabled) : [];
+  const referenceImageCount = operation === "vibe-transfer" || operation === "precise-reference" ? activeReferenceSelections.length : operation === "character-reference" && source ? 1 : 0;
+  const encodedVibeCount = operation === "vibe-transfer" ? activeReferenceSelections.filter(item => imageReferences.encodings[item.id]?.model === model && imageReferences.encodings[item.id]?.information === item.information).length : 0;
   const activeGatewayCapacity = providerId === "newapi" ? gatewayImageCapacity : null;
   const batchConcurrency = Math.max(1, activeGatewayCapacity?.concurrency || 2);
   useEffect(() => {
@@ -2128,9 +2184,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
+    let params: URLSearchParams;
+    try { params = imageGenerationIntentParams(window.location.search); }
+    catch (error) { void Promise.resolve().then(() => setNotice(error instanceof Error ? error.message : "无法读取生成任务")); return; }
     if (params.get("reuse") !== "1") return;
     const timer = window.setTimeout(() => {
+      if (params.get("origin") === "comic" && /^[a-f0-9-]{36}$/i.test(params.get("projectId") || "") && /^[a-f0-9-]{36}$/i.test(params.get("panelId") || "")) setComicDestination({ projectId: params.get("projectId")!, panelId: params.get("panelId")! });
       const reusedOperation = params.get("operation") as Operation | null;
       if (reusedOperation && modes.some(({ id }) => id === reusedOperation))
         setOperation(reusedOperation);
@@ -2151,9 +2210,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         ["steps", setSteps, 1, 50],
         ["scale", setScale, 0, 10],
         ["n", setCount, 1, 6],
+        ["count", setCount, 1, 6],
         ["cfg_rescale", setCfgRescale, 0, 1],
       ] as const;
       numericValues.forEach(([key, setter, min, max]) => {
+        if (!params.has(key)) return;
         const value = Number(params.get(key));
         if (Number.isFinite(value) && value >= min && value <= max)
           setter(value);
@@ -2174,7 +2235,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (params.has("negative_prompt"))
         setNegative(params.get("negative_prompt") || "");
       if (params.has("seed")) setSeed(params.get("seed") || "");
-      setNotice("已载入历史参数，请确认后再生成。");
+      setNotice(params.get("origin") === "story" ? "已载入故事场景，请补充画面描述并确认后生成。" : params.get("origin") === "comic" ? "已载入分镜提示词，请确认后生成。" : "已载入历史参数，请确认后再生成。");
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -2341,26 +2402,29 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     await agentImageUploadQueue.current;
   }
 
+  const assistantConversations = useAssistantConversations(signedIn);
+  const assistantMessageQueue = useOperationQueue([signedIn ? "account" : "guest", assistantConversations.ownerId ?? "pending", assistantConversations.identityRevision, assistantConversations.activeId].join(":"), 10);
   useEffect(() => {
-    // 登出态清空对话交给微任务，避免 effect 内同步 setState。
-    if (!signedIn) {
-      void Promise.resolve().then(() =>
-        setConversation({ turns: [], tagPool: [] }),
-      );
-      return;
-    }
-    // 恢复服务端持久化的对话：历史轮次 + 跨轮次标签池。
-    fetch("/api/assistant/tags", { cache: "no-store" })
+    const controller = new AbortController();
+    assistantAbortRef.current?.abort("context-changed");
+    assistantAbortRef.current = null;
+    assistantActiveRequestRef.current = null;
+    if (assistantTimeoutRef.current != null) { window.clearTimeout(assistantTimeoutRef.current); assistantTimeoutRef.current = null; }
+    void Promise.resolve().then(() => {
+      if (controller.signal.aborted) return;
+      setAssistantLoading(false);
+      setConversation({ turns: [], tagPool: [] }); setAssistantSuggestion(null); setAgentSteps([]);
+    });
+    if (!signedIn) return () => controller.abort();
+    const selectedId = assistantConversations.activeId;
+    fetch("/api/assistant/tags?conversationId=" + encodeURIComponent(selectedId), { cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         const result = await response.json();
-        if (!response.ok) throw new Error(result.message);
-        setConversation({
-          turns: Array.isArray(result.turns) ? result.turns : [],
-          tagPool: Array.isArray(result.tagPool) ? result.tagPool : [],
-        });
-      })
-      .catch(() => undefined);
-  }, [signedIn]);
+        if (!response.ok || controller.signal.aborted) return;
+        setConversation({ turns: Array.isArray(result.turns) ? result.turns : [], tagPool: Array.isArray(result.tagPool) ? result.tagPool : [] });
+      }).catch(() => undefined);
+    return () => controller.abort();
+  }, [signedIn, assistantConversations.activeId, assistantConversations.identityRevision]);
 
   useEffect(() => {
     const latest = conversation.turns[0];
@@ -2368,10 +2432,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   }, [conversation.turns, restoreAssistantUsage]);
 
   async function refreshConversation() {
+    const selectedId = assistantConversations.getActiveId();
+    const identityToken = assistantConversations.getIdentityToken();
     try {
-      const response = await fetch("/api/assistant/tags", { cache: "no-store" });
+      const response = await fetch("/api/assistant/tags?conversationId=" + encodeURIComponent(selectedId), { cache: "no-store" });
       const result = await response.json();
-      if (!response.ok) return;
+      if (!response.ok || (selectedId !== assistantConversations.getActiveId() || identityToken !== assistantConversations.getIdentityToken())) return;
       setConversation({
         turns: Array.isArray(result.turns) ? result.turns : [],
         tagPool: Array.isArray(result.tagPool) ? result.tagPool : [],
@@ -2410,12 +2476,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   }, [signedIn, providerId, model, operation, naturalImageModel, upscaleModel]);
 
   async function clearConversationHistory() {
-    const response = await fetch("/api/assistant/tags", { method: "DELETE" });
+    const selectedId = assistantConversations.getActiveId();
+    const identityToken = assistantConversations.getIdentityToken();
+    const response = await fetch("/api/assistant/tags?conversationId=" + encodeURIComponent(selectedId), { method: "DELETE" });
     const result = await response.json();
     if (!response.ok) {
       setNotice(result.message || "对话记录清空失败");
       return;
     }
+    if ((selectedId !== assistantConversations.getActiveId() || identityToken !== assistantConversations.getIdentityToken())) return;
     setConversation({ turns: [], tagPool: [] });
     setAssistantSuggestion(null);
     setAgentSteps([]);
@@ -2431,14 +2500,26 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   function inputImagesForAgent(): string[] {
     return [...agentImagesRef.current];
   }
-  async function askTagAssistant(request: string, options?: { localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalMaxRounds?: number; goalRunId?: string }) {
-    await agentImageUploadQueue.current;
-    if (!assistantModel) {
+  async function askTagAssistant(request: string, options?: { snapshot?: AssistantRequestSnapshot; throwOnError?: boolean; localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalMaxRounds?: number; goalRunId?: string }) {
+    const task = (async () => {
+      if (!studioMountedRef.current) return null;
+    const requestIdentityToken = options?.snapshot?.identityToken ?? assistantConversations.getIdentityToken();
+  const requestConversationId = options?.snapshot?.body.conversationId ?? assistantConversations.getActiveId();
+  if (!options?.snapshot) await agentImageUploadQueue.current;
+  if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId() || options?.signal?.aborted) return null;
+    const activeMemory = requestCreativeMemory();
+  const selectedMemory = options?.snapshot ? options.snapshot.body.creativeMemory?.filter((note) => activeMemory?.some((current) => current.title === note.title && current.text === note.text)) : activeMemory;
+  const requestMemory = selectedMemory?.length ? selectedMemory : undefined;
+  const requestedAssistantModel = options?.snapshot?.body.model || assistantModel;
+  if (!requestedAssistantModel) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
       return null;
     }
     assistantAbortRef.current?.abort("cancel");
     const controller = new AbortController();
+    let serverJobId = "";
+    const cancelServerJob = () => { if (serverJobId) void fetch(`/api/assistant/tags?job=${encodeURIComponent(serverJobId)}`, { method: "DELETE", keepalive: true }).catch(() => {}); };
+    controller.signal.addEventListener("abort", cancelServerJob, { once: true });
     const abortFromCaller = () => controller.abort("cancel");
     options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
     if (options?.signal?.aborted) controller.abort("cancel");
@@ -2460,17 +2541,17 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: assistantModel,
-          assistantProviderId, assistantGroup,
-          reasoningEffort: storedAssistantReasoning(assistantModel),
-          imageModel: model,
-          modelProtocol: imageProtocol,
-          operation,
-          localTags: options?.localTags,
-          request,
-          currentPrompt: prompt,
-          currentNegativePrompt: negative,
-          images: options?.images ?? (options?.image ? [options.image] : inputImagesForAgent()),
+          ...(options?.snapshot?.body || {
+            model: assistantModel, assistantProviderId, assistantGroup,
+            reasoningEffort: storedAssistantReasoning(assistantModel), creativeMemory: requestCreativeMemory(),
+            conversationId: requestConversationId, imageModel: model, modelProtocol: imageProtocol, operation,
+            currentPrompt: prompt, currentNegativePrompt: negative,
+            images: options?.images ?? (options?.image ? [options.image] : inputImagesForAgent()),
+          }),
+          // A later opt-out or deletion also removes memory from waiting requests.
+          creativeMemory: requestMemory,
+          allowWikipedia: (options?.snapshot?.body.allowWikipedia ?? wikipediaLookupEnabled()) && wikipediaLookupEnabled(),
+          request, localTags: options?.localTags,
           ...(options?.goalMode ? { goalMode: true, accessMode: options.accessMode || "approval", goal: options.goal || "", goalIteration: options.goalIteration || 0, goalMaxRounds: options.goalMaxRounds, goalRunId: options.goalRunId } : {}),
           image: undefined,
         }),
@@ -2481,8 +2562,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       const result = await response.json();
       if (!response.ok) throw new Error(result.message || "智能助手调用失败");
       const jobId = String(result.jobId || "");
+      serverJobId = jobId;
+      if (controller.signal.aborted) cancelServerJob();
+      if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId()) { controller.abort("context-changed"); return null; }
       if (!jobId) throw new Error("智能助手未返回任务编号");
       assistantUsage.recordJob(usageScope, jobId, []);
+      if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId()) { controller.abort("context-changed"); return null; }
       if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
       for (let pollCount = 0; pollCount < ASSISTANT_MAX_POLLS; pollCount += 1) {
         await waitForAssistantPoll(ASSISTANT_POLL_INTERVAL_MS, controller.signal);
@@ -2491,7 +2576,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           { cache: "no-store", signal: controller.signal },
         );
         const progress = await poll.json();
-        if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
+        if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId()) { controller.abort("context-changed"); return null; }
+      if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
         if (!poll.ok) throw new Error(progress.message || "智能助手调用失败");
         if (Array.isArray(progress.usage)) assistantUsage.recordJob(usageScope, jobId, progress.usage, progress.status);
         if (Array.isArray(progress.steps) && progress.steps.length)
@@ -2502,6 +2588,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           void refreshConversation();
           return progress.suggestion as AssistantSuggestion;
         }
+        if (progress.status === "cancelled") throw new DOMException("助手任务已取消", "AbortError");
         if (progress.status === "error")
           throw new Error(progress.message || "智能助手调用失败");
       }
@@ -2519,8 +2606,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         setAssistantTaskError(message);
         setNotice(message);
       }
-      return null;
-    } finally {
+      if (options?.throwOnError && !controller.signal.aborted) throw error;
+    if (options?.throwOnError && controller.signal.reason === "timeout") throw new Error("助手任务超时");
+    return null;
+  } finally {
       options?.signal?.removeEventListener("abort", abortFromCaller);
       if (assistantTimeoutRef.current === timeoutId) {
         window.clearTimeout(timeoutId);
@@ -2531,12 +2620,40 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         setAssistantLoading(false);
       }
     }
+
+    })();
+    assistantActiveRequestRef.current = task;
+    const release = () => { if (assistantActiveRequestRef.current === task) assistantActiveRequestRef.current = null; };
+    void task.then(release, release);
+    return task;
   }
 
   // “让助手处理”是明确的 Agent 入口。仅在无可用模型时降级到直接检索。
-  async function runAgent() {
-    const input = agentInput.trim();
-    if (agentInput.length > ASSISTANT_INPUT_MAX_LENGTH) {
+  function submitAssistantMessage(inputOverride?: string): boolean {
+    const input = (inputOverride ?? agentInput).trim();
+    if (!input || input.length > ASSISTANT_INPUT_MAX_LENGTH) { setNotice("请输入不超过 10000 字的创作需求。"); return false; }
+    if (assistantMode === "goal" || !signedIn || !assistantModel) { void runAgent(input); return true; }
+    if (assistantConversations.control.pending || agentImagesLoading) { setNotice("正在恢复会话或处理参考图，请稍候再发送。"); return false; }
+    const snapshot: AssistantRequestSnapshot = {
+      identityToken: assistantConversations.getIdentityToken(),
+      body: {
+        model: assistantModel, assistantProviderId, assistantGroup,
+        reasoningEffort: storedAssistantReasoning(assistantModel), allowWikipedia: wikipediaLookupEnabled(), creativeMemory: requestCreativeMemory()?.map((note) => ({ ...note })),
+        conversationId: assistantConversations.getActiveId(), imageModel: model, modelProtocol: imageProtocol, operation,
+        currentPrompt: prompt, currentNegativePrompt: negative, images: [...agentImagesRef.current],
+      },
+    };
+    try {
+      assistantMessageQueue.queue.enqueue(input, async (signal) => {
+        const result = await askTagAssistant(input, { snapshot, signal, throwOnError: true });
+        if (!result && !signal.aborted) throw new Error("助手任务未完成，请查看对话中的错误信息。");
+      }, () => assistantActiveRequestRef.current);
+      return true;
+    } catch (error) { setNotice(error instanceof Error ? error.message : "无法加入助手队列"); return false; }
+  }
+  async function runAgent(inputOverride?: string) {
+    const input = (inputOverride ?? agentInput).trim();
+    if ((inputOverride ?? agentInput).length > ASSISTANT_INPUT_MAX_LENGTH) {
       setNotice("创作需求不能超过 10000 字。");
       return;
     }
@@ -3901,8 +4018,21 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     </>
   );
 
-  async function runOperation(approvedConfirmation?: string, allowAutonomousCost = false) {
-    if (generationInFlight.current) return;
+  function cancelImageGeneration() {
+    for (const item of imageOperationQueue.items) if (item.status === "running") imageOperationQueue.queue.cancel(item.id);
+    generationAbortRef.current?.abort();
+  }
+
+  function runOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal): Promise<void> {
+    if (!queueRequested && generationInFlight.current) return imageActiveRequestRef.current ?? Promise.resolve();
+    if (!queueRequested && !queueSignal) queuedGenerationApprovalRef.current = null;
+    const request = performImageOperation(approvedConfirmation, allowAutonomousCost, queueRequested, queueSignal);
+    if (!queueRequested) { imageActiveRequestRef.current = request; const release = () => { if (imageActiveRequestRef.current === request) imageActiveRequestRef.current = null; }; void request.then(release, release); }
+    return request;
+  }
+
+  async function performImageOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal) {
+    if (generationInFlight.current && !queueRequested) return;
     if (!model) {
       setNotice("请先选择当前接口可用的图像模型。");
       return;
@@ -3950,7 +4080,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       cfgRescale,
       seed,
       strength,
-      source,
+      source: activeReferenceSelections[0] ?? source,
       mask,
     });
     if (validationError) {
@@ -3978,13 +4108,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         characterPromptCount: operation === "generate" && charactersEnabled
           ? characters.filter((character) => character.prompt.trim()).length
           : 0,
-        referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
+        referenceImageCount,
       });
     if (!naturalImageModel && newApiPricedImage && !canUseAffEstimate && (multiImage || requestLeavesLimit) && estimatedNewApiCost == null) {
       setNotice("暂时无法读取 NewAPI 实际价格，请稍后再试，避免意外扣费。");
       return;
     }
-    if (!allowAutonomousCost && (multiImage || (requestLeavesLimit && !canUseAffEstimate))) {
+    if (!allowAutonomousCost && (multiImage || (requestLeavesLimit && !canUseAffEstimate) || (operation === "vibe-transfer" && referenceImageCount > encodedVibeCount))) {
       const payment = providerId !== "newapi"
         ? "费用以所选 API 的账单为准"
         : canUseAffEstimate
@@ -3995,18 +4125,33 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         : multiImage
           ? "每张独立请求"
           : "当前参数可能进入高价档";
-      const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}`;
+      const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}${operation === "vibe-transfer" && referenceImageCount > encodedVibeCount ? `\n其中 ${referenceImageCount - encodedVibeCount} 张风格参考需先付费预处理；成功的编码将缓存并在以后复用，生成失败也不会退回已完成的编码费用。` : ""}`;
       if (approvedConfirmation !== confirmation) {
+        queuedGenerationApprovalRef.current = queueRequested ? () => { if (imageOwnerRef.current === imageQueueScope) void runOperation(confirmation, allowAutonomousCost, true); } : null;
         setGenerationConfirmation(confirmation);
         return;
       }
     }
+    if (queueRequested) {
+      const capturedScope = imageQueueScope;
+      try { imageOperationQueue.queue.enqueue(`${operation} · ${prompt.slice(0, 80) || "图片任务"}`, async signal => {
+        signal.throwIfAborted();
+        if (imageOwnerRef.current !== capturedScope || !studioMountedRef.current) throw new Error("账号已切换，此任务已停止。");
+        await runOperation(approvedConfirmation, allowAutonomousCost, false, signal);
+      }, () => imageActiveRequestRef.current); setNotice("已加入图片队列；提示词、模型、参考图与生成参数已固定。"); }
+      catch (error) {
+      if (queueSignal?.aborted) throw error; setNotice(error instanceof Error ? error.message : "图片队列已满。"); }
+      return;
+    }
     const usageGoalId = goalRunRef.current?.status === "running" ? goalRunRef.current.id : undefined;
     const fetchGoalImage = async (url: string, init: RequestInit) => {
-      const response = await fetch(url, init);
+      generationAbortRef.current?.signal.throwIfAborted();
+      queueSignal?.throwIfAborted();
+      const response = await fetch(url, { ...init, signal: queueSignal && generationAbortRef.current ? AbortSignal.any([queueSignal, generationAbortRef.current.signal]) : generationAbortRef.current?.signal || init.signal });
       if (usageGoalId) assistantUsage.recordImage(usageGoalId, response.headers.get("x-lfn-request-id"));
       return response;
     };
+    generationAbortRef.current = new AbortController();
     generationInFlight.current = true;
     setGenerating(true);
     setImages([]);
@@ -4109,10 +4254,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       base.strength = strength;
     }
     if (["inpainting", "edits"].includes(operation)) base.mask = mask?.data;
-    if (operation === "vibe-transfer") {
-      base.reference_image = source?.data;
-      base.reference_strength = vibeStrength;
-      base.reference_information_extracted = vibeInformationExtracted;
+    if (operation === "vibe-transfer" || operation === "precise-reference") {
+      try { Object.assign(base, await imageReferences.prepare(operation, queueSignal && generationAbortRef.current ? AbortSignal.any([queueSignal, generationAbortRef.current.signal]) : generationAbortRef.current?.signal, activeReferenceSelections)); }
+      catch (error) { setNotice(generationAbortRef.current?.signal.aborted ? "已取消参考图预处理。" : error instanceof Error ? error.message : "参考图预处理失败。"); generationInFlight.current = false; generationAbortRef.current = null; setGenerating(false); if (queueSignal) throw error; return; }
     }
     if (operation === "character-reference")
       base.characters = [
@@ -4124,15 +4268,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           reference_information_extracted: 1,
         },
       ];
-    if (operation === "precise-reference")
-      base.references = [
-        {
-          reference_image: source?.data,
-          reference_type: referenceType,
-          strength: 1,
-          fidelity: 1,
-        },
-      ];
+
     if (operation === "annotate") {
       base.image = source?.data;
       base.model = controlModel;
@@ -4248,7 +4384,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           Array.from(
             { length: Math.min(BATCH_PARALLEL, chunkSizes.length) },
             async () => {
-              while (nextChunk < chunkSizes.length) {
+              while ((nextChunk < chunkSizes.length && !generationAbortRef.current?.signal.aborted) && !queueSignal?.aborted) {
                 const chunkIndex = nextChunk;
                 nextChunk += 1;
                 // 按片序号错峰启动，避免瞬时并发挤满网关队列。
@@ -4258,6 +4394,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 try {
                   await runChunk(chunkIndex);
                 } catch (error) {
+      if (queueSignal?.aborted) throw error;
                   failures += 1;
                   lastError =
                     error instanceof Error ? error.message : "生成失败";
@@ -4357,10 +4494,14 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         }
       }
     } catch (error) {
+      if (queueSignal) throw error;
       setNotice(
         error instanceof Error ? error.message : "操作失败，请稍后重试",
       );
     } finally {
+      const generationWasCancelled = Boolean(generationAbortRef.current?.signal.aborted || queueSignal?.aborted);
+      if (generationWasCancelled) setNotice("已停止当前生成；已经返回的图片保留在当前结果中。");
+      generationAbortRef.current = null;
       generationInFlight.current = false;
       setBatchProgress("");
       setStreamProgress("");
@@ -4368,7 +4509,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (usageGoalId) void assistantUsage.refresh();
       const goalImage = goalReviewImageRef.current;
       goalReviewImageRef.current = null;
-      if (goalImage && goalRunRef.current?.status === "running")
+      if (!generationWasCancelled && goalImage && goalRunRef.current?.status === "running")
         window.setTimeout(() => void reviewGoalResult(goalImage), 0);
     }
   }
@@ -4395,8 +4536,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           samples: outputCount,
           sequential: batchMode === "sequential" && outputCount > 1,
           strength: imagePricingStrength({ strength }, operation),
-          referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
-          encodedVibeCount: 0,
+          referenceImageCount,
+          encodedVibeCount,
           characterPromptCount: activeCharacterCount,
         };
   const dailyFamily = dailyImageFamily(affGeneration);
@@ -4410,8 +4551,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     samples: outputCount,
     characterPromptCount: activeCharacterCount,
     strength: imagePricingStrength({ strength }, operation),
-    referenceImageCount: ["vibe-transfer", "character-reference", "precise-reference"].includes(operation) && source ? 1 : 0,
-    encodedVibeCount: 0,
+    referenceImageCount,
+    encodedVibeCount,
   });
   const packageRateImages = Math.min(
     outputCount,
@@ -4502,8 +4643,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       style={layoutEditorOpen ? customModuleStyle("agent") : undefined} tools={layoutModuleTools("agent")}
       mode={assistantMode} onModeChange={setAssistantMode} autonomy={autonomyMode} onAutonomyChange={setAutonomyMode}
       rounds={goalMaxRounds} onRoundsChange={setGoalMaxRounds} goal={goalRun} onStopGoal={stopGoalAgent} onClearGoal={() => updateGoalRun(null)}
-      modelControl={assistantSelection.control}
-      usage={assistantUsage} input={agentInput} onInputChange={setAgentInput} onSubmit={runAgent} onCancel={cancelAssistantTask}
+      modelControl={assistantSelection.control} sessionControl={assistantConversations.control}
+      usage={assistantUsage} input={agentInput} onInputChange={setAgentInput} onSubmit={submitAssistantMessage} onQueue={signedIn && assistantModel ? submitAssistantMessage : undefined}
+      queueRunning={assistantMessageQueue.running} messageQueue={assistantMessageQueue.items}
+      onRemoveQueued={(id) => assistantMessageQueue.queue.cancel(id)}
+      onClearQueued={() => assistantMessageQueue.pending.forEach((item) => assistantMessageQueue.queue.cancel(item.id))}
+      onClearQueueHistory={() => assistantMessageQueue.queue.clearFinished()}
+      onCancel={() => { const current = assistantMessageQueue.items.find((item) => item.status === "running"); if (current) assistantMessageQueue.queue.cancel(current.id); cancelAssistantTask(); }}
       loading={assistantLoading} searching={tagSearching} error={assistantTaskError}
       images={agentImages} imagesLoading={agentImagesLoading} onAddImages={files => { void handleAgentImageFiles(files); }}
       onRemoveImage={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
@@ -4615,9 +4761,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       {operation !== "suggest-tags" && pricingDetails()}
       <div className="nai-generation-action">
         <button
-          data-studio-generate
-          onClick={handleStudioGenerationClick}
-          disabled={generating || layoutEditorOpen || !model}
+          data-studio-generate={generating ? undefined : true}
+              data-studio-cancel={generating || undefined}
+              aria-label={generating ? "取消当前生成" : undefined}
+          onClick={generating ? () => cancelImageGeneration() : handleStudioGenerationClick}
+          disabled={!generating && (layoutEditorOpen || !model)}
           title={
             providerId !== "newapi"
               ? "使用个人 API Key；费用以提供方账单为准"
@@ -4630,7 +4778,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           className="nai-generate-button"
         >
           <span className="flex items-center gap-2">
-            <Sparkles size={18} />
+            <Sparkles size={18} />{generating && <span>取消当前生成</span>}
             {generating
               ? streamProgress
                 ? `生成中 ${streamProgress}`
@@ -4666,12 +4814,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     reader.onerror = () => setNotice("读取图片失败，请重试。");
     reader.onload = () => {
       if (typeof reader.result !== "string") return;
+      const nextOperation = imageInputModes.has(operation) && operation !== "suggest-tags" ? operation : modelCapabilities.operations.includes("img2img") ? "img2img" : "edits";
+      if (nextOperation === "vibe-transfer" || nextOperation === "precise-reference") imageReferences.add(nextOperation, { id: crypto.randomUUID(), data: reader.result as string, name: file.name, createdAt: Date.now() });
       setSource({ data: reader.result, name: file.name });
       setMask(null);
       setImages([]);
       setPreviewDrafts([]);
       setUpscaleSource(null);
-      const nextOperation = imageInputModes.has(operation) && operation !== "suggest-tags" ? operation : modelCapabilities.operations.includes("img2img") ? "img2img" : "edits";
       setOperation(nextOperation);
       setNotice("已载入图片。");
     };
@@ -4700,7 +4849,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const replicaBalance = providerId === "newapi"
     ? !signedIn ? "体验模式" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
     : "个人 Key";
-  const controls = replicaLayout ? <ReplicaControls variant={replicaVariant}
+  function renderReferenceLibrary(kind: ImageReferenceKind) {
+    const props: ReferenceLibraryProps = { kind, references: referenceSelections(kind), library: imageReferences.library, encodings: imageReferences.encodings, encodingId: imageReferences.encodingId, disabled: generating,
+      onAdd: imageReferences.add, onUpdate: (mode,id,change) => { if (id === "source" && !imageReferences.baskets[mode].length) imageReferences.replace(mode, referenceSelections(mode).map(item => ({ ...item, ...change }))); else imageReferences.update(mode,id,change); },
+      onRemove: (mode,id) => { if (imageReferences.baskets[mode].length <= 1) { setSource(null); setMask(null); } imageReferences.remove(mode,id); },
+      onReplace: imageReferences.replace, onSave: imageReferences.save, onDeleteSaved: imageReferences.removeSaved, onEncode: imageReferences.encode, onCancelEncoding: imageReferences.cancelEncoding, onClearCache: imageReferences.clearCache, onNotice: setNotice };
+    return <ReferenceLibrary {...props}/>;
+  }
+  async function returnComicCandidates() {
+    if (!comicDestination || !images.length) return;
+    try { await appendComicCandidates(signedIn && userId ? String(userId) : "guest", comicDestination.projectId, comicDestination.panelId, images.map((image, index) => ({ id: crypto.randomUUID(), image, prompt, createdAt: Date.now() + index }))); setNotice("已加入分镜候选，可返回漫画工作台选择图片和编辑对白。"); }
+    catch (error) { setNotice(error instanceof Error ? error.message : "无法保存分镜候选，请返回漫画工作台确认项目仍存在。"); }
+  }
+  const mobileWorkspaceExtras = <><MetadataRestoreControl preferences={metadataRestore.preferences} onChange={metadataRestore.update}/><details className="mobile-studio-image-queue"><summary>图片队列 · {imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length} 个任务</summary><p>排队保留提交时的参数，费用以执行时服务端结算为准。</p><button type="button" disabled={!signedIn || imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length >= 10} onClick={() => void runOperation(undefined, false, true)}>将当前设置加入队列</button><button type="button" disabled={!imageOperationQueue.items.some(item => item.status === "queued")} onClick={() => imageOperationQueue.items.filter(item => item.status === "queued").forEach(item => imageOperationQueue.queue.cancel(item.id))}>清除等待任务</button><ol>{imageOperationQueue.items.map(item => <li key={item.id}><span>{item.label} · {item.status === "queued" ? "等待中" : item.status === "running" ? "生成中" : item.status === "completed" ? "已完成" : item.status === "failed" ? "失败" : "已取消"}{item.error ? `：${item.error}` : ""}</span>{(item.status === "queued" || item.status === "running") && <button type="button" onClick={() => imageOperationQueue.queue.cancel(item.id)}>{item.status === "running" ? "停止" : "移除"}</button>}</li>)}</ol></details><div className="mobile-studio-preview-follow"><button type="button" disabled={!displayedImages.length && !previewFrozen} aria-pressed={previewFrozen} onClick={() => { if (!previewFrozen) setFrozenPreviewImages([...incomingPreviewImages]); setPreviewFrozen(value => !value); }}>{previewFrozen ? "恢复显示最新结果" : "固定当前预览"}</button>{previewFrozen && <span role="status">预览已固定；新结果继续保存在历史中。</span>}<a href="/comic">漫画分镜</a></div>{comicDestination && <div className="mobile-studio-comic-handoff"><a href="/comic">返回漫画分镜</a><button type="button" disabled={generating || !images.length} onClick={() => void returnComicCandidates()}>将当前结果加入此格</button></div>}</>;
+  const controls = <>{mobileWorkspaceExtras}{replicaLayout ? <><ReplicaControls referenceLibrary={{ "vibe-transfer": renderReferenceLibrary("vibe-transfer"), "precise-reference": renderReferenceLibrary("precise-reference") }} variant={replicaVariant}
     prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} historyPrompts={sessionHistory.map((item) => item.prompt)}
     onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
     onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }}
@@ -4718,7 +4880,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       reader.onload = () => {
         if (typeof reader.result !== "string") return;
         if (nextOperation === "suggest-tags") { setAgentImage(reader.result); return; }
-        setSource({ data: reader.result, name: file.name }); setMask(null);
+        if (nextOperation === "vibe-transfer" || nextOperation === "precise-reference") imageReferences.add(nextOperation, { id: crypto.randomUUID(), data: reader.result as string, name: file.name, createdAt: Date.now() });
+      setSource({ data: reader.result, name: file.name }); setMask(null);
         setOperation(nextOperation as Operation);
         if (nextOperation === "inpainting" || nextOperation === "edits") {
           const inpaintModel = inpaintModelFor(model, imageProtocol);
@@ -4738,7 +4901,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     strength={strength} setStrength={setStrength} vibeStrength={vibeStrength} setVibeStrength={setVibeStrength}
     vibeInformationExtracted={vibeInformationExtracted} setVibeInformationExtracted={setVibeInformationExtracted}
     referenceType={referenceType} setReferenceType={setReferenceType}
-  /> : legacyControls;
+  />{replicaVariant === "nai" && (operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</> : <>{legacyControls}{(operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</>}</>;
   const naiGenerationFooter = replicaLayout || customWorkspace ? <ReplicaGenerationFooter variant={customWorkspace ? "nai" : replicaVariant}
     settings={customWorkspace ? <div className="custom-generation-meta"><span>{count} 张图像</span><button type="button" aria-label="切换提交方式" onClick={() => setBatchMode(batchMode === "once" ? "sequential" : "once")}>{batchMode === "once" ? "一次性" : "分批次"}</button></div> : <ReplicaGenerationSettings variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
@@ -4750,22 +4913,30 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
     count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={handleStudioGenerationClick}
+      onCancel={() => cancelImageGeneration()}
   /> : legacyGenerationFooter;
   function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
     if (nextOperation === "reuse-parameters") {
-      restoreCharacterParameters(item, true);
-      if (item.providerId && item.providerId !== "newapi" && item.providerId !== "novelai" && !customProviders.some(provider => provider.id === item.providerId)) {
+      if (metadataRestore.preferences.characters) restoreCharacterParameters(item, true);
+      if (metadataRestore.preferences.model && item.providerId && item.providerId !== "newapi" && item.providerId !== "novelai" && !customProviders.some(provider => provider.id === item.providerId)) {
         setNotice("这张历史图片的 API 来源已移除，请先重新配置来源。"); return;
       }
+      if (metadataRestore.preferences.model) {
       if (item.providerId) setProviderId(item.providerId);
       if (item.model) setModel(item.model);
       if (item.providerId === "newapi" && item.imageProtocol) setNewApiImageProtocol(item.imageProtocol);
       if (item.quality) setImageQuality(item.quality);
       if (item.imageSize) setImageResolution(item.imageSize);
       if (item.background) setImageBackground(item.background);
-      const size = item.model ? normalizeImageModelSize(item.model, item.width, item.height, item.imageProtocol) : item;
-      setPrompt(item.prompt); setNegative(item.negative); setWidth(size.width); setHeight(size.height);
-      setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed)); setOperation("generate");
+      }
+      const targetModel = metadataRestore.preferences.model ? item.model || model : model;
+      const targetProtocol = metadataRestore.preferences.model ? item.imageProtocol || imageProtocol : imageProtocol;
+      const size = normalizeImageModelSize(targetModel, item.width, item.height, targetProtocol);
+      if (metadataRestore.preferences.prompts) { setPrompt(item.prompt); setNegative(item.negative); }
+      if (metadataRestore.preferences.dimensions) { setWidth(size.width); setHeight(size.height); }
+      if (metadataRestore.preferences.sampling) { setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); }
+      if (metadataRestore.preferences.seed) setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed));
+      setOperation("generate");
     } else applyImageAsSource(item.image, nextOperation as Operation);
   }
   const mobileHistoryItems = sessionHistory;
@@ -4854,7 +5025,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           ? <div className="mobile-studio-session-content">{walletBlock}<Link href="/profile#profile-wallet" className="settings-secondary-button">打开账号页面</Link></div>
           : null;
 
-  const displayedImages = images.length ? images : previewDrafts;
+
 
   return (
     <PromptVersionProvider prompt={prompt} negative={negative} scope={userId ? String(userId) : "guest"} onRestore={(target, text) => (target === "prompt" ? setPrompt : setNegative)(text)}>
@@ -5030,13 +5201,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               parameterContent={mobileParameterContent}
               assistantContent={<div className="mobile-studio-assistant-content">{assistantPanel}</div>}
               onRefreshHistory={() => setMobileHistoryRefresh((value) => value + 1)}
-              referenceContent={<div className="mobile-reference-tools">
+              referenceContent={<div className="mobile-reference-tools">{(operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}
                 <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
                 <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
                 <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
                 <button type="button" data-tutorial-editor={operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas"} className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor(operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas")}><Scan size={18} />{operation === "inpainting" || operation === "edits" ? "绘制重绘蒙版" : "打开图像编辑器"}</button>
               </div>}
-              moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
+              moreContent={<>{mobileWorkspaceExtras}<LauncherDestinationGroups admin={isAdmin} workspace /></>}
               operationOptions={mobileOperationOptions}
               onSelectOperation={(next) => selectOperation(next as Operation)}
               onOpenSheet={(next) => setMobileSheet(next)}
@@ -5341,12 +5512,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 <small>查看定价与阶梯</small></>, "credit-pricing-summary")
               )}
               <button
-                data-studio-generate
-                onClick={handleStudioGenerationClick}
-                disabled={generating || !model}
+                data-studio-generate={generating ? undefined : true} data-studio-cancel={generating || undefined} aria-label={generating ? "取消当前生成" : undefined}
+                onClick={generating ? () => cancelImageGeneration() : handleStudioGenerationClick}
+                disabled={!generating && !model}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
               >
-                <Sparkles size={18} />
+                <Sparkles size={18} />{generating && <span>取消当前生成</span>}
                 {generating
                   ? batchProgress
                     ? `生成中 ${batchProgress}…`
@@ -5381,7 +5552,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             assistantEnabled={assistantEnabled}
             assistantOpenRequest={replicaAssistantOpenRequest}
             expansionRequest={customDockExpansionRequest}
-            onCollapsedChange={setReplicaDockCollapsed}
+            onCollapsedChange={setReplicaDockCollapsed} onUserInteraction={() => { customDockInteractionRevision.current += 1; }}
           /> : toolsPanel}
         </aside>
       </div>
@@ -5635,7 +5806,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 onClick={() => {
                   const approved = generationConfirmation;
                   setGenerationConfirmation(null);
-                  void runOperation(approved);
+                  const queuedApproval = queuedGenerationApprovalRef.current; queuedGenerationApprovalRef.current = null; if (queuedApproval) queuedApproval(); else void runOperation(approved);
                 }}
                 className="rounded-lg bg-[var(--rose)] px-4 py-2 text-sm font-semibold text-white"
               >

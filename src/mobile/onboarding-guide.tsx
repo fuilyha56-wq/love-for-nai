@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { GUIDE_KEY, GUIDE_OPEN_EVENT, guideLauncherVisible, setGuideActive, setGuideLauncherVisible, subscribeGuideVisibility } from "@/mobile/lib/guide-preferences";
 import "./onboarding-guide.css";
-import { TutorialText } from "@/app/tutorials/tutorial-text";
+import { TutorialText } from "@/mobile/tutorials/tutorial-text";
 import { FEATURE_TUTORIAL_EVENT, readTutorialResult, readTutorialSession } from "@/lib/feature-tutorial-session";
 
 type Step = { title: string; body: string; path: string; target?: string; action?: string };

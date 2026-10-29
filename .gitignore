@@ -112,3 +112,16 @@ __pycache__/
 /scripts/.tmp/
 /%SystemDrive%/
 /public/tutorials/**/audit*.json
+# Verification stays local; published source and images exclude test suites and QA runners.
+/tests/
+**/__tests__/
+**/*.test.*
+**/*.spec.*
+/vitest.config.mts
+/scripts/check-*.cjs
+/scripts/audit-*
+/scripts/tutorial-test-support.cjs
+/test-results/
+/playwright-report/
+**/known_hosts*
+/.kilo/

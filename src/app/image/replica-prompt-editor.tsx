@@ -1,4 +1,6 @@
 "use client";
+
+import PromptNotebook from "@/app/image/prompt-notebook";
 import { PromptHistoryButton } from "@/app/ui/prompt-versions";
 
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject, type ReactNode } from "react";
@@ -436,7 +438,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
              onFocus={() => hover(item, 0)} onBlur={() => hover(null, 180)}>{item === "positive" ? <Sparkles size={16} /> : <Ban size={16} />} {natural ? item === "positive" ? "描述" : "排除内容" : item === "positive" ? "正面" : "负面"} <span>{natural ? promptCount(item === "positive" ? prompt : negative, true) : splitPromptTags(item === "positive" ? prompt : negative).length}</span></button>)}
         </div>
         <button type="button" className="replica-fixed-button" aria-label="管理固定词" title="管理固定词" onClick={() => setFixedOpen(true)}><Pin size={16} /></button>
-        {presetButton("quality")}{presetButton("uc")}
+        {presetButton("quality")}{presetButton("uc")}<PromptNotebook prompt={prompt} negativePrompt={negative} onPromptChange={onPromptChange} onNegativePromptChange={onNegativeChange} />
       </div>
       {editor(target)}
       <PromptResizeHandle height={editorHeight} onChange={setEditorHeight} />
@@ -455,7 +457,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
             {(["positive", "negative"] as const).map((item) => <button type="button" key={item} ref={item === "positive" ? positiveButton : negativeButton} role="tab" aria-selected={target === item}
                className={item + (target === item ? " is-selected" : "")} disabled={item === "negative" && !acceptsNegative} onClick={() => { setTarget(item); setMenu(null); setPresetHover(null); setHoverTarget(null); }}>{natural ? item === "positive" ? "描述" : "排除内容" : item === "positive" ? "提示词" : "UC"}</button>)}
           </div>
-          <div className="replica-nai-prompt-actions"><button type="button" aria-label={"清空" + (target === "positive" ? "提示词" : "负面内容")} onClick={() => (target === "positive" ? onPromptChange : onNegativeChange)("")}><X size={16} /></button><button type="button" aria-label="随机提示词" disabled={randomizing} onClick={() => void randomize(target)}><Dice5 size={16} /></button>{canCollapse && <button type="button" className="replica-prompt-collapse" aria-label={isCollapsed ? "展开提示词" : "收起提示词"} aria-expanded={!isCollapsed} onClick={() => {
+          <div className="replica-nai-prompt-actions"><PromptNotebook prompt={prompt} negativePrompt={negative} onPromptChange={onPromptChange} onNegativePromptChange={onNegativeChange} /><button type="button" aria-label={"清空" + (target === "positive" ? "提示词" : "负面内容")} onClick={() => (target === "positive" ? onPromptChange : onNegativeChange)("")}><X size={16} /></button><button type="button" aria-label="随机提示词" disabled={randomizing} onClick={() => void randomize(target)}><Dice5 size={16} /></button>{canCollapse && <button type="button" className="replica-prompt-collapse" aria-label={isCollapsed ? "展开提示词" : "收起提示词"} aria-expanded={!isCollapsed} onClick={() => {
             if (hoverTimer.current) clearTimeout(hoverTimer.current);
             setMenu(null); setPresetHover(null); setHoverTarget(null);
             onCollapsedChange?.(!isCollapsed);

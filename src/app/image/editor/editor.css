@@ -349,3 +349,7 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
 }
 
 }
+
+.editor-quality-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 8px; }
+.editor-quality-actions button { min-height: 36px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+@media (max-width: 1023px) { .editor-quality-actions button { min-height: 44px; } }

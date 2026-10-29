@@ -1,0 +1,12 @@
+.mobile-seed-mode-notice { display:flex; flex:none; min-width:0; align-items:center; justify-content:space-between; gap:8px; width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface-muted); color:var(--muted); font-size:11px; line-height:1.5; }
+.mobile-seed-mode-notice > span { display:flex; align-items:center; flex-wrap:wrap; gap:5px; min-width:0; }
+.mobile-seed-mode-notice b { color:var(--ink); font-weight:600; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.mobile-seed-mode-notice small { font-size:10px; }
+.mobile-seed-mode-notice button { flex:none; min-height:30px; padding:3px 6px; border-radius:4px; color:var(--rose); font-weight:600; white-space:nowrap; }
+.mobile-seed-mode-notice button:focus-visible { outline:2px solid var(--rose); outline-offset:2px; }
+.nai-generation-footer > .mobile-seed-mode-notice { margin-bottom:8px; }
+@media(max-width:1023px) { .mobile-seed-mode-notice { padding:4px 8px; }.mobile-seed-mode-notice button { min-height:36px; }.mobile-seed-mode-notice small { display:none; } }
+@media(max-width:1023px) {
+  .mobile-studio-launcher .mobile-generation-footer:has(> .mobile-seed-mode-notice) { flex-wrap:wrap; max-height:none; }
+  .mobile-studio-launcher .mobile-generation-footer > .mobile-seed-mode-notice { order:-1; flex:0 0 100%; margin-bottom:0; }
+}

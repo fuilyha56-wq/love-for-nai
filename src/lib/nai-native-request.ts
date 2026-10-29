@@ -164,7 +164,9 @@ export function naiNativeGenerationBody(
   if (typeof body.strength === "number" || action === "img2img")
     parameters.strength = typeof body.strength === "number" ? body.strength : 0.7;
   if (typeof body.inpaintImg2ImgStrength === "number" || action === "infill")
-    parameters.inpaintImg2ImgStrength = typeof body.inpaintImg2ImgStrength === "number" ? body.inpaintImg2ImgStrength : 1;
+    parameters.inpaintImg2ImgStrength = typeof body.inpaintImg2ImgStrength === "number"
+      ? body.inpaintImg2ImgStrength
+      : typeof body.strength === "number" ? body.strength : 1;
   if (typeof body.uncond_scale === "number") parameters.uncond_scale = body.uncond_scale;
   if (typeof body.service_tier === "string") parameters.service_tier = body.service_tier;
   if (typeof body.image === "string" && body.image)
@@ -183,7 +185,11 @@ export function naiNativeGenerationBody(
     ];
   }
   if (Array.isArray(body.reference_images) && body.reference_images.length) {
-    parameters.reference_image_multiple = stripDataUrl(body.reference_images);
+    {
+      parameters.reference_image_multiple = stripDataUrl(body.reference_images);
+      parameters.reference_strength_multiple = body.reference_images.map((_, index) => Array.isArray(body.reference_strength_multiple) ? body.reference_strength_multiple[index] ?? 0.6 : 0.6);
+      parameters.reference_information_extracted_multiple = body.reference_images.map((_, index) => Array.isArray(body.reference_information_extracted_multiple) ? body.reference_information_extracted_multiple[index] ?? 1 : 1);
+    }
   }
   // The studio's character-reference operation wraps each uploaded image in
   // characters[].reference_image. Native NAI accepts these in the same

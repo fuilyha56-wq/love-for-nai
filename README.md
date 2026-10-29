@@ -1,5 +1,8 @@
 # Love for NAI
 
+> 验证文件说明：文中的单元测试、浏览器检查和审计脚本保留在开发者本机，按发布要求不包含在当前 GitHub 文件中。干净检出可运行 `npm run lint` 和 `npm run build`；历史测试路径与命令仅供拥有本机验证文件的开发环境参考。
+
+
 Love for NAI（LFN）是使用现有 NewAPI 账号、余额和模型权限的中文 NovelAI 图片工作台。
 
 当前版本包含中文图片工作台、文生图、图生图、蒙版重绘、参考图和 Director Tools、Danbooru 标签检索、LLM 标签助手、用户图片历史，以及 NewAPI 资料、余额、日志、模型和密钥管理。网页登录使用签名 `HttpOnly` 会话；图片调用经 NewAPI 鉴权和计费，不修改 NewAPI，也不会将 Gateway 密码发送给浏览器。
@@ -84,7 +87,7 @@ Danbooru 或 Wikipedia 无法直连时设置 `LFN_OUTBOUND_PROXY`。只有在受
 
 ```bash
 npm run lint
-npm test
+# npm test 仅适用于保留本机验证文件的开发环境
 npm run build
 docker compose ps
 ```

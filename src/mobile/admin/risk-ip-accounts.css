@@ -1,0 +1,35 @@
+.mobile-risk-ip-account-groups { min-width:0; padding:4px 16px 12px; }
+.mobile-risk-ip-account-group { min-width:0; margin:10px 0; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); font-family:var(--font-sans); }
+.mobile-risk-ip-account-group > summary { display:grid; grid-template-columns:minmax(140px,1fr) minmax(180px,1fr) 112px auto; align-items:center; min-height:84px; gap:20px; padding:16px; list-style:none; cursor:pointer; font-size:13px; line-height:1.5; }
+.mobile-risk-ip-account-group > summary::-webkit-details-marker { display:none; }
+.mobile-risk-ip-account-group > summary::marker { content:""; }
+.mobile-risk-ip-account-group > summary:hover { background:var(--surface-muted); border-radius:10px; }
+.mobile-risk-ip-account-group > summary:focus-visible { outline:2px solid var(--rose); outline-offset:2px; border-radius:10px; }
+.mobile-risk-ip-account-group .risk-identity { gap:12px; }
+.mobile-risk-ip-account-group .risk-identity > div { min-width:0; }
+.mobile-risk-ip-account-group .risk-avatar { width:36px; height:36px; flex-shrink:0; border-radius:9px; font-size:14px; font-weight:600; }
+.mobile-risk-ip-account-group .risk-identity strong { display:block; max-width:none; overflow-wrap:anywhere; font-size:14px; font-weight:600; line-height:1.6; }
+.mobile-risk-ip-account-group .risk-identity small { display:block; margin-top:2px; font-size:11px; font-variant-numeric:tabular-nums; }
+.mobile-risk-ip-account-stats { display:flex; align-items:center; flex-wrap:wrap; gap:8px 20px; color:var(--muted); font-size:12px; }
+.mobile-risk-ip-account-stats > span { white-space:nowrap; }
+.mobile-risk-ip-account-stats strong { color:var(--ink); font-size:16px; font-weight:600; font-variant-numeric:tabular-nums; }
+.mobile-risk-ip-account-last-seen { color:var(--muted); font-size:11px; }
+.mobile-risk-ip-account-last-seen > span,.mobile-risk-ip-account-last-seen > b { display:block; }
+.mobile-risk-ip-account-last-seen > b { margin-top:3px; color:var(--ink); font-weight:400; font-size:12px; font-variant-numeric:tabular-nums; }
+.mobile-risk-ip-account-toggle { display:flex; align-items:center; justify-content:flex-end; gap:6px; color:var(--rose); font-size:12px; font-weight:500; white-space:nowrap; }
+.mobile-risk-ip-account-collapse { display:none; }
+.mobile-risk-ip-account-group[open] .mobile-risk-ip-account-expand { display:none; }
+.mobile-risk-ip-account-group[open] .mobile-risk-ip-account-collapse { display:inline; }
+.mobile-risk-ip-account-group[open] .mobile-risk-ip-account-toggle > svg { transform:rotate(180deg); }
+.mobile-risk-ip-account-group > .risk-table-wrap { border-top:1px solid var(--line); }
+@media(max-width:767px) {
+  .mobile-risk-ip-account-groups { padding:4px 12px 12px; }
+  .mobile-risk-ip-account-group > summary { grid-template-columns:minmax(0,1fr) auto; gap:14px; padding:14px; }
+  .mobile-risk-ip-account-toggle { grid-column:2; grid-row:1; }
+  .mobile-risk-ip-account-stats { grid-column:1; grid-row:2; }
+  .mobile-risk-ip-account-last-seen { grid-column:2; grid-row:2; text-align:right; }
+}
+@media(max-width:420px) {
+  .mobile-risk-ip-account-last-seen { grid-column:1 / -1; grid-row:3; display:flex; gap:8px; align-items:baseline; text-align:left; }
+  .mobile-risk-ip-account-last-seen > b { margin:0; }
+}
