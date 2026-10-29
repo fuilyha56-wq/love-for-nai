@@ -249,3 +249,5 @@
 .mobile-tag-assistant-panel .assistant-shortcuts span { min-width: 0; overflow-wrap: anywhere; }
 
 .mobile-tag-assistant-panel .assistant-shortcuts button { min-height: 44px; }
+
+.mobile-tag-assistant-panel .assistant-composer-actions{flex-wrap:wrap}.mobile-tag-assistant-panel .assistant-resource-button{min-height:44px;padding:6px 10px;white-space:nowrap;flex-shrink:0}.mobile-tag-assistant-panel [data-assistant-image-drop=active]{outline:2px dashed var(--accent,#8a78d7);outline-offset:-3px}

@@ -239,3 +239,5 @@
 .tag-assistant-panel .assistant-shortcuts button { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; min-height: 34px; padding: 5px 7px; border: 0; border-radius: 5px; color: var(--ink); background: transparent; text-align: left; font-size: 10px; }
 .tag-assistant-panel .assistant-shortcuts button[aria-selected=true] { background: var(--surface-muted); color: var(--rose); }
 .tag-assistant-panel .assistant-shortcuts span { min-width: 0; overflow-wrap: anywhere; }
+
+.tag-assistant-panel .assistant-composer-actions{flex-wrap:wrap}.tag-assistant-panel .assistant-resource-button{min-height:36px;padding:6px 10px;white-space:nowrap;flex-shrink:0}.tag-assistant-panel [data-assistant-image-drop=active]{outline:2px dashed var(--accent,#8a78d7);outline-offset:-3px}

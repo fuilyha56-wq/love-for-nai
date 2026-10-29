@@ -1,4 +1,6 @@
 "use client";
+import { assistantImageFileWithType } from "@/lib/assistant-image-resource";
+import { useAssistantImageSources } from "@/app/ui/use-assistant-image-sources";
 import { useMetadataRestorePreferences } from "@/lib/client-metadata-restore";
 import { MetadataRestoreControl } from "./metadata-restore-control";
 import { appendComicCandidates } from "@/lib/client-comic-projects";
@@ -798,9 +800,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   // 随需求发给视觉模型的参考图（data URL）。
   const [agentImages, setAgentImages] = useState<string[]>([]);
   const agentImagesRef = useRef<string[]>([]);
+  const agentImageUploadGeneration = useRef(0);
+  const agentImageOwnerRef = useRef(authenticated && userId ? `assistant-assets:${userId}` : "assistant-assets:guest");
+  const [agentImagesScope, setAgentImagesScope] = useState(authenticated && userId ? `assistant-assets:${userId}` : "assistant-assets:guest");
   const agentImage = agentImages[0] || null;
   const updateAgentImages = (images: string[]) => { agentImagesRef.current = images; setAgentImages(images); };
-  const setAgentImage = (image: string | null) => updateAgentImages(image ? [image] : []);
+  const setAgentImage = (image: string | null) => { cancelAgentImageImport(); updateAgentImages(image ? [image] : []); };
   const [agentPreview, setAgentPreview] = useState<string | null>(null);
   const [agentImagesLoading, setAgentImagesLoading] = useState(false);
   const agentImageUploadQueue = useRef<Promise<void>>(Promise.resolve());
@@ -1905,6 +1910,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   // 服务端 prop 只是初值，会话可能在页面存活期间失效。
   const [sessionValid, setSessionValid] = useState(authenticated);
   const signedIn = authenticated && sessionValid;
+  const assistantResourceScope = signedIn && userId ? `assistant-assets:${userId}` : "assistant-assets:guest";
+  const assistantImageSources = useAssistantImageSources(assistantResourceScope, handleAgentImageFiles, setNotice);
+  const cancelAssistantSourceImports = assistantImageSources.cancel;
+  useLayoutEffect(() => {
+    if (agentImageOwnerRef.current === assistantResourceScope) return;
+    agentImageOwnerRef.current = assistantResourceScope; agentImageUploadGeneration.current++; agentImageUploadQueue.current = Promise.resolve(); cancelAssistantSourceImports(false);
+    const generation = agentImageUploadGeneration.current;
+    void Promise.resolve().then(() => { if (agentImageUploadGeneration.current === generation) { updateAgentImages([]); setAgentImagesScope(assistantResourceScope); setAgentImagesLoading(false); } });
+  }, [assistantResourceScope, cancelAssistantSourceImports]);
   const metadataRestore = useMetadataRestorePreferences();
   const imageQueueScope = signedIn && userId ? `image:${userId}` : "image:guest";
   const imageOperationQueue = useOperationQueue(imageQueueScope, 10);
@@ -2324,21 +2338,30 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     return canvas.toDataURL("image/jpeg", 0.85);
   }
 
+  function cancelAgentImageImport() { agentImageUploadGeneration.current++; agentImageUploadQueue.current = Promise.resolve(); assistantImageSources.cancel(); setAgentImagesLoading(false); }
+
   async function handleAgentImageFiles(files: File[]) {
     if (!files.length) return;
-    agentImageUploadQueue.current = agentImageUploadQueue.current.then(async () => {
+    const generation = agentImageUploadGeneration.current, scope = assistantResourceScope;
+    const valid = () => studioMountedRef.current && agentImageUploadGeneration.current === generation && agentImageOwnerRef.current === scope;
+    agentImageUploadQueue.current = agentImageUploadQueue.current.catch(() => {}).then(async () => {
+      if (!valid()) return;
       setAgentImagesLoading(true);
       try {
-        const available = MAX_ASSISTANT_IMAGES - agentImagesRef.current.length;
+        const available = Math.max(0, MAX_ASSISTANT_IMAGES - agentImagesRef.current.length);
         if (files.length > available) setNotice(`最多可附 ${MAX_ASSISTANT_IMAGES} 张参考图，本次仅添加前 ${available} 张。`);
         const added: string[] = [];
         for (const file of files.slice(0, available)) {
-          if (!file.type.startsWith("image/")) throw new Error("请选择图片文件。");
-          added.push(await compressAgentImage(file));
+          if (!valid()) return;
+          const preparedFile = await assistantImageFileWithType(file);
+          if (!valid()) return;
+          const image = await compressAgentImage(preparedFile);
+          if (!valid()) return;
+          added.push(image);
         }
-        updateAgentImages([...agentImagesRef.current, ...added].slice(0, MAX_ASSISTANT_IMAGES));
-      } catch (error) { setNotice(error instanceof Error ? error.message : "图片处理失败"); }
-      finally { setAgentImagesLoading(false); }
+        if (valid()) updateAgentImages([...agentImagesRef.current, ...added].slice(0, MAX_ASSISTANT_IMAGES));
+      } catch (error) { if (valid()) setNotice(error instanceof Error ? error.message : "图片处理失败"); }
+      finally { if (valid()) setAgentImagesLoading(false); }
     });
     await agentImageUploadQueue.current;
   }
@@ -4616,9 +4639,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       onClearQueueHistory={() => assistantMessageQueue.queue.clearFinished()}
       onCancel={() => { const current = assistantMessageQueue.items.find((item) => item.status === "running"); if (current) assistantMessageQueue.queue.cancel(current.id); cancelAssistantTask(); }}
       loading={assistantLoading} searching={tagSearching} error={assistantTaskError}
-      images={agentImages} imagesLoading={agentImagesLoading} onAddImages={files => { void handleAgentImageFiles(files); }}
+      resourceScope={assistantResourceScope} imageResources={[...sessionHistory.map((item, index) => ({ id: `history:${item.id}`, source: item.image, name: `生成图片 ${index + 1}`, kind: "history" as const, description: `${item.width}×${item.height} · ${item.prompt.slice(0, 160)}` })), ...imageReferences.library.map(item => ({ id: `library:${item.id}`, source: item.data, name: item.name, kind: "library" as const }))]}
+      onAddImageSources={sources => { if (agentImagesRef.current.length >= MAX_ASSISTANT_IMAGES) { setNotice("参考图已满，请先移除不需要的图片。"); return; } void assistantImageSources.addSources(sources.slice(0, MAX_ASSISTANT_IMAGES - agentImagesRef.current.length)); }} onCancelImageImport={cancelAgentImageImport}
+      images={agentImagesScope === assistantResourceScope ? agentImages : []} imagesLoading={(agentImagesScope === assistantResourceScope && agentImagesLoading) || assistantImageSources.loading} onAddImages={files => { void handleAgentImageFiles(files); }}
       onRemoveImage={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
-      onClearImages={() => updateAgentImages([])} onPreviewImage={setAgentPreview}
+      onClearImages={() => setAgentImage(null)} onPreviewImage={setAgentPreview}
       conversation={conversation} onClearConversation={() => { void (async () => {
         if (await lfnConfirm("确定清空助手对话记录？历史轮次与累积标签都会删除。")) void clearConversationHistory();
       })(); }}
