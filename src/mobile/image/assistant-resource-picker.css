@@ -36,3 +36,7 @@
 .mobile-assistant-resource-picker[data-compact=true] { overflow:auto; display:block; }
 .mobile-assistant-resource-picker[data-compact=true] .mobile-assistant-resource-body { overflow:visible; }
 @media(max-width:479px) { .mobile-assistant-resource-grid { grid-template-columns:minmax(0,1fr); } .mobile-assistant-resource-picker > footer { flex-wrap:wrap; } }
+
+.mobile-assistant-resource-search { background:color-mix(in srgb,var(--ink) 4%,var(--panel)); }
+.mobile-assistant-resource-search:focus-within { box-shadow:inset 0 0 0 1px var(--rose); }
+.mobile-assistant-resource-search input:focus-visible { outline:none; }

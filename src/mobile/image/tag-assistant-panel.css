@@ -272,3 +272,8 @@
 .mobile-tag-assistant-panel .assistant-settings-help summary { min-height:32px; cursor:pointer; }
 .mobile-tag-assistant-panel .assistant-model-settings-trigger { display:flex; align-items:center; width:100%; min-height:36px; gap:6px; padding:4px 0; border:0; border-top:1px solid var(--line); background:transparent; color:var(--ink); font-size:10px; text-align:left; }
 .mobile-tag-assistant-panel .assistant-model-settings-trigger small { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--muted); font-size:10px; }
+
+.mobile-tag-assistant-panel .assistant-panel-settings .popup-select-trigger { width:100%; justify-content:space-between; padding:8px 10px; border:1px solid var(--line); border-radius:7px; background:color-mix(in srgb,var(--ink) 3%,var(--panel)); color:var(--ink); font-size:12px; }
+.mobile-tag-assistant-panel .assistant-settings-field { display:grid; min-width:0; gap:4px; }
+.mobile-tag-assistant-panel .assistant-settings-field > span { color:var(--muted); font-size:10px; }
+.mobile-tag-assistant-panel .assistant-panel-settings .assistant-settings-refresh { padding:8px 10px; background:color-mix(in srgb,var(--ink) 4%,var(--panel)); }

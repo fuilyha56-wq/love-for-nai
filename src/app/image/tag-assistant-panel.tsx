@@ -169,7 +169,7 @@ export function TagAssistantPanel(p: Props) {
       <div className="assistant-settings-heading"><b>助手设置</b><button type="button" onClick={() => { setSettingsOpen(false); settingsButtonRef.current?.focus(); }} aria-label="关闭助手设置"><X size={16} /></button></div>
       <section className="assistant-settings-section"><h3>模型与思考</h3>
         <AssistantSourceControl {...p.modelControl} disabled={busy || !p.signedIn} />
-        <div className="assistant-composer-models"><AssistantModelPicker {...p.modelControl} compact disabled={busy || !p.signedIn} /><AssistantReasoningControl model={p.modelControl.value} compact disabled={busy || !p.signedIn} /></div>
+        <div className="assistant-composer-models"><div className="assistant-settings-field"><span>对话模型</span><AssistantModelPicker {...p.modelControl} compact disabled={busy || !p.signedIn} /></div><div className="assistant-settings-field"><span>思考强度</span><AssistantReasoningControl model={p.modelControl.value} compact disabled={busy || !p.signedIn} /></div></div>
         <button type="button" className="assistant-settings-refresh" disabled={busy || p.modelControl.pending || !p.signedIn} onClick={p.modelControl.onRefresh}><RefreshCw size={14} />{p.modelControl.pending ? "刷新中…" : "刷新可用模型"}</button>
         <p>{p.modelControl.providerId && p.modelControl.providerId !== "newapi" ? "模型调用由所选自定义模型源计费。" : "模型调用使用当前账号的 NewAPI 额度。"}生图使用工作台当前参数和计价。</p>
       </section>

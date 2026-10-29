@@ -36,3 +36,7 @@
 .assistant-resource-picker[data-compact=true] { overflow:auto; display:block; }
 .assistant-resource-picker[data-compact=true] .assistant-resource-body { overflow:visible; }
 @media(max-width:479px) { .assistant-resource-grid { grid-template-columns:minmax(0,1fr); } .assistant-resource-picker > footer { flex-wrap:wrap; } }
+
+.assistant-resource-search { background:color-mix(in srgb,var(--ink) 4%,var(--panel)); }
+.assistant-resource-search:focus-within { box-shadow:inset 0 0 0 1px var(--rose); }
+.assistant-resource-search input:focus-visible { outline:none; }

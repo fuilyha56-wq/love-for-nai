@@ -18,6 +18,7 @@ import "./replica-controls.css";
 export type ReplicaCharacter = { id: string; prompt: string; negative?: string; centerX: number; centerY: number };
 type Source = { data: string; name: string } | null;
 type Props = {
+  parameterFooter?: ReactNode;
   referenceLibrary?: Partial<Record<"vibe-transfer" | "precise-reference", ReactNode>>;
   variant: "nai" | "nlw";
   mobileSection?: "prompt" | "reference" | "size" | "tools";
@@ -246,6 +247,7 @@ export function ReplicaControls(p: Props) {
       {visible("tools") && capabilities.operations.includes("inpainting") && p.operation === "inpainting" && <><button type="button" data-tutorial="inpaint-source" className="replica-tonal-button" onClick={() => upload("inpainting")}><FileUp size={18} />上传重绘源图片</button><SourcePreview source={activeSource("inpainting")} onRemove={p.onRemoveSource} /><button type="button" data-tutorial-editor="inpaint" className="replica-tonal-button" disabled={!p.source} onClick={p.onOpenMaskEditor}><Brush size={18} />绘制蒙版与精确重绘</button></>}
       {visible("tools") && p.operation !== "generate" && <button type="button" className="replica-back-generate" onClick={() => p.onSelectOperation("generate")}><Sparkles size={16} />返回文生图</button>}
       {visible("tools") && capabilities.edit && <details className="replica-more-tools"><summary>图像工具</summary><div>{[['inpainting', '局部重绘'], ['upscale', '放大'], ['director-lineart', '提取线稿'], ['director-bg-remover', '移除背景']].filter(([value]) => capabilities.operations.includes(value)).map(([value,label]) => <button key={value} type="button" onClick={() => p.onSelectOperation(value)}>{label}</button>)}</div></details>}
+      {p.parameterFooter}
     </div>
   </div>;
 }
