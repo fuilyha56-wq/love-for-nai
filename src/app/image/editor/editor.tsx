@@ -497,6 +497,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const [viewportSize, setViewportSize] = useState({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
   const [model, setModel] = useState("nai-v5-inpaint");
   const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
+  const [modelPolicyReady, setModelPolicyReady] = useState(false);
   const [availableInpaintModels, setAvailableInpaintModels] = useState<readonly InpaintModelOption[]>(INPAINT_MODELS);
   const [tiledModelCatalog, setTiledModelCatalog] = useState<{ key: string; options: SelectOption[] } | null>(null);
   const [tiledModelCatalogError, setTiledModelCatalogError] = useState<{ key: string; message: string } | null>(null);
@@ -557,10 +558,11 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setModelPolicy({ enableV5Models: result.enableV5Models, enableV45Models: result.enableV45Models });
     } catch {
       // Keep the conservative client policy until the next refresh.
-    }
+    } finally { if (!signal?.aborted) setModelPolicyReady(true); }
   }, []);
 
   const refreshInpaintModels = useCallback(async (signal?: AbortSignal) => {
+    if (imageProviderId !== "newapi") { setAvailableInpaintModels(INPAINT_MODELS); return; }
     try {
       const response = await fetch("/api/public/catalog", { cache: "no-store", signal });
       const result = await response.json() as { models?: Array<{ id?: string; kind?: string }> };
@@ -568,13 +570,19 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const ids = new Set((result.models || [])
         .filter((item) => item.kind === "image" && typeof item.id === "string")
         .map((item) => item.id as string));
-      const catalogOptions = INPAINT_MODELS.filter(([id]) => ids.has(id));
+      // Some gateways advertise only base IDs and select infill through the
+      // operation field. Preserve that advertised ID in requests and billing.
+      const catalogOptions: InpaintModelOption[] = INPAINT_MODELS.flatMap(([id, label]) => {
+        if (ids.has(id)) return [[id, label] as InpaintModelOption];
+        const base = generationModelFor(id);
+        return ids.has(base) ? [[base, label] as InpaintModelOption] : [];
+      });
       // A catalog outage must not erase the usable legacy list.
       if (catalogOptions.length) setAvailableInpaintModels(catalogOptions);
     } catch {
       // Keep the static list when the public catalog is unavailable.
     }
-  }, []);
+  }, [imageProviderId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -598,10 +606,15 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       availableInpaintModels.map(([value, label]) => ({ value, label })),
       modelPolicy,
     );
-    if (mode !== "tiled-upscale" && filtered.length) {
-      void Promise.resolve().then(() => setModel((current) => current.startsWith("nai-") && !filtered.some(({ value }) => value === current) ? filtered[0].value : current));
-    }
-  }, [availableInpaintModels, modelPolicy, mode]);
+    if (!document || !modelPolicyReady || mode === "tiled-upscale" || !filtered.length) return;
+    void Promise.resolve().then(() => setModel(current => {
+      if (!current.startsWith("nai-") || filtered.some(({ value }) => value === current)) return current;
+      const sameFamily = filtered.find(({ value }) => value === generationModelFor(current));
+      if (sameFamily) return sameFamily.value;
+      // Never downgrade a role reference to an incompatible model while loading.
+      return document.characterReference ? current : filtered[0].value;
+    }));
+  }, [availableInpaintModels, modelPolicy, modelPolicyReady, mode, document]);
 
   useEffect(() => {
     if (!tiledModelSourceReady || mode !== "tiled-upscale") return;
@@ -673,8 +686,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     : "每块会按所选来源的图生图规则计费；并发受当前来源的 LFN 限流控制。";
   const pendingPreviewUrl = useMemo(() => pending ? maskedPatchDataUrl(pending) : "", [pending]);
   const filteredInpaintModels = useMemo(
-    () => filterNaiModelOptions(availableInpaintModels.map(([value, label]) => ({ value, label })), modelPolicy),
-    [availableInpaintModels, modelPolicy],
+    () => filterNaiModelOptions(availableInpaintModels.map(([value, label]) => ({ value, label })), modelPolicy)
+      .filter(({ value }) => !document?.characterReference || supportsCharacterReferenceEdit(value, imageProtocol)),
+    [availableInpaintModels, modelPolicy, document?.characterReference, imageProtocol],
   );
   const tiledModelOptions = useMemo(
     () => filterTiledUpscaleModelOptions(
