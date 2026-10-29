@@ -121,8 +121,9 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
   const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null);
-  const width = natural?.image === item.image ? natural.width : (Number.isFinite(item.width) && item.width > 0 ? item.width : 1);
-  const height = natural?.image === item.image ? natural.height : (Number.isFinite(item.height) && item.height > 0 ? item.height : 1);
+  const hasDimensions = Number.isFinite(item.width) && item.width > 0 && Number.isFinite(item.height) && item.height > 0;
+  const width = natural?.image === item.image ? natural.width : hasDimensions ? item.width : 1;
+  const height = natural?.image === item.image ? natural.height : hasDimensions ? item.height : 1;
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -181,12 +182,13 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
         if (event.shiftKey && event.key === "F10") { event.preventDefault(); setMenuOpen(true); }
       }}
     >
-      <button className="replica-history-preview" type="button" aria-label={`查看第 ${index + 1} 张历史图像`} title={item.prompt || "查看原图"} onClick={() => { setMenuOpen(false); onOpen(item); }}>
+      <button className="replica-history-preview" style={{ aspectRatio: `${width} / ${height}` }} type="button" aria-label={`查看第 ${index + 1} 张历史图像`} title={item.prompt || "查看原图"} onClick={() => { setMenuOpen(false); onOpen(item); }}>
         <Image
           src={item.image}
           alt={item.prompt || `历史图像 ${index + 1}`}
           width={width}
           height={height}
+          style={{ width: "100%", height: "100%", objectFit: "contain" }}
           unoptimized
           onLoad={(event) => {
             const image = event.currentTarget;
