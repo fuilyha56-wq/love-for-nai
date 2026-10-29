@@ -108,7 +108,7 @@
 .tag-assistant-panel .assistant-usage-detail[hidden]{display:none}
 .tag-assistant-panel .assistant-login-hint{margin:6px 3px 0;color:var(--muted);font-size:10px}
 .tag-assistant-panel .assistant-panel-settings{position:absolute;top:44px;right:8px;left:8px;z-index:6;max-height:calc(100% - 60px);overflow:auto;padding:12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:0 10px 30px #0002;font-size:11px}
-.tag-assistant-panel .assistant-panel-settings>div{display:flex;align-items:center;justify-content:space-between}
+.tag-assistant-panel .assistant-panel-settings>.assistant-settings-heading{display:flex;align-items:center;justify-content:space-between}
 .tag-assistant-panel .assistant-panel-settings button{display:flex;align-items:center;justify-content:center;gap:6px;min-height:30px;border:0;border-radius:5px;background:transparent;color:var(--muted)}
 .tag-assistant-panel .assistant-panel-settings p{margin:10px 0;color:var(--muted);line-height:1.8}
 .tag-assistant-panel .assistant-panel-settings .assistant-settings-refresh{width:100%;border:1px solid var(--line);margin-top:12px}
@@ -241,3 +241,24 @@
 .tag-assistant-panel .assistant-shortcuts span { min-width: 0; overflow-wrap: anywhere; }
 
 .tag-assistant-panel .assistant-composer-actions{flex-wrap:wrap}.tag-assistant-panel .assistant-resource-button{min-height:36px;padding:6px 10px;white-space:nowrap;flex-shrink:0}.tag-assistant-panel [data-assistant-image-drop=active]{outline:2px dashed var(--accent,#8a78d7);outline-offset:-3px}
+
+.tag-assistant-panel .assistant-panel-settings { padding:14px; border-radius:12px; font-size:12px; overscroll-behavior:contain; }
+.tag-assistant-panel .assistant-settings-heading { position:sticky; top:-14px; z-index:2; margin:-14px -14px 0; padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line); }
+.tag-assistant-panel .assistant-settings-heading b { font-size:13px; }
+.tag-assistant-panel .assistant-settings-section { display:block; padding:12px 0; border-bottom:1px solid var(--line); }
+.tag-assistant-panel .assistant-settings-section h3 { margin:0 0 8px; font-size:12px; font-weight:600; }
+.tag-assistant-panel .assistant-panel-settings .assistant-composer-models { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:0; }
+.tag-assistant-panel .assistant-panel-settings .assistant-source-control { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:0 0 8px; }
+.tag-assistant-panel .assistant-panel-settings :is(.field,.popup-select-trigger) { min-height:36px; font-size:12px; }
+.tag-assistant-panel .assistant-panel-settings button { min-height:36px; }
+.tag-assistant-panel .assistant-panel-settings .assistant-settings-refresh { border:0; background:var(--surface); font-size:11px; }
+.tag-assistant-panel .assistant-settings-segments { display:flex; gap:4px; border-radius:8px; padding:3px; background:var(--surface); }
+.tag-assistant-panel .assistant-settings-segments > button { flex:1; padding:6px; font-size:11px; }
+.tag-assistant-panel .assistant-settings-segments > button[aria-pressed=true] { color:var(--rose); background:color-mix(in srgb,var(--rose) 10%,var(--panel)); }
+.tag-assistant-panel .assistant-panel-settings .assistant-goal-settings { padding:8px 0 0; border:0; background:transparent; }
+.tag-assistant-panel .assistant-panel-settings p { margin:8px 0 0; font-size:11px; line-height:1.65; }
+.tag-assistant-panel .assistant-panel-settings .assistant-settings-session { width:100%; justify-content:space-between; padding:6px 10px; background:var(--surface); color:var(--ink); font-size:12px; }
+.tag-assistant-panel .assistant-settings-help { padding-top:12px; color:var(--muted); font-size:11px; }
+.tag-assistant-panel .assistant-settings-help summary { min-height:32px; cursor:pointer; }
+.tag-assistant-panel .assistant-model-settings-trigger { display:flex; align-items:center; width:100%; min-height:36px; gap:6px; padding:4px 0; border:0; border-top:1px solid var(--line); background:transparent; color:var(--ink); font-size:10px; text-align:left; }
+.tag-assistant-panel .assistant-model-settings-trigger small { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-align:right; color:var(--muted); font-size:10px; }

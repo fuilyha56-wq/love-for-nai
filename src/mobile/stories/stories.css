@@ -142,9 +142,9 @@
   .story-generation-dock { width:calc(100% - 16px); margin:4px auto calc(8px + env(safe-area-inset-bottom)); }
   .story-dock-toolbar { gap:4px; }
   .story-dock-secondary,.story-generate-group { gap:4px; }
-  .story-dock-secondary .story-icon-button:first-child { display:none; }
+  .story-dock-secondary .story-icon-button:first-child { display:inline-flex; }
   .story-generate-group .popup-select { flex-basis:112px; width:112px; }
-  .story-word-count { display:none; }
+  .story-word-count { display:inline; font-size:10px; }
   .story-send-button { padding:8px 12px; }
   .stories-shell input:not([type=range]),.stories-shell textarea { font-size:16px; }
 }
@@ -155,4 +155,60 @@
   .story-panel-surface { width:100%; border-radius:24px 24px 0 0; padding-bottom:env(safe-area-inset-bottom); }
 }
 
+}
+
+@media(max-width:1023px) {
+ .story-dashboard { display:block; overflow-y:auto; padding-bottom:20px; background:var(--surface); }
+ .mobile-story-home-header { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:64px; padding:12px 20px; background:var(--panel); border-bottom:1px solid var(--line); }
+ .mobile-story-home-header > a { display:flex; align-items:center; gap:10px; font-size:17px; font-weight:650; }
+ .mobile-story-home-header > a svg { color:var(--rose); }
+ .mobile-story-home-header nav { display:flex; align-items:center; gap:6px; }
+ .mobile-story-home-header nav a { display:flex; align-items:center; justify-content:center; gap:6px; min-height:44px; padding:8px 10px; border-radius:8px; font-size:12px; }
+ .mobile-story-home-header nav a:hover { background:var(--surface); }
+ .mobile-story-welcome { position:relative; padding:26px 24px 24px; border-bottom:1px solid var(--line); background:linear-gradient(130deg,var(--panel),color-mix(in srgb,var(--rose) 8%,var(--panel))); }
+ .mobile-story-welcome > span { color:var(--rose); font-size:10px; font-weight:650; letter-spacing:.08em; }
+ .mobile-story-welcome h1 { margin:8px 0; font-size:29px; line-height:1.3; font-weight:650; }
+ .mobile-story-welcome p { margin:0 0 18px; max-width:420px; color:var(--muted); font-size:13px; line-height:1.7; }
+ .mobile-story-welcome .story-primary-button { display:inline-flex; min-height:44px; align-items:center; gap:7px; padding:10px 16px; border:0; border-radius:8px; background:var(--rose); color:white; font-size:12px; font-weight:600; }
+ .mobile-story-stats { display:flex; gap:18px; margin-top:18px; color:var(--muted); font-size:11px; }
+ .mobile-story-stats b { color:var(--ink); font-weight:600; }
+ .story-dashboard .collection-toolbar { position:static; }
+ .story-dashboard-content { padding:16px 20px; }
+ .story-dashboard-card { grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:12px; padding:14px; border:1px solid var(--line); border-radius:12px; background:var(--panel); text-align:left; }
+ .story-dashboard-card > .story-card-meta { display:none; }
+ .mobile-story-card-copy { display:flex; min-width:0; flex-direction:column; gap:6px; }
+ .mobile-story-card-copy > b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+ .mobile-story-card-copy > small { margin:0; font-size:11px; }
+ .mobile-story-card-badges { display:flex; gap:5px; flex-wrap:wrap; }
+ .mobile-story-card-badges i { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:3px 6px; border-radius:4px; background:var(--surface); color:var(--muted); font-size:9px; font-style:normal; }
+ .mobile-story-feature-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin:4px 20px 20px; }
+ .mobile-story-feature-grid > :is(a,button) { display:flex; align-items:center; gap:10px; min-width:0; min-height:88px; padding:14px 12px; border:1px solid var(--line); border-radius:10px; background:var(--panel); color:var(--ink); text-align:left; }
+ .mobile-story-feature-grid > :is(a,button) > svg:first-child { flex:none; color:var(--rose); }
+ .mobile-story-feature-grid > :is(a,button) > svg:last-child { flex:none; margin-left:auto; color:var(--muted); }
+ .mobile-story-feature-grid span { display:flex; min-width:0; flex-direction:column; gap:5px; }
+ .mobile-story-feature-grid b { font-size:12px; font-weight:600; }
+ .mobile-story-feature-grid small { color:var(--muted); font-size:10px; line-height:1.6; }
+ .mobile-story-no-results { display:flex; flex-direction:column; align-items:center; gap:8px; padding:32px 12px; color:var(--muted); font-size:12px; }
+ .mobile-story-no-results p { margin:0; }
+ .mobile-story-no-results button { min-height:44px; margin-top:6px; padding:8px 14px; border:0; border-radius:7px; background:var(--panel); color:var(--rose); }
+ .mobile-story-create-intro { display:flex; gap:12px; margin-bottom:24px; }
+ .mobile-story-create-intro > span { display:grid; place-items:center; flex:none; width:48px; height:48px; border-radius:12px; background:var(--surface); color:var(--rose); }
+ .mobile-story-create-intro h2 { margin:0 0 6px; font-size:20px; }
+ .mobile-story-create-intro p { margin:0; color:var(--muted); font-size:12px; line-height:1.7; }
+ .story-create-form .story-suggestions button { min-height:44px; border:0; border-radius:7px; background:var(--surface); font-size:12px; }
+ .story-create-form .story-suggestions button[aria-pressed=true] { color:var(--rose); background:color-mix(in srgb,var(--rose) 10%,var(--panel)); }
+ .story-dock-toolbar { flex-wrap:wrap; row-gap:8px; }
+ .story-dock-secondary { flex:none; }
+ .story-generate-group { margin-left:auto; }
+}
+@media(max-width:599px) {
+ .mobile-story-home-header { padding:10px 14px; }
+ .mobile-story-home-header nav a { padding:8px; }
+ .mobile-story-welcome { padding:24px 16px 20px; }
+ .story-dashboard-content { padding:14px 12px; }
+ .story-grid { grid-template-columns:minmax(0,1fr); gap:10px; }
+ .mobile-story-feature-grid { grid-template-columns:minmax(0,1fr); gap:8px; margin:4px 12px 16px; }
+ .mobile-story-feature-grid > :is(a,button) { min-height:76px; padding:12px 14px; }
+ .mobile-story-feature-grid b { font-size:13px; }
+ .mobile-story-feature-grid small { font-size:11px; }
 }

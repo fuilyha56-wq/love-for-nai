@@ -1176,7 +1176,7 @@ function CreditsPanel({
               </p>
               <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>
             </div>
-            <div className="flex shrink-0 flex-wrap justify-end gap-3 text-xs font-semibold">
+            <div className="creator-review-actions flex shrink-0 flex-wrap items-center justify-end gap-2 text-xs font-semibold">
               {mode === "creator" && item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
               {item.status === "approved" && <button type="button" onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
               <a href={`/gallery/${encodeURIComponent(item.id)}#comments`} className="text-[var(--rose)] hover:underline">评论管理</a>

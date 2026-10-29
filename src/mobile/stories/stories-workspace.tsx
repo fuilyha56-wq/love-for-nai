@@ -496,7 +496,7 @@ export default function StoriesWorkspace({
     return <main className="stories-shell story-create-screen">
       <header className="story-form-toolbar"><button type="button" onClick={() => setView("dashboard")}><ArrowLeft size={20} />返回故事列表</button><h1>新建故事</h1></header>
       <form className="story-create-form" onSubmit={event => { event.preventDefault(); void createStory(); }}>
-        <h2>故事信息</h2><p>填写创作方向，之后仍可在故事设置中修改。</p>
+        <div className="mobile-story-create-intro"><span><WandSparkles size={22} /></span><div><h2>从一个灵感开始</h2><p>填写创作方向，创建后可选择模型、设置记忆与世界书。</p></div></div>
         <label><span>故事标题</span><input value={newTitle} onChange={event => setNewTitle(event.target.value)} maxLength={120} placeholder="新故事" autoFocus /></label>
         <label><span>类型</span><input value={genre} onChange={event => setGenre(event.target.value)} placeholder="例如：奇幻、悬疑、恋爱" /></label>
         <label><span>标签</span><input value={tags} onChange={event => setTags(event.target.value)} placeholder="例如：魔法、成长、公路故事" /></label>
@@ -722,23 +722,27 @@ export default function StoriesWorkspace({
 
   return (
     <main className="stories-shell story-dashboard">
-      <CollectionToolbar title="故事工作台" icon={<BookText size={21} />} count={stories.length} query={query} onQueryChange={setQuery} searchPlaceholder="搜索故事标题、类型…" actions={<div className="launcher-story-actions"><button type="button" onClick={() => setView("create")}><Plus size={18} />新故事</button><label><Upload size={18} />导入<input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={importFile} /></label></div>} />
+      <header className="mobile-story-home-header"><Link href="/image" aria-label="返回图片工作台"><BookOpen size={20} /><span>Stories</span></Link><nav aria-label="故事工作台导航"><Link href="/image"><ImagePlus size={17} /><span>图片生成</span></Link><Link href="/settings"><Settings size={17} /><span>设置</span></Link></nav></header>
+      <section className="mobile-story-welcome"><span>LOVE FOR NAI / WRITING</span><h1>故事工作台</h1><p>续写、改写与探索故事分支，把想象写成下一章。</p><button type="button" className="story-primary-button" onClick={() => setView("create")}><Plus size={18} />开始新故事</button><div className="mobile-story-stats"><span><b>{stories.length}</b> 个故事</span><span><b>{stories.reduce((sum, story) => sum + story.branches.length, 0)}</b> 条分支</span></div></section>
+      <CollectionToolbar title="我的故事" icon={<BookText size={21} />} count={stories.length} query={query} onQueryChange={setQuery} searchPlaceholder="搜索故事标题、类型…" actions={<div className="launcher-story-actions"><button type="button" onClick={() => setView("create")}><Plus size={18} />新故事</button><label><Upload size={18} />导入<input type="file" accept=".txt,.md,text/plain,text/markdown" onChange={importFile} /></label></div>} />
       <section className="story-dashboard-content">
         <p className="story-owner">{userName} 的故事</p>
         {error && <div className="story-dashboard-error">{error}<button type="button" onClick={() => setError("")}><X size={15} /></button></div>}
         {loading ? (
           <div className="story-dashboard-loading"><LoaderCircle className="story-spin" size={25} /> 正在读取你的故事</div>
-        ) : stories.length ? (
+        ) : stories.filter(story => `${story.title} ${story.genre}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).length ? (
           <div className="story-grid">
             {stories.filter(story => `${story.title} ${story.genre}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())).map((story) => (
               <button type="button" key={story.id} className="story-dashboard-card" onClick={() => openStory(story)}>
                 <span className="story-card-icon"><BookText size={22} /></span>
-                <span><b>{story.title}</b><small>上次编辑：{storyDate(story.updatedAt)}</small></span>
+                <span className="mobile-story-card-copy"><b>{story.title}</b><small>上次编辑：{storyDate(story.updatedAt)}</small><span className="mobile-story-card-badges"><i>{story.model.toUpperCase()}</i><i>{story.branches.length} 个分支</i>{story.genre && <i>{story.genre}</i>}</span></span>
                 <span className="story-card-meta"><i>{story.model.toUpperCase()}</i><i>{story.branches.length} 个分支</i></span>
                 <ChevronRight size={20} />
               </button>
             ))}
           </div>
+        ) : query.trim() ? (
+          <div className="mobile-story-no-results"><BookText size={26} /><b>没有找到这个故事</b><p>试试其他标题或类型。</p><button type="button" onClick={() => setQuery("")}>清空搜索</button></div>
         ) : (
           <button type="button" className="story-empty-state" onClick={() => setView("create")}>
             <FilePlus2 size={29} />
@@ -747,6 +751,7 @@ export default function StoriesWorkspace({
           </button>
         )}
       </section>
+      <section className="mobile-story-feature-grid" aria-label="创作工具"><button type="button" onClick={() => setView("create")}><WandSparkles size={20} /><span><b>小说创作</b><small>从写作方向开始，设置模型与记忆</small></span><ChevronRight size={16} /></button><Link href="/image"><ImagePlus size={20} /><span><b>场景生图</b><small>在故事中选取段落，带到图片工作台</small></span><ChevronRight size={16} /></Link><Link href="/settings"><SlidersHorizontal size={20} /><span><b>调整工作台</b><small>主题、模型来源与布局偏好</small></span><ChevronRight size={16} /></Link></section>
     </main>
   );
 }

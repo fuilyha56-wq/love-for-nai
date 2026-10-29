@@ -77,3 +77,16 @@ html[data-theme="night"] .admin-shell { background: radial-gradient(circle at 8%
 @media (prefers-reduced-motion: reduce) { .admin-button, .admin-nav-item, .admin-button-spinner { animation: none; transition: none; } }
 
 }
+
+@media (min-width:1024px) {
+/* Keep creator moderation links and buttons on the same baseline. */
+.creator-review-actions { align-items: center; }
+.creator-review-actions > :is(button, a) { display: inline-flex; height: 36px; min-height: 36px; align-items: center; justify-content: center; margin: 0; padding: 0 6px; line-height: 1; white-space: nowrap; vertical-align: middle; }
+@media (max-width: 599px) {
+ .creator-review-actions { flex: 1 1 100%; justify-content: flex-end; gap: 4px; }
+ .creator-review-actions > :is(button, a) { height: 44px; min-height: 44px; }
+ .creator-review-actions { max-width: 100%; }
+ div:has(> .creator-review-actions) { flex-wrap: wrap; }
+}
+
+}

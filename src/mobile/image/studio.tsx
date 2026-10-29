@@ -1,4 +1,5 @@
 "use client";
+import "./parameter-utilities.css";
 import { assistantImageFileWithType } from "@/lib/assistant-image-resource";
 import { useAssistantImageSources } from "@/app/ui/use-assistant-image-sources";
 import { useMetadataRestorePreferences } from "@/lib/client-metadata-restore";
@@ -4881,8 +4882,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     try { await appendComicCandidates(signedIn && userId ? String(userId) : "guest", comicDestination.projectId, comicDestination.panelId, images.map((image, index) => ({ id: crypto.randomUUID(), image, prompt, createdAt: Date.now() + index }))); setNotice("已加入分镜候选，可返回漫画工作台选择图片和编辑对白。"); }
     catch (error) { setNotice(error instanceof Error ? error.message : "无法保存分镜候选，请返回漫画工作台确认项目仍存在。"); }
   }
-  const mobileWorkspaceExtras = <><MetadataRestoreControl preferences={metadataRestore.preferences} onChange={metadataRestore.update}/><details className="mobile-studio-image-queue"><summary>图片队列 · {imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length} 个任务</summary><p>排队保留提交时的参数，费用以执行时服务端结算为准。</p><button type="button" disabled={!signedIn || imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length >= 10} onClick={() => void runOperation(undefined, false, true)}>将当前设置加入队列</button><button type="button" disabled={!imageOperationQueue.items.some(item => item.status === "queued")} onClick={() => imageOperationQueue.items.filter(item => item.status === "queued").forEach(item => imageOperationQueue.queue.cancel(item.id))}>清除等待任务</button><ol>{imageOperationQueue.items.map(item => <li key={item.id}><span>{item.label} · {item.status === "queued" ? "等待中" : item.status === "running" ? "生成中" : item.status === "completed" ? "已完成" : item.status === "failed" ? "失败" : "已取消"}{item.error ? `：${item.error}` : ""}</span>{(item.status === "queued" || item.status === "running") && <button type="button" onClick={() => imageOperationQueue.queue.cancel(item.id)}>{item.status === "running" ? "停止" : "移除"}</button>}</li>)}</ol></details><div className="mobile-studio-preview-follow"><button type="button" disabled={!displayedImages.length && !previewFrozen} aria-pressed={previewFrozen} onClick={() => { if (!previewFrozen) setFrozenPreviewImages([...incomingPreviewImages]); setPreviewFrozen(value => !value); }}>{previewFrozen ? "恢复显示最新结果" : "固定当前预览"}</button>{previewFrozen && <span role="status">预览已固定；新结果继续保存在历史中。</span>}<a href="/comic">漫画分镜</a></div>{comicDestination && <div className="mobile-studio-comic-handoff"><a href="/comic">返回漫画分镜</a><button type="button" disabled={generating || !images.length} onClick={() => void returnComicCandidates()}>将当前结果加入此格</button></div>}</>;
-  const controls = <>{mobileWorkspaceExtras}{replicaLayout ? <><ReplicaControls referenceLibrary={{ "vibe-transfer": renderReferenceLibrary("vibe-transfer"), "precise-reference": renderReferenceLibrary("precise-reference") }} variant={replicaVariant}
+  const mobileWorkspaceExtras = <section className="mobile-studio-parameter-utilities" aria-label="参数附加工具"><header><WandSparkles size={16} /><b>工作台工具</b><small>历史复用、任务队列与预览</small></header><MetadataRestoreControl preferences={metadataRestore.preferences} onChange={metadataRestore.update}/><details className="mobile-studio-image-queue"><summary>图片队列 · {imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length} 个任务</summary><p>排队保留提交时的参数，费用以执行时服务端结算为准。</p><button type="button" disabled={!signedIn || imageOperationQueue.items.filter(item => item.status === "queued" || item.status === "running").length >= 10} onClick={() => void runOperation(undefined, false, true)}>将当前设置加入队列</button><button type="button" disabled={!imageOperationQueue.items.some(item => item.status === "queued")} onClick={() => imageOperationQueue.items.filter(item => item.status === "queued").forEach(item => imageOperationQueue.queue.cancel(item.id))}>清除等待任务</button>{!imageOperationQueue.items.length && <p className="queue-empty">暂无排队任务</p>}<ol>{imageOperationQueue.items.map(item => <li key={item.id}><span>{item.label} · {item.status === "queued" ? "等待中" : item.status === "running" ? "生成中" : item.status === "completed" ? "已完成" : item.status === "failed" ? "失败" : "已取消"}{item.error ? `：${item.error}` : ""}</span>{(item.status === "queued" || item.status === "running") && <button type="button" onClick={() => imageOperationQueue.queue.cancel(item.id)}>{item.status === "running" ? "停止" : "移除"}</button>}</li>)}</ol></details><div className="mobile-studio-preview-follow"><h3>预览与分镜</h3><p>固定预览时，新结果仍会保存至历史。</p><button type="button" disabled={!displayedImages.length && !previewFrozen} aria-pressed={previewFrozen} onClick={() => { if (!previewFrozen) setFrozenPreviewImages([...incomingPreviewImages]); setPreviewFrozen(value => !value); }}>{previewFrozen ? "恢复显示最新结果" : "固定当前预览"}</button>{previewFrozen && <span role="status">预览已固定；新结果继续保存在历史中。</span>}<a href="/comic">漫画分镜</a></div>{comicDestination && <div className="mobile-studio-comic-handoff"><a href="/comic">返回漫画分镜</a><button type="button" disabled={generating || !images.length} onClick={() => void returnComicCandidates()}>将当前结果加入此格</button></div>}</section>;
+  const mobileReplicaControls = <ReplicaControls referenceLibrary={{ "vibe-transfer": renderReferenceLibrary("vibe-transfer"), "precise-reference": renderReferenceLibrary("precise-reference") }} variant={replicaVariant}
     prompt={prompt} negative={negative} model={model} imageProtocol={imageProtocol} operation={operation} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} historyPrompts={sessionHistory.map((item) => item.prompt)}
     onPromptChange={setPrompt} onNegativeChange={setNegative} onEffectiveChange={setEffectivePrompts}
     onAssistant={(text) => { setAgentInput(text); openAssistantPanel(); }}
@@ -4921,7 +4922,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     strength={strength} setStrength={setStrength} vibeStrength={vibeStrength} setVibeStrength={setVibeStrength}
     vibeInformationExtracted={vibeInformationExtracted} setVibeInformationExtracted={setVibeInformationExtracted}
     referenceType={referenceType} setReferenceType={setReferenceType}
-  />{replicaVariant === "nai" && (operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</> : <>{legacyControls}{(operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</>}</>;
+  />;
+  const controls = <>{replicaLayout ? <>{mobileReplicaControls}{replicaVariant === "nai" && (operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</> : <>{legacyControls}{(operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}</>}</>;
   const naiGenerationFooter = replicaLayout || customWorkspace ? <ReplicaGenerationFooter variant={customWorkspace ? "nai" : replicaVariant}
     settings={customWorkspace ? <div className="custom-generation-meta"><span>{count} 张图像</span><button type="button" aria-label="切换提交方式" onClick={() => setBatchMode(batchMode === "once" ? "sequential" : "once")}>{batchMode === "once" ? "一次性" : "分批次"}</button></div> : <ReplicaGenerationSettings variant={replicaVariant} model={modelOptions.find(item => item.value === model)?.label || model} modelControls={modelModeControls} naturalSettings={naturalSettings}
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
@@ -4999,9 +5001,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const mobileHistoryPanel = (onReturnToGenerate: () => void) => <ReplicaHistory items={mobileHistoryItems} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }} onPublish={(item) => void publishHistory(item)}
     onUse={(item, nextOperation) => { reuseHistory(item, nextOperation); onReturnToGenerate(); }} onDelete={(index) => void deleteMobileHistory(mobileHistoryItems[index])} />;
   const mobileControlsFor = (section: "prompt" | "reference" | "size" | "tools") =>
-    isValidElement(controls) && controls.type !== Fragment
-      ? cloneElement(controls as React.ReactElement<{ mobileSection?: string }>, { mobileSection: section })
-      : controls;
+    cloneElement(mobileReplicaControls, { mobileSection: section });
   const mobileLegacyPrompt = <div className="mobile-legacy-sheet-section">
     <div className="mobile-legacy-sheet-heading"><Paintbrush size={17} /><b>提示词</b></div>
     {promptFields}
@@ -5027,6 +5027,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />
     {operationSettings}
     <button className="mobile-reference-action" type="button" onClick={() => setMobileSheet("tools")}><WandSparkles size={17} />参考图与更多工具</button>
+    {mobileWorkspaceExtras}
   </div>;
   const mobileToolsContent = <div className="mobile-legacy-sheet-section">
     <Control label="图像操作"><PopupSelect ariaLabel="图像操作" value={operation} options={mobileOperationOptions} onChange={(value) => selectOperation(value as Operation)} /></Control>
@@ -5227,7 +5228,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
                 <button type="button" data-tutorial-editor={operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas"} className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor(operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas")}><Scan size={18} />{operation === "inpainting" || operation === "edits" ? "绘制重绘蒙版" : "打开图像编辑器"}</button>
               </div>}
-              moreContent={<>{mobileWorkspaceExtras}<LauncherDestinationGroups admin={isAdmin} workspace /></>}
+              moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
               operationOptions={mobileOperationOptions}
               onSelectOperation={(next) => selectOperation(next as Operation)}
               onOpenSheet={(next) => setMobileSheet(next)}

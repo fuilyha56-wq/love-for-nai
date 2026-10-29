@@ -2,6 +2,7 @@
 import { useAssistantResourceViewport } from "@/app/ui/use-assistant-resource-viewport";
 
 import Image from "next/image";
+import { Check, History, ImagePlus, Images, Search, X } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GalleryPicker } from "./gallery-picker";
@@ -13,7 +14,7 @@ export function AssistantResourcePicker(p: AssistantResourcePickerProps) {
   const dialog = useRef<HTMLDialogElement>(null), opener = useRef<HTMLElement | null>(null), alive = useRef(false);
   const [tab, setTab] = useState<"history" | "library" | "public">("history"), [search, setSearch] = useState(""), [selected, setSelected] = useState<string[]>([]);
   const titleId = useId(), viewport = useAssistantResourceViewport();
-  const pickerWidth = Math.max(1, Math.min(880, viewport.width - 16));
+  const pickerWidth = Math.max(1, Math.min(720, viewport.width - 16));
   const [selectionScope, setSelectionScope] = useState(p.scope);
   const activeSelected = selectionScope === p.scope ? selected : [];
   useLayoutEffect(() => { alive.current = p.open; return () => { alive.current = false; }; }, [p.open, p.scope]);
@@ -40,9 +41,9 @@ export function AssistantResourcePicker(p: AssistantResourcePickerProps) {
       else if (!event.shiftKey && (active === last || active === panel || !panel.contains(active))) { event.preventDefault(); first.focus(); }
       event.stopPropagation();
     }} onClick={(event) => { if (event.target === event.currentTarget) p.onClose(); }}>
-    <header><h2 id={titleId}>选择助手参考图</h2><button type="button" aria-label="关闭助手资源选择" onClick={p.onClose}>关闭</button></header>
-    <nav aria-label="参考图资源来源">{(["history", "library", "public"] as const).map((value) => <button type="button" aria-pressed={tab === value} key={value} onClick={() => { setTab(value); setSearch(""); }}>{value === "history" ? "生成历史" : value === "library" ? "本机参考库" : "公开图库"}</button>)}</nav>
-    <div className="assistant-resource-body">{tab === "public" ? <GalleryPicker returnDataUrl onSelect={(source, item) => choose([{ source, name: item.title }])}/> : <><label className="assistant-resource-search">搜索资源<input value={search} placeholder="图片名称或提示词" onChange={(event) => setSearch(event.target.value)}/></label><div className="assistant-resource-grid">{visible.map((item) => <button type="button" key={item.id} aria-pressed={activeSelected.includes(item.id)} disabled={!activeSelected.includes(item.id) && activeSelected.length >= p.available} onClick={() => setSelected((items) => items.includes(item.id) ? items.filter((id) => id !== item.id) : [...items, item.id])}><Image unoptimized src={item.source} alt={item.name} width={160} height={120}/><strong>{item.name}</strong>{item.description && <small>{item.description}</small>}</button>)}</div>{!visible.length && <p>当前没有匹配的图片。可从公开图库或本地文件添加。</p>}</>}</div>
-    <footer><span>还可添加 {p.available} 张 · 选中 {activeSelected.length} 张</span><button type="button" disabled={!activeSelected.length || p.available < 1} onClick={() => choose(p.resources.filter((item) => activeSelected.includes(item.id)).map(({ source, name }) => ({ source, name })))}>添加选中参考图</button></footer>
+    <header><div><ImagePlus size={18} /><h2 id={titleId}>选择参考图</h2></div><button type="button" aria-label="关闭助手资源选择" onClick={p.onClose}><X size={18} /></button></header>
+    <nav aria-label="参考图资源来源">{(["history", "library", "public"] as const).map((value) => <button type="button" aria-pressed={tab === value} key={value} onClick={() => { setTab(value); setSearch(""); }}>{value === "history" ? <History size={15} /> : <Images size={15} />}{value === "history" ? "生成历史" : value === "library" ? "本机参考库" : "公开图库"}</button>)}</nav>
+    <div className="assistant-resource-body">{tab === "public" ? <GalleryPicker returnDataUrl onSelect={(source, item) => choose([{ source, name: item.title }])}/> : <><label className="assistant-resource-search"><Search size={17} /><span className="sr-only">搜索资源</span><input aria-label="搜索资源" value={search} placeholder="图片名称或提示词" onChange={(event) => setSearch(event.target.value)}/>{search && <button type="button" aria-label="清空资源搜索" onClick={() => setSearch("")}><X size={16} /></button>}</label><div className="assistant-resource-grid">{visible.map((item) => <button type="button" key={item.id} aria-pressed={activeSelected.includes(item.id)} disabled={!activeSelected.includes(item.id) && activeSelected.length >= p.available} onClick={() => setSelected((items) => items.includes(item.id) ? items.filter((id) => id !== item.id) : [...items, item.id])}><Image unoptimized src={item.source} alt={item.name} width={160} height={120}/><span className="resource-card-copy"><strong>{item.name}</strong><small>{item.description || (item.kind === "history" ? "生成历史" : "本机参考库")}</small></span><span className="resource-card-check" aria-hidden="true">{activeSelected.includes(item.id) ? <Check size={15} /> : <ImagePlus size={15} />}</span></button>)}</div>{!visible.length && <p className="resource-empty"><Images size={28} /><b>没有匹配的参考图</b><span>试试其他关键词，或切换资源来源。</span></p>}</>}</div>
+    <footer><span>还可添加 {p.available} 张 · 选中 {activeSelected.length} 张</span><button type="button" disabled={!activeSelected.length || p.available < 1} onClick={() => choose(p.resources.filter((item) => activeSelected.includes(item.id)).map(({ source, name }) => ({ source, name })))}><Check size={15} />添加 {activeSelected.length || ""} 张参考图</button></footer>
   </dialog>, document.body);
 }

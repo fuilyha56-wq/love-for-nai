@@ -789,7 +789,7 @@ export default function StoriesWorkspace({
       <header className="story-dashboard-header">
         <div className="story-dashboard-brand"><span className="stories-brand-mark"><BookOpen size={21} /></span><b>Stories</b></div>
         <nav aria-label="Stories 页面导航">
-          <Link href="/comic">漫画分镜</Link><Link href="/image"><ImagePlus size={17} /> 图片生成</Link>
+              <Link href="/image"><ImagePlus size={17} /> 图片生成</Link>
           <Link href="/settings"><Settings size={17} /> 设置</Link>
           <Link href="/profile"><UserRound size={17} /> {userName}</Link>
         </nav>

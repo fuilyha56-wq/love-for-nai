@@ -22,7 +22,7 @@ export function AssistantModelPicker({ value, options, pending, error, disabled,
   return <div className={compact ? "assistant-model-picker is-compact" : "mt-3"}>
     <div className="assistant-model-picker-heading mb-1.5 flex items-center justify-between text-[11px] text-[var(--muted)]">
       <span>助手模型 · {sourceName}</span>
-      <button type="button" disabled={pending} onClick={onRefresh}>{pending ? "读取中…" : "刷新"}</button>
+      <button type="button" disabled={pending || disabled} onClick={onRefresh}>{pending ? "读取中…" : "刷新"}</button>
     </div>
     <PopupSelect value={value} options={options} onChange={onChange} ariaLabel="智能助手模型" searchable searchPlaceholder="搜索对话模型"
       triggerClassName={compact ? "assistant-model-trigger" : ""} menuClassName="assistant-model-menu"

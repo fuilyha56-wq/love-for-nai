@@ -73,7 +73,7 @@
 .mobile-studio-reference-panel .mobile-reference-tools > button:last-child:nth-of-type(3) { grid-column: 1 / -1; }
 .mobile-studio-generate-scroll > :is(.mobile-studio-preview-section, .mobile-studio-reference-panel) { animation: mobile-studio-content-in 220ms ease both; }
 .mobile-studio-generate-scroll.is-inpainting > :is(.mobile-studio-preview-section, .mobile-studio-reference-panel) { animation-name: mobile-studio-content-in-left; }
-.mobile-studio-history-scroll { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 10px; }
+.mobile-studio-history-scroll { display: block; overflow-y: auto; }
 .mobile-studio-history-toolbar { display: grid; gap: 6px; flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .mobile-studio-history-mode { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; }
 .mobile-studio-history-mode .lfn-select { min-width: 130px; }
@@ -81,13 +81,13 @@
 .mobile-studio-sheet-content > .mobile-reference-tools { margin-bottom: 16px; }
 .mobile-studio-sheet-content .mobile-legacy-sheet-section { padding-block: 4px 12px; }
 .mobile-studio-sheet-content :is(.nai-model-mode-row, .studio-model-controls) { min-width: 0; }
-.mobile-studio-history-scroll > [data-replica-history] { display: contents; }
+.mobile-studio-history-scroll > [data-replica-history] { display: block; height: auto; min-height: 100%; overflow: visible; background: transparent; }
 .mobile-studio-history-scroll > [data-replica-history] .replica-history-list {
-  display: contents;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: max-content; align-content: start; align-items: start; gap: 10px; height: auto; min-height: 0; flex: none; overflow: visible; padding: 0;
 }
 .mobile-studio-history-scroll > [data-replica-history]:has(.replica-history-empty) { display: flex; min-width: 0; min-height: 0; grid-column: 1 / -1; align-items: center; justify-content: center; }
 .mobile-studio-history-scroll > [data-replica-history]:has(.replica-history-empty) .replica-history-empty { width: 100%; min-height: 300px; }
-.mobile-studio-history-scroll .replica-history-card { min-width: 0; overflow: hidden; border-radius: 12px; background: var(--panel); }
+.mobile-studio-history-scroll .replica-history-card { align-self: start; height: auto; min-height: max-content; min-width: 0; overflow: hidden; border-radius: 12px; background: var(--panel); }
 .mobile-studio-history-scroll .replica-history-preview { width: 100%; }
 .mobile-studio-history-scroll .replica-history-preview img { display: block; width: 100%; height: auto; aspect-ratio: auto; object-fit: contain; }
 .mobile-studio-empty-page { display: grid; grid-column: 1 / -1; min-height: 300px; place-items: center; align-content: center; gap: 8px; color: var(--muted); text-align: center; }
