@@ -14,7 +14,7 @@ export async function GET() {
     imageUrl: `/api/history/${item.id}/image`,
     thumbnailUrl: `/api/history/${item.id}/image?variant=thumbnail`,
   }));
-  return NextResponse.json({ items });
+  return NextResponse.json({ userId: session.userId, items });
 }
 
 export async function DELETE(request: NextRequest) {

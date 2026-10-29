@@ -5029,12 +5029,24 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     <button className="mobile-reference-action" type="button" onClick={() => setMobileSheet("tools")}><WandSparkles size={17} />参考图与更多工具</button>
     {mobileWorkspaceExtras}
   </div>;
-  const mobileToolsContent = <div className="mobile-legacy-sheet-section">
-    <Control label="图像操作"><PopupSelect ariaLabel="图像操作" value={operation} options={mobileOperationOptions} onChange={(value) => selectOperation(value as Operation)} /></Control>
-    {replicaLayout ? mobileControlsFor("reference") : <ReplicaNaiReference hideGroupLabel model={model} imageProtocol={imageProtocol} operation={operation} source={source} onRemoveSource={removeMobileReference}
-      onSelectOperation={(value) => selectOperation(value as Operation)} onUpload={(file) => handleMobileReferenceUpload(file)} onOpenEditor={() => void openImageEditor("canvas")} strength={strength} setStrength={setStrength} />}
-    {operationSettings}
-    {directorTools}
+  const mobileToolsContent = <div className="mobile-legacy-sheet-section mobile-tools-workspace">
+    <section className="mobile-tool-card mobile-tool-mode">
+      <div className="mobile-tool-card-heading"><span><SlidersHorizontal size={18} />当前操作</span><small>选择图片处理方式</small></div>
+      <Control label="图像操作"><PopupSelect ariaLabel="图像操作" value={operation} options={mobileOperationOptions} onChange={(value) => selectOperation(value as Operation)} /></Control>
+    </section>
+    <div className="mobile-tool-group-heading"><Images size={17} /><h3>图片与参考</h3><span>展开设置</span></div>
+    <div className="mobile-tool-references">
+      {replicaLayout ? mobileControlsFor("reference") : <ReplicaNaiReference hideGroupLabel model={model} imageProtocol={imageProtocol} operation={operation} source={source} onRemoveSource={removeMobileReference}
+        onSelectOperation={(value) => selectOperation(value as Operation)} onUpload={(file) => handleMobileReferenceUpload(file)} onOpenEditor={() => void openImageEditor("canvas")} strength={strength} setStrength={setStrength} />}
+    </div>
+    {operation !== "generate" && operation !== "suggest-tags" && <section className="mobile-tool-card mobile-tool-parameters">
+      <div className="mobile-tool-card-heading"><span><SlidersHorizontal size={18} />操作参数</span></div>
+      {operationSettings}
+    </section>}
+    {modes.some((item) => item.id.startsWith("director-") && modelCapabilities.operations.includes(item.id)) && <section className="mobile-tool-card mobile-tool-director">
+      <div className="mobile-tool-card-heading"><span><WandSparkles size={18} />导演工具</span><small>为当前图片添加处理效果</small></div>
+      {directorTools}
+    </section>}
   </div>;
   const mobileSheetContent = mobileSheet === "reference" || mobileSheet === "tools"
     ? mobileToolsContent

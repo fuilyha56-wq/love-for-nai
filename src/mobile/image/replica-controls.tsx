@@ -74,7 +74,7 @@ export function ReplicaCharacters(p: ReplicaCharactersProps) {
     else if (p.characters.length < 6) p.setCharacters([...p.characters, { id: `character-${Date.now()}`, prompt: tag, negative: "", centerX: 0.5, centerY: 0.5 }]);
   };
   const capabilities = resolveImageModelCapabilities(p.model, p.imageProtocol);
-  const supportsCharacters = capabilities.characters && /v(?:4|5)/i.test(p.model);
+  const supportsCharacters = capabilities.characters;
   if (!capabilities.characters) return null;
   return <section className={`replica-character-section${characterOpen ? " is-open" : ""}`}>
     <div className="replica-character-heading">
@@ -84,6 +84,7 @@ export function ReplicaCharacters(p: ReplicaCharactersProps) {
         <button type="button" className="replica-character-chevron" onClick={() => setCharacterOpen(!characterOpen)} aria-label="展开角色" aria-expanded={characterOpen}><ChevronDown size={18} /></button>
       </>}
     </div>
+    <button type="button" className="replica-character-create" onClick={() => addCharacter()} disabled={!supportsCharacters || (p.charactersEnabled && p.characters.length >= 6)}><Plus size={16} />添加角色<span>{p.charactersEnabled ? p.characters.length : 0} / 6</span></button>
     <div className="replica-character-motion" aria-hidden={!characterOpen} inert={!characterOpen}><div className="replica-character-body">
       {!supportsCharacters && <p>当前模型不支持角色提示词。</p>}
       {supportsCharacters && <label className="replica-character-auto"><input type="checkbox" checked={p.aiAutoPosition} onChange={event => p.setAiAutoPosition(event.target.checked)} />AI 自动定位</label>}

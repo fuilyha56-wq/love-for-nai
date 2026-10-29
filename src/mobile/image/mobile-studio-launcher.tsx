@@ -183,7 +183,7 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
   </>;
   const clientReady = useSyncExternalStore(subscribeToDocument, documentReady, serverDocumentReady);
   const portalTarget = clientReady ? document.body : null;
-  return <div className="mobile-studio-launcher" data-mobile-studio-launcher="true">
+  return <div className="mobile-studio-launcher" data-mobile-studio-launcher="true" data-dialog-open={dialogOpen ? "true" : undefined} aria-hidden={dialogOpen || undefined} inert={dialogOpen}>
     <main className={`mobile-studio-page is-${page}`} inert={dialogOpen}>
       <div className="mobile-studio-page-panel" hidden={page !== "generate"}>{generatePage}</div>
       <div className="mobile-studio-page-panel" hidden={page !== "history"}>{historyPage}</div>

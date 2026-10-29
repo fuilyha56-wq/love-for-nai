@@ -19,3 +19,6 @@
 .studio-parameter-utilities li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding-top:6px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
 .studio-parameter-utilities li button { flex:none; }
 .studio-parameter-utilities [role=status] { display:block; color:var(--muted); font-size:11px; line-height:1.6; }
+
+/* Parameter utilities follow every arranged module, including custom and NAI layouts. */
+.studio-parameter-utilities { order:999; flex:none; grid-column:1 / -1; }
