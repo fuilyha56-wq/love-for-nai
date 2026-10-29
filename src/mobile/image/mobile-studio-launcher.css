@@ -105,7 +105,7 @@
 .mobile-studio-bottom-nav :is(button,a) { display: flex; min-height: 48px; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 650; }
 .mobile-studio-bottom-nav button[aria-current="page"] { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); color: var(--rose); }
 .mobile-studio-sheet-backdrop { position: fixed; z-index: 60; inset: 0; display: flex; justify-content: center; background: var(--panel); animation: mobile-studio-backdrop-in .18s ease both; }
-.mobile-studio-sheet-backdrop, .mobile-studio-prompt-backdrop { top: var(--lfn-viewport-top, 0px); bottom: auto; height: var(--lfn-viewport-height, 100dvh); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+.mobile-studio-sheet-backdrop, .mobile-studio-prompt-backdrop { top: var(--lfn-viewport-top, 0px); left: var(--lfn-viewport-left, 0px); right: auto; bottom: auto; width: var(--lfn-viewport-width, 100%); height: var(--lfn-viewport-height, 100dvh); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
 .mobile-studio-sheet-backdrop .mobile-studio-sheet { max-height: 100%; }
 .mobile-studio-prompt-backdrop .mobile-studio-prompt-dialog { max-height: 100%; }
 .mobile-studio-sheet { display: flex; width: 100%; height: 100%; max-height: 100dvh; flex-direction: column; padding-top: env(safe-area-inset-top); border: 0; border-radius: 0; background: var(--panel); animation: mobile-studio-sheet-in .18s ease both; }
@@ -249,6 +249,19 @@ html[data-motion="reduced"] :is(.mobile-studio-sheet-backdrop, .mobile-studio-sh
 /* A body portal isolates the workspace from transformed studio/layout ancestors. */
 .mobile-studio-prompt-backdrop { z-index: 1000; overflow: hidden; }
 .mobile-studio-workspace-dialog[data-active-pane="assistant"] > .mobile-studio-prompt-actions { display: none; }
+/* Editing owns the available viewport. The page footer must not compete with
+   the keyboard or cover the caret. Keep this CSS-driven so IME composition and
+   selection survive; returning focus to navigation restores the footer. */
+.mobile-studio-workspace-dialog:has(:is(textarea, input:not([type="file"]):not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), [contenteditable="true"]):focus) {
+  padding-bottom: 0;
+}
+.mobile-studio-workspace-dialog:has(:is(textarea, input:not([type="file"]):not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), [contenteditable="true"]):focus) > .mobile-studio-prompt-actions {
+  display: none;
+}
+.mobile-studio-workspace-content.is-prompt .replica-text-editor:focus-within,
+.mobile-studio-workspace-content.is-prompt .replica-shared-tag-editor:focus-within {
+  height: clamp(144px, calc(var(--lfn-viewport-height, 100dvh) - 260px), 480px) !important;
+}
 .mobile-studio-workspace-content.is-assistant:not([hidden]) { display: flex; min-height: 0; padding: 0; overflow: hidden; }
 .mobile-studio-workspace-content.is-assistant .mobile-studio-assistant-content { display: flex; min-width: 0; min-height: 0; flex: 1; height: 100%; overflow: hidden; }
 .mobile-studio-workspace-content.is-assistant .mobile-tag-assistant-panel { display: grid; flex: 1; min-height: 0; height: 100%; margin: 0; padding: 0; border: 0; overflow: hidden; }

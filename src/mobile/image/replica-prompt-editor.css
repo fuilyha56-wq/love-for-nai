@@ -156,7 +156,8 @@
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) .replica-composition-part.fixed {background:color-mix(in srgb, var(--ink) 6%, var(--surface))}
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) .replica-composition-part summary {display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:650;list-style:none}
 .replica-prompt-overlay:is([data-variant="nai"],[data-variant="nlw"]) .replica-composition-part summary>span:nth-child(2) {margin-left:auto;background:color-mix(in srgb, var(--ink) 7%, transparent);border-radius:15px;padding:2px 7px}
-.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) {position:fixed;inset:0;margin:auto;padding:0;border:0;border-radius:24px;background:var(--rp-canvas);width:min(860px,calc(100vw - 32px));max-height:calc(100dvh - 32px);overflow:hidden;box-shadow:0 20px 70px color-mix(in srgb, var(--ink) 20%, transparent)}
+/* Keep nested prompt dialogs inside the same visible rectangle as the workspace. */
+.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) {position:fixed;inset:auto;top:calc(var(--lfn-viewport-top,0px) + var(--lfn-viewport-height,100dvh)/2);left:calc(var(--lfn-viewport-left,0px) + var(--lfn-viewport-width,100vw)/2);translate:-50% -50%;margin:0;padding:0;border:0;border-radius:24px;background:var(--rp-canvas);width:min(860px,calc(var(--lfn-viewport-width,100vw) - 32px));max-width:calc(var(--lfn-viewport-width,100vw) - 16px);max-height:calc(var(--lfn-viewport-height,100dvh) - 32px);overflow:hidden;box-shadow:0 20px 70px color-mix(in srgb, var(--ink) 20%, transparent)}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"])::backdrop {background:color-mix(in srgb, var(--paper) 65%, transparent)}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"])[open] {display:flex;flex-direction:column}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"])>header {display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--rp-section);padding:18px 20px;flex-shrink:0;min-height:62px;font-size:18px}
@@ -173,7 +174,7 @@
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) label>input:not([type="checkbox"]),
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) label>select {display:block;width:100%;margin-top:7px;padding:11px 12px;background:var(--rp-control);border:0;border-radius:8px;min-width:0}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) label>textarea {display:block;width:100%;background:var(--rp-control);border:0;border-radius:8px;padding:12px;resize:vertical}
-.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-manager {width:min(980px,calc(100vw - 32px));height:min(820px,calc(100dvh - 32px))}
+.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-manager {width:min(980px,calc(var(--lfn-viewport-width,100vw) - 32px));height:min(820px,calc(var(--lfn-viewport-height,100dvh) - 32px))}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-manager>.replica-dialog-body {flex:1;padding:16px 12px}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-manager>footer {justify-content:space-between}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-manager>footer small {color:var(--rp-muted);font-size:10px}
@@ -198,7 +199,7 @@
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-entry small,
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-library-empty {font-size:11px;color:var(--rp-muted)}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-entry p {margin:3px 0;font-size:12px;overflow-wrap:anywhere}
-.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-editor {height:min(760px,calc(100dvh - 32px))}
+.replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-editor {height:min(760px,calc(var(--lfn-viewport-height,100dvh) - 32px))}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]).replica-fixed-editor>.replica-dialog-body {flex:1}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-editor-grid {display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:32px;min-height:100%}
 .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-editor-content {display:flex;flex-direction:column;gap:16px;min-width:0}
@@ -256,7 +257,7 @@
 .replica-prompt-overlay,.replica-prompt-dialog {animation:replica-prompt-enter 160ms ease-out}
 @keyframes replica-prompt-enter {from {opacity:0;transform:translateY(4px)} to {opacity:1;transform:translateY(0)}}
 @media(max-width:640px) {
-  .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) {width:calc(100vw - 16px);max-height:calc(100dvh - 16px);border-radius:14px}
+  .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) {width:calc(var(--lfn-viewport-width,100vw) - 16px);max-height:calc(var(--lfn-viewport-height,100dvh) - 16px);border-radius:14px}
   .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-columns {grid-template-columns:1fr;gap:24px}
   .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-columns>section+section {border-left:0}
   .replica-prompt-dialog:is([data-variant="nai"],[data-variant="nlw"]) .replica-fixed-empty {min-height:120px}
