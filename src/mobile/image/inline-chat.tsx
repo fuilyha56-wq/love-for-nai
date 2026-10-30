@@ -5,6 +5,7 @@ import { storedAssistantReasoning } from "@/lib/client-assistant-reasoning";
 // 锚定在文本域下方的对话框，Keep 用结果替换所选内容。
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "@/mobile/ui/tooltip";
+import { placeTextMenu, readTextMenuViewport } from "@/mobile/ui/text-menu-placement";
 import {
   Check,
   Copy,
@@ -105,25 +106,30 @@ export function InlineChatMenu({
   canUseAi: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [placement, setPlacement] = useState({ x: position.x, y: position.y });
+  const [placement, setPlacement] = useState({ left: position.x, top: position.y, maxWidth: 260, maxHeight: 0 });
   useLayoutEffect(() => {
     const place = () => {
-      const rect = ref.current?.getBoundingClientRect();
-      if (rect)
-        setPlacement({
-          x: Math.max(
-            8,
-            Math.min(position.x, window.innerWidth - rect.width - 8),
-          ),
-          y: Math.max(
-            8,
-            Math.min(position.y, window.innerHeight - rect.height - 8),
-          ),
-        });
+      const menu = ref.current;
+      if (menu) setPlacement(placeTextMenu({ x: position.x, y: position.y }, {
+        width: menu.getBoundingClientRect().width, height: menu.scrollHeight + 2,
+      }, readTextMenuViewport()));
     };
     place();
+    const viewport = window.visualViewport;
+    const observer = new MutationObserver(place);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    const sizeObserver = new ResizeObserver(place);
+    if (ref.current) sizeObserver.observe(ref.current);
     window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
+    viewport?.addEventListener("resize", place);
+    viewport?.addEventListener("scroll", place);
+    return () => {
+      observer.disconnect();
+      sizeObserver.disconnect();
+      window.removeEventListener("resize", place);
+      viewport?.removeEventListener("resize", place);
+      viewport?.removeEventListener("scroll", place);
+    };
   }, [position.x, position.y]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -151,10 +157,13 @@ export function InlineChatMenu({
         className="inline-chat-menu"
         role="menu"
         aria-label={`文本操作 · ${targetLabel}`}
+        // Copy/paste uses the stored selection. Do not blur the editor and close
+        // its keyboard before a touch can finish clicking the menu item.
+        onPointerDown={(event) => { if ((event.target as Element).closest("button")) event.preventDefault(); }}
         style={{
-          left: placement.x,
-          top: placement.y,
-          maxHeight: "calc(100dvh - 16px)",
+          ...placement,
+          maxWidth: Math.min(260, placement.maxWidth),
+          minWidth: Math.min(200, placement.maxWidth),
           overflowY: "auto",
         }}
       >

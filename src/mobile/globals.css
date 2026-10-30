@@ -1237,11 +1237,12 @@ html[data-theme="night"] .mask-editor-number {
 .inline-chat-menu-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 110;
+  /* These body portals must sit above the full-screen workspace (1000). */
+  z-index: 47000;
 }
 .inline-chat-menu {
   position: fixed;
-  z-index: 120;
+  z-index: 47002;
   min-width: 200px;
   max-width: 260px;
   padding: 4px;
@@ -1298,7 +1299,7 @@ html[data-theme="night"] .mask-editor-number {
 }
 .inline-chat-zone {
   position: fixed;
-  z-index: 115;
+  z-index: 47001;
   display: flex;
   min-height: 0;
   flex-direction: column;
