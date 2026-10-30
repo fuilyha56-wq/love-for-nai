@@ -7,6 +7,7 @@ const modelAliases: Record<string, string> = {
   "nai-v4.5-full": "nai-diffusion-4-5-full",
   "nai-v4.5-curated": "nai-diffusion-4-5-curated",
   "nai-v4.5-inpaint": "nai-diffusion-4-5-full-inpainting",
+  "nai-v4.5-curated-inpaint": "nai-diffusion-4-5-curated-inpainting",
   "nai-v5-full": "nai-diffusion-5-full",
   "nai-v5-curated": "nai-diffusion-5-curated",
   "nai-v5-inpaint": "nai-diffusion-5-full-inpainting",
@@ -47,6 +48,14 @@ export function naiUpstreamModel(model: string): string {
   return modelAliases[withoutLimit] || trimmed;
 }
 
+/** These billing aliases are absent from the Gateway registry. Pass-through
+ * NewAPI channels skip model_mapping, so send their official IDs directly. */
+export function naiGatewayModel(model: string): string {
+  return ["nai-v4.5-curated-inpaint", "nai-v4-full", "nai-v4-curated"].includes(model)
+    ? naiUpstreamModel(model)
+    : model;
+}
+
 export function isNaiMediumModel(model: string): boolean {
   return /nai-v5-(?:full|inpaint)-medium$/i.test(model) ||
     /nai-diffusion-5-full-medium(?:-inpainting)?$/i.test(model);
@@ -56,7 +65,11 @@ export function isNaiMediumModel(model: string): boolean {
  * qualityToggle. Send both opt-outs so composed/custom/disabled presets survive
  * buffering and stream fallback without an extra default suffix. */
 export function naiGatewayGenerationBody(body: Record<string, unknown>): Record<string, unknown> {
-  return { ...body, ...(body.qualityToggle === false ? { quality_tags: "" } : {}) };
+  return {
+    ...body,
+    ...(typeof body.model === "string" ? { model: naiGatewayModel(body.model) } : {}),
+    ...(body.qualityToggle === false ? { quality_tags: "" } : {}),
+  };
 }
 
 export function randomNaiSeed(): number {
@@ -78,6 +91,7 @@ function actionFor(operation: string): string {
 function modelForAction(model: string, action: string): string {
   const upstream = naiUpstreamModel(model);
   if (action !== "infill") return upstream;
+  if (upstream.endsWith("-inpainting")) return upstream;
   if (isNaiMediumModel(model)) return "nai-diffusion-5-full-medium-inpainting";
   if (upstream.startsWith("nai-diffusion-5"))
     return "nai-diffusion-5-full-inpainting";

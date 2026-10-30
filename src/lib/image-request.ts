@@ -112,7 +112,8 @@ export function assertImageModel(model: unknown): string {
   if (
     typeof model !== "string" ||
     (!/^nai-v(?:3|4(?:\.5)?|5)(?:-(?:full|curated|inpaint|furry(?:-inpaint)?)(?:-limit)?)?$/i.test(model) &&
-      !/^nai-v5-(?:full|inpaint)-medium$/i.test(model)) ||
+      !/^nai-v5-(?:full|inpaint)-medium$/i.test(model) &&
+      model !== "nai-v4.5-curated-inpaint") ||
     model.toLowerCase() === "nai-chat"
   )
     invalid("当前模型不允许用于图像生成");
@@ -153,7 +154,12 @@ export function validateMediumRequest(model: string, body: Record<string, unknow
   }
   if ([parameters.negative_prompt, parameters.negativePrompt].some((value) => Boolean(value) && value !== NAI_MEDIUM_NEGATIVE_PROMPT) || parameters.service_tier === "priority")
     reject("Medium 档不支持自定义负面词或 priority 服务");
-  if (Object.entries(parameters).some(([key, value]) => Boolean(value) && /^(?:reference_|director_reference_|controlnet_)/.test(key) && key !== "controlnet_strength") || parameters.references || parameters.characters || parameters.upscale || parameters.upscaled_enhance)
+  // Official clients may include empty reference lists even when references are off.
+  const hasReferenceValue = (value: unknown): boolean => Array.isArray(value) ? value.length > 0 : Boolean(value);
+  const hasReferences = Object.entries(parameters).some(([key, value]) => /^(?:reference_|director_reference_)/.test(key) && hasReferenceValue(value)) ||
+    hasReferenceValue(parameters.references) || hasReferenceValue(parameters.characters);
+  const hasControlNet = Object.entries(parameters).some(([key, value]) => Boolean(value) && /^controlnet_/.test(key) && key !== "controlnet_strength");
+  if (hasReferences || hasControlNet || parameters.upscale || parameters.upscaled_enhance)
     reject("Medium 档不支持参考图、ControlNet 或付费图像工具");
   if (operation === "generate" && parameters.image) reject("Medium 文生图不能携带输入图片");
   if (Array.isArray(parameters.characterPrompts) && parameters.characterPrompts.some((item) => item && typeof item === "object" && (item.negativePrompt || item.negative)))

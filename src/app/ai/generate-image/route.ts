@@ -4,10 +4,8 @@ import {
   externalGeneration,
   imageOperationFromBody,
   imageRequestErrorBody,
-  isRecord,
   naiGenerationPayload,
   naiZipResponse,
-  naiMsgpackResponse,
   parseNaiGenerationBody,
   proxyImageWithCredits,
   proxyNaiNativeWithCredits,
@@ -31,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
 
   let body: Record<string, unknown>;
   try {
-    body = await parseNaiGenerationBody(request);
+    body = await parseNaiGenerationBody(request.clone());
   } catch {
     return withExternalCors(Response.json({ message: "Request body must be valid JSON" }, { status: 400 }));
   }
@@ -40,10 +38,6 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof body.model !== "string" || !body.model.trim())
     return withExternalCors(Response.json({ message: "model is required" }, { status: 400 }));
 
-  const parameters =
-    body.parameters && typeof body.parameters === "object" && !Array.isArray(body.parameters)
-      ? (body.parameters as Record<string, unknown>)
-      : {};
   const billingOperation = imageOperationFromBody(body);
   const nativeGeneration = externalGeneration(body, billingOperation);
   let payload: Record<string, unknown>;
@@ -61,26 +55,23 @@ export async function POST(request: Request): Promise<Response> {
     return withExternalCors(Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 }));
 
   const nativeUpstream = await resolvedNaiImageUpstream();
-  const wantsStream =
-    (isRecord(parameters) && parameters.stream === "msgpack") ||
-    request.headers.get("accept")?.includes("msgpack") ||
-    request.url.includes("generate-image-stream");
   if (nativeUpstream) {
-    const nativePath = wantsStream ? "/ai/generate-image-stream" : "/ai/generate-image";
-    const nativeBody = {
-      ...body,
-      parameters: { ...parameters, image_format: parameters.image_format ?? "png", ...(wantsStream ? { stream: "msgpack" } : {}) },
-    };
+    // NovelAI exposes separate ZIP and streaming endpoints. Some clients send
+    // parameters.stream on this ZIP endpoint while still decoding a ZIP;
+    // forwarding that field must not silently select a different endpoint.
+    // Parse a clone for billing, then preserve the original JSON/multipart body.
+    const contentType = request.headers.get("content-type") || "application/json";
+    const rawBody = await request.arrayBuffer();
     const proxyRequest = new Request(request.url, {
       method: "POST",
-      headers: nativeRequestHeaders(request, authorization, wantsStream ? "application/x-msgpack" : request.headers.get("accept") || "application/zip"),
+      headers: nativeRequestHeaders(request, authorization, request.headers.get("accept") || "application/zip"),
     });
     const native = await proxyNaiNativeWithCredits(
       proxyRequest,
-      nativePath,
+      "/ai/generate-image",
       {
-        body: JSON.stringify(nativeBody),
-        contentType: "application/json",
+        body: rawBody,
+        contentType,
         generation,
         prompt: typeof body.input === "string" ? body.input : undefined,
       },
@@ -108,5 +99,5 @@ export async function POST(request: Request): Promise<Response> {
       prompt: typeof body.input === "string" ? body.input : undefined,
     },
   );
-  return wantsStream ? naiMsgpackResponse(upstream) : naiZipResponse(upstream);
+  return naiZipResponse(upstream);
 }

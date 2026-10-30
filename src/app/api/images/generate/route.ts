@@ -23,6 +23,7 @@ import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlem
 import { handlePersonalProviderGeneration } from "@/lib/provider/generate";
 import { handleNewApiImageModelGeneration } from "@/lib/provider/newapi-generate";
 import { externalGeneration, imageRequestErrorBody } from "@/lib/compat-api";
+import { naiGatewayModel } from "@/lib/nai-native-request";
 import { startRequestAudit } from "@/lib/request-audit";
 import {
   assertBodySize,
@@ -216,7 +217,7 @@ async function generateImage(request: Request, session: NonNullable<Awaited<Retu
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       }),
-      body: JSON.stringify(nativeNaiModel ? generationPayload : {
+      body: JSON.stringify(nativeNaiModel ? { ...generationPayload, model: naiGatewayModel(model) } : {
         model,
         prompt: body.prompt,
         size: `${width}x${height}`,

@@ -24,6 +24,7 @@ const IMAGE_MODELS: readonly NaiModelCatalogEntry[] = [
   { id: "nai-v4.5-full", label: "nai-v4.5-full", kind: "image", inpaint: false },
   { id: "nai-v4.5-curated", label: "nai-v4.5-curated", kind: "image", inpaint: false },
   { id: "nai-v4.5-inpaint", label: "nai-v4.5-inpaint", kind: "image", inpaint: true },
+  { id: "nai-v4.5-curated-inpaint", label: "nai-v4.5-curated-inpaint", kind: "image", inpaint: true },
   { id: "nai-v4.5-full-limit", label: "nai-v4.5-full-limit", kind: "image", inpaint: false },
   { id: "nai-v4.5-curated-limit", label: "nai-v4.5-curated-limit", kind: "image", inpaint: false },
   { id: "nai-v4.5-inpaint-limit", label: "nai-v4.5-inpaint-limit", kind: "image", inpaint: true },
@@ -47,7 +48,7 @@ export const NAI_IMAGE_MODEL_OPTIONS = IMAGE_MODELS.map(({ id, label }) => ({ va
 
 export const NAI_INPAINT_MODEL_OPTIONS = IMAGE_MODELS
   .filter(({ inpaint }) => inpaint)
-  .map(({ id }) => [id, id.includes("v3-furry") ? "V3 兽人局部重绘" : `${id.startsWith("nai-v5") ? "V5" : id.startsWith("nai-v4.5") ? "V4.5" : "V3"} 局部重绘${id.endsWith("-limit") ? " · 受限" : ""}`] as const);
+  .map(({ id }) => [id, id.includes("v3-furry") ? "V3 兽人局部重绘" : `${id.startsWith("nai-v5") ? "V5" : id.startsWith("nai-v4.5") ? "V4.5" : "V3"}${id.includes("curated") ? " Curated" : ""} 局部重绘${id.endsWith("-limit") ? " · 受限" : ""}`] as const);
 
 /** Native API names accepted by the standalone /ai/upscale endpoint. */
 export const NAI_UPSCALE_MODEL_OPTIONS = [

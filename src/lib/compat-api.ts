@@ -56,7 +56,7 @@ import { withExternalCors } from "@/lib/external-cors";
 import { evaluateImageRisk, riskBlockedResponse, riskRateLimitedResponse } from "@/lib/risk-control";
 import { createImageSettlement, updateImageSettlement } from "@/lib/risk-settlement";
 import { recordIpEvidence } from "@/lib/risk-ip";
-import { isNaiMediumModel, naiUsageModel } from "@/lib/nai-native-request";
+import { isNaiMediumModel, naiGatewayModel, naiUsageModel } from "@/lib/nai-native-request";
 import { imagePricingStrength, isInFreeEnvelope, upscaleAnlasCost } from "@/lib/image-pricing";
 import { isNaiLimitModel } from "@/lib/nai-image-limits";
 import { observeNativeImageCompletion, sanitizeNativeImageStream } from "@/lib/nai-stream-completion";
@@ -143,6 +143,7 @@ const novelAiModelAliases: Record<string, string> = {
   "nai-diffusion-4-5-full": "nai-v4.5-full",
   "nai-diffusion-4-5-curated": "nai-v4.5-curated",
   "nai-diffusion-4-5-full-inpainting": "nai-v4.5-inpaint",
+  "nai-diffusion-4-5-curated-inpainting": "nai-v4.5-curated-inpaint",
   "nai-diffusion-5": "nai-v5-full",
   "nai-diffusion-5-curated": "nai-v5-curated",
   "nai-diffusion-5-full": "nai-v5-full",
@@ -187,6 +188,7 @@ export async function proxyNewApi(
   pathname: string,
   body?: BodyInit | null,
   contentType?: string | null,
+  options: { imageResponse?: boolean } = {},
 ): Promise<Response> {
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
@@ -229,7 +231,7 @@ export async function proxyNewApi(
     const publicUpstream = pathname.endsWith("-stream") && protectedUpstream.ok && /(?:msgpack|octet-stream)/i.test(protectedUpstream.headers.get("content-type") || "")
       ? sanitizeNativeImageStream(protectedUpstream, upstreamPrivacy)
       : protectedUpstream;
-    if (imageUserId != null && protectedUpstream.ok) {
+    if (options.imageResponse !== false && imageUserId != null && protectedUpstream.ok) {
       let model = "external-image";
       try { model = String(body instanceof FormData ? body.get("model") || model : typeof body === "string" ? JSON.parse(body).model || model : model); } catch { /* Optional attribution only. */ }
       const marked = await watermarkImageResponse(publicUpstream, imageUserId, model, { requestId: randomUUID() });
@@ -449,6 +451,20 @@ export async function proxyImageWithCredits(
   const identity = authorization;
   if (!isNaiExternalModel(imageRequest.generation.model))
     return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+  const transportModel = naiGatewayModel(imageRequest.generation.model);
+  if (transportModel !== imageRequest.generation.model) {
+    // Keep the accounting model unchanged; only the outgoing payload uses the
+    // official ID. Clone multipart fields so image bytes and names survive.
+    if (typeof imageRequest.body === "string") {
+      const payload: unknown = JSON.parse(imageRequest.body);
+      if (isRecord(payload)) imageRequest = { ...imageRequest, body: JSON.stringify({ ...payload, model: transportModel }) };
+    } else if (imageRequest.body instanceof FormData) {
+      const form = new FormData();
+      for (const [key, value] of imageRequest.body.entries()) form.append(key, value);
+      form.set("model", transportModel);
+      imageRequest = { ...imageRequest, body: form };
+    }
+  }
   if (!(await isNaiModelEnabled(imageRequest.generation.model)))
     return withExternalCors(Response.json({ error: { message: "该 NAI 模型已被管理员停用", code: "model_disabled" } }, { status: 403 }));
   const rate = checkImageRateLimit(request, identity);
@@ -759,7 +775,7 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   return {
     ...rest,
     prompt: typeof body.input === "string" ? body.input : "",
-    model,
+    model: naiGatewayModel(model),
     n: samples,
     n_samples: samples,
     steps,
@@ -812,7 +828,30 @@ export async function naiMsgpackResponse(upstream: Response): Promise<Response> 
   return withExternalCors(new Response(bytes, { headers }));
 }
 
+async function naiVibeResponse(response: Response): Promise<Response> {
+  if (!response.ok) return response;
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+  if (/application\/(?:binary|octet-stream)/.test(contentType)) return response;
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  headers.delete("content-encoding");
+  const invalid = (): Response => {
+    headers.set("Content-Type", "application/json");
+    return Response.json({ error: { message: "上游没有返回有效的 Vibe 编码", type: "api_error", code: "lfn_native_invalid_vibe" } }, { status: 502, headers });
+  };
+  const payload: unknown = await response.json().catch(() => null);
+  if (!isRecord(payload) || payload.object !== "vibe" || typeof payload.reference_image !== "string") return invalid();
+  const encoded = payload.reference_image;
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return invalid();
+  const bytes = Buffer.from(encoded, "base64");
+  const canonical = bytes.toString("base64");
+  if (!bytes.length || (encoded.includes("=") ? canonical !== encoded : canonical.replace(/=+$/, "") !== encoded)) return invalid();
+  headers.set("Content-Type", "application/binary");
+  return new Response(bytes, { status: response.status, statusText: response.statusText, headers });
+}
+
 async function nativeResponseForPath(response: Response, pathname: string): Promise<Response> {
+  if (pathname === "/ai/encode-vibe") return naiVibeResponse(response);
   if (!pathname.startsWith("/ai/generate-image")) return response;
   return pathname.endsWith("-stream") ? naiMsgpackResponse(response) : naiZipResponse(response);
 }
@@ -1055,7 +1094,10 @@ export async function proxyNaiNativeWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        const marked = await watermarkImageResponse(await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy), userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
+        const safeManaged = await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy);
+        if (pathname === "/ai/encode-vibe")
+          return auditedResponse(paymentResponse(await nativeResponseForPath(safeManaged, pathname), "newapi"), audit, { paymentSource: "newapi" });
+        const marked = await watermarkImageResponse(safeManaged, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
         return auditedResponse(paymentResponse(await nativeResponseForPath(marked.response, pathname), "newapi"), audit, { paymentSource: "newapi", watermarkStatus: marked.status() });
       }
       return auditedResponse(
@@ -1238,8 +1280,9 @@ async function nativeNewApiFallback(
       newApiFallback.pathname,
       newApiFallback.body,
       newApiFallback.contentType,
+      { imageResponse: pathname !== "/ai/encode-vibe" },
     ), pathname);
-  return nativeResponseForPath(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), pathname);
+  return nativeResponseForPath(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, { imageResponse: pathname !== "/ai/encode-vibe" }), pathname);
 }
 
 export function isRecord(value: unknown): value is JsonRecord {
