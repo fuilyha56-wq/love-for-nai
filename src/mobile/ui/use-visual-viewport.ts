@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { getWorkspaceKeyboard } from "./use-workspace-keyboard";
+import { getWorkspaceKeyboard, getWorkspaceViewport } from "./use-workspace-keyboard";
 
 const editableSelector = 'textarea:not([readonly]):not([disabled]), input:not([readonly]):not([disabled]):is([type="text"], [type="search"], [type="email"], [type="url"], [type="tel"], [type="password"], [type="number"], :not([type]))';
 
@@ -29,6 +29,8 @@ export function useVisualViewport() {
     let keyboardWasOpen = false;
     let nativeState: "unknown" | "visible" | "hidden" = "unknown";
     let transitionUntil = 0;
+    let openingUntil = 0;
+    let appliedHeight = 0;
     const written = new Map<string, string>();
     function write(name: string, value: string) {
       if (written.get(name) === value) return;
@@ -62,6 +64,7 @@ export function useVisualViewport() {
       const rect = keyboard?.boundingRect;
       const layoutHeight = root.clientHeight || window.innerHeight;
       const unzoomed = Math.abs(scale - 1) < 0.01;
+      const workspace = unzoomed ? getWorkspaceViewport() : undefined;
       const dynamicHeight = dynamicViewport?.getBoundingClientRect().height ?? 0;
       const usableDynamicHeight = unzoomed && Number.isFinite(dynamicHeight) && dynamicHeight > 0
         ? dynamicHeight : 0;
@@ -108,18 +111,37 @@ export function useVisualViewport() {
       // authority, including resizes-content browsers. Switching to layout
       // height near equality also reset offsetTop and could move the sheet back
       // and forth as animation rounding crossed the old two-pixel boundary.
-      // Some engines briefly report the toolbar-hidden visual height when the
-      // keyboard closes. CSS dvh excludes current browser chrome; it is an upper
-      // bound only, so a smaller visual keyboard rectangle still wins. Do not
-      // mix unscaled CSS viewport units with a zoomed visual rectangle.
+      // CSS dvh can bound an overstated visual rectangle, but both measurements
+      // can expand together during dismissal (handled by the workspace bound
+      // below). Do not mix unscaled CSS units with a zoomed visual rectangle.
       if (usableDynamicHeight) height = Math.min(height, usableDynamicHeight);
+      // On the affected phones both VV and dvh overstate the closed height.
+      // Only the pre-edit rectangle is a trustworthy restoration bound. Keep
+      // it through blur, retained-focus dismissal and repeated keyboard visits.
+      if (workspace) height = Math.min(height, Math.max(0, workspace.height - top));
+      const now = performance.now();
+      if (!workspace || height >= workspace.height - 2 || source === "keyboard") {
+        openingUntil = 0;
+      } else if (!openingUntil && appliedHeight >= workspace.height - 2 &&
+        workspace.height - height > threshold && editing) {
+        // Real Android traces contain a 32ms undershoot before the final IME
+        // height. Coalesce only this initial shrink, with a fixed deadline;
+        // closing is immediate and later keyboard resizing remains responsive.
+        openingUntil = now + 50;
+      }
+      if (openingUntil && now < openingUntil) {
+        scheduleFrame();
+        return;
+      }
+      openingUntil = 0;
+      appliedHeight = height;
       write("--lfn-viewport-height", `${height}px`);
       write("--lfn-viewport-width", `${width}px`);
       write("--lfn-viewport-top", `${top}px`);
       write("--lfn-viewport-left", `${viewport?.offsetLeft ?? 0}px`);
       if (root.dataset.viewportSource !== source) root.dataset.viewportSource = source;
 
-      const heightLoss = Math.max(0, availableHeight - height * scale);
+      const heightLoss = Math.max(0, (workspace?.height ?? availableHeight) - height * scale);
       const estimatedHeight = (editing || keyboardWasOpen) && heightLoss > threshold ? heightLoss : 0;
       const nativeHeight = keyboard?.overlaysContent && rect && Number.isFinite(rect.height)
         ? Math.max(0, rect.height) : 0;

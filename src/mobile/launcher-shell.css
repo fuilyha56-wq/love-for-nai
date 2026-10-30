@@ -153,6 +153,12 @@
   .launcher-content>.viewport-surface>main { min-height:calc(100dvh - 64px - env(safe-area-inset-bottom)); }
   .launcher-shell[data-immersive="true"] .launcher-content { padding-bottom:0; }
   .launcher-content [data-studio-layout], .launcher-content .image-editor-page { width:100%; height:var(--lfn-viewport-height,100dvh); min-height:0; }
+  /* The portal alone follows the IME. Freeze the inactive canvas at the same
+     pre-edit height instead of letting its independent 100dvh expand beneath it. */
+  html[data-workspace-viewport="true"] .launcher-shell,
+  html[data-workspace-viewport="true"] .launcher-content>.viewport-surface>main[data-studio-layout] {
+    height:var(--lfn-workspace-rest-height); min-height:0; overflow:hidden;
+  }
   .launcher-bottom-nav { position:fixed; z-index:85; bottom:0; left:0; right:0; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; padding:4px 8px calc(4px + env(safe-area-inset-bottom)); background:var(--panel); box-shadow:0 -1px 0 var(--line); }
   .launcher-bottom-nav :is(a,button) { display:flex; min-width:0; height:56px; flex-direction:column; align-items:center; justify-content:center; gap:4px; border-radius:12px; color:var(--muted); font-size:11px; }
   .launcher-bottom-nav [aria-current="page"] { background:color-mix(in srgb,var(--rose) 12%,var(--panel)); color:var(--accent-text); }
