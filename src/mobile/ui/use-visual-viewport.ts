@@ -29,14 +29,6 @@ export function useVisualViewport() {
     let keyboardWasOpen = false;
     let nativeState: "unknown" | "visible" | "hidden" = "unknown";
     let transitionUntil = 0;
-    let hiddenShrinkUntil = 0;
-    let hiddenShrinkHandled: Element | null = null;
-    let correctionUntil = 0;
-    let correction: { from: number; target: number; start: number } | undefined;
-    let geometryContext = "";
-    let lastEditor: Element | null = null;
-    let appliedHeight = 0;
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)");
     const written = new Map<string, string>();
     function write(name: string, value: string) {
       if (written.get(name) === value) return;
@@ -56,7 +48,6 @@ export function useVisualViewport() {
       let source = "visual";
       const active = document.activeElement;
       const editing = !!active && (active.matches(editableSelector) || (active as HTMLElement).isContentEditable);
-      if (editing) lastEditor = active;
       // Keep the pre-keyboard baseline through blur/IME closing animations too.
       // Changing orientation or viewport width invalidates that baseline.
       const widthChanged = Math.abs(window.innerWidth - baselineWidth) > 1;
@@ -127,60 +118,9 @@ export function useVisualViewport() {
       // it through blur, retained-focus dismissal and repeated keyboard visits.
       if (workspace) height = Math.min(height, Math.max(0, workspace.height - top));
       const availableVisualHeight = height;
-      const now = performance.now();
-      const context = workspace ? `${workspace.width}:${scale}:${top}:${viewport?.offsetLeft ?? 0}` : "";
-      const contextChanged = context !== geometryContext;
-      if (contextChanged) {
-        geometryContext = context;
-        hiddenShrinkUntil = correctionUntil = 0;
-        correction = undefined;
-      }
-      // Only a pane whose old editor has actually disappeared may hold a brief
-      // closing undershoot. Blur alone is not proof the input is hidden.
-      const editorHidden = !!lastEditor && (lastEditor.isConnected === false ||
-        !!lastEditor.closest?.("[hidden], [inert]"));
-      if (!workspace || editing || height >= workspace.height - 2) hiddenShrinkHandled = null;
-      else if (contextChanged) hiddenShrinkHandled = lastEditor;
-      if (!workspace || editing || !editorHidden || height >= appliedHeight - 2) hiddenShrinkUntil = 0;
-      else if (!hiddenShrinkUntil && keyboardWasOpen && hiddenShrinkHandled !== lastEditor && !contextChanged) {
-        hiddenShrinkHandled = lastEditor;
-        hiddenShrinkUntil = now + 50;
-      }
-      if (hiddenShrinkUntil && now < hiddenShrinkUntil) {
-        correction = undefined;
-        correctionUntil = 0;
-        scheduleFrame();
-        return;
-      }
-      hiddenShrinkUntil = 0;
-      if (!workspace || !editing || source === "keyboard" || reducedMotion?.matches || height >= workspace.height - 2) {
-        correction = undefined;
-        correctionUntil = 0;
-      } else {
-        if (height < appliedHeight - 2) {
-          // Shrink immediately: holding the old height leaves the input behind
-          // the IME. Only a quick upward correction after this first shrink is
-          // eased, and it can never extend beyond the latest visible rectangle.
-          correction = undefined;
-          correctionUntil = appliedHeight >= workspace.height - 2 && workspace.height - height > threshold ? now + 120 : 0;
-        }
-        if (correction && height < correction.target - 2) {
-          correction = undefined;
-          correctionUntil = 0;
-        }
-        if (!correction && height > appliedHeight + 2 && now < correctionUntil) {
-          correction = { from: appliedHeight, target: height, start: now };
-          correctionUntil = 0;
-        }
-        if (correction) {
-          correction.target = height;
-          const progress = Math.min(1, (now - correction.start) / 80);
-          height = Math.min(height, correction.from + (correction.target - correction.from) * (1 - (1 - progress) ** 2));
-          if (progress === 1) correction = undefined;
-          else scheduleFrame();
-        }
-      }
-      appliedHeight = height;
+      // Publish one rectangle directly from the browser. Interpolating height
+      // leaves a visible strip above the IME and repeatedly resizes/scrolls the
+      // focused editor after the browser has already reached its final size.
       write("--lfn-viewport-height", `${height}px`);
       write("--lfn-viewport-width", `${width}px`);
       write("--lfn-viewport-top", `${top}px`);
