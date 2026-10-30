@@ -5,6 +5,7 @@ import { useId } from "react";
 import { LfnSearchField } from "@/app/ui/lfn-search-field";
 import { PopupSelect } from "@/mobile/ui/popup-select";
 import styles from "@/mobile/ui/discovery-controls.module.css";
+import layout from "@/app/gallery/gallery-filters.module.css";
 import type { GallerySort } from "@/app/gallery/use-gallery-discovery";
 
 const ratings = [
@@ -19,6 +20,10 @@ const sorts = [
   { value: "likes", label: "点赞最多" },
   { value: "downloads", label: "下载最多" },
   { value: "uses", label: "导入使用最多" },
+];
+const categories = [
+  { value: "all", label: "全部图片" },
+  { value: "no-original-data", label: "无原数据图" },
 ];
 
 export function GalleryFilters({ query, onQueryChange, tagFilter, onTagFilterChange, tagSuggestions, rating, onRatingChange, category = "all", onCategoryChange, sort, onSortChange, total, loading, onReset, onRefresh, Select = PopupSelect }: {
@@ -42,19 +47,21 @@ export function GalleryFilters({ query, onQueryChange, tagFilter, onTagFilterCha
   const id = useId();
   const tags = [...new Set(tagFilter.split(/[,，\n]/).map((tag) => tag.trim()).filter(Boolean))];
   const filtered = Boolean(query || tags.length || rating !== "all" || category !== "all" || sort !== "newest");
+  const filters = [
+    { key: "category", label: "原数据分类", ariaLabel: "按原数据分类筛选", value: category, options: categories, onChange: (value: string) => onCategoryChange?.(value) },
+    { key: "rating", label: "作品分级", ariaLabel: "按作品分级筛选", value: rating, options: ratings, onChange: onRatingChange },
+    { key: "sort", label: "排序方式", ariaLabel: "图库排序方式", value: sort, options: sorts, onChange: (value: string) => onSortChange(value as GallerySort) },
+  ];
   return <section className={styles.panel} aria-label="图片广场搜索与筛选">
-    <LfnSearchField label="搜索图片广场" value={query} onChange={onQueryChange} placeholder="搜索作品名、作者或标签…" />
-    <div className={styles.filters}>
+    <div className={layout.searchFields}>
+      <LfnSearchField label="搜索图片广场" value={query} onChange={onQueryChange} placeholder="搜索作品名、作者或标签…" />
       <LfnSearchField label="按标签筛选作品" value={tagFilter} onChange={onTagFilterChange} placeholder="输入标签，多个标签用逗号分隔" suggestions={tagSuggestions} multiple />
-      <div className={`${styles.field} ${styles.select}`}><label className={styles.label} htmlFor={`${id}-category`}>原数据分类</label><Select id={`${id}-category`} ariaLabel="按原数据分类筛选" value={category} options={[{ value: "all", label: "全部图片" }, { value: "no-original-data", label: "无原数据图" }]} onChange={value => onCategoryChange?.(value)} menuClassName={styles.menu} /></div>
-      <div className={`${styles.field} ${styles.select}`}>
-        <label className={styles.label} htmlFor={`${id}-rating`}>作品分级</label>
-        <Select id={`${id}-rating`} ariaLabel="按作品分级筛选" value={rating} options={ratings} onChange={onRatingChange} menuClassName={styles.menu} />
-      </div>
-      <div className={`${styles.field} ${styles.select}`}>
-        <label className={styles.label} htmlFor={`${id}-sort`}>排序方式</label>
-        <Select id={`${id}-sort`} ariaLabel="图库排序方式" value={sort} options={sorts} onChange={(value) => onSortChange(value as GallerySort)} menuClassName={styles.menu} />
-      </div>
+    </div>
+    <div className={layout.filterFields}>
+      {filters.map(filter => <div key={filter.key} className={`${styles.field} ${styles.select}`}>
+        <label className={styles.label} htmlFor={`${id}-${filter.key}`}>{filter.label}</label>
+        <Select id={`${id}-${filter.key}`} ariaLabel={filter.ariaLabel} value={filter.value} options={filter.options} onChange={filter.onChange} menuClassName={styles.menu} />
+      </div>)}
     </div>
     <div className={styles.footer}>
       <p className={styles.status} role="status" aria-live="polite">{loading ? <><LoaderCircle size={14} className={styles.spin} aria-hidden="true" />正在查找作品…</> : <><SlidersHorizontal size={14} aria-hidden="true" />{filtered ? "找到" : "共"} <strong>{total}</strong> 件作品</>}</p>
