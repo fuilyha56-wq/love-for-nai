@@ -2,7 +2,8 @@ import { keyboardProbePage } from "@/lib/keyboard-probe-page";
 
 /** A separate document: it does not load the application's layout or viewport hooks. */
 export function GET(request: Request) {
-  const mode = new URL(request.url).searchParams.get("mode") === "overlay" ? "overlay" : "content";
+  const requested = new URL(request.url).searchParams.get("mode");
+  const mode = requested === "overlay" || requested === "native" ? requested : "content";
   return new Response(keyboardProbePage(mode), {
     headers: {
       "Content-Type": "text/html; charset=utf-8",

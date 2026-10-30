@@ -8,7 +8,7 @@ import {
   VIEWPORT_DIAGNOSTIC_VERSION,
 } from "./viewport-diagnostic-schema";
 
-export function keyboardProbePage(mode: "content" | "overlay") {
+export function keyboardProbePage(mode: "content" | "overlay" | "native") {
   const config = JSON.stringify({
     mode, bounds: VIEWPORT_DIAGNOSTIC_BOUNDS, tokenPattern: VIEWPORT_DIAGNOSTIC_CAPTURE_RE.source,
     duration: VIEWPORT_DIAGNOSTIC_DURATION_MS, events: VIEWPORT_DIAGNOSTIC_EVENT,
@@ -21,7 +21,7 @@ export function keyboardProbePage(mode: "content" | "overlay") {
 <title>键盘尺寸对照</title><link rel="icon" href="data:,">
 <style>
 *{box-sizing:border-box}html,body{margin:0;height:100%;font-family:system-ui,sans-serif;color:#18212d;background:#f4f6f8}body{overflow:hidden}
-#probe{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:white}.overlay #probe{padding-bottom:env(keyboard-inset-height,0px)}
+#probe{height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:white}.overlay #probe,.native #probe{padding-bottom:env(keyboard-inset-height,0px)}
 header{flex:none;padding:8px 10px;border-bottom:1px solid #c8d0da;background:#edf3fa}h1{font-size:16px;line-height:20px;margin:0}p{margin:5px 0;font-size:12px;line-height:17px}
 nav{display:flex;gap:8px;margin:6px 0}a{color:#194c9b;font-size:12px;padding:4px 6px;border:1px solid #8ca7ce;border-radius:4px}a[aria-current=page]{font-weight:700;background:#d3e4ff}
 #readout{height:32px;overflow:hidden;white-space:pre;font:11px/16px ui-monospace,monospace;font-variant-numeric:tabular-nums}button{font:inherit;font-size:13px;min-height:32px;border:1px solid #7292bc;border-radius:5px;background:#e3efff;color:#173d70;padding:5px 8px}button:disabled{opacity:.65}#record{width:100%;margin-top:5px;white-space:nowrap}
@@ -29,12 +29,12 @@ nav{display:flex;gap:8px;margin:6px 0}a{color:#194c9b;font-size:12px;padding:4px
 #composer{flex:none;padding:7px 10px;border-top:1px solid #c8d0da;background:#edf3fa}.input-row{display:flex;align-items:stretch;gap:7px}#lower{height:58px;min-width:0;flex:1}.input-row button{flex:none}
 #measure{position:fixed;top:0;left:0;width:0;height:100dvh;visibility:hidden;pointer-events:none;--key-top:env(keyboard-inset-top,0px);--key-height:env(keyboard-inset-height,0px);--key-width:env(keyboard-inset-width,0px);--key-left:env(keyboard-inset-left,0px);--key-bottom:env(keyboard-inset-bottom,0px)}
 </style></head><body class="${mode}"><main id="probe">
-<header><h1>键盘尺寸对照 · ${mode === "overlay" ? "覆盖模式" : "内容缩放模式"}</h1>
+<header><h1>键盘尺寸对照 · ${mode === "native" ? "原生 API 模式" : mode === "overlay" ? "覆盖模式" : "内容缩放模式"}</h1>
 <p>独立页面，不改变正式工作台。仅记录尺寸，不保存输入文字。</p>
-<nav aria-label="对照模式"><a data-mode="content" href="?mode=content" ${mode === "content" ? 'aria-current="page"' : ""}>内容缩放</a><a data-mode="overlay" href="?mode=overlay" ${mode === "overlay" ? 'aria-current="page"' : ""}>覆盖 + CSS env</a></nav>
+<nav aria-label="对照模式"><a data-mode="content" href="?mode=content" ${mode === "content" ? 'aria-current="page"' : ""}>内容缩放</a><a data-mode="overlay" href="?mode=overlay" ${mode === "overlay" ? 'aria-current="page"' : ""}>覆盖 + CSS env</a><a data-mode="native" href="?mode=native" ${mode === "native" ? 'aria-current="page"' : ""}>原生 API</a></nav>
 <div id="readout" aria-label="实时尺寸"></div><button id="record" type="button" disabled>需要有效诊断链接</button></header>
 <section id="middle" aria-label="可滚动中间区域"><label for="upper">上部输入框</label><textarea id="upper" placeholder="点这里弹出键盘" autocomplete="off"></textarea>
-<p>先点击上方的记录按钮，再交替点击上下输入框，收起并重新弹出键盘。</p><p>观察底部输入框是否被遮挡、键盘上方是否出现空白，以及中间内容是否能滚动。</p><p>内容缩放模式：浏览器调整页面尺寸。覆盖模式：页面仅使用 CSS 键盘环境变量避让；变量为 0 时可能不会避让，这正是本页要记录的对照结果。</p><p>输入任意测试文字即可，不会发送文字。</p></section>
+<p>先点击上方的记录按钮，再交替点击上下输入框，收起并重新弹出键盘。</p><p>观察底部输入框是否被遮挡、键盘上方是否出现空白，以及中间内容是否能滚动。</p><p>内容缩放模式：浏览器调整页面尺寸。覆盖模式：仅使用 CSS 键盘环境变量避让；变量为 0 时可能不会避让。原生模式：在 HTTPS 且 API 可用时主动开启键盘覆盖，并记录原生键盘位置；不支持时退回内容缩放。</p><p>读数中“输入/预”是本地 input / beforeinput 事件次数，不上传。输入任意测试文字即可，不会发送文字。</p></section>
 <footer id="composer"><label for="lower">底部输入框</label><div class="input-row"><textarea id="lower" placeholder="点这里再次对照" autocomplete="off"></textarea><button id="dismiss" type="button">收起</button></div></footer>
 </main><div id="measure" aria-hidden="true"></div>
 <script>
@@ -49,14 +49,28 @@ const button = document.getElementById("record"), readout = document.getElementB
 const viewport = window.visualViewport, keyboard = navigator.virtualKeyboard;
 const validToken = new RegExp(config.tokenPattern, "i");
 let capture = "", state = "ready", savedPayload = null, stop = null, request = null;
+let inputs = 0, beforeInputs = 0;
+const previousOverlay = keyboard ? keyboard.overlaysContent : false;
+let nativeStatus = "";
+function enableNative() {
+  if (config.mode !== "native") return;
+  nativeStatus = !isSecureContext ? "原生需HTTPS" : !keyboard ? "原生不支持" : "原生未开启";
+  if (!isSecureContext || !keyboard) return;
+  try {
+    keyboard.overlaysContent = true;
+    if (keyboard.overlaysContent) nativeStatus = "原生已开启";
+  } catch { nativeStatus = "原生开启失败"; }
+}
 function env() {
   const style = getComputedStyle(measure);
   return ["top", "height", "width", "left", "bottom"].map(name => Number.parseFloat(style.getPropertyValue("--key-" + name)) || 0);
 }
 function metrics() {
   const k = env();
-  readout.textContent = "VV " + (viewport ? viewport.height.toFixed(1) : "n/a") + " · inner " + innerHeight + " · dvh " + measure.getBoundingClientRect().height.toFixed(1)
+  const text = (nativeStatus ? nativeStatus + " · " : "") + "VV " + (viewport ? viewport.height.toFixed(1) : "n/a")
+    + " D " + measure.getBoundingClientRect().height.toFixed(1) + " 输入/预 " + inputs + "/" + beforeInputs
     + "\\nenv top/h/w/l/b: " + k.map(value => value.toFixed(1)).join(" / ");
+  if (readout.textContent !== text) readout.textContent = text;
 }
 function tokenChanged() {
   const value = (new URLSearchParams(location.hash.slice(1)).get("viewportTrace") || "").toLowerCase();
@@ -78,10 +92,12 @@ function snapshot(start, mask) {
   const active = document.activeElement;
   const textarea = active instanceof HTMLTextAreaElement ? active : lower;
   const rect = panel.getBoundingClientRect(), k = env();
+  const native = config.mode === "native" ? keyboard && keyboard.boundingRect : null;
   const kind = !active ? 0 : active === body ? 1 : active instanceof HTMLTextAreaElement ? 2
     : active instanceof HTMLInputElement ? 3 : active.isContentEditable ? 4 : 5;
   // Schema 1: main/panel are the CSS page, pane/transcript the scrollable middle.
-  // vk_y/vk_height carry CSS env top/height here; vk_available remains the real API presence.
+  // Native mode records the actual API rect; the other modes record CSS env.
+  // Input event counters stay on this page and are not included in the matrix.
   const row = [performance.now() - start, mask, innerHeight, innerWidth, root.clientHeight,
     viewport ? viewport.height : -1, viewport ? viewport.width : -1, viewport ? viewport.offsetTop : -1,
     viewport ? viewport.offsetLeft : -1, viewport ? viewport.scale : -1, viewport ? viewport.pageTop : -1,
@@ -89,18 +105,27 @@ function snapshot(start, mask) {
     ...box(body), ...box(root), ...box(panel), -1, -1, -1, -1, -1, -1,
     ...box(middle), ...box(panel), ...box(middle), ...box(composer), ...box(textarea),
     body.clientHeight, body.scrollHeight, root.scrollHeight, panel.clientHeight, panel.scrollHeight,
-    kind, 0, k[0], k[1], config.mode === "overlay" ? 1 : 0, config.mode === "content" ? 1 : 0, document.hidden ? 1 : 0];
+    kind, config.mode === "native" ? 2 : 0,
+    config.mode === "native" ? (native ? native.y : -1) : k[0],
+    config.mode === "native" ? (native ? native.height : -1) : k[1],
+    config.mode === "native" ? (keyboard ? Number(keyboard.overlaysContent) : -1) : config.mode === "overlay" ? 1 : 0,
+    config.mode === "overlay" ? 0 : 1, document.hidden ? 1 : 0];
   return row.map((value, index) => {
     const bound = config.bounds[index];
     return Math.round(Math.max(bound[0], Math.min(bound[1], Number.isFinite(value) ? value : -1)) * 100) / 100;
   });
+}
+function uploadPath() {
+  const base = new URL(location.href);
+  base.pathname = base.pathname.replace(/\\/$/, "");
+  return new URL("../api/diagnostics/viewport", base).pathname;
 }
 async function upload() {
   if (!savedPayload || !validToken.test(savedPayload.capture)) return;
   state = "uploading"; button.disabled = true; button.textContent = "正在发送尺寸记录…";
   request = new AbortController();
   try {
-    const response = await fetch("/api/diagnostics/viewport", {method:"POST", headers:{"Content-Type":"application/json"},
+    const response = await fetch(uploadPath(), {method:"POST", headers:{"Content-Type":"application/json"},
       body:JSON.stringify(savedPayload), signal:request.signal, credentials:"omit", referrerPolicy:"no-referrer", cache:"no-store"});
     if (!response.ok) throw new Error("Upload failed");
     const result = await response.json();
@@ -168,14 +193,27 @@ function begin() {
   stop = cleanup; append(snapshot(started, E.start)); frame = requestAnimationFrame(sample);
 }
 button.addEventListener("click", begin);
+document.addEventListener("input", event => {
+  if (event.target instanceof HTMLTextAreaElement) { inputs++; metrics(); }
+});
+document.addEventListener("beforeinput", event => {
+  if (event.target instanceof HTMLTextAreaElement) { beforeInputs++; metrics(); }
+});
 document.getElementById("dismiss").addEventListener("pointerdown", () => {
   if (document.activeElement instanceof HTMLTextAreaElement) document.activeElement.blur();
 });
 window.addEventListener("hashchange", tokenChanged);
 window.addEventListener("resize", metrics);
 if (viewport) viewport.addEventListener("resize", metrics);
-window.addEventListener("pagehide", () => { if (stop) stop(); if (request) request.abort(); });
-tokenChanged(); metrics();
+if (keyboard) keyboard.addEventListener("geometrychange", metrics);
+window.addEventListener("pagehide", () => {
+  if (stop) stop(); if (request) request.abort();
+  if (config.mode === "native" && keyboard) {
+    try { keyboard.overlaysContent = previousOverlay; } catch { /* The page is leaving. */ }
+  }
+});
+window.addEventListener("pageshow", () => { enableNative(); metrics(); });
+enableNative(); tokenChanged(); metrics();
 })();
 </script></body></html>`;
 }
