@@ -202,11 +202,10 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
     </nav>
     {portalTarget && (workspace.visited.length > 0 || legacySheet) && createPortal(<div className="mobile-studio-prompt-backdrop" role="presentation" hidden={!dialogOpen} inert={!dialogOpen} onClick={goBack}>
       <section ref={activeSheetRef} tabIndex={-1} className="mobile-studio-prompt-dialog mobile-studio-workspace-dialog" data-active-pane={activePane || undefined} role="dialog" aria-modal={dialogOpen ? "true" : undefined} aria-label={activeSheet === "prompt" ? "提示词区域" : activeSheet ? sheetTitles[activeSheet] : undefined} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); goBack(); } }}>
-        <header className="mobile-studio-sheet-header"><button type="button" aria-label={activePane === "prompt" ? "收起提示词" : `关闭${activeSheet ? sheetTitles[activeSheet] : "工作面板"}`} onClick={goBack}><ArrowLeft size={20} /></button><b>{activeSheet ? sheetTitles[activeSheet] : "工作面板"}</b></header>
+        <header className="mobile-studio-sheet-header"><button type="button" aria-label={activePane === "prompt" ? "收起提示词" : `关闭${activeSheet ? sheetTitles[activeSheet] : "工作面板"}`} onClick={goBack}><ArrowLeft size={20} /></button><b>{activeSheet ? sheetTitles[activeSheet] : "工作面板"}{activePane === "parameters" && <small className="mobile-studio-workspace-dimensions">{width}×{height}</small>}</b>{activePane && <button type="button" className="mobile-studio-workspace-done" onClick={closeWorkspace}>完成</button>}</header>
         {activePane && workspaceSwitch(activePane)}
         {workspacePanes.map((pane) => workspace.visited.includes(pane) && <WorkspaceContent key={pane} pane={pane} active={activePane === pane}>{pane === "prompt" ? promptContent : pane === "parameters" ? parameterContent : assistantContent}</WorkspaceContent>)}
         {legacySheet && <div className="mobile-studio-sheet-content">{legacySheet === "reference" ? <>{referenceContent}{sheetContent}</> : sheetContent}</div>}
-        {activePane && <div className="mobile-studio-prompt-actions"><button type="button" onClick={() => openWorkspace(activePane === "parameters" ? "prompt" : "parameters")}>{activePane === "parameters" ? <Sparkles size={17} /> : <SlidersHorizontal size={17} />}{activePane === "parameters" ? "返回提示词" : `生成参数 · ${width}×${height}`}</button><button type="button" onClick={closeWorkspace}>完成</button></div>}
       </section>
     </div>, portalTarget)}
   </div>;

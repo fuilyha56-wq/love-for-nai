@@ -16,12 +16,22 @@ export function useVisualViewport() {
     let baselineHeight = window.innerHeight;
     let baselineWidth = window.innerWidth;
     let keyboardWasOpen = false;
-    let settling: ReturnType<typeof setTimeout>[] = [];
+    let nativeState: "unknown" | "visible" | "hidden" = "unknown";
+    let transitionUntil = 0;
+    const written = new Map<string, string>();
+    function write(name: string, value: string) {
+      if (written.get(name) === value) return;
+      written.set(name, value);
+      root.style.setProperty(name, value);
+    }
     function measure() {
       frame = 0;
       let height = viewport?.height ?? window.innerHeight;
       const width = viewport?.width ?? window.innerWidth;
-      if (height <= 0 || width <= 0) return;
+      if (height <= 0 || width <= 0) {
+        if (performance.now() < transitionUntil) scheduleFrame();
+        return;
+      }
       let top = viewport?.offsetTop ?? 0;
       const scale = viewport?.scale ?? 1;
       let source = "visual";
@@ -29,10 +39,12 @@ export function useVisualViewport() {
       const editing = !!active && (active.matches(editableSelector) || (active as HTMLElement).isContentEditable);
       // Keep the pre-keyboard baseline through blur/IME closing animations too.
       // Changing orientation or viewport width invalidates that baseline.
-      if ((!editing && !keyboardWasOpen) || Math.abs(window.innerWidth - baselineWidth) > 1) {
+      const widthChanged = Math.abs(window.innerWidth - baselineWidth) > 1;
+      if ((!editing && !keyboardWasOpen) || widthChanged) {
         baselineHeight = window.innerHeight;
         baselineWidth = window.innerWidth;
         keyboardWasOpen = false;
+        if (widthChanged) nativeState = "unknown";
       }
       const availableHeight = Math.max(baselineHeight, window.innerHeight);
       const threshold = Math.max(120, availableHeight * 0.15);
@@ -47,70 +59,94 @@ export function useVisualViewport() {
         rect.height > 0 && rect.y > top && rect.x <= 1 &&
         rect.x + rect.width >= window.innerWidth - 1 &&
         Math.abs(rect.y + rect.height - layoutHeight) <= 2;
+      const empty = !!rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) &&
+        rect.width === 0 && rect.height === 0;
+      if (!keyboard?.overlaysContent || !unzoomed || (!docked && !empty)) nativeState = "unknown";
+      // Once visual metrics catch up, the dismissal override has done its job.
+      // A later keyboard opening can retain focus too; do not carry the previous
+      // full-height decision into that new opening while native geometry lags.
+      if (nativeState === "hidden" && Math.abs(height - layoutHeight) <= 2 && Math.abs(top) <= 2) nativeState = "unknown";
       if (docked) {
         // At scale 1 the keyboard top is independent of VisualViewport: it can
         // recover space lost to a stale/undersized viewport report. While zoomed,
         // only clip the visible viewport; older engines use inconsistent rects.
         height = unzoomed ? rect.y - top : Math.min(height, rect.y - top);
         source = "keyboard";
-      } else if (!keyboard?.overlaysContent && unzoomed && (editing || keyboardWasOpen) &&
-        availableHeight - layoutHeight > threshold && Math.abs(layoutHeight - window.innerHeight) <= 2 &&
-        Math.abs(height - layoutHeight) <= 2) {
-        // resizes-content: use the layout size only when the visual size agrees.
-        // A smaller layout alone can also mean split-screen/window resizing;
-        // expanding a truly keyboard-occluded visual viewport would hide input.
+        if (unzoomed) nativeState = "visible";
+      } else if (keyboard?.overlaysContent && unzoomed && empty && nativeState !== "unknown") {
+        // A working native API changing from docked to empty confirms dismissal,
+        // even if Android retains input focus and its visual metrics still lag.
+        // Overlay mode leaves the layout viewport intact: do not wait for a
+        // second resize or preserve the keyboard's stale pan/height here.
+        nativeState = "hidden";
         height = layoutHeight;
         top = 0;
-        source = "layout";
+        source = "keyboard";
       }
-      root.style.setProperty("--lfn-viewport-height", `${height}px`);
-      root.style.setProperty("--lfn-viewport-width", `${width}px`);
-      root.style.setProperty("--lfn-viewport-top", `${top}px`);
-      root.style.setProperty("--lfn-viewport-left", `${viewport?.offsetLeft ?? 0}px`);
-      root.dataset.viewportSource = source;
+      // Without validated native geometry, the visual rectangle is the only
+      // authority, including resizes-content browsers. Switching to layout
+      // height near equality also reset offsetTop and could move the sheet back
+      // and forth as animation rounding crossed the old two-pixel boundary.
+      write("--lfn-viewport-height", `${height}px`);
+      write("--lfn-viewport-width", `${width}px`);
+      write("--lfn-viewport-top", `${top}px`);
+      write("--lfn-viewport-left", `${viewport?.offsetLeft ?? 0}px`);
+      if (root.dataset.viewportSource !== source) root.dataset.viewportSource = source;
 
       const heightLoss = Math.max(0, availableHeight - height * scale);
       const estimatedHeight = (editing || keyboardWasOpen) && heightLoss > threshold ? heightLoss : 0;
-      const keyboardHeight = Math.max(0, rect?.height ?? 0) || estimatedHeight;
-      root.style.setProperty("--lfn-keyboard-height", `${keyboardHeight}px`);
-      root.dataset.keyboardOpen = keyboardHeight > 0 ? "true" : "false";
+      const nativeHeight = keyboard?.overlaysContent && rect && Number.isFinite(rect.height)
+        ? Math.max(0, rect.height) : 0;
+      const keyboardHeight = nativeState === "hidden" && source === "keyboard"
+        ? 0 : nativeHeight || estimatedHeight;
+      write("--lfn-keyboard-height", `${keyboardHeight}px`);
+      const open = keyboardHeight > 0 ? "true" : "false";
+      if (root.dataset.keyboardOpen !== open) root.dataset.keyboardOpen = open;
       keyboardWasOpen = keyboardHeight > 0;
+      if (performance.now() < transitionUntil) scheduleFrame();
     }
     function scheduleFrame() { if (!frame) frame = requestAnimationFrame(measure); }
     function schedule() {
       scheduleFrame();
-      // Some mobile engines notify before their final IME geometry is available.
-      // Bounded trailing reads cover that transition without a permanent poll.
-      settling.forEach(clearTimeout);
-      settling = [60, 180, 350, 600].map(delay => setTimeout(scheduleFrame, delay));
+      // Android can notify before updating its metrics, including keyboard /
+      // clipboard-panel swaps. Read each paint during this bounded transition,
+      // not at sparse timeout checkpoints that leave the old layout on screen.
+      transitionUntil = performance.now() + 750;
+    }
+    function focusIn() {
+      // A new focus can start another keyboard opening before native geometry
+      // catches up. The previous dismissal is no longer proof it is hidden.
+      if (nativeState === "hidden") nativeState = "unknown";
+      schedule();
     }
     function resetBaseline() {
       baselineHeight = window.innerHeight;
       baselineWidth = window.innerWidth;
       keyboardWasOpen = false;
+      nativeState = "unknown";
       schedule();
     }
     measure();
     viewport?.addEventListener("resize", schedule);
-    viewport?.addEventListener("scroll", scheduleFrame);
+    viewport?.addEventListener("scroll", schedule);
     window.addEventListener("resize", schedule);
     window.addEventListener("pageshow", schedule);
     window.addEventListener("orientationchange", resetBaseline);
     orientation?.addEventListener("change", resetBaseline);
     keyboard?.addEventListener("geometrychange", schedule);
-    document.addEventListener("focusin", schedule);
+    document.addEventListener("focusin", focusIn);
     document.addEventListener("focusout", schedule);
     return () => {
       cancelAnimationFrame(frame);
-      settling.forEach(clearTimeout);
+      transitionUntil = 0;
       viewport?.removeEventListener("resize", schedule);
-      viewport?.removeEventListener("scroll", scheduleFrame);
+      viewport?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
       window.removeEventListener("pageshow", schedule);
       window.removeEventListener("orientationchange", resetBaseline);
       orientation?.removeEventListener("change", resetBaseline);
       keyboard?.removeEventListener("geometrychange", schedule);
-      document.removeEventListener("focusin", schedule);
+      document.removeEventListener("focusin", focusIn);
       document.removeEventListener("focusout", schedule);
       root.style.removeProperty("--lfn-viewport-height");
       root.style.removeProperty("--lfn-viewport-width");

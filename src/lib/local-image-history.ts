@@ -1,5 +1,5 @@
 import { imageHistoryContent, sameImageHistoryContent } from "@/lib/image-history-content";
-import { cacheImageBlob } from "@/lib/browser-image-cache";
+import { cacheImageBlob, createImageThumbnail } from "@/lib/browser-image-cache";
 
 export type LocalImageHistoryItem = {
   id: string;
@@ -15,8 +15,20 @@ export type LocalImageHistoryItem = {
   parameters?: Record<string, unknown>;
 };
 
+/** List rows never carry the full-resolution Blob. */
+export type LocalImageHistorySummary = Omit<LocalImageHistoryItem, "image"> & {
+  imageType: string;
+  imageSize: number;
+};
+
+function historySummary({ image, ...item }: LocalImageHistoryItem): LocalImageHistorySummary {
+  return { ...item, imageType: image.type, imageSize: image.size };
+}
+
 const DB_NAME = "lfn-local-image-history-v1";
 const STORE = "images";
+const SUMMARIES = "summaries";
+const THUMBNAILS = "thumbnails";
 const MODE_KEY = "lfn-image-history-mode-v1";
 export type ImageHistoryMode = "account" | "local" | "none";
 
@@ -35,9 +47,28 @@ export function writeImageHistoryMode(mode: ImageHistoryMode) {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE, { keyPath: "id" });
-    request.onsuccess = () => resolve(request.result);
+    const request = indexedDB.open(DB_NAME, 3);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const images = db.objectStoreNames.contains(STORE)
+        ? request.transaction!.objectStore(STORE) : db.createObjectStore(STORE, { keyPath: "id" });
+      if (!images.indexNames.contains("remoteId")) images.createIndex("remoteId", "remoteId");
+      if (!db.objectStoreNames.contains(THUMBNAILS)) db.createObjectStore(THUMBNAILS, { keyPath: "id" });
+      if (db.objectStoreNames.contains(SUMMARIES)) return;
+      const summaries = db.createObjectStore(SUMMARIES, { keyPath: "id" });
+      // Project legacy rows one at a time; do not materialize all original Blobs.
+      // Their thumbnails are generated lazily when a visible list row needs one.
+      const cursor = images.openCursor();
+      cursor.onsuccess = () => {
+        if (!cursor.result) return;
+        summaries.put(historySummary(cursor.result.value as LocalImageHistoryItem));
+        cursor.result.continue();
+      };
+    };
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close();
+      resolve(request.result);
+    };
     request.onerror = () => reject(request.error || new Error("无法打开本地图片历史"));
   });
 }
@@ -46,24 +77,65 @@ export async function saveLocalImageHistory(item: LocalImageHistoryItem) {
   const db = await openDb();
   try {
     await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(STORE, "readwrite");
+      const transaction = db.transaction([STORE, SUMMARIES, THUMBNAILS], "readwrite");
       transaction.objectStore(STORE).put(item);
+      transaction.objectStore(SUMMARIES).put(historySummary(item));
+      // Persist the original first. Preview decoding/quota must never lose it.
+      transaction.objectStore(THUMBNAILS).delete(item.id);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error || new Error("无法保存本地图片历史"));
       transaction.onabort = () => reject(transaction.error || new Error("无法保存本地图片历史"));
     });
   } finally { db.close(); }
-  if (item.remoteId) await cacheImageBlob(`/api/history/${encodeURIComponent(item.remoteId)}/image`, item.image).catch(() => undefined);
+  const thumbnail = await createImageThumbnail(item.image).catch(() => null);
+  if (thumbnail) await persistHistoryThumbnail(item, thumbnail);
+  // The original belongs to the owner captured at generation time, not whoever
+  // may have signed in while the asynchronous preview was being decoded.
+  if (item.remoteId && Number.isSafeInteger(item.ownerId) && item.ownerId! > 0) await cacheImageBlob(`/api/history/${encodeURIComponent(item.remoteId)}/image`, item.image, `user:${item.ownerId}`).catch(() => undefined);
+}
+
+async function persistHistoryThumbnail(original: LocalImageHistoryItem, thumbnail: Blob) {
+  let db: IDBDatabase | undefined;
+  try {
+    db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db!.transaction([STORE, THUMBNAILS], "readwrite");
+      const read = transaction.objectStore(STORE).get(original.id);
+      read.onsuccess = () => {
+        // Do not recreate a deleted row's thumbnail after asynchronous decoding.
+        const current = read.result as LocalImageHistoryItem | undefined;
+        try {
+          if (current && current.createdAt === original.createdAt && current.image.size === original.image.size) transaction.objectStore(THUMBNAILS).put({ id: original.id, image: thumbnail });
+        } catch (error) { reject(error); transaction.abort(); }
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } catch { /* A preview is usable even when persistent cache storage is full. */ }
+  finally { db?.close(); }
 }
 
 export async function deleteLocalImageHistory(id: string) {
   const db = await openDb();
-  await new Promise<void>((resolve, reject) => {
-    const request = db.transaction(STORE, "readwrite").objectStore(STORE).delete(id);
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error || new Error("无法删除本地图片历史"));
-  });
-  db.close();
+  try { await new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction([STORE, SUMMARIES, THUMBNAILS], "readwrite");
+    for (const store of [STORE, SUMMARIES, THUMBNAILS]) transaction.objectStore(store).delete(id);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error("无法删除本地图片历史"));
+    transaction.onabort = () => reject(transaction.error || new Error("无法删除本地图片历史"));
+  }); } finally { db.close(); }
+}
+
+export async function listLocalImageHistorySummaries(limit = Number.POSITIVE_INFINITY): Promise<LocalImageHistorySummary[]> {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(SUMMARIES, "readonly").objectStore(SUMMARIES).getAll();
+      request.onsuccess = () => resolve((request.result as LocalImageHistorySummary[]).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit));
+      request.onerror = () => reject(request.error || new Error("无法读取本地图片历史"));
+    });
+  } finally { db.close(); }
 }
 
 export async function listLocalImageHistory(limit = 40): Promise<LocalImageHistoryItem[]> {
@@ -84,16 +156,43 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
 
 export async function findLocalImageHistory(remoteId: string): Promise<LocalImageHistoryItem | null> {
   const db = await openDb();
-  const item = await new Promise<LocalImageHistoryItem | null>((resolve, reject) => {
-    const request = db.transaction(STORE, "readonly").objectStore(STORE).getAll();
+  try { return await new Promise<LocalImageHistoryItem | null>((resolve, reject) => {
+    const store = db.transaction(STORE, "readonly").objectStore(STORE);
+    const request = store.get(remoteId);
     request.onsuccess = () => {
-      const items = request.result as LocalImageHistoryItem[];
-      resolve(items.find((entry) => entry.remoteId === remoteId || entry.id === remoteId) || null);
+      if (request.result) { resolve(request.result); return; }
+      const remote = store.index("remoteId").get(remoteId);
+      remote.onsuccess = () => resolve(remote.result || null);
+      remote.onerror = () => reject(remote.error || new Error("无法查找本地图片历史"));
     };
     request.onerror = () => reject(request.error || new Error("无法查找本地图片历史"));
-  });
-  db.close();
-  return item;
+  }); } finally { db.close(); }
+}
+
+const thumbnailReads = new Map<string, Promise<Blob | null>>();
+
+/** Decode at most one selected legacy original per image, then persist its preview. */
+export function getLocalImageHistoryThumbnail(id: string): Promise<Blob | null> {
+  const pending = thumbnailReads.get(id);
+  if (pending) return pending;
+  const request = (async () => {
+    const db = await openDb();
+    let cached: Blob | null;
+    try { cached = await new Promise((resolve, reject) => {
+      const read = db.transaction(THUMBNAILS, "readonly").objectStore(THUMBNAILS).get(id);
+      read.onsuccess = () => resolve(read.result?.image || null);
+      read.onerror = () => reject(read.error);
+    }); } finally { db.close(); }
+    if (cached) return cached;
+    const original = await findLocalImageHistory(id);
+    if (!original) return null;
+    const thumbnail = await createImageThumbnail(original.image).catch(() => null);
+    if (!thumbnail) return null;
+    await persistHistoryThumbnail(original, thumbnail);
+    return thumbnail;
+  })().finally(() => thumbnailReads.delete(id));
+  thumbnailReads.set(id, request);
+  return request;
 }
 
 /** Repair legacy copies by comparing bytes, including on the HTTP deployment. */
@@ -155,13 +254,17 @@ export async function linkLocalImageHistoryToRemote(
   if (!links.size) return;
   const db = await openDb();
   try { await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(STORE, "readwrite");
+    const transaction = db.transaction([STORE, SUMMARIES], "readwrite");
     const store = transaction.objectStore(STORE);
     for (const [id, remoteId] of links) {
       const request = store.get(id);
       request.onsuccess = () => {
         const current = request.result as LocalImageHistoryItem | undefined;
-        if (current && !current.remoteId) store.put({ ...current, remoteId });
+        if (current && !current.remoteId) {
+          const linked = { ...current, remoteId };
+          store.put(linked);
+          transaction.objectStore(SUMMARIES).put(historySummary(linked));
+        }
       };
     }
     transaction.oncomplete = () => resolve();

@@ -1,3 +1,5 @@
+import { parseLocalHistoryImageSource } from "@/lib/local-history-image-source";
+
 /** Persistent image bytes are separate from history rows: caching never creates a gallery entry. */
 const DB_NAME = "lfn-browser-image-cache-v1";
 const STORE = "images";
@@ -17,7 +19,7 @@ function cacheUrl(source: string): string | null {
   return url.pathname + url.search;
 }
 
-export function isCacheableImage(source: string): boolean { return cacheUrl(source) !== null; }
+export function isCacheableImage(source: string): boolean { return parseLocalHistoryImageSource(source) !== null || cacheUrl(source) !== null; }
 
 // Share concurrent checks only. A later lookup checks the current account again,
 // including after login/logout or an account change in another browser tab.
@@ -74,7 +76,7 @@ async function fetchImage(source: string, revalidate = false): Promise<Blob> {
   return blob;
 }
 
-async function thumbnailFrom(original: Blob): Promise<Blob> {
+export async function createImageThumbnail(original: Blob): Promise<Blob> {
   const objectUrl = URL.createObjectURL(original);
   try {
     const image = new Image();
@@ -95,10 +97,11 @@ async function thumbnailFrom(original: Blob): Promise<Blob> {
 }
 
 /** Store a newly generated/local original without requesting its server copy. */
-export async function cacheImageBlob(source: string, blob: Blob): Promise<void> {
+export async function cacheImageBlob(source: string, blob: Blob, expectedScope?: string): Promise<void> {
   const url = cacheUrl(source);
   if (!url || galleryImage(url)) return;
   const scope = await imageScope();
+  if (expectedScope !== undefined && scope !== expectedScope) return;
   const family = familyKey(scope, url);
   const revision = revisions.get(family);
   if (!await read(scope, url).catch(() => null) && revisions.get(family) === revision) await write(scope, url, blob);
@@ -106,6 +109,15 @@ export async function cacheImageBlob(source: string, blob: Blob): Promise<void> 
 
 /** Original and thumbnail URLs have independent entries; list views never request a missing original. */
 export async function fetchCachedImageBlob(source: string): Promise<Blob> {
+  const local = parseLocalHistoryImageSource(source);
+  if (local) {
+    const { findLocalImageHistory, getLocalImageHistoryThumbnail } = await import("@/lib/local-image-history");
+    const blob = local.thumbnail
+      ? await getLocalImageHistoryThumbnail(local.id)
+      : (await findLocalImageHistory(local.id))?.image;
+    if (!blob) throw new Error("本机历史图片不存在，请刷新重试");
+    return blob;
+  }
   const url = cacheUrl(source);
   if (!url) return fetchImage(source);
   // Gallery publication and approval can change without changing the image URL.
@@ -127,7 +139,7 @@ export async function fetchCachedImageBlob(source: string): Promise<Blob> {
     if (parsed.searchParams.get("variant") === "thumbnail") {
       parsed.searchParams.delete("variant");
       const original = await read(scope, parsed.pathname + parsed.search).catch(() => null);
-      if (original) blob = await thumbnailFrom(original).catch(() => null);
+      if (original) blob = await createImageThumbnail(original).catch(() => null);
     }
     blob ||= await fetchImage(source);
     if (revisions.get(family) === revision) await write(scope, url, blob).catch(() => undefined);

@@ -1504,10 +1504,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       let historyId: string | undefined;
       let historyError = "";
       try {
-        if (imageHistoryMode === "local") {
-          const localId = createBrowserRequestId("local");
-          await saveLocalImageHistory({ id: localId, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: inpaintModel, operation: "inpainting" });
-        } else if (imageHistoryMode === "account") {
+        if (imageHistoryMode === "account") {
           historyId = await saveEditorComposite({
             image: finalImage, model: inpaintModel, prompt, negative_prompt: negative,
             providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
@@ -1517,7 +1514,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       } catch (error) {
         historyError = error instanceof Error ? error.message : "历史保存失败";
       }
-      await addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting");
+      // Session persistence saves the owned local copy once for either mode.
+      await addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting", { model: inpaintModel, width: imageSize.width, height: imageSize.height });
       setNotice(historyError
         ? `精确重绘已完成，但${historyError}。完整图片已保留在工作台，请及时下载。`
         : imageHistoryMode === "none"

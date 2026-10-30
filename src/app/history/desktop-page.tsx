@@ -26,27 +26,11 @@ import {
   SessionExpiredNotice,
 } from "@/app/session-notice";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
-import { deleteLocalImageHistory, listLocalImageHistory } from "@/lib/local-image-history";
+import { deleteLocalImageHistory, listLocalImageHistorySummaries } from "@/lib/local-image-history";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
-import { cacheImageBlob, deleteCachedImage, fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import { deleteCachedImage, fetchCachedImageBlob } from "@/lib/browser-image-cache";
 
-type HistoryItem = {
-  id: string;
-  createdAt: string;
-  imageUrl: string;
-  thumbnailUrl?: string;
-  requestId?: string;
-  imageSha256?: string;
-  parameters: Record<string, string | number>;
-};
-
-function isIntermediate(parameters: Record<string, unknown>, operation?: string, prompt?: string) {
-  return parameters._lfnHistoryVisibility === "intermediate" ||
-    parameters._lfnEditorIntermediate === true ||
-    parameters.editor_composite === true ||
-    operation === "editor-tile" || operation === "editor-patch" ||
-    Boolean(prompt?.includes("continue details naturally across the crop edges"));
-}
+import { mergeHistoryListItems, type HistoryListItem as HistoryItem } from "@/lib/history-list-items";
 
 function importHref(item: HistoryItem, mode: "img2img" | "generate") {
   const params = new URLSearchParams({ historyId: item.id, importMode: mode });
@@ -69,85 +53,24 @@ export default function HistoryPage() {
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [importMenu, setImportMenu] = useState<{ item: HistoryItem; top: number; left: number } | null>(null);
   const importMenuTimer = useRef<number | null>(null);
-  const objectUrls = useRef(new Set<string>());
-
-  useEffect(() => () => {
-    objectUrls.current.forEach((url) => URL.revokeObjectURL(url));
-    objectUrls.current.clear();
-  }, []);
 
   useEffect(() => {
     let active = true;
-    let localHistory: HistoryItem[] = [];
     const controller = new AbortController();
-    const mergeItems = (remoteItems: HistoryItem[]) => {
-      const merged = new Map<string, HistoryItem>();
-      localHistory.forEach((item) => merged.set(item.id, item));
-      remoteItems.forEach((item) => {
-        merged.set(item.id, item);
-      });
-      return [...merged.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    };
-    const loadHistory = async () => {
-      let localItems = await listLocalImageHistory(40).catch(() => []);
-      const urls: Record<string, string> = {};
-      localHistory = localItems.filter((local) => !isIntermediate(local.parameters || {}, local.operation, local.prompt)).map((local) => {
-        const remoteId = local.remoteId || local.id;
-        const url = URL.createObjectURL(local.image);
-        objectUrls.current.add(url);
-        urls[remoteId] = url;
-        return {
-          id: remoteId,
-          createdAt: new Date(local.createdAt).toISOString(),
-          imageUrl: url,
-          requestId: local.requestId,
-          parameters: (local.parameters || { prompt: local.prompt || "", model: local.model || "", operation: local.operation || "generate" }) as HistoryItem["parameters"],
-        };
-      });
-      if (!active) return;
-      setLocalUrls((current) => ({ ...current, ...urls }));
-      if (localHistory.length) setItems((current) => mergeItems(current));
-      setLoading(false);
-      const result = await readJson<{ items?: HistoryItem[] }>(
-        await fetch("/api/history", { cache: "no-store", signal: controller.signal }),
-        "读取历史失败",
+    void (async () => {
+      const result = await readJson<{ userId?: number; items?: HistoryItem[] }>(
+        await fetch("/api/history", { cache: "no-store", signal: controller.signal }), "读取历史失败",
       );
-      const remoteItems = result.items || [];
-      localItems = await listLocalImageHistory(40).catch(() => localItems);
-      // Seed already-generated originals; a thumbnail can then be made locally
-      // without asking the server for either variant.
-      await Promise.all(localItems.filter((local) => local.remoteId || remoteItems.some((remote) => remote.id === local.id)).map((local) =>
-        cacheImageBlob(`/api/history/${encodeURIComponent(local.remoteId || local.id)}/image`, local.image).catch(() => undefined),
-      ));
-      // A local copy with the same request ID is the browser's copy of one of
-      // the server results. Avoid rendering a duplicate without downloading
-      // full-size remote files just to compare their pixels.
-      const linkedLocal = localItems.filter((local) => !isIntermediate(local.parameters || {}, local.operation, local.prompt) &&
-        !remoteItems.some((remote) => remote.id === (local.remoteId || local.id) || (!!local.requestId && remote.requestId === local.requestId))).map((local) => {
-        const remoteId = local.remoteId || local.id;
-        const url = URL.createObjectURL(local.image);
-        objectUrls.current.add(url);
-        urls[remoteId] = url;
-        return {
-          id: remoteId,
-          createdAt: new Date(local.createdAt).toISOString(),
-          imageUrl: url,
-          requestId: local.requestId,
-          parameters: (local.parameters || { prompt: local.prompt || "", model: local.model || "", operation: local.operation || "generate" }) as HistoryItem["parameters"],
-        };
-      });
-      if (active) {
-        setLocalUrls((current) => ({ ...current, ...urls }));
-        localHistory = linkedLocal;
-        setItems(mergeItems(remoteItems));
-      }
-    };
-    void loadHistory().catch((error) => {
-        if (!active) return;
-        if (error instanceof Error && error.name === "AbortError") return;
-        if (error instanceof SessionExpiredError) setExpired(error.message);
-        else setMessage(error instanceof Error ? error.message : "读取历史失败");
-      }).finally(() => { if (active) setLoading(false); });
+      const local = await listLocalImageHistorySummaries().catch(() => []);
+      if (!active) return;
+      const merged = mergeHistoryListItems(result.items || [], local, Number(result.userId));
+      setLocalUrls(merged.localSources);
+      setItems(merged.items);
+    })().catch((error) => {
+      if (!active || (error instanceof Error && error.name === "AbortError")) return;
+      if (error instanceof SessionExpiredError) setExpired(error.message);
+      else setMessage(error instanceof Error ? error.message : "读取历史失败");
+    }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; controller.abort(); };
   }, []);
 
@@ -159,6 +82,14 @@ export default function HistoryPage() {
     setPreviewLoaded(false);
     setPreviewSrc(imageSrc(item));
     setPreview(item);
+  }
+
+  async function openGallerySubmission(item: HistoryItem) {
+    try {
+      const blob = item.account ? null : await fetchCachedImageBlob(imageSrc(item));
+      const file = blob ? new File([blob], `history-${item.id}.${blob.type === "image/jpeg" ? "jpg" : "png"}`, { type: blob.type }) : undefined;
+      setGalleryForm({ historyId: item.account ? item.id : undefined, file, title: item.parameters.prompt?.toString().slice(0, 40) || "未命名作品", authorName: "", rating: "general", source: item.account ? "lfn" : "local", tags: "", exposeParameters: true });
+    } catch (error) { setMessage(error instanceof Error ? error.message : "读取历史图片失败"); }
   }
 
   function closePreview() {
@@ -188,17 +119,17 @@ export default function HistoryPage() {
 
   async function remove(id: string) {
     if (!(await lfnConfirm("确认删除这张历史图片？删除后无法恢复。"))) return;
-    const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    });
-    if (!response.ok) {
-      const result = await response.json();
-      setMessage(result.message || "删除失败");
-      return;
-    }
-    const localCopies = await listLocalImageHistory(Number.POSITIVE_INFINITY).catch(() => []);
     const deletedItem = items.find((item) => item.id === id);
-    await Promise.all(localCopies.filter((entry) => (entry.remoteId || entry.id) === id || (!!deletedItem?.requestId && entry.requestId === deletedItem.requestId)).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
+    if (deletedItem?.account) {
+      const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) {
+        const result = await response.json();
+        setMessage(result.message || "删除失败");
+        return;
+      }
+    }
+    const localCopies = await listLocalImageHistorySummaries().catch(() => []);
+    await Promise.all(localCopies.filter((entry) => (entry.remoteId || entry.id) === id).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
     await deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`).catch(() => undefined);
     setItems((current) => current.filter((item) => item.id !== id));
     setLocalUrls((current) => { const next = { ...current }; delete next[id]; return next; });
@@ -281,16 +212,18 @@ export default function HistoryPage() {
     setZipping(true);
     try {
       const ids = [...selected];
-      const response = await fetch("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
-      const result = await response.json().catch(() => ({})) as { message?: string; count?: number };
-      if (!response.ok) throw new Error(result.message || "批量删除失败");
-      const localCopies = await listLocalImageHistory(Number.POSITIVE_INFINITY).catch(() => []);
-      const selectedRequestIds = new Set(items.filter((item) => selected.has(item.id)).map((item) => item.requestId).filter((id): id is string => Boolean(id)));
-      await Promise.all(localCopies.filter((entry) => selected.has(entry.remoteId || entry.id) || (!!entry.requestId && selectedRequestIds.has(entry.requestId))).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
+      const remoteIds = items.filter((item) => selected.has(item.id) && item.account).map((item) => item.id);
+      for (let offset = 0; offset < remoteIds.length; offset += 100) {
+        const response = await fetch("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: remoteIds.slice(offset, offset + 100) }) });
+        const result = await response.json().catch(() => ({})) as { message?: string };
+        if (!response.ok) throw new Error(result.message || "批量删除失败");
+      }
+      const localCopies = await listLocalImageHistorySummaries().catch(() => []);
+      await Promise.all(localCopies.filter((entry) => selected.has(entry.remoteId || entry.id)).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
       await Promise.all(ids.map((id) => deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`).catch(() => undefined)));
       setItems((current) => current.filter((item) => !selected.has(item.id)));
       setLocalUrls((current) => { const next = { ...current }; ids.forEach((id) => delete next[id]); return next; });
-      setMessage(`已删除 ${result.count ?? ids.length} 张图片。`);
+      setMessage(`已删除 ${ids.length} 张图片。`);
       exitSelectMode();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "批量删除失败");
@@ -437,7 +370,7 @@ export default function HistoryPage() {
                     <ImageDownloadMenu src={imageSrc(item)} filename={`lfn-${item.id}`} className="history-action" title="下载图片" />
                     <button
                       type="button"
-                      onClick={() => setGalleryForm({ historyId: item.id, title: item.parameters.prompt?.toString().slice(0, 40) || "未命名作品", authorName: "", rating: "general", source: "lfn", tags: "", exposeParameters: true })}
+                      onClick={() => void openGallerySubmission(item)}
                       className="history-action"
                       title="提交到图片广场"
                     >

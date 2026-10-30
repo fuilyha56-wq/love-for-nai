@@ -11,16 +11,85 @@ a missing strip by adding a fixed height or taking `max(innerHeight, visualHeigh
   with a keyboard resize; retaining the old height creates a gap or clips content.
 - Do not multiply those dimensions by scale or subtract keyboard height again.
 - Update on viewport resize/scroll, window resize/pageshow, and focus changes.
-  Batch measurements with requestAnimationFrame and remove properties/listeners
-  when the mobile provider unmounts.
+  Measure on the next animation frame, then follow every frame for at most 750ms
+  after the latest event. This is a tracking window, not a restoration delay.
+  Skip unchanged style writes and cancel the frame/listeners on provider unmount.
 - Body portals avoid transformed application ancestors, but positioning must
   still use the visible rectangle. Native dialogs also need its center and limits.
-- While an editable field has focus, hide the mobile workspace footer so it
-  cannot cover the editor. Restore it when focus returns to navigation. Do not
-  remount the editor or rewrite its value to handle keyboard events: preserve
-  composition, selection, and draft contents.
+- Keep completion in the persistent workspace header and switch panes using the
+  existing tabs. Keyboard/focus thresholds must not add or remove footer space,
+  safe-area padding, or navigation rows. Do not remount the editor or rewrite its
+  value to handle keyboard events: preserve composition, selection, and drafts.
 - Keep overflow scrolling available in short screens. Desktop prompt components
   and their styling are separate and should not be changed for this behavior.
+
+## Keyboard dismissal and clipboard switching — 2026-10-30
+
+The user's phone video shows a temporary editor displacement while switching
+between the keyboard and its clipboard panel. The recording does not expose the
+browser's viewport measurements, so it establishes the visual symptom rather
+than a device-specific event sequence. The deployed HTTP origin may not expose
+VirtualKeyboard; the VisualViewport fallback must work independently.
+
+Sparse trailing measurements left gaps between viewport reads, and the original
+focus-only footer rule could not restore the footer while Android retained input
+focus. Replacing that rule with a keyboard-height threshold also proved unstable:
+a browser trace reducing viewport height from 720px to 690px increased the prompt
+pane from 550px to 581px, and its textarea from 408px to 439px, as the footer
+disappeared. Closing reversed the same jump. This is a flow-layout discontinuity,
+not evidence of a z-index problem.
+
+- Replace the former 60/180/350/600ms timer checkpoints with bounded animation
+  frame tracking. When a browser changes geometry after sending its event, the
+  layout follows on the next paint instead of waiting for another checkpoint.
+  Keyboard-to-clipboard-to-keyboard changes can resize the same focused input
+  repeatedly; the full-height result is not latched in the fallback path.
+- After a validated docked native keyboard changes to an empty rectangle,
+  restore the intact overlay layout height and clear stale vertical pan without
+  waiting for VisualViewport to catch up. An initially empty API rectangle or
+  blur alone does not prove dismissal. Discard native trust on zoom, rotation,
+  invalid geometry, loss of overlay ownership, or a new focus after dismissal.
+- End the native dismissal override once visual metrics catch up. A subsequent
+  opening with the same focused input must again respect reported occlusion.
+  Ignore stale native rectangle heights after returning ownership to the browser.
+- Remove the duplicate bottom action row. `完成` remains available in the existing
+  header; the tabs retain parameter/prompt switching, and the parameter header
+  shows image dimensions. No empty footer space is reserved. Keyboard state is
+  advisory and no longer changes the workspace's chrome or safe-area padding.
+- Remove height-breakpoint changes from workspace navigation, prompt toolbar and
+  assistant chrome. The assistant textarea uses continuous `clamp()` sizing,
+  while its fold control occupies the existing header and its character count
+  remains available in input options. The nonshrinking composer leaves remaining
+  height to the transcript. Constant prompt-pane padding and matching small
+  textarea/highlight padding avoid an accidental padding-only minimum height.
+  The transcript and prompt editor retain their independent scrolling.
+- Use the VisualViewport rectangle consistently when native geometry is absent.
+  The former near-equality layout fallback also reset `offsetTop`; crossing its
+  two-pixel tolerance could move the sheet between two positions during an
+  animation. Do not blur the editor, change text, force document scrolling, or
+  add CSS height transitions to conceal these discontinuities.
+
+Validation for this follow-up: **28 viewport/keyboard lifecycle tests pass**,
+including HTTP-style fallback without VirtualKeyboard, delayed metrics without a
+second event, retained focus during dismissal/reopening, transient zero viewport
+reports, threshold-crossing open/close/clipboard sequences, stable pan through
+layout/visual rounding differences, stale native state and lifecycle cleanup. Source ESLint and diff
+whitespace checks pass. These tests verify the event/layout contract; physical
+phone verification is still required. Without native geometry, restoration
+cannot precede the browser reporting its actual available viewport.
+
+Final browser verification of the transition fix:
+
+| Check | Observed result |
+| --- | --- |
+| Prompt viewport 844→240→844px | Editor height changed monotonically; pane top stayed at 98px and textarea top at 149px. The pane's existing scrollTop of 47px, established by prior UI focus, remained unchanged throughout. At 240px, the textarea was 40px tall. |
+| Assistant at 240px | Message area 19px; textarea 32px; send-button bottom 232px, inside the visible viewport. |
+| Assistant at 400px | Message area 115px; textarea 96px; send-button bottom 392px. |
+| Header `完成` | Closed the workspace and restored the body's previous empty inline position. |
+
+Evidence is saved under `scripts/.tmp/mobile-feedback/`: `final-traces.json`,
+`assistant-400.jpg`, and `prompt-400.jpg`. These are actual browser DOM/layout
+checks with simulated viewport heights, not a physical-phone keyboard test.
 
 ## Residual blank-area follow-up — 2026-10-30 (r15)
 
@@ -47,12 +116,12 @@ Changes in this follow-up:
   rectangle after 900ms, the visit falls back to browser behavior. A normal
   dismissal after successful geometry is not treated as API failure.
 - The viewport metadata requests `interactive-widget=resizes-content`. Browsers
-  without native geometry retain VisualViewport/window fallback. Layout height
-  is accepted only when visual height agrees, preventing split-screen resizing
-  from expanding content behind a keyboard.
-- Resize/focus events schedule four bounded trailing measurements at 60, 180,
-  350 and 600ms. A browser that notifies before its final IME geometry settles
-  no longer leaves the first measurement frozen. Cleanup cancels every timer.
+  without native geometry retain VisualViewport/window fallback. This release's
+  near-equality layout fallback is superseded by the single visual-rectangle
+  authority described above.
+- This release added trailing measurements at 60, 180, 350 and 600ms. Those
+  checkpoints are superseded by the per-frame transition tracking described
+  above, which avoids waiting between checkpoints when metrics update late.
 - A confirmed assistant defect was empty-state auto-scrolling: the welcome
   content was scrolled to its bottom on resize. Empty sessions now stay at the
   top; real results follow the latest message only while the reader is following.
@@ -91,8 +160,9 @@ The remaining reproduced defect was inside the sheet: at 390×360 the prompt
 textarea still ended at y=379, outside the visible area. Its 144px minimum and
 fixed viewport-minus-toolbar arithmetic did not reflect the actual pane height.
 The assistant also allowed the whole composer to scroll while reserving too
-little space for its transcript. The existing focus/footer selectors are valid;
-browser inspection confirmed they hide the footer correctly.
+little space for its transcript. Browser inspection confirmed the earlier
+focus/footer selectors were valid; the dismissal follow-up above replaces their
+focus-only behavior with persistent header actions and no bottom action row.
 
 - The prompt's primary toolbar/editor group now uses the available pane's
   container height. The toolbar stays in flow; the editor uses `flex: 1`,
@@ -102,7 +172,8 @@ browser inspection confirmed they hide the footer correctly.
   space with `min-height: 0; overflow-y: auto`. The composer shrinks its textarea
   and keeps its 44px send control in flow. Queue, usage, reference previews and
   model options share an independently scrolling options panel.
-- Very short visible heights compact workspace navigation and the composer.
+- This earlier version compacted navigation/composer at height breakpoints; the
+  transition follow-up above keeps chrome stable and sizes the editor continuously.
   Neither page positions its input bar with `position: fixed`.
 - The provider also exposes `--lfn-keyboard-height` and `data-keyboard-open`.
   A nonzero VirtualKeyboard bounding rectangle is preferred; otherwise an

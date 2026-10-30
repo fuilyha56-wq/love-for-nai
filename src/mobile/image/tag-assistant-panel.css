@@ -139,33 +139,7 @@
 }
 @media(prefers-reduced-motion:reduce){.mobile-tag-assistant-panel .assistant-working-dot{animation:none}}
 @keyframes assistant-dot-pulse{50%{opacity:.35}}
-@container(max-height:420px){
- .mobile-tag-assistant-panel .assistant-transcript{padding:6px 10px}
- .mobile-tag-assistant-panel .assistant-panel-heading{min-height:34px;padding:0 8px}
- .mobile-tag-assistant-panel .assistant-panel-heading>button{width:30px;min-height:30px}
- .mobile-tag-assistant-panel .assistant-panel-modes button{min-height:34px}
- .mobile-tag-assistant-panel .assistant-editor textarea{height:48px;min-height:40px}
- .mobile-tag-assistant-panel .assistant-composer.is-expanded .assistant-editor textarea{height:64px}
- .mobile-tag-assistant-panel .assistant-composer-meta{font-size:8px;padding:0 3px 2px}
- .mobile-tag-assistant-panel .assistant-composer-meta>span:first-child{display:none}
- .mobile-tag-assistant-panel .assistant-model-trigger,.mobile-tag-assistant-panel .mobile-assistant-reasoning-trigger{height:28px;min-height:28px;font-size:10px}
- .mobile-tag-assistant-panel .assistant-composer-models{padding-top:3px}
- .mobile-tag-assistant-panel .assistant-composer-actions,.mobile-tag-assistant-panel .assistant-add-reference{min-height:30px}
- .mobile-tag-assistant-panel .assistant-send-button{width:30px;height:30px;min-height:30px}
- .mobile-tag-assistant-panel .assistant-composer{padding-block:4px}
- .mobile-tag-assistant-panel .assistant-composer-area{position:static;padding-bottom:6px}
- .mobile-tag-assistant-panel .assistant-reference-tray{margin-bottom:2px}
- .mobile-tag-assistant-panel .assistant-reference-tray>div:first-child>button{min-height:20px;height:20px;padding:0}
- .mobile-tag-assistant-panel .assistant-attachments-grid{padding:3px 3px 4px}
- .mobile-tag-assistant-panel .assistant-attachments-grid>div{flex-basis:36px}
- .mobile-tag-assistant-panel .assistant-attachments-grid>div>button:first-child{width:36px;height:36px}
- .mobile-tag-assistant-panel .mobile-assistant-usage-panel.is-compact{padding-bottom:3px}
- .mobile-tag-assistant-panel .mobile-assistant-usage-panel.is-compact .mobile-assistant-usage-toggle{min-height:24px}
- .mobile-tag-assistant-panel .mobile-assistant-usage-panel.is-compact .mobile-assistant-usage-detail{position:absolute;left:10px;right:10px;bottom:calc(var(--assistant-composer-height) + 4px);z-index:8;max-height:max(40px,calc(100cqh - var(--assistant-composer-height) - 48px));margin:0;box-shadow:0 6px 20px #0002}
- .mobile-tag-assistant-panel .assistant-jump-latest{top:5px;right:74px;bottom:auto;width:24px;height:24px;min-height:24px;padding:0;justify-content:center;gap:0;border:0;box-shadow:none;background:transparent;font-size:0!important}
- .mobile-tag-assistant-panel:has(.assistant-jump-latest) .assistant-panel-modes{padding-right:26px;gap:6px}
- .mobile-tag-assistant-panel:has(.mobile-assistant-usage-toggle[aria-expanded=true]) .assistant-jump-latest{display:none}
-}
+
 
 .mobile-tag-assistant-panel .assistant-source-control{display:flex;align-items:center;gap:6px;min-width:0;padding:4px 0;border-bottom:1px solid var(--line);font-size:10px}
 .mobile-tag-assistant-panel .assistant-source-control>div[role=group]{display:flex;gap:2px;flex-shrink:0}
@@ -175,7 +149,7 @@
 .mobile-tag-assistant-panel .assistant-source-control .field{min-height:28px;height:28px;padding-block:2px;font:inherit}
 .mobile-tag-assistant-panel .assistant-source-group{margin-left:auto;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @container(max-width:280px){.mobile-tag-assistant-panel .assistant-source-control{gap:3px;font-size:9px}.mobile-tag-assistant-panel .assistant-source-control>div[role=group]>button{padding-inline:4px}}
-@container(max-height:420px){.mobile-tag-assistant-panel .assistant-source-control{padding-block:1px}.mobile-tag-assistant-panel .assistant-source-control .field,.mobile-tag-assistant-panel .assistant-source-control>div[role=group]>button{min-height:24px;height:24px}}
+
 
 /* Independent chat workspace: the editor remains mounted while it is folded. */
 .mobile-tag-assistant-panel { flex-direction: column; }
@@ -197,12 +171,7 @@
 .mobile-tag-assistant-panel .assistant-composer-models { grid-template-columns: minmax(0, 1fr) minmax(80px, .5fr); }
 .mobile-tag-assistant-panel .mobile-assistant-reasoning-select { width: 100%; }
 .mobile-tag-assistant-panel .mobile-assistant-usage-panel.is-compact .mobile-assistant-usage-detail { position: static; max-height: 160px; }
-@container (max-height: 420px) {
-  .mobile-tag-assistant-panel .assistant-composer-area { position: relative; padding-bottom: 6px; }
-  .mobile-tag-assistant-panel .assistant-editor textarea { height: 80px; min-height: 64px; }
-  .mobile-tag-assistant-panel .assistant-composer.is-expanded .assistant-editor textarea { height: min(180px, 52cqh); min-height: 96px; }
-  .mobile-tag-assistant-panel .assistant-model-settings > summary { min-height: 32px; }
-}
+
 
 .mobile-tag-assistant-panel .assistant-compose-bar button, .mobile-tag-assistant-panel .assistant-model-settings > summary { min-height: 40px; }
 .mobile-tag-assistant-panel .assistant-editor textarea { font-size: 16px; line-height: 1.65; }
@@ -301,24 +270,27 @@
 .mobile-tag-assistant-panel .assistant-composer-options-scroll .assistant-message-queue ol,
 .mobile-tag-assistant-panel .assistant-composer-options-scroll .mobile-assistant-usage-detail { position: static; max-height: none; overflow: visible; }
 .mobile-tag-assistant-panel .assistant-shortcuts { position: absolute; z-index: 9; right: 12px; bottom: calc(100% - 36px); left: 12px; max-height: min(180px, 40cqh); margin: 0; box-shadow: 0 5px 18px #0002; }
-@container (max-height: 420px) {
-  .mobile-tag-assistant-panel .assistant-compose-bar { padding-block: 0; }
-  .mobile-tag-assistant-panel .assistant-compose-bar button { min-height: 28px; padding-block: 0; }
-  .mobile-tag-assistant-panel .assistant-composer { padding: 3px 6px; }
-  .mobile-tag-assistant-panel .assistant-composer-area { padding-bottom: 4px; }
-  .mobile-tag-assistant-panel .assistant-editor { height: 64px; flex-basis: 64px; }
-  .mobile-tag-assistant-panel .assistant-composer.is-expanded .assistant-editor { height: min(120px, 30cqh); flex-basis: min(120px, 30cqh); }
-  .mobile-tag-assistant-panel .assistant-composer-meta { display: none; }
-  .mobile-tag-assistant-panel .assistant-composer-options { top: 38px; bottom: 52px; }
-}
+
 @container (max-width: 340px) {
   .mobile-tag-assistant-panel .assistant-composer-actions { gap: 3px; }
   .mobile-tag-assistant-panel .assistant-options-trigger span { display: none; }
   .mobile-tag-assistant-panel .assistant-resource-button { padding-inline: 3px; }
   .mobile-tag-assistant-panel .assistant-enqueue-button { padding-inline: 3px; font-size: 9px; }
 }
-@container (max-height: 220px) {
-  .mobile-tag-assistant-panel .assistant-composer-area { flex: 0 0 auto; }
-  .mobile-tag-assistant-panel .assistant-editor,
-  .mobile-tag-assistant-panel .assistant-composer.is-expanded .assistant-editor { height: 32px; flex-basis: 32px; }
-}
+
+
+/* Keep assistant chrome identical during keyboard animation. Only the flexible
+   transcript and textarea change height, continuously, without breakpoint jumps. */
+.mobile-tag-assistant-panel .assistant-panel-heading { min-height: 34px; padding: 0 8px; }
+.mobile-tag-assistant-panel .assistant-panel-heading > button { width: 30px; min-height: 30px; }
+.mobile-tag-assistant-panel .assistant-panel-modes button { min-height: 34px; }
+.mobile-tag-assistant-panel .assistant-transcript { padding: 8px 12px; }
+.mobile-tag-assistant-panel .assistant-compose-bar { padding-block: 0; }
+.mobile-tag-assistant-panel .assistant-compose-bar button { min-height: 28px; padding-block: 0; }
+.mobile-tag-assistant-panel .assistant-composer { padding: 3px 6px; }
+.mobile-tag-assistant-panel .assistant-composer-area { flex: 0 0 auto; padding-bottom: 4px; }
+.mobile-tag-assistant-panel .assistant-editor { height: clamp(32px, calc(100cqh - 180px), 96px); flex-basis: clamp(32px, calc(100cqh - 180px), 96px); }
+.mobile-tag-assistant-panel .assistant-composer.is-expanded .assistant-editor { height: clamp(32px, calc(100cqh - 180px), min(220px, 34cqh)); flex-basis: clamp(32px, calc(100cqh - 180px), min(220px, 34cqh)); }
+.mobile-tag-assistant-panel .assistant-composer-meta { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; pointer-events: none; }
+.mobile-tag-assistant-panel .assistant-composer-meta > span:first-child { display: none; }
+.mobile-tag-assistant-panel .assistant-composer-options { top: 38px; bottom: 52px; }
