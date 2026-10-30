@@ -6,6 +6,10 @@ already expressed in CSS pixels. Fall back to window dimensions when unavailable
 While the full-screen workspace owns VirtualKeyboard overlay mode, a validated
 bottom-docked keyboard rectangle determines the lower edge instead. Never guess
 a missing strip by adding a fixed height or taking `max(innerHeight, visualHeight)`.
+At scale 1, independently measured `100dvh` is an upper bound on that rectangle's
+height, so browser controls are never counted as page space. A hidden fixed
+probe and ResizeObserver follow dynamic browser chrome without depending on the
+height variables being written. At other scales, retain VisualViewport geometry.
 
 - Never stop updating because `scale !== 1`. Pinch zoom or input zoom can coexist
   with a keyboard resize; retaining the old height creates a gap or clips content.
@@ -22,6 +26,53 @@ a missing strip by adding a fixed height or taking `max(innerHeight, visualHeigh
   value to handle keyboard events: preserve composition, selection, and drafts.
 - Keep overflow scrolling available in short screens. Desktop prompt components
   and their styling are separate and should not be changed for this behavior.
+
+## Return to the pre-input position — 2026-10-30 (r18)
+
+The follow-up screenshots keep the header in the same place but move the welcome
+content and composer by different amounts. The composer is at the bottom of the
+flex column and the welcome content is vertically centered: excess outer height
+of 105 CSS px moves them by 105px and 52.5px respectively. This is a height defect,
+not a reason to add a compensating transform or force scroll the page.
+
+Two paths previously admitted that excess height: native keyboard dismissal
+restored `documentElement.clientHeight`, and the HTTP fallback accepted a visual
+viewport taller than the current dynamic viewport. A layout viewport is not a
+measurement of the area above the browser's visible toolbars. An empty native
+keyboard rectangle proves dismissal, but not that all layout pixels are visible.
+
+- Use an independent `100dvh` measurement as a scale-1 upper bound on both paths.
+  Smaller visual keyboard geometry still wins. Do not subtract the keyboard or
+  visual pan twice, and do not impose a fixed 105px device-specific inset.
+- Confirmed native dismissal restores the dynamic height, not clientHeight. If
+  dvh is unavailable or zero, keep the visual rectangle until it recovers.
+- Release the native dismissal latch when the visual rectangle reaches the
+  dynamic bound, including when browser controls remain expanded. A subsequent
+  keyboard opening with retained focus can shrink immediately again.
+- Observe the probe separately, so toolbar height changes after the 750ms
+  transition window still trigger measurement. Disconnect/remove it on unmount.
+
+Browser verification used real Next dev components at 390×739, with an injected
+layout height of 844px, no VirtualKeyboard API, and visual height 739→360→844.
+The last value deliberately simulates stale toolbar-hidden metrics; it does not
+claim to measure the reporter's physical phone.
+
+| Position (CSS px) | Before input | Old release after closing | Fixed after closing |
+| --- | ---: | ---: | ---: |
+| Sheet bottom | 739 | 844 | 739 |
+| Composer top | 587 | 692 | 587 |
+| Composer bottom | 735 | 840 | 735 |
+| Welcome heading top | 301.796875 | 354.296875 | 301.796875 |
+
+The same no-API event sequence reproduced the clipping in production r17 and
+returned to identical coordinates in the repaired dev build, retaining focus and
+the editor value. Evidence: `scripts/.tmp/mobile-feedback/return-traces.json`,
+`return-old-bug.jpg`, `return-before.jpg`, and `return-after.jpg`.
+33 viewport/workspace lifecycle tests cover both API paths, repeated close/open,
+late toolbar resizing, zoom 2→1, invalid/unsupported dvh, and cleanup. A physical
+phone pass is still required to confirm its actual browser metrics.
+
+Reference: [dynamic viewport units and browser UI](https://web.dev/blog/viewport-units).
 
 ## Keyboard dismissal and clipboard switching — 2026-10-30
 
@@ -45,7 +96,7 @@ not evidence of a z-index problem.
   Keyboard-to-clipboard-to-keyboard changes can resize the same focused input
   repeatedly; the full-height result is not latched in the fallback path.
 - After a validated docked native keyboard changes to an empty rectangle,
-  restore the intact overlay layout height and clear stale vertical pan without
+  restore the independently measured dynamic height and clear stale vertical pan without
   waiting for VisualViewport to catch up. An initially empty API rectangle or
   blur alone does not prove dismissal. Discard native trust on zoom, rotation,
   invalid geometry, loss of overlay ownership, or a new focus after dismissal.

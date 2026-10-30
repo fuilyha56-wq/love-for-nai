@@ -12,6 +12,17 @@ export function useVisualViewport() {
     const keyboard = getWorkspaceKeyboard();
     const orientation = window.screen?.orientation;
     const root = document.documentElement;
+    // Browser controls can occupy part of the layout viewport after the IME
+    // closes. Measure CSS's dynamic viewport independently of our own height
+    // variables, including on HTTP origins without VirtualKeyboard support.
+    const dynamicViewport = typeof CSS !== "undefined" && CSS.supports("height", "100dvh")
+      ? document.createElement("div") : null;
+    if (dynamicViewport) {
+      dynamicViewport.setAttribute("data-viewport-measure", "");
+      dynamicViewport.setAttribute("aria-hidden", "true");
+      dynamicViewport.style.cssText = "position:fixed;top:0;left:0;width:0;height:100dvh;visibility:hidden;pointer-events:none;contain:strict;";
+      document.body.appendChild(dynamicViewport);
+    }
     let frame = 0;
     let baselineHeight = window.innerHeight;
     let baselineWidth = window.innerWidth;
@@ -51,6 +62,9 @@ export function useVisualViewport() {
       const rect = keyboard?.boundingRect;
       const layoutHeight = root.clientHeight || window.innerHeight;
       const unzoomed = Math.abs(scale - 1) < 0.01;
+      const dynamicHeight = dynamicViewport?.getBoundingClientRect().height ?? 0;
+      const usableDynamicHeight = unzoomed && Number.isFinite(dynamicHeight) && dynamicHeight > 0
+        ? dynamicHeight : 0;
       // Native geometry is useful only in overlay mode and when it describes a
       // full-width, bottom-docked keyboard in layout CSS pixels. Never treat a
       // floating keyboard (or an invalid/transitional rect) as a page-wide inset.
@@ -65,7 +79,8 @@ export function useVisualViewport() {
       // Once visual metrics catch up, the dismissal override has done its job.
       // A later keyboard opening can retain focus too; do not carry the previous
       // full-height decision into that new opening while native geometry lags.
-      if (nativeState === "hidden" && Math.abs(height - layoutHeight) <= 2 && Math.abs(top) <= 2) nativeState = "unknown";
+      if (nativeState === "hidden" && (!usableDynamicHeight ||
+        (Math.abs(Math.min(height, usableDynamicHeight) - usableDynamicHeight) <= 2 && Math.abs(top) <= 2))) nativeState = "unknown";
       if (docked) {
         // At scale 1 the keyboard top is independent of VisualViewport: it can
         // recover space lost to a stale/undersized viewport report. While zoomed,
@@ -76,17 +91,28 @@ export function useVisualViewport() {
       } else if (keyboard?.overlaysContent && unzoomed && empty && nativeState !== "unknown") {
         // A working native API changing from docked to empty confirms dismissal,
         // even if Android retains input focus and its visual metrics still lag.
-        // Overlay mode leaves the layout viewport intact: do not wait for a
-        // second resize or preserve the keyboard's stale pan/height here.
-        nativeState = "hidden";
-        height = layoutHeight;
-        top = 0;
-        source = "keyboard";
+        // Restore the dynamic viewport, not the larger layout viewport hidden
+        // behind browser toolbars. Do not preserve the keyboard's stale pan.
+        if (usableDynamicHeight) {
+          nativeState = "hidden";
+          height = usableDynamicHeight;
+          top = 0;
+          source = "keyboard";
+        } else {
+          // Empty native geometry proves no occlusion, not that the entire
+          // layout viewport is visible. Older engines keep visual authority.
+          nativeState = "unknown";
+        }
       }
       // Without validated native geometry, the visual rectangle is the only
       // authority, including resizes-content browsers. Switching to layout
       // height near equality also reset offsetTop and could move the sheet back
       // and forth as animation rounding crossed the old two-pixel boundary.
+      // Some engines briefly report the toolbar-hidden visual height when the
+      // keyboard closes. CSS dvh excludes current browser chrome; it is an upper
+      // bound only, so a smaller visual keyboard rectangle still wins. Do not
+      // mix unscaled CSS viewport units with a zoomed visual rectangle.
+      if (usableDynamicHeight) height = Math.min(height, usableDynamicHeight);
       write("--lfn-viewport-height", `${height}px`);
       write("--lfn-viewport-width", `${width}px`);
       write("--lfn-viewport-top", `${top}px`);
@@ -127,6 +153,9 @@ export function useVisualViewport() {
       schedule();
     }
     measure();
+    const dynamicObserver = dynamicViewport && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(schedule) : null;
+    if (dynamicViewport) dynamicObserver?.observe(dynamicViewport);
     viewport?.addEventListener("resize", schedule);
     viewport?.addEventListener("scroll", schedule);
     window.addEventListener("resize", schedule);
@@ -139,6 +168,8 @@ export function useVisualViewport() {
     return () => {
       cancelAnimationFrame(frame);
       transitionUntil = 0;
+      dynamicObserver?.disconnect();
+      dynamicViewport?.remove();
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);

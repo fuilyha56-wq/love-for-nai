@@ -6,7 +6,7 @@ vi.mock("react", () => ({
 }));
 import { useVisualViewport } from "@/mobile/ui/use-visual-viewport";
 
-function browser(withViewport = true, withKeyboard = false) {
+function browser(withViewport = true, withKeyboard = false, withDynamicViewport = false) {
   const properties = new Map<string, string>();
   const root = {
     clientHeight: 800,
@@ -25,6 +25,19 @@ function browser(withViewport = true, withKeyboard = false) {
   const doc = Object.assign(new EventTarget(), {
     documentElement: root,
     activeElement: null as null | { matches: (selector: string) => boolean; isContentEditable?: boolean },
+  });
+  const dynamic = { height: 800, notify: () => {} };
+  const probe = {
+    style: { cssText: "" }, setAttribute: vi.fn(), remove: vi.fn(),
+    getBoundingClientRect: () => ({ height: dynamic.height }),
+  };
+  const disconnect = vi.fn();
+  Object.assign(doc, { createElement: () => probe, body: { appendChild: vi.fn() } });
+  vi.stubGlobal("CSS", { supports: () => withDynamicViewport });
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) { dynamic.notify = callback; }
+    observe = vi.fn();
+    disconnect = disconnect;
   });
   let frameId = 0;
   const frames = new Map<number, FrameRequestCallback>();
@@ -51,7 +64,7 @@ function browser(withViewport = true, withKeyboard = false) {
     (withViewport ? viewport : win).dispatchEvent(new Event("resize"));
     flush();
   }
-  return { properties, root, viewport, keyboard, orientation, win, doc, frames, request, flush, focus, resize };
+  return { properties, root, viewport, keyboard, orientation, win, doc, frames, request, flush, focus, resize, dynamic, probe, disconnect };
 }
 
 let unmount: () => void;
@@ -167,8 +180,101 @@ describe("mobile visual viewport", () => {
     expect(b.properties.get("--lfn-viewport-height")).toBe("800px");
   });
 
+  it("restores the same visible height after native dismissal with browser toolbars expanded", () => {
+    const b = browser(true, true, true);
+    b.win.innerHeight = b.root.clientHeight = 844;
+    b.viewport.height = b.dynamic.height = 739;
+    mount();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("739px");
+    b.focus();
+    const focused = b.doc.activeElement;
+    b.keyboard.overlaysContent = true;
+    Object.assign(b.viewport, { height: 360, offsetTop: 20 });
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 465, width: 390, height: 379 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("445px");
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 0, width: 0, height: 0 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("739px");
+    expect(b.properties.get("--lfn-viewport-top")).toBe("0px");
+    expect(b.doc.activeElement).toBe(focused);
+    // The visual viewport recovers only to the area above browser controls.
+    Object.assign(b.viewport, { height: 739, offsetTop: 0 });
+    b.resize();
+    expect(b.root.dataset.viewportSource).toBe("visual");
+    // Reopening with retained focus must not reuse a latched full height.
+    b.viewport.height = 360;
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("360px");
+  });
+
+  it("bounds stale HTTP visual metrics by the current dynamic viewport without limiting real expansion", () => {
+    const b = browser(true, false, true);
+    b.win.innerHeight = b.root.clientHeight = 844;
+    b.viewport.height = b.dynamic.height = 739;
+    mount();
+    b.focus();
+    for (let visit = 0; visit < 3; visit++) {
+      b.viewport.height = 360;
+      b.resize();
+      expect(b.properties.get("--lfn-viewport-height")).toBe("360px");
+      // Edge may restore the toolbar-hidden height before browser chrome.
+      b.viewport.height = 844;
+      b.resize();
+      expect(b.properties.get("--lfn-viewport-height")).toBe("739px");
+    }
+    vi.advanceTimersByTime(1000);
+    b.flush();
+    expect(b.frames.size).toBe(0);
+    // Toolbars can move later, without a VisualViewport notification.
+    b.dynamic.height = 700;
+    b.dynamic.notify();
+    b.flush();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("700px");
+    b.dynamic.height = 844;
+    b.dynamic.notify();
+    b.flush();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("844px");
+    unmount();
+    expect(b.disconnect).toHaveBeenCalledOnce();
+    expect(b.probe.remove).toHaveBeenCalledOnce();
+    unmount = () => {};
+  });
+
+  it("ignores invalid dynamic measurements and does not mix CSS dvh with pinch zoom", () => {
+    const b = browser(true, false, true);
+    b.dynamic.height = 0;
+    mount();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("800px");
+    b.dynamic.height = 200;
+    Object.assign(b.viewport, { height: 400, width: 195, offsetTop: 80, scale: 2 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("400px");
+    expect(b.properties.get("--lfn-viewport-top")).toBe("80px");
+    Object.assign(b.viewport, { height: 800, width: 390, offsetTop: 0, scale: 1 });
+    b.dynamic.height = 739;
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("739px");
+  });
+
+  it.each([false, true])("does not expand stale native dismissal without usable dvh (support=%s)", support => {
+    const b = browser(true, true, support);
+    b.dynamic.height = 0;
+    mount();
+    b.focus();
+    b.keyboard.overlaysContent = true;
+    Object.assign(b.viewport, { height: 360, offsetTop: 20 });
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 465, width: 390, height: 335 });
+    b.resize();
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 0, width: 0, height: 0 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("360px");
+    expect(b.properties.get("--lfn-viewport-top")).toBe("20px");
+    expect(b.root.dataset.viewportSource).toBe("visual");
+  });
+
   it("restores on confirmed native dismissal while focus and visual height/pan are still stale", () => {
-    const b = browser(true, true);
+    const b = browser(true, true, true);
     mount();
     b.focus();
     const focused = b.doc.activeElement;
@@ -236,7 +342,7 @@ describe("mobile visual viewport", () => {
   });
 
   it("does not reuse a completed native dismissal when the same focused input reopens the keyboard", () => {
-    const b = browser(true, true);
+    const b = browser(true, true, true);
     mount();
     b.focus();
     b.keyboard.overlaysContent = true;
