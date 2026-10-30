@@ -772,6 +772,10 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   // OpenAI fallback must return final base64 images. A native "msgpack"
   // stream flag is not an OpenAI boolean stream flag.
   delete rest.stream;
+  // Official V5 defaults to native when omitted. Preserve that native request
+  // meaning across NewAPI fallback, whose OpenAI builder defaults to karras.
+  if (model.startsWith("nai-v5-") && !Object.hasOwn(parameters, "noise_schedule"))
+    rest.noise_schedule = "native";
   validateNaiGenerationCost(model, width, height, steps, imagePricingStrength(rest, operation ?? action), operation ?? action);
   validateMediumRequest(model, { ...rest, width, height, n: samples, steps }, operation ?? action);
   return {
