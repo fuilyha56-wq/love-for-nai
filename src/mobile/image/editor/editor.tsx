@@ -246,10 +246,8 @@ function maskToPngDataUrl(values: ArrayLike<number>, width: number, height: numb
   const rgba = new Uint8ClampedArray(width * height * 4);
   for (let index = 0; index < values.length; index += 1) {
     const offset = index * 4;
-    rgba[offset] = 255;
-    rgba[offset + 1] = 255;
-    rgba[offset + 2] = 255;
-    rgba[offset + 3] = values[index];
+    rgba[offset] = rgba[offset + 1] = rgba[offset + 2] = values[index];
+    rgba[offset + 3] = 255;
   }
   context.putImageData(new ImageData(rgba, width, height), 0, 0);
   return canvas.toDataURL("image/png");

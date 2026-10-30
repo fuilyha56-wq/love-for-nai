@@ -22,6 +22,7 @@ import {
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { reserveHistoryImageIds, saveHistory } from "@/lib/history";
 import { watermarkImageResponse } from "@/lib/image-response-watermark";
+import { prepareMaskedImageEdit } from "@/lib/image-transport";
 import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
 import { invalidJsonResponse, parseJsonBody } from "@/lib/request";
@@ -383,6 +384,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       { message: `局部重绘需要重绘模型，${model} 不支持该操作` },
       { status: 400 },
     );
+  let maskedEdit: Awaited<ReturnType<typeof prepareMaskedImageEdit>> | null = null;
   if (operation === "inpainting" || operation === "edits" || operation === "outpainting") {
     const sourceImage = typeof body.image === "string" ? body.image : "";
     const sourceMask = typeof body.mask === "string" ? body.mask : "";
@@ -401,7 +403,14 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         { message: "源图片和蒙版尺寸必须一致" },
         { status: 400 },
       );
+    try {
+      maskedEdit = await prepareMaskedImageEdit(body, 8);
+      body.mask = maskedEdit.mask;
+    } catch (error) {
+      return NextResponse.json({ message: error instanceof Error ? error.message : "无法读取重绘原图与蒙版" }, { status: 400 });
+    }
   }
+  const finishMaskedImages = (images: string[]) => maskedEdit ? maskedEdit.finish(images) : Promise.resolve(images);
 
   const rate = checkImageRateLimit(request, `session:${session.userId}`);
   if (!rate.allowed)
@@ -631,11 +640,12 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
               const image = pngDataUrl(event.image);
               latestImages.set(event.sampleIndex, image);
               if (event.eventType === "final") {
-                finals.set(event.sampleIndex, image);
+                const protectedImage = (await finishMaskedImages([image]))[0];
+                finals.set(event.sampleIndex, protectedImage);
                 generatedSamples = finals.size;
                 send("final", {
                   sampleIndex: event.sampleIndex,
-                  image,
+                  image: protectedImage,
                   currentStep: steps,
                   totalSteps: steps,
                 });
@@ -654,11 +664,9 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             await nativeResponse.body?.cancel().catch(() => undefined);
             if (!errorMessage && finals.size === 0 && latestImages.size > 0) {
               console.warn("[lfn] 流式响应缺少 final 事件，提升最后一帧图片");
-              latestImages.forEach((image, sampleIndex) => finals.set(sampleIndex, image));
+              for (const [sampleIndex, image] of latestImages) finals.set(sampleIndex, (await finishMaskedImages([image]))[0]);
             } else if (!errorMessage && finals.size > 0) {
-              latestImages.forEach((image, sampleIndex) => {
-                if (!finals.has(sampleIndex)) finals.set(sampleIndex, image);
-              });
+              for (const [sampleIndex, image] of latestImages) if (!finals.has(sampleIndex)) finals.set(sampleIndex, (await finishMaskedImages([image]))[0]);
             }
             if (!errorMessage && finals.size) {
               const images = Array.from(
@@ -756,7 +764,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                     data?: Array<{ b64_json?: string; url?: string }>;
                     usage?: unknown;
                   };
-                  const images = imageFromResult(result);
+                  const images = await finishMaskedImages(imageFromResult(result));
                   if (!images.length) throw new Error("fallback no images");
                   generatedSamples = images.length;
                   if (creditCharge && generatedSamples < samples) {
@@ -956,7 +964,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         lastRaw = explainUpstreamFailure(safeUpstreamMessage(raw, upstreamPrivacy), upstream.status, body);
         break;
       }
-      const batchImages = imageFromResult(result);
+      const batchImages = await finishMaskedImages(imageFromResult(result));
       if (!batchImages.length) {
         lastStatus = 502;
         lastRaw = "上游未返回图片";

@@ -4,6 +4,7 @@ import { isPublicIp } from "@/lib/provider/validation";
 import { ImageRequestValidationError, MAX_IMAGE_BODY_BYTES, normalizeDimension, normalizeSteps, validateImageShape, validateReferenceCount } from "@/lib/image-request";
 import { nearestImageAspectRatio, normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { naiGatewayGenerationBody } from "@/lib/nai-native-request";
+import { preserveEditedPngText } from "@/lib/png-edit-metadata";
 
 export type ImageTransportRequest = { path: string; headers: Record<string, string>; body: string | FormData; width: number; height: number };
 export type ImageTransportResult = { images: string[]; usage: unknown; text: string };
@@ -120,13 +121,55 @@ export async function openAiAlphaMask(maskValue: unknown, imageValue: unknown): 
   const dims = await rasterMetadata(source);
   const maskDims = await rasterMetadata(mask);
   if (dims.width !== maskDims.width || dims.height !== maskDims.height) invalid("蒙版尺寸必须与原图一致");
-  const { data, info } = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data, info } = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   for (let offset = 0; offset < data.length; offset += 4) {
     const amount = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3 * data[offset + 3] / 255);
     data[offset] = data[offset + 1] = data[offset + 2] = 0;
     data[offset + 3] = 255 - amount;
   }
   return sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } }).png().toBuffer();
+}
+
+/** Decode once per request. Keep the precise selection separate from NAI's 8-pixel latent mask. */
+export async function prepareMaskedImageEdit(body: Record<string, unknown>, latentGrid = 1) {
+  const source = inlineRaster(body.image, "待编辑原图"), mask = inlineRaster(body.mask, "蒙版");
+  const dimensions = await rasterMetadata(source), maskDims = await rasterMetadata(mask);
+  if (dimensions.width !== maskDims.width || dimensions.height !== maskDims.height) invalid("蒙版尺寸必须与原图一致");
+  const original = await sharp(source.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer();
+  const pixels = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer();
+  const coverage = new Uint8Array(dimensions.width * dimensions.height);
+  for (let i = 0; i < coverage.length; i++) coverage[i] = Math.round((pixels[i * 4] + pixels[i * 4 + 1] + pixels[i * 4 + 2]) / 3 * pixels[i * 4 + 3] / 255);
+  const requestMask = Buffer.from(coverage);
+  if (latentGrid > 1) {
+    for (let top = 0; top < dimensions.height; top += latentGrid) for (let left = 0; left < dimensions.width; left += latentGrid) {
+      const right = Math.min(left + latentGrid, dimensions.width), bottom = Math.min(top + latentGrid, dimensions.height);
+      let selected = false;
+      for (let y = top; y < bottom && !selected; y++) for (let x = left; x < right; x++) if (coverage[y * dimensions.width + x] > 0) { selected = true; break; }
+      for (let y = top; y < bottom; y++) requestMask.fill(selected ? 255 : 0, y * dimensions.width + left, y * dimensions.width + right);
+    }
+  }
+  // An opaque grayscale PNG removes ambiguous RGB/alpha interpretations in NAI gateways.
+  const normalizedMask = pngUrl(await sharp(requestMask, { raw: { ...dimensions, channels: 1 } }).toColourspace("b-w").png().toBuffer());
+  const finish = async (images: string[]): Promise<string[]> => {
+    const result: string[] = [];
+    // Serial processing bounds peak memory for batch edits.
+    for (const image of images) {
+      const generated = inlineRaster(image, "上游重绘图片");
+      const output = await sharp(generated.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).resize(dimensions.width, dimensions.height, { fit: "fill" }).toColourspace("srgb").ensureAlpha().raw().toBuffer();
+      for (let i = 0; i < coverage.length; i++) {
+        const offset = i * 4, weight = coverage[i] / 255;
+        if (weight === 1) continue;
+        if (weight === 0) { original.copy(output, offset, offset, offset + 4); continue; }
+        const alpha = original[offset + 3] * (1 - weight) + output[offset + 3] * weight;
+        for (let channel = 0; channel < 3; channel++) output[offset + channel] = alpha === 0 ? 0 : Math.round((original[offset + channel] * original[offset + 3] * (1 - weight) + output[offset + channel] * output[offset + 3] * weight) / alpha);
+        output[offset + 3] = Math.round(alpha);
+      }
+      const png = await sharp(output, { raw: { ...dimensions, channels: 4 } }).png().toBuffer();
+      result.push(pngUrl(preserveEditedPngText(generated.bytes, png)));
+    }
+    return result;
+  };
+  return { mask: normalizedMask, finish };
 }
 
 export async function buildImageTransportRequest(body: Record<string, unknown>, apiKey: string, protocol: ImageProviderProtocol = "auto", samples = 1): Promise<ImageTransportRequest> {
@@ -192,6 +235,7 @@ export async function buildImageTransportRequest(body: Record<string, unknown>, 
     const steps = normalizeSteps(body.steps);
     const allowed = ["prompt", "negative_prompt", "negativePrompt", "scale", "sampler", "noise_schedule", "cfg_rescale", "seed", "strength", "noise", "image", "mask", "reference_image", "reference_images", "references", "characters", "characterPrompts", "use_coords", "reference_strength", "reference_information_extracted", "qualityToggle", "ucPreset", "emotion", "defry"];
     const payload: Record<string, unknown> = { model, ...Object.fromEntries(allowed.filter((field) => body[field] !== undefined).map((field) => [field, body[field]])), width, height, steps, n: samples, n_samples: samples, response_format: "b64_json" };
+    if (hasMask) payload.mask = (await prepareMaskedImageEdit(body, 8)).mask;
     for (const field of ["image", "mask", "reference_image", "reference_images", "references", "characters"]) if (payload[field] !== undefined) payload[field] = stripInlineImagePrefixes(payload[field]);
     if (operation !== "generate") payload.novelai_operation = operation === "outpainting" ? "inpainting" : operation;
     return { path: "/v1/images/generations", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(naiGatewayGenerationBody(payload)), ...dimensions };
@@ -282,18 +326,5 @@ export async function finishImageTransportImages(body: Record<string, unknown>, 
     const generated = inlineRaster(image, "上游图片");
     return pngUrl(await sharp(generated.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).resize(dimensions.width * 2, dimensions.height * 2).png().toBuffer());
   }));
-  const mask = inlineRaster(body.mask, "蒙版");
-  const maskDims = await rasterMetadata(mask);
-  if (dimensions.width !== maskDims.width || dimensions.height !== maskDims.height) invalid("蒙版尺寸必须与原图一致");
-  const original = await sharp(source.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).ensureAlpha().raw().toBuffer();
-  const maskPixels = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).ensureAlpha().raw().toBuffer();
-  return Promise.all(images.map(async (image) => {
-    const generated = inlineRaster(image, "上游重绘图片");
-    const output = await sharp(generated.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).resize(dimensions.width, dimensions.height, { fit: "fill" }).ensureAlpha().raw().toBuffer();
-    for (let offset = 0; offset < output.length; offset += 4) {
-      const weight = (maskPixels[offset] + maskPixels[offset + 1] + maskPixels[offset + 2]) / (3 * 255) * maskPixels[offset + 3] / 255;
-      for (let channel = 0; channel < 4; channel++) output[offset + channel] = Math.round(original[offset + channel] * (1 - weight) + output[offset + channel] * weight);
-    }
-    return pngUrl(await sharp(output, { raw: { ...dimensions, channels: 4 } }).png().toBuffer());
-  }));
+  return (await prepareMaskedImageEdit(body)).finish(images);
 }
