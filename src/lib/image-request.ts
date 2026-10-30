@@ -1,6 +1,6 @@
 import { privateKey, SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
 import { cachedRiskSettings } from "./risk-settings";
-import { isNaiMediumModel, NAI_MEDIUM_NEGATIVE_PROMPT } from "@/lib/nai-native-request";
+import { isNaiMediumModel } from "@/lib/nai-native-request";
 import { officialNaiAnlasCost, NAI_MAX_ANLAS_PER_IMAGE } from "./image-pricing";
 import { isNaiLimitModel, naiImageSizeError, NAI_MAX_DIMENSION, NAI_MAX_PIXELS } from "./nai-image-limits";
 
@@ -148,12 +148,12 @@ export function validateMediumRequest(model: string, body: Record<string, unknow
     reject("Medium 档步数固定为 14");
   if (parameters.cfg_rescale !== undefined && parameters.cfg_rescale !== 0)
     reject("Medium 档不支持 Prompt Guidance Rescale");
-  const fixed: Record<string, unknown> = { sampler: "k_euler_ancestral", uncond_scale: 1, params_version: 4, ucPreset: 0, ucPresetId: "heavy", tag_hint_uc_preset: 2, sm: false, sm_dyn: false };
+  const fixed: Record<string, unknown> = { sampler: "k_euler_ancestral", uncond_scale: 1, params_version: 4, sm: false, sm_dyn: false };
   for (const [key, value] of Object.entries(fixed)) {
     if (parameters[key] !== undefined && parameters[key] !== value) reject(`Medium 档不支持修改 ${key}`);
   }
-  if ([parameters.negative_prompt, parameters.negativePrompt].some((value) => Boolean(value) && value !== NAI_MEDIUM_NEGATIVE_PROMPT) || parameters.service_tier === "priority")
-    reject("Medium 档不支持自定义负面词或 priority 服务");
+  if (parameters.service_tier === "priority")
+    reject("Medium 档不支持 priority 服务");
   // Official clients may include empty reference lists even when references are off.
   const hasReferenceValue = (value: unknown): boolean => Array.isArray(value) ? value.length > 0 : Boolean(value);
   const hasReferences = Object.entries(parameters).some(([key, value]) => /^(?:reference_|director_reference_)/.test(key) && hasReferenceValue(value)) ||
@@ -162,17 +162,6 @@ export function validateMediumRequest(model: string, body: Record<string, unknow
   if (hasReferences || hasControlNet || parameters.upscale || parameters.upscaled_enhance)
     reject("Medium 档不支持参考图、ControlNet 或付费图像工具");
   if (operation === "generate" && parameters.image) reject("Medium 文生图不能携带输入图片");
-  if (Array.isArray(parameters.characterPrompts) && parameters.characterPrompts.some((item) => item && typeof item === "object" && (item.negativePrompt || item.negative)))
-    reject("Medium 档不支持角色负面词");
-  if (parameters.v4_negative_prompt && typeof parameters.v4_negative_prompt === "object") {
-    const caption = (parameters.v4_negative_prompt as Record<string, unknown>).caption;
-    if (caption && typeof caption === "object") {
-      const negative = caption as Record<string, unknown>;
-      if ((negative.base_caption && negative.base_caption !== NAI_MEDIUM_NEGATIVE_PROMPT) ||
-        (Array.isArray(negative.char_captions) && negative.char_captions.some((item) => item && typeof item === "object" && item.char_caption)))
-        reject("Medium 档不支持嵌套自定义负面词");
-    }
-  }
 }
 
 export function assertBodySize(request: Pick<Request, "headers">): void {

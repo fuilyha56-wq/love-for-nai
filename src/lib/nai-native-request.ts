@@ -136,18 +136,26 @@ export function naiNativeGenerationBody(
 ): Record<string, unknown> {
   const operation = typeof body.operation === "string" ? body.operation : "generate";
   const prompt = typeof body.prompt === "string" ? body.prompt : "";
+  const medium = isNaiMediumModel(String(body.model || ""));
+  const nativeNegative = medium && body.v4_negative_prompt && typeof body.v4_negative_prompt === "object" && !Array.isArray(body.v4_negative_prompt)
+    ? body.v4_negative_prompt as Record<string, unknown>
+    : undefined;
+  const nativeNegativeCaption = nativeNegative?.caption && typeof nativeNegative.caption === "object"
+    ? nativeNegative.caption as Record<string, unknown>
+    : undefined;
   const negative =
     typeof body.negative_prompt === "string"
       ? body.negative_prompt
       : typeof body.negativePrompt === "string"
         ? body.negativePrompt
-        : "";
+        : typeof nativeNegativeCaption?.base_caption === "string"
+          ? nativeNegativeCaption.base_caption
+          : medium ? NAI_MEDIUM_NEGATIVE_PROMPT : "";
   const samples = options.samples ?? (typeof body.n === "number" ? body.n : 1);
   // 角色定位模式：use_coords=false 时由 AI 根据提示词决定位置（Aaalice aiChoice）。
   const useCoords = typeof body.use_coords === "boolean" ? body.use_coords : true;
   const action = actionFor(operation);
   const upstreamModel = modelForAction(String(body.model || ""), action);
-  const medium = isNaiMediumModel(String(body.model || ""));
   const parameters: Record<string, unknown> = {
     params_version: upstreamModel.startsWith("nai-diffusion-5") ? 4 : 3,
     width: body.width,
@@ -163,7 +171,7 @@ export function naiNativeGenerationBody(
     noise: body.noise ?? 0,
     // NAI 官方语义：种子留空即随机；0 同样视为未指定。
     seed: typeof body.seed === "number" && Number.isSafeInteger(body.seed) && body.seed !== 0 ? body.seed : randomNaiSeed(),
-    negative_prompt: medium ? NAI_MEDIUM_NEGATIVE_PROMPT : negative,
+    negative_prompt: negative,
     legacy: false,
     add_original_image: true,
     autoSmea: false,
@@ -171,8 +179,7 @@ export function naiNativeGenerationBody(
     prefer_brownian: true,
   };
   if (medium) {
-    parameters.ucPreset = 0;
-    parameters.tag_hint_uc_preset = 2;
+    parameters.tag_hint_uc_preset = body.tag_hint_uc_preset ?? 2;
   }
   if (options.stream) parameters.stream = "msgpack";
   if (typeof body.strength === "number" || action === "img2img")
@@ -246,9 +253,7 @@ export function naiNativeGenerationBody(
     ).map((item) => (typeof item.strength === "number" ? item.strength : 1));
   }
   if (Array.isArray(body.characterPrompts) && body.characterPrompts.length) {
-    parameters.characterPrompts = medium
-      ? (body.characterPrompts as Array<Record<string, unknown>>).map((character) => ({ ...character, negative: "", negativePrompt: "" }))
-      : body.characterPrompts;
+    parameters.characterPrompts = body.characterPrompts;
     const captions = characterCaptions(body.characterPrompts);
     parameters.v4_prompt = {
       caption: { base_caption: prompt, char_captions: captions },
@@ -258,12 +263,15 @@ export function naiNativeGenerationBody(
     // 每角色负向：优先 negativePrompt，并兼容旧 negative 字段。
     parameters.v4_negative_prompt = {
       caption: {
-        base_caption: medium ? NAI_MEDIUM_NEGATIVE_PROMPT : negative,
+        base_caption: negative,
         char_captions: characterCaptions(parameters.characterPrompts, true),
       },
       legacy_uc: false,
     };
   }
+  // Native Medium accepts explicit base and character UC captions; retain the caller's
+  // structure instead of replacing it with the default Heavy preset.
+  if (nativeNegative) parameters.v4_negative_prompt = nativeNegative;
   return {
     input: prompt,
     model: upstreamModel,
