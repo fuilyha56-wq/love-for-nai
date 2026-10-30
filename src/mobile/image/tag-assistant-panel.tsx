@@ -2,7 +2,7 @@
 import { AssistantResourcePicker } from "./assistant-resource-picker";
 import { assistantDropFiles, hasAssistantImageDrag, type AssistantImageResource, type AssistantImageSource } from "@/lib/assistant-image-resource";
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, Expand, Minimize2, Plus, RefreshCw, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { AssistantModelPicker, AssistantSourceControl, type AssistantModelControl } from "./assistant-model-picker";
 import { AssistantReasoningControl } from "./assistant-reasoning-control";
@@ -94,24 +94,35 @@ export function TagAssistantPanel(p: Props) {
   const turns = p.conversation.turns.filter((turn, index) => !(index === 0 && p.suggestion && turn.id === currentJobId));
   const visibleTurns = (allTurns ? turns : turns.slice(0, 6)).toReversed();
   const hasCurrent = Boolean(p.suggestion || p.loading || p.steps.length || p.results.length || p.error);
-  const jumpToLatest = () => { const node = scrollRef.current; if (node) node.scrollTop = node.scrollHeight; followingRef.current = true; setFollow(true); };
+  const showWelcome = !visibleTurns.length && !hasCurrent;
+  const jumpToLatest = () => { const node = scrollRef.current; if (node) node.scrollTop = showWelcome ? 0 : node.scrollHeight; followingRef.current = true; setFollow(true); };
+  // Resize callbacks survive session changes. Read the latest content state so
+  // shrinking the keyboard viewport cannot scroll an empty welcome offscreen.
+  const syncTranscriptPosition = useEffectEvent(() => {
+    const transcript = scrollRef.current;
+    if (!transcript) return;
+    if (showWelcome) {
+      transcript.scrollTop = 0;
+      followingRef.current = true;
+      setFollow(true);
+    } else if (followingRef.current) transcript.scrollTop = transcript.scrollHeight;
+  });
   useEffect(() => {
     const node = composerRef.current; if (!node) return;
     const measure = () => {
       rootRef.current?.style.setProperty("--assistant-composer-height", `${node.getBoundingClientRect().height}px`);
-      const transcript = scrollRef.current;
-      if (followingRef.current && transcript) transcript.scrollTop = transcript.scrollHeight;
+      syncTranscriptPosition();
     };
     measure();
     if (typeof ResizeObserver === "undefined") { window.addEventListener("resize", measure); return () => window.removeEventListener("resize", measure); }
     const observer = new ResizeObserver(measure); observer.observe(node);
+    if (scrollRef.current) observer.observe(scrollRef.current);
     return () => observer.disconnect();
   }, []);
   useEffect(() => {
-    if (!followingRef.current) return;
-    const frame = requestAnimationFrame(() => { const node = scrollRef.current; if (node) node.scrollTop = node.scrollHeight; });
+    const frame = requestAnimationFrame(() => syncTranscriptPosition());
     return () => cancelAnimationFrame(frame);
-  }, [latest?.id, p.suggestion, p.loading, p.steps.length, p.error, p.results.length]);
+  }, [latest?.id, p.suggestion, p.loading, p.steps.length, p.error, p.results.length, showWelcome]);
   useEffect(() => {
     if (!settingsOpen) return;
     const dismiss = (event: PointerEvent) => { if (event.target instanceof Element && event.target.closest(".mobile-assistant-model-menu, .mobile-assistant-reasoning-menu")) return; if (!settingsRef.current?.contains(event.target as Node) && !settingsButtonRef.current?.contains(event.target as Node)) setSettingsOpen(false); };
@@ -200,14 +211,14 @@ export function TagAssistantPanel(p: Props) {
     {sessionsOpen && p.sessionControl && <div ref={sessionRef} className="assistant-session-popover"><AssistantSessionManager control={p.sessionControl} disabled={busy} onClose={() => { setSessionsOpen(false); sessionButtonRef.current?.focus(); }} /></div>}
     <div className="assistant-transcript" ref={scrollRef} onScroll={() => {
       const node = scrollRef.current; if (!node) return;
-      const near = node.scrollHeight - node.scrollTop - node.clientHeight < 72; followingRef.current = near; setFollow(near);
+      const near = showWelcome || node.scrollHeight - node.scrollTop - node.clientHeight < 72; followingRef.current = near; setFollow(near);
     }} role="log" aria-label="助手对话" aria-live="polite">
       
       {p.goal && <div className="assistant-goal-progress" role="status">
         <div><b>目标 Agent · 已生成 {p.goal.completedGenerations}{p.goal.accessMode === "full" ? ` / ${p.goal.maxGenerations}` : ""} 轮</b>{p.goal.status === "running" ? <button type="button" onClick={p.onStopGoal}>停止</button> : <button type="button" onClick={p.onClearGoal}>清除</button>}</div>
         <p>{p.goal.status === "running" ? p.goal.accessMode === "full" ? "Agent 正在迭代，生成后的图片会自动送回模型评估。" : "等待建议或下一张结果；所有改动都需要你手动应用。" : p.goal.status === "complete" ? "Agent 判断图像已达到目标。" : p.goal.status === "limit" ? "已达到完全访问轮数上限，最后建议仍可手动应用。" : p.goal.status === "stopped" ? "Agent 已停止。" : "Agent 暂停，请检查当前设置或重新发起目标。"}</p>
       </div>}
-      {!visibleTurns.length && !hasCurrent && <div className="assistant-welcome">
+      {showWelcome && <div className="assistant-welcome">
         <div><Sparkles size={26} /></div><h3>{p.mode === "goal" ? "让想法逐步成形" : "从一个想法开始"}</h3>
         <p>{p.mode === "goal" ? "描述最终目标，助手会评估每轮结果并提出调整。" : "描述画面或添加参考图，整理成适合当前模型的提示词。"}</p>
         <button type="button" onClick={() => { p.onInputChange("请整理当前提示词，保留主体与画面意图，优化描述和结构。"); inputRef.current?.focus(); }}>整理当前提示词<ArrowUp size={13} /></button>

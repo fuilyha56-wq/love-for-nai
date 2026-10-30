@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { memo, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
+import { useWorkspaceKeyboard } from "@/mobile/ui/use-workspace-keyboard";
 import { PopupSelect, type SelectOption } from "@/mobile/ui/popup-select";
 import { createPortal } from "react-dom";
 import "./mobile-studio-launcher.css";
@@ -93,6 +94,7 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
     else if (sheet) onCloseSheet();
   });
   const dialogOpen = Boolean(activeSheet);
+  useWorkspaceKeyboard(dialogOpen);
   const promptOpen = activePane === "prompt";
   const generateScrollRef = useRef<HTMLDivElement>(null);
   const inlinePromptToggleRef = useRef<HTMLButtonElement>(null);

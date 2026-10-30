@@ -19,6 +19,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 5,
   viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 };
 
 // 首帧前应用本地外观，避免刷新时先闪默认主题。解析规则由 appearance-store 统一生成，

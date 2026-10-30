@@ -1,8 +1,11 @@
 # Mobile input viewport contract
 
-Mobile sheets and prompt dialogs must use the same visible rectangle. The source
-is `window.visualViewport`: `width`, `height`, `offsetLeft`, and `offsetTop`, already
-expressed in CSS pixels. Fall back to the window dimensions when unavailable.
+Mobile sheets and prompt dialogs must use the same usable rectangle. The default
+source is `window.visualViewport`: `width`, `height`, `offsetLeft`, and `offsetTop`,
+already expressed in CSS pixels. Fall back to window dimensions when unavailable.
+While the full-screen workspace owns VirtualKeyboard overlay mode, a validated
+bottom-docked keyboard rectangle determines the lower edge instead. Never guess
+a missing strip by adding a fixed height or taking `max(innerHeight, visualHeight)`.
 
 - Never stop updating because `scale !== 1`. Pinch zoom or input zoom can coexist
   with a keyboard resize; retaining the old height creates a gap or clips content.
@@ -18,6 +21,68 @@ expressed in CSS pixels. Fall back to the window dimensions when unavailable.
   composition, selection, and draft contents.
 - Keep overflow scrolling available in short screens. Desktop prompt components
   and their styling are separate and should not be changed for this behavior.
+
+## Residual blank-area follow-up — 2026-10-30 (r15)
+
+The user reported the earlier release still left the same strip below both
+workspaces on phones, including mobile Edge and other browsers. The screenshots
+show the two workspaces ending at the same vertical position, approximately
+105 CSS px above the keyboard. This points to their shared outer geometry, but
+the screenshots alone do not establish which native viewport metric was wrong.
+No physical phone is connected to this workstation, so device resolution is
+**not yet verified**. The previous desktop resize checks were insufficient to
+claim a physical keyboard fix.
+
+Changes in this follow-up:
+
+- The full-screen workspace locks background document scrolling and restores
+  the exact previous inline styles, priorities, and scroll position on close.
+- On supported secure-context Chromium browsers, the workspace opts into
+  `virtualKeyboard.overlaysContent` before input focus. A finite, full-width,
+  bottom-docked rectangle supplies `height = keyboard.y - viewport.offsetTop`.
+  This lets actual keyboard geometry recover an undersized visual report. Native
+  height is not subtracted again. Floating or invalid rectangles are rejected.
+- Overlay ownership lasts only for the workspace visit. Initial zoom skips it;
+  later zoom disables it. If the first focused input still has no usable native
+  rectangle after 900ms, the visit falls back to browser behavior. A normal
+  dismissal after successful geometry is not treated as API failure.
+- The viewport metadata requests `interactive-widget=resizes-content`. Browsers
+  without native geometry retain VisualViewport/window fallback. Layout height
+  is accepted only when visual height agrees, preventing split-screen resizing
+  from expanding content behind a keyboard.
+- Resize/focus events schedule four bounded trailing measurements at 60, 180,
+  350 and 600ms. A browser that notifies before its final IME geometry settles
+  no longer leaves the first measurement frozen. Cleanup cancels every timer.
+- A confirmed assistant defect was empty-state auto-scrolling: the welcome
+  content was scrolled to its bottom on resize. Empty sessions now stay at the
+  top; real results follow the latest message only while the reader is following.
+  ResizeObserver reads current session state and observes the transcript as well
+  as the composer, preserving user scroll position and draft text.
+
+Next.js dev / in-app browser verification (simulated keyboard geometry):
+
+| Scenario | Observed result |
+| --- | --- |
+| Layout 390×844, visual report 360px, native keyboard top 465px | Sheet bottom 465px; the missing 105px becomes usable content. Welcome heading and description appear; input 64px, send bottom 457px. |
+| 40-line prompt in the same geometry | Textarea 214px, scroll content 1964px; keyboard navigation reaches line 40 with caret visible. Original prompt restored. |
+| Actual guest `blue_sky` tag lookup | Search response appears in the real transcript, 173px tall; content scrolls in 373px. No paid model/image request. |
+| Read older results, then change keyboard top 465→400px | Scroll position stays at 0; transcript becomes 108px; draft retained; send bottom 392px. |
+| Visual-only fallback with actual layout still 844px | Visual height 420px gives sheet bottom 420px and send bottom 412px. Unlike the previous check, neither innerHeight nor the layout viewport was resized. |
+| Content viewport 390×280 | Transcript 39px, textarea 32px, send bottom 272px; content remains scrollable. |
+| 110% page scale | Overlay is disabled; sheet height 767.2656px matches VisualViewport 767.2727px within rounding. |
+| Close all workspace panes | Body position and root overflow restored; keyboard overlay restored to false; original prompt and seed preserved. |
+| Automated checks | 20 viewport/keyboard lifecycle tests, changed-source ESLint, and TypeScript passed before integrating the latest GitHub changes. Production build validates the integrated release. |
+
+Screenshots are local QA artifacts under `scripts/.tmp/mobile-keyboard-r15/`:
+`prompt-end.jpg`, `assistant-native-geometry.jpg`, `assistant-results.jpg`, and
+`assistant-visual-only.jpg`. Captures are clipped to the simulated visible area;
+they are not photos of a physical keyboard. All injected geometry is removed
+after verification. The actual phone/browser URL and a device pass are still
+needed to establish that the user's reported condition is fully resolved.
+
+References: [VirtualKeyboard API](https://developer.chrome.com/docs/web-platform/virtual-keyboard/),
+[VirtualKeyboard coordinates and overlay contract](https://www.w3.org/TR/virtual-keyboard/),
+[browser viewport resize behavior](https://developer.chrome.com/blog/viewport-resize-behavior/).
 
 ## Keyboard layout follow-up — 2026-10-30
 
@@ -53,7 +118,7 @@ Validation used Next.js 16.4.3 `next dev` at `http://127.0.0.1:3000/image`:
 | Check | Observed result |
 | --- | --- |
 | Long prompt, 22 lines | Native scrolling reached the last line; 169px textarea, 1100px scroll content, scrollTop 931. |
-| Visual-only keyboard simulation | Main-world innerHeight held at 844px while VisualViewport became 420px; keyboard estimate 424px; sheet height 420px. |
+| Earlier viewport simulation (limited) | innerHeight was mocked to 844px while the browser/layout viewport itself was resized to 420px. This did not reproduce a true visual-only keyboard resize; the r15 check above replaces that evidence. |
 | Assistant at 390×420 | Real guest tag-search results remained scrollable; transcript 128px; input 64px; send bottom y=412, inside the viewport. |
 | Expanded assistant at 390×280 | Transcript 39px, input 32px, 44px send button ending at y=272. |
 | Viewport pan | Simulated offsetTop 35px moved the sheet to y=35 without reducing its height twice. |

@@ -9,6 +9,7 @@ import { useVisualViewport } from "@/mobile/ui/use-visual-viewport";
 function browser(withViewport = true, withKeyboard = false) {
   const properties = new Map<string, string>();
   const root = {
+    clientHeight: 800,
     style: {
       setProperty: (name: string, value: string) => properties.set(name, value),
       removeProperty: (name: string) => properties.delete(name),
@@ -16,7 +17,7 @@ function browser(withViewport = true, withKeyboard = false) {
     dataset: {} as Record<string, string>,
   };
   const viewport = Object.assign(new EventTarget(), { width: 390, height: 800, offsetLeft: 0, offsetTop: 0, scale: 1 });
-  const keyboard = Object.assign(new EventTarget(), { boundingRect: { height: 0 }, overlaysContent: false });
+  const keyboard = Object.assign(new EventTarget(), { boundingRect: { x: 0, y: 0, width: 0, height: 0 }, overlaysContent: false });
   const orientation = new EventTarget();
   const win = Object.assign(new EventTarget(), {
     innerWidth: 390, innerHeight: 800, visualViewport: withViewport ? viewport : undefined, screen: { orientation },
@@ -63,8 +64,8 @@ function mount() {
 }
 
 describe("mobile visual viewport", () => {
-  beforeEach(() => { runtime.effects = []; unmount = () => {}; });
-  afterEach(() => { unmount(); vi.unstubAllGlobals(); });
+  beforeEach(() => { runtime.effects = []; unmount = () => {}; vi.useFakeTimers(); });
+  afterEach(() => { unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
   it("follows a visual-only keyboard resize and pan without subtracting the keyboard twice", () => {
     const b = browser();
@@ -118,43 +119,100 @@ describe("mobile visual viewport", () => {
     const b = browser(false);
     mount();
     b.focus();
-    b.win.innerHeight = 440;
+    b.win.innerHeight = b.root.clientHeight = 440;
     b.resize();
     expect(b.properties.get("--lfn-viewport-height")).toBe("440px");
     expect(b.properties.get("--lfn-viewport-top")).toBe("0px");
     expect(b.properties.get("--lfn-keyboard-height")).toBe("360px");
-    b.win.innerHeight = 800;
+    b.win.innerHeight = b.root.clientHeight = 800;
     b.resize();
     expect(b.properties.get("--lfn-keyboard-height")).toBe("0px");
     expect(b.root.dataset.keyboardOpen).toBe("false");
   });
 
-  it("prefers reported keyboard geometry but handles an empty API rectangle without enabling overlays", () => {
+  it("uses the native docked keyboard edge when the visual viewport understates usable space", () => {
     const b = browser(true, true);
     mount();
     b.focus();
-    b.win.innerHeight = b.viewport.height = 440;
+    b.keyboard.overlaysContent = true;
+    b.viewport.height = 360;
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 465, width: 390, height: 335 });
     b.resize();
-    expect(b.properties.get("--lfn-keyboard-height")).toBe("360px");
-    b.keyboard.boundingRect.height = 220.5;
+    expect(b.properties.get("--lfn-viewport-height")).toBe("465px");
+    expect(b.properties.get("--lfn-keyboard-height")).toBe("335px");
+    expect(b.root.dataset.viewportSource).toBe("keyboard");
+    Object.assign(b.keyboard.boundingRect, { y: 400, height: 400 });
     b.keyboard.dispatchEvent(new Event("geometrychange"));
     b.flush();
-    expect(b.properties.get("--lfn-keyboard-height")).toBe("220.5px");
-    expect(b.properties.get("--lfn-viewport-height")).toBe("440px");
-    expect(b.keyboard.overlaysContent).toBe(false);
-    b.keyboard.boundingRect.height = 0;
-    b.win.innerHeight = b.viewport.height = 800;
+    expect(b.properties.get("--lfn-viewport-height")).toBe("400px");
+    Object.assign(b.keyboard.boundingRect, { y: 0, width: 0, height: 0 });
+    b.viewport.height = 800;
     b.keyboard.dispatchEvent(new Event("geometrychange"));
     b.flush();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("800px");
     expect(b.root.dataset.keyboardOpen).toBe("false");
   });
 
-  it("resets stale baselines after rotation and clears the signal after blur", () => {
+  it("does not remove a page-wide strip for floating keyboards or invalid native rectangles", () => {
+    const b = browser(true, true);
+    mount();
+    b.focus();
+    b.keyboard.overlaysContent = true;
+    Object.assign(b.keyboard.boundingRect, { x: 40, y: 500, width: 280, height: 240 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("800px");
+    expect(b.root.dataset.viewportSource).toBe("visual");
+    Object.assign(b.keyboard.boundingRect, { x: 0, y: 465, width: 390, height: 600 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("800px");
+  });
+
+  it("accepts content resize only when both viewports agree, and never expands visual-only occlusion", () => {
+    const b = browser();
+    mount();
+    b.focus();
+    b.win.innerHeight = b.root.clientHeight = 465;
+    Object.assign(b.viewport, { height: 465, offsetTop: 0 });
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("465px");
+    expect(b.properties.get("--lfn-viewport-top")).toBe("0px");
+    expect(b.properties.get("--lfn-keyboard-height")).toBe("335px");
+    expect(b.root.dataset.viewportSource).toBe("layout");
+    // A split-screen/window resize can shrink layout while the IME separately
+    // occludes the visual viewport, even when the input remains focused.
+    b.viewport.height = 360;
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("360px");
+    expect(b.root.dataset.viewportSource).toBe("visual");
+    // An unchanged layout viewport must never extend the page under the IME.
+    b.win.innerHeight = b.root.clientHeight = 800;
+    b.resize();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("360px");
+    expect(b.root.dataset.viewportSource).toBe("visual");
+  });
+
+  it("reads settled keyboard geometry even if there is no second resize notification", () => {
+    const b = browser();
+    mount();
+    b.focus();
+    b.viewport.height = 360;
+    b.resize();
+    b.viewport.height = 465;
+    vi.advanceTimersByTime(180);
+    b.flush();
+    expect(b.properties.get("--lfn-viewport-height")).toBe("465px");
+    vi.advanceTimersByTime(1000);
+    b.flush();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(b.frames.size).toBe(0);
+  });
+
+  it("resets stale baselines after rotation and retains them through keyboard dismissal", () => {
     const b = browser();
     mount();
     b.focus();
     b.win.innerWidth = b.viewport.width = 800;
-    b.win.innerHeight = b.viewport.height = 390;
+    b.win.innerHeight = b.root.clientHeight = b.viewport.height = 390;
     b.orientation.dispatchEvent(new Event("change"));
     b.flush();
     expect(b.root.dataset.keyboardOpen).toBe("false");
@@ -164,6 +222,9 @@ describe("mobile visual viewport", () => {
     b.doc.activeElement = null;
     b.doc.dispatchEvent(new Event("focusout"));
     b.flush();
+    expect(b.root.dataset.keyboardOpen).toBe("true");
+    b.viewport.height = 390;
+    b.resize();
     expect(b.root.dataset.keyboardOpen).toBe("false");
   });
 
@@ -176,7 +237,9 @@ describe("mobile visual viewport", () => {
     unmount();
     expect(b.properties.size).toBe(0);
     expect(b.root.dataset.keyboardOpen).toBeUndefined();
+    expect(b.root.dataset.viewportSource).toBeUndefined();
     expect(b.frames.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
     for (const [target, events] of [
       [b.viewport, ["resize", "scroll"]], [b.win, ["resize", "pageshow", "orientationchange"]],
       [b.doc, ["focusin", "focusout"]], [b.orientation, ["change"]], [b.keyboard, ["geometrychange"]],
