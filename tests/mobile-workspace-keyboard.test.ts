@@ -46,6 +46,21 @@ function browser(withKeyboard = true) {
   return { body, root, viewport, keyboard, win, doc, focus, geometry };
 }
 
+function phoneBrowser() {
+  const b = browser(false);
+  b.win.innerWidth = 406;
+  b.viewport.width = 406.67;
+  b.viewport.height = b.win.innerHeight = b.root.clientHeight = 864;
+  b.root.style.setProperty("--lfn-viewport-height", "864px");
+  return b;
+}
+
+function expectPhoneRest(b: ReturnType<typeof phoneBrowser>, height: number) {
+  expect(getWorkspaceViewport()).toEqual({ height, width: 406 });
+  expect(b.root.style.getPropertyValue("--lfn-workspace-rest-height")).toBe(`${height}px`);
+  expect(b.body.style.getPropertyValue("height")).toBe(`${height}px`);
+}
+
 let unmount: () => void;
 function mount(open = true) {
   // Run the lifecycle without installing an additional browser test runtime.
@@ -60,7 +75,7 @@ function mount(open = true) {
 
 describe("mobile workspace keyboard ownership", () => {
   beforeEach(() => { runtime.effects = []; unmount = () => {}; vi.useFakeTimers(); });
-  afterEach(() => { unmount(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+  afterEach(() => { unmount(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   it("only opts in while open and restores exact styles, priorities and scroll on close", () => {
     const b = browser();
@@ -250,6 +265,147 @@ describe("mobile workspace keyboard ownership", () => {
     expect(b.body.style.getPropertyValue("height")).toBe("710px");
   });
 
+  it.each(["window", "visual"] as const)("corrects an early 864px snapshot to 754px on %s resize before editing, then freezes it", source => {
+    const b = phoneBrowser();
+    mount();
+    expectPhoneRest(b, 864);
+    b.viewport.height = b.win.innerHeight = b.root.clientHeight = 754;
+    // The applied viewport variable may still contain the previous frame.
+    (source === "window" ? b.win : b.viewport).dispatchEvent(new Event("resize"));
+    expectPhoneRest(b, 754);
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Browser controls hiding must not increase the calibrated ceiling.
+    b.viewport.height = 864;
+    b.viewport.dispatchEvent(new Event("resize"));
+    expectPhoneRest(b, 754);
+    b.focus();
+    b.root.dataset.keyboardOpen = "true";
+    for (const height of [374.67, 484.67]) {
+      b.viewport.height = b.win.innerHeight = b.root.clientHeight = height;
+      b.win.dispatchEvent(new Event("resize"));
+      b.viewport.dispatchEvent(new Event("resize"));
+      expectPhoneRest(b, 754);
+    }
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    b.root.dataset.keyboardOpen = "false";
+    for (const height of [864, 700, 754]) {
+      b.viewport.height = b.win.innerHeight = b.root.clientHeight = height;
+      b.win.dispatchEvent(new Event("resize"));
+      b.viewport.dispatchEvent(new Event("resize"));
+      expectPhoneRest(b, 754);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("takes one final small toolbar correction on the first text focus when its resize has not fired", () => {
+    const b = phoneBrowser();
+    mount();
+    b.viewport.height = 754;
+    b.focus();
+    expectPhoneRest(b, 754);
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    b.viewport.height = 700;
+    b.focus();
+    expectPhoneRest(b, 754);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["focus", "keyboard", "large shrink", "pan", "zoom", "width", "zero", "invalid"] as const)("does not learn a smaller rest height during %s", mode => {
+    const b = phoneBrowser();
+    mount();
+    if (mode === "focus") b.focus();
+    b.viewport.height = 754;
+    if (mode === "keyboard") b.root.dataset.keyboardOpen = "true";
+    if (mode === "large shrink") b.viewport.height = 484.67;
+    if (mode === "pan") b.viewport.offsetTop = 3;
+    if (mode === "zoom") b.viewport.scale = 1.2;
+    if (mode === "width") b.win.innerWidth = b.viewport.width = 600;
+    if (mode === "zero") b.viewport.height = 0;
+    if (mode === "invalid") b.viewport.height = Number.NaN;
+    b.viewport.dispatchEvent(new Event("resize"));
+    b.win.dispatchEvent(new Event("resize"));
+    if (mode === "width") {
+      expect(getWorkspaceViewport()).toBeUndefined();
+      b.win.innerWidth = 406;
+      b.viewport.width = 406.67;
+      b.viewport.height = 864;
+      b.win.dispatchEvent(new Event("resize"));
+    }
+    expectPhoneRest(b, 864);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(["keyboard", "large shrink", "pan", "zoom", "width"] as const)("keeps the first-focus correction guarded during %s", mode => {
+    const b = phoneBrowser();
+    mount();
+    b.viewport.height = mode === "large shrink" ? 484.67 : 754;
+    if (mode === "keyboard") b.root.dataset.keyboardOpen = "true";
+    if (mode === "pan") b.viewport.offsetTop = 3;
+    if (mode === "zoom") b.viewport.scale = 1.2;
+    if (mode === "width") b.win.innerWidth = 600;
+    b.focus();
+    b.win.innerWidth = 406;
+    expectPhoneRest(b, 864);
+  });
+
+  it("rejects a shrink exactly at the keyboard threshold", () => {
+    const b = browser(false);
+    mount();
+    b.viewport.height = 680;
+    b.viewport.dispatchEvent(new Event("resize"));
+    expect(getWorkspaceViewport()).toEqual({ height: 800, width: 390 });
+    expect(b.body.style.getPropertyValue("height")).toBe("800px");
+  });
+
+  it("locks the initial editor focus for the whole visit, even after blur", () => {
+    const b = phoneBrowser();
+    b.focus();
+    mount();
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    b.viewport.height = 754;
+    b.viewport.dispatchEvent(new Event("resize"));
+    b.win.dispatchEvent(new Event("resize"));
+    expectPhoneRest(b, 864);
+  });
+
+  it("allows toolbar calibration after a non-editable control received focus", () => {
+    const b = phoneBrowser();
+    mount();
+    b.doc.activeElement = { matches: () => false };
+    b.doc.dispatchEvent(new Event("focusin"));
+    b.viewport.height = 754;
+    b.viewport.dispatchEvent(new Event("resize"));
+    expectPhoneRest(b, 754);
+  });
+
+  it("removes every viewport listener and the calibrated baseline on close", () => {
+    const b = phoneBrowser();
+    const added = vi.spyOn(b.viewport, "addEventListener");
+    const removed = vi.spyOn(b.viewport, "removeEventListener");
+    const bodyBefore = [...b.body.style.values];
+    const rootBefore = [...b.root.style.values];
+    mount();
+    b.viewport.height = 754;
+    b.viewport.dispatchEvent(new Event("resize"));
+    expectPhoneRest(b, 754);
+    unmount();
+    for (const [event, listener] of added.mock.calls) {
+      expect(removed).toHaveBeenCalledWith(event, listener);
+    }
+    expect(getWorkspaceViewport()).toBeUndefined();
+    b.viewport.height = 700;
+    b.viewport.dispatchEvent(new Event("resize"));
+    b.win.dispatchEvent(new Event("resize"));
+    b.focus();
+    expect([...b.body.style.values]).toEqual(bodyBefore);
+    expect([...b.root.style.values]).toEqual(rootBefore);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it.each([
     ["754px", 864, 754],
     ["864px", 754, 754],
@@ -321,6 +477,9 @@ describe("mobile workspace keyboard ownership", () => {
     mount();
     expect(b.root.dataset.workspaceViewport).toBe("true");
     expect(b.body.style.getPropertyValue("min-height")).toBe("0");
+    b.viewport.height = 754;
+    b.viewport.dispatchEvent(new Event("resize"));
+    expect(b.body.style.getPropertyValue("height")).toBe("754px");
     unmount();
     expect([...b.body.style.values]).toEqual(bodyBefore);
     expect([...b.root.style.values]).toEqual(rootBefore);

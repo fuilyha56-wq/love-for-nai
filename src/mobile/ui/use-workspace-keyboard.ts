@@ -42,6 +42,7 @@ export function useWorkspaceKeyboard(open: boolean) {
     const previousRestPriority = root.style.getPropertyPriority("--lfn-workspace-rest-height");
     const previousWorkspace = root.dataset.workspaceViewport;
     const viewport = window.visualViewport;
+    let editingStarted = isTextEntryFocused() || root.dataset.keyboardOpen === "true";
     const reportedHeight = Number.parseFloat(root.style.getPropertyValue("--lfn-viewport-height"));
     const visibleHeight = viewport?.height ?? window.innerHeight;
     const restHeight = reportedHeight > 0 ? Math.min(visibleHeight, reportedHeight) : visibleHeight;
@@ -56,12 +57,31 @@ export function useWorkspaceKeyboard(open: boolean) {
       root.style.setProperty("--lfn-workspace-rest-height", `${height}px`);
       body.style.setProperty("height", `${height}px`);
     }
+    function refineRestHeight(beforeFirstFocus = false) {
+      if (isTextEntryFocused() && !beforeFirstFocus) editingStarted = true;
+      if (editingStarted || root.dataset.keyboardOpen === "true" ||
+        !(Math.abs((viewport?.scale ?? 1) - 1) < 0.01) ||
+        !(Math.abs(viewport?.offsetTop ?? 0) <= 2)) return;
+      const saved = getWorkspaceViewport();
+      const height = viewport?.height ?? window.innerHeight;
+      if (!saved || !Number.isFinite(height) || height <= 0) return;
+      const shrink = saved.height - height;
+      // The first snapshot can precede browser toolbar restoration. Only learn
+      // a small downward correction before this visit's first text edit; a
+      // keyboard-sized shrink or later blur must never redefine the ceiling.
+      if (shrink <= 0 || shrink >= Math.max(120, saved.height * 0.15)) return;
+      workspaceViewports.set(document, { width: saved.width, height });
+      freezeBackground(height);
+    }
+    const resizeViewport = () => refineRestHeight();
     function resizeBackground() {
-      if (Math.abs(window.innerWidth - backgroundWidth) <= 1) return;
-      backgroundWidth = window.innerWidth;
-      // A different orientation must not inherit the old orientation's ceiling.
-      // Returning to the initial width can reuse its known unobscured rectangle.
-      freezeBackground(getWorkspaceViewport()?.height ?? window.innerHeight);
+      if (Math.abs(window.innerWidth - backgroundWidth) > 1) {
+        backgroundWidth = window.innerWidth;
+        // A different orientation must not inherit the old orientation's ceiling.
+        // Returning to the initial width can reuse its known unobscured rectangle.
+        freezeBackground(getWorkspaceViewport()?.height ?? window.innerHeight);
+      }
+      refineRestHeight();
     }
     root.style.setProperty("overflow", "hidden");
     body.style.setProperty("position", "fixed");
@@ -72,6 +92,7 @@ export function useWorkspaceKeyboard(open: boolean) {
     body.style.setProperty("min-height", "0");
     body.style.setProperty("overflow", "hidden");
     window.addEventListener("resize", resizeBackground);
+    viewport?.addEventListener("resize", resizeViewport);
 
     // Opt in before focusing an editor. Other pages keep native browser behavior.
     // Without this opt-in Chromium normally reports an empty keyboard rectangle.
@@ -102,7 +123,11 @@ export function useWorkspaceKeyboard(open: boolean) {
       keyboard.overlaysContent = previousOverlay ?? false;
       window.dispatchEvent(new Event("resize"));
     }
-    function inspectKeyboard() {
+    function inspectKeyboard(event?: Event) {
+      // This also runs on focusin when HTTP has no VirtualKeyboard API.
+      // Read a toolbar correction once if focus beats its pending resize event.
+      if (!editingStarted && event?.type === "focusin" && isTextEntryFocused()) refineRestHeight(true);
+      if (isTextEntryFocused()) editingStarted = true;
       if (!overlayEnabled) return;
       // Older Android engines report native keyboard coordinates inconsistently
       // while zoomed; return ownership to the browser for this workspace visit.
@@ -150,6 +175,7 @@ export function useWorkspaceKeyboard(open: boolean) {
       document.removeEventListener("focusin", inspectKeyboard);
       document.removeEventListener("focusout", inspectKeyboard);
       window.removeEventListener("resize", resizeBackground);
+      viewport?.removeEventListener("resize", resizeViewport);
       workspaceViewports.delete(document);
       if (previousWorkspace === undefined) delete root.dataset.workspaceViewport;
       else root.dataset.workspaceViewport = previousWorkspace;
