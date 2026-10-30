@@ -1,5 +1,7 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { PopupSelect } from "@/app/ui/popup-select";
+import styles from "@/app/ui/discovery-controls.module.css";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 import { hasReadableGenerationMetadata } from "@/lib/gallery-publication";
 import type {
@@ -16,13 +18,21 @@ type Form = GalleryPublicationInput & {
   source: string;
   originalFile?: File;
 };
+const publicationModes = [
+  { value: "full", label: "完整公开原数据" },
+  { value: "partial", label: "部分公开提示词（手动填写并校验）" },
+  { value: "hidden", label: "不公开提示词" },
+  { value: "none", label: "无原数据图" },
+];
 export function GalleryPublicationFields({
   form,
   onChange,
   allowOriginalProof = false,
+  Select = PopupSelect,
 }: {
   form: Form;
   allowOriginalProof?: boolean;
+  Select?: typeof PopupSelect;
   onChange: (
     patch: GalleryPublicationInput & {
       exposeParameters?: boolean;
@@ -31,6 +41,7 @@ export function GalleryPublicationFields({
     },
   ) => void;
 }) {
+  const publicationModeId = useId();
   const [detected, setDetected] = useState("");
   const files = form.files?.length ? form.files : form.file ? [form.file] : [];
   const first = files[0];
@@ -111,13 +122,18 @@ export function GalleryPublicationFields({
           {files.length > 1 ? " 批量上传将逐张检测和分类。" : ""}
         </p>
       )}
-      <label className="block text-sm">
-        公开方式
-        <select
-          className="field mt-2 w-full p-2"
+      <div className="text-sm">
+        <label htmlFor={publicationModeId}>公开方式</label>
+        <Select
+          id={publicationModeId}
+          ariaLabel="公开方式"
+          className={`mt-2 ${styles.select}`}
+          menuClassName={styles.menu}
+          menuMinWidth={260}
           value={mode}
-          onChange={(event) => {
-            const promptMode = event.target.value as GalleryPromptMode;
+          options={publicationModes}
+          onChange={(value) => {
+            const promptMode = value as GalleryPromptMode;
             change.current({
               promptMode,
               exposeParameters:
@@ -125,13 +141,8 @@ export function GalleryPublicationFields({
               requireLikeForParameters: false,
             });
           }}
-        >
-          <option value="full">完整公开原数据</option>
-          <option value="partial">部分公开提示词（手动填写并校验）</option>
-          <option value="hidden">不公开提示词</option>
-          <option value="none">无原数据图</option>
-        </select>
-      </label>
+        />
+      </div>
       <p className="text-xs leading-5 text-[var(--muted)]">
         无法读取原始生成元数据时会自动归类为无原数据图。提供校验原图并通过审核时进入
         0.3

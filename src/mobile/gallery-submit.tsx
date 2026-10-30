@@ -166,7 +166,7 @@ export function GallerySubmitDialog({
           {historyMode && <GalleryHistoryField historyId={form.historyId} file={form.file} title={form.title} disabled={publishing} onSelect={(item) => { setError(""); onChange({ ...form, historyId: item.historyId, source: item.historyId ? "lfn" : "local", file: item.file, files: item.file ? [item.file] : undefined, title: form.title.trim() ? form.title : item.prompt.slice(0, 80) }); }} onClear={() => { setError(""); onChange({ ...form, historyId: undefined, source: "lfn", file: undefined, files: undefined }); }} />}
           {!historyMode && form.source !== "lfn" && <GalleryUploadField files={form.files?.length ? form.files : form.file ? [form.file] : []} onChange={(files) => { setError(""); onChange({ ...form, file: files[0], files }); }} />}
           <label className="block text-sm font-semibold">公开标签<span className="field mt-2 flex h-11 items-center px-4"><input className="w-full bg-transparent outline-none" value={form.tags} onChange={(event) => onChange({ ...form, tags: event.target.value })} placeholder="例如：azure lane, blue hair, night" /></span><small className="mt-1 block font-normal text-[var(--muted)]">使用英文逗号分隔标签。</small></label>
-          <GalleryPublicationFields allowOriginalProof form={form} onChange={patch => onChange({ ...form, ...patch })} />
+          <GalleryPublicationFields Select={PopupSelect} allowOriginalProof form={form} onChange={patch => onChange({ ...form, ...patch })} />
         </div>
     </div>
     <footer className="lfn-adaptive-footer">
