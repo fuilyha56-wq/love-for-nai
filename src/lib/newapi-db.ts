@@ -12,7 +12,7 @@ import {
 // 因此任何在 NewAPI 有效的密钥走 LFN 图像端点都能自动定位
 // 到对应的图包/个人 AFF 账本，用户不需要任何绑定操作。
 // 跨服务器部署（数据库不可直连）时改走管理 API 的 token 搜索做
-// HTTP 兜底识别；两者都不可用或 key 无效时返回 null，LFN 严格计费入口拒绝
+// HTTP 兜底识别；无法识别时 userId 为 null，LFN 严格计费入口拒绝
 // 转用其他钱包。数据库配置存在但故障时抛错，
 // 避免静默跳过图包扣费。
 
@@ -22,6 +22,9 @@ export type ExternalApiIdentity = {
   group: string | null;
   allowedModels?: string[];
   validUntil?: number;
+  // Only a successful authoritative DB lookup may mark a key invalid.
+  // Missing classification (including older cache entries) stays unresolved.
+  authentication?: "invalid" | "unresolved";
 };
 
 type ApiKeyCacheEntry = ExternalApiIdentity & { expiresAt: number; validatedAt: number };
@@ -146,21 +149,23 @@ export async function resolveExternalApiIdentity(
   const cache = apiKeyCache();
   const cacheKey = createHash("sha256").update(key).digest("hex"), cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > now && now - cached.validatedAt < (cached.userId ? positiveMs : negativeMs))
-    return { userId: cached.userId, username: cached.username, group: cached.group, ...(cached.allowedModels ? { allowedModels: cached.allowedModels } : {}) };
+    return { userId: cached.userId, username: cached.username, group: cached.group, ...(cached.allowedModels ? { allowedModels: cached.allowedModels } : {}), ...(cached.authentication ? { authentication: cached.authentication } : {}) };
   const pool = dbPool();
   if (!pool) {
     // 数据库不可直连（跨服务器部署）：走管理 API 兜底识别，
     // 确保外部 Key 仍能命中站内图包/个人 AFF 账本，而不是静默透传。
-    const httpIdentity = await resolveUserViaHttp(
+    const httpIdentity: ExternalApiIdentity = await resolveUserViaHttp(
       key,
       Math.floor(now / 1000),
     ).catch(() => ({ userId: null, username: null, group: null }));
+    if (httpIdentity.userId == null) httpIdentity.authentication = "unresolved";
     if (cache.size >= CACHE_MAX_KEYS) cache.clear();
     cache.set(cacheKey, {
       userId: httpIdentity.userId,
       username: httpIdentity.username,
       group: httpIdentity.group,
       ...("allowedModels" in httpIdentity ? { allowedModels: httpIdentity.allowedModels } : {}),
+      ...(httpIdentity.authentication ? { authentication: httpIdentity.authentication } : {}),
       validatedAt: now,
       expiresAt: Math.min(now + (httpIdentity.userId ? positiveMs : negativeMs), "validUntil" in httpIdentity ? Number(httpIdentity.validUntil) : Infinity),
     });
@@ -172,6 +177,7 @@ export async function resolveExternalApiIdentity(
   let group: string | null = null;
   let allowedModels: string[] | undefined;
   let validUntil = Infinity;
+  let authentication: ExternalApiIdentity["authentication"];
   try {
     const result = await pool.query<{ user_id: number; username: string; group: string; model_limits_enabled: boolean; model_limits: string; expired_time: number }>(
       `SELECT t.user_id, t."group", u.username, t.model_limits_enabled, t.model_limits, t.expired_time
@@ -188,6 +194,7 @@ export async function resolveExternalApiIdentity(
       [key, Math.floor(now / 1000)],
     );
     const row = result.rows[0];
+    if (!row) authentication = "invalid";
     // pg 驱动把 bigint 序列化成字符串，需显式转数字再校验。
     const parsedUserId = row ? Number(row.user_id) : NaN;
     if (Number.isInteger(parsedUserId) && parsedUserId > 0) {
@@ -208,10 +215,11 @@ export async function resolveExternalApiIdentity(
     username,
     group,
     ...(allowedModels ? { allowedModels } : {}),
+    ...(authentication ? { authentication } : {}),
     validatedAt: now,
     expiresAt: Math.min(now + (userId ? positiveMs : negativeMs), validUntil),
   });
-  return { userId, username, group, ...(allowedModels ? { allowedModels } : {}) };
+  return { userId, username, group, ...(allowedModels ? { allowedModels } : {}), ...(authentication ? { authentication } : {}) };
 }
 
 export async function resolveExternalApiUser(

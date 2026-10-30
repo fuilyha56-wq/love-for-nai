@@ -502,6 +502,7 @@ export async function proxyImageWithCredits(
     model: imageRequest.generation.model,
     parameters: imageRequest.generation as unknown as Record<string, unknown>,
   });
+  if (apiIdentity.authentication === "invalid") return auditedResponse(withExternalCors(Response.json({ error: { message: "API Key 无效或当前不可用于此入口，请检查是否已停用、过期、删除，或受到访问限制", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 401 })), audit, { error: "invalid_api_key", generatedSamples: 0 });
   const ipEvidence = await recordIpEvidence(request, audit.requestId, apiIdentity.userId ?? undefined, logUser, true).catch(() => null);
   if (ipEvidence) audit.record.ipEvidenceId = ipEvidence.evidenceId;
 
@@ -966,6 +967,7 @@ export async function proxyNaiNativeWithCredits(
     model: imageRequest.generation.model,
     parameters: imageRequest.generation as unknown as Record<string, unknown>,
   });
+  if (apiIdentity.authentication === "invalid") return auditedResponse(withExternalCors(Response.json({ error: { message: "API Key 无效或当前不可用于此入口，请检查是否已停用、过期、删除，或受到访问限制", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 401 })), audit, { error: "invalid_api_key", generatedSamples: 0 });
 
   const userId = apiIdentity.userId;
   let risk: Awaited<ReturnType<typeof evaluateImageRisk>> | null = null;
