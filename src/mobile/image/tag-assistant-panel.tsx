@@ -74,6 +74,8 @@ export function TagAssistantPanel(p: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false), [expandedInput, setExpandedInput] = useState(false), [allTurns, setAllTurns] = useState(false);
   const [referencesExpanded, setReferencesExpanded] = useState(true);
   const [inputCollapsed, setInputCollapsed] = useState(false);
+  const [composerOptionsOpen, setComposerOptionsOpen] = useState(false);
+  const composerOptionsRef = useRef<HTMLDivElement>(null), composerOptionsButtonRef = useRef<HTMLButtonElement>(null);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [shortcutIndex, setShortcutIndex] = useState(0), [shortcutsDismissed, setShortcutsDismissed] = useState(false);
   const sessionRef = useRef<HTMLDivElement>(null), sessionButtonRef = useRef<HTMLButtonElement>(null);
@@ -82,7 +84,7 @@ export function TagAssistantPanel(p: Props) {
   const rootRef = useRef<HTMLElement>(null), composerRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null), settingsRef = useRef<HTMLDivElement>(null), settingsButtonRef = useRef<HTMLButtonElement>(null), inputRef = useRef<HTMLTextAreaElement>(null);
   const followingRef = useRef(true), uploadRef = useRef<HTMLInputElement>(null);
-  const countId = useId(), settingsId = useId(), shortcutId = useId();
+  const countId = useId(), settingsId = useId(), shortcutId = useId(), composerOptionsId = useId();
   const busy = p.loading || p.searching || p.queueRunning || p.goal?.status === "running";
   const shortcuts = shortcutsDismissed ? [] : assistantShortcuts(p.input).filter((item) => (!(item.action === "sessions" || item.action === "new") || Boolean(p.signedIn && p.sessionControl)) && (item.action !== "new" || !busy) && (item.command !== "/negative" || !p.natural));
   const activeShortcut = Math.min(shortcutIndex, Math.max(0, shortcuts.length - 1));
@@ -122,6 +124,14 @@ export function TagAssistantPanel(p: Props) {
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [sessionsOpen]);
+  useEffect(() => {
+    if (!composerOptionsOpen) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!composerOptionsRef.current?.contains(event.target as Node) && !composerOptionsButtonRef.current?.contains(event.target as Node)) setComposerOptionsOpen(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [composerOptionsOpen]);
   function chooseShortcut(item: AssistantShortcut) {
     if (item.action === "new" && (busy || !p.sessionControl || p.sessionControl.pending)) return;
     if (item.action === "image" && (p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES)) return;
@@ -153,6 +163,7 @@ export function TagAssistantPanel(p: Props) {
   const [imageDragActive, setImageDragActive] = useState(false);
   function addImages(files: File[]) { setReferencesExpanded(true); p.onAddImages(files); }
   return <section ref={rootRef} className={`mobile-tag-assistant-panel${inputCollapsed ? " is-input-collapsed" : ""}`} data-assistant-layout="aaalice-mobile" data-layout-module="agent" style={p.style} aria-label="创作助手" onKeyDownCapture={event => {
+    if (event.key === "Escape" && composerOptionsOpen) { event.preventDefault(); event.stopPropagation(); setComposerOptionsOpen(false); composerOptionsButtonRef.current?.focus({ preventScroll: true }); }
     if (event.key === "Escape" && sessionsOpen) { event.preventDefault(); event.stopPropagation(); setSessionsOpen(false); sessionButtonRef.current?.focus(); }
     if (event.key === "Escape" && settingsOpen && !document.querySelector(".mobile-assistant-model-menu, .mobile-assistant-reasoning-menu")) { event.preventDefault(); event.stopPropagation(); setSettingsOpen(false); settingsButtonRef.current?.focus(); }
   }}>
@@ -236,19 +247,26 @@ export function TagAssistantPanel(p: Props) {
       {!!p.conversation.tagPool.length && <details className="assistant-tag-memory"><summary>已保留标签 · {p.conversation.tagPool.length}</summary><div className="assistant-tag-list">{p.conversation.tagPool.map(tag => <button type="button" key={tag.name} onClick={() => p.onAppendTag(tag.name)}>{tag.displayName}</button>)}</div></details>}
     </div>
     {!follow && <button type="button" className="assistant-jump-latest" aria-label="跳到最新消息" title="跳到最新消息" onClick={jumpToLatest}><ArrowDown size={14} />最新消息</button>}
-    <div className="assistant-composer-area" ref={composerRef}>
-      <div className="assistant-compose-bar"><button type="button" aria-label={inputCollapsed ? "展开助手输入区" : "折叠助手输入区"} aria-expanded={!inputCollapsed} onClick={() => {
-        if (!inputCollapsed) { inputRef.current?.blur(); setExpandedInput(false); }
-        setInputCollapsed(!inputCollapsed);
-        if (inputCollapsed) requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-      }}>{inputCollapsed ? <ArrowUp size={14} /> : <ChevronDown size={14} />}<span>{inputCollapsed ? p.input ? "继续编辑草稿" : "发送新消息" : "收起输入区，阅读对话"}</span></button>{inputCollapsed && busy && <button type="button" onClick={p.goal?.status === "running" ? p.onStopGoal : p.onCancel}><Square size={13} />停止</button>}</div>
+    {composerOptionsOpen && <div ref={composerOptionsRef} id={composerOptionsId} className="assistant-composer-options" role="region" aria-label="助手输入选项">
+      <div className="assistant-composer-options-heading"><b>输入选项</b><button type="button" aria-label="关闭助手输入选项" onClick={() => { setComposerOptionsOpen(false); composerOptionsButtonRef.current?.focus({ preventScroll: true }); }}><X size={16} /></button></div>
+      <div className="assistant-composer-options-scroll">
       {!!p.messageQueue?.length && <details className="assistant-message-queue"><summary>消息队列 · {p.messageQueue.filter((item) => item.status === "queued").length} 等待 · {p.messageQueue.filter((item) => item.status === "failed").length} 失败</summary><p>使用入队时的模型、提示词和参考图；仅在当前页面依次执行。</p><ol>{p.messageQueue.map((item) => <li key={item.id} data-status={item.status}><b>{{ queued: "等待", running: "处理中", cancelling: "停止中", completed: "完成", cancelled: "已取消", failed: "失败" }[item.status]}</b><div><span title={item.label}>{item.label}</span>{item.error && <small>{item.error}</small>}</div>{item.status === "queued" ? <button type="button" onClick={() => p.onRemoveQueued?.(item.id)} aria-label="移除排队消息">移除</button> : item.status === "running" ? <button type="button" onClick={p.onCancel} aria-label="停止队列当前任务">停止</button> : null}</li>)}</ol><div><button type="button" onClick={p.onClearQueued}>移除全部等待</button><button type="button" onClick={p.onClearQueueHistory}>清理已结束记录</button></div></details>}
       {p.signedIn && <AssistantUsagePanel usage={p.usage} goal={p.mode === "goal" && Boolean(p.goal)} compact />}
-      <form className={`assistant-composer assistant-attachments${expandedInput ? " is-expanded" : ""}`} data-assistant-image-drop={imageDragActive ? "active" : undefined} onDragOver={event => { if (hasAssistantImageDrag(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setImageDragActive(true); } }} onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setImageDragActive(false); }} onDrop={event => { const files = assistantDropFiles(event.dataTransfer.files); setImageDragActive(false); if (files.length) { event.preventDefault(); event.stopPropagation(); addImages(files); } }} onSubmit={event => { event.preventDefault(); submit(); }}>
         {!!p.images.length && <div className="assistant-reference-tray"><div><button type="button" className="assistant-reference-toggle" aria-label={referencesExpanded ? "收起参考图" : "展开参考图"} aria-expanded={referencesExpanded} onClick={() => setReferencesExpanded(value => !value)}>参考图 {p.images.length} / {MAX_ASSISTANT_IMAGES}<ChevronDown size={12} /></button><button type="button" onClick={p.onClearImages}>清空</button></div><div className="assistant-attachments-grid" hidden={!referencesExpanded}>{p.images.map((image, index) => <div key={index}><button type="button" aria-label={`查看参考图 ${index + 1}`} onClick={() => p.onPreviewImage(image)}>
           {/* Local, already-compressed references must stay on the client. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={image} alt={`参考图 ${index + 1}`} /><span>{index + 1}</span></button><button type="button" aria-label={`移除参考图 ${index + 1}`} onClick={() => p.onRemoveImage(index)}><X size={12} /></button></div>)}</div></div>}
+        {p.signedIn && <button type="button" className="assistant-model-settings assistant-model-settings-trigger" aria-label="打开模型与思考设置" aria-expanded={settingsOpen} onClick={() => { setComposerOptionsOpen(false); setSessionsOpen(false); setSettingsOpen(true); }}><Settings2 size={14} /><span>模型与思考设置</span><small>{p.modelControl.sourceName || (!p.modelControl.providerId || p.modelControl.providerId === "newapi" ? "NewAPI" : "自定义来源")} · {p.modelControl.value || "请选择模型"}</small><ChevronDown size={13} /></button>}
+      {!p.signedIn && <p className="assistant-login-hint">登录后可使用 NewAPI 模型；当前可直接检索标签。</p>}
+      </div>
+    </div>}
+    <div className="assistant-composer-area" ref={composerRef}>
+      <div className="assistant-compose-bar"><button type="button" aria-label={inputCollapsed ? "展开助手输入区" : "折叠助手输入区"} aria-expanded={!inputCollapsed} onClick={() => {
+        if (!inputCollapsed) { inputRef.current?.blur(); setExpandedInput(false); setComposerOptionsOpen(false); }
+        setInputCollapsed(!inputCollapsed);
+        if (inputCollapsed) requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+      }}>{inputCollapsed ? <ArrowUp size={14} /> : <ChevronDown size={14} />}<span>{inputCollapsed ? p.input ? "继续编辑草稿" : "发送新消息" : "收起输入区，阅读对话"}</span></button>{inputCollapsed && busy && <button type="button" onClick={p.goal?.status === "running" ? p.onStopGoal : p.onCancel}><Square size={13} />停止</button>}</div>
+      <form className={`assistant-composer assistant-attachments${expandedInput ? " is-expanded" : ""}`} data-assistant-image-drop={imageDragActive ? "active" : undefined} onDragOver={event => { if (hasAssistantImageDrag(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setImageDragActive(true); } }} onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setImageDragActive(false); }} onDrop={event => { const files = assistantDropFiles(event.dataTransfer.files); setImageDragActive(false); if (files.length) { event.preventDefault(); event.stopPropagation(); addImages(files); } }} onSubmit={event => { event.preventDefault(); submit(); }}>
         {!!shortcuts.length && <div id={shortcutId} className="assistant-shortcuts" role="listbox" aria-label="助手快捷指令">{shortcuts.map((item, index) => <button key={item.command} id={`${shortcutId}-${index}`} type="button" role="option" aria-selected={index === activeShortcut} disabled={item.action === "new" && p.sessionControl?.pending || item.action === "image" && (p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES)} onPointerDown={(event) => event.preventDefault()} onClick={() => chooseShortcut(item)}><b>{item.command}</b><span>{item.title}</span></button>)}</div>}
         <div className="assistant-editor"><textarea ref={inputRef} value={p.input} maxLength={ASSISTANT_INPUT_MAX_LENGTH} aria-label="标签助手输入" aria-describedby={countId} aria-controls={shortcuts.length ? shortcutId : undefined} aria-activedescendant={shortcuts.length ? `${shortcutId}-${activeShortcut}` : undefined} onChange={event => { setShortcutIndex(0); setShortcutsDismissed(false); p.onInputChange(event.target.value); }} onKeyDown={event => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -265,16 +283,15 @@ export function TagAssistantPanel(p: Props) {
         }} placeholder={p.mode === "goal" ? "描述你希望达到的画面…" : "给助手发送消息，可粘贴参考图…"} />
           <button type="button" aria-label={expandedInput ? "收起助手输入框" : "展开助手输入框"} aria-expanded={expandedInput} title={expandedInput ? "收起输入框" : "展开输入框"} onClick={() => setExpandedInput(!expandedInput)}>{expandedInput ? <Minimize2 size={13} /> : <Expand size={13} />}</button></div>
         <div className="assistant-composer-meta"><span>{p.imagesLoading ? "正在压缩参考图…" : shortcuts.length ? "↑↓选择 · Enter 填入 · Esc 收起" : "Enter 发送 · Shift + Enter 换行 · / 快捷指令"}</span><span id={countId} data-assistant-input-count>{p.input.length.toLocaleString()} / {ASSISTANT_INPUT_MAX_LENGTH.toLocaleString()} 字</span></div>
-        {p.signedIn && <button type="button" className="assistant-model-settings assistant-model-settings-trigger" aria-label="打开模型与思考设置" aria-expanded={settingsOpen} onClick={() => { setSessionsOpen(false); setSettingsOpen(true); }}><Settings2 size={14} /><span>模型与思考设置</span><small>{p.modelControl.sourceName || (!p.modelControl.providerId || p.modelControl.providerId === "newapi" ? "NewAPI" : "自定义来源")} · {p.modelControl.value || "请选择模型"}</small><ChevronDown size={13} /></button>}
-        <div className="assistant-composer-actions"><label className="assistant-add-reference" title={`添加参考图 · ${p.images.length} / ${MAX_ASSISTANT_IMAGES}`} aria-disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES}><Plus size={18} /><span>{p.images.length ? `${p.images.length} / ${MAX_ASSISTANT_IMAGES}` : "参考图"}</span><input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="上传识图图片" disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES} onChange={event => { const files = [...(event.target.files || [])]; event.target.value = ""; addImages(files); }} /></label>
+        <div className="assistant-composer-actions"><div className="assistant-composer-tools"><label className="assistant-add-reference" title={`添加参考图 · ${p.images.length} / ${MAX_ASSISTANT_IMAGES}`} aria-disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES}><Plus size={18} /><span>{p.images.length ? `${p.images.length} / ${MAX_ASSISTANT_IMAGES}` : "参考图"}</span><input ref={uploadRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple aria-label="上传识图图片" disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES} onChange={event => { const files = [...(event.target.files || [])]; event.target.value = ""; addImages(files); }} /></label>
           {p.onAddImageSources && <button type="button" className="assistant-resource-button" aria-label="从资源库添加参考图" disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES} onClick={() => setResourcePickerOpen(true)}>资源库</button>}
     {p.imagesLoading && p.onCancelImageImport && <button type="button" className="assistant-resource-button" onClick={p.onCancelImageImport}>取消导入</button>}
     {busy && p.mode === "tags" && p.onQueue && <button type="button" className="assistant-enqueue-button" aria-label="排队发送助手消息" disabled={p.imagesLoading || !p.input.trim()} onClick={submit}>排队发送</button>}
-          <span className="assistant-composer-spacer" />{p.goal?.status === "running" ? <button className="assistant-send-button" type="button" onClick={p.onStopGoal} aria-label="停止目标 Agent" title="停止自动迭代"><Square size={14} fill="currentColor" /></button> : p.loading ? <button className="assistant-send-button" type="button" onClick={p.onCancel} aria-label="取消助手任务" title="取消"><Square size={14} fill="currentColor" /></button> : <button type="submit" className="assistant-send-button" disabled={busy || p.imagesLoading || !p.input.trim()} aria-label={sendLabel} title={sendLabel}><ArrowUp size={18} /></button>}
+          <button ref={composerOptionsButtonRef} type="button" className="assistant-options-trigger" aria-label="助手输入选项" aria-expanded={composerOptionsOpen} aria-controls={composerOptionsId} onClick={() => { setSettingsOpen(false); setSessionsOpen(false); setComposerOptionsOpen(!composerOptionsOpen); }}><Settings2 size={16} /><span>选项</span></button>
+          </div>{p.goal?.status === "running" ? <button className="assistant-send-button" type="button" onClick={p.onStopGoal} aria-label="停止目标 Agent" title="停止自动迭代"><Square size={14} fill="currentColor" /></button> : p.loading ? <button className="assistant-send-button" type="button" onClick={p.onCancel} aria-label="取消助手任务" title="取消"><Square size={14} fill="currentColor" /></button> : <button type="submit" className="assistant-send-button" disabled={busy || p.imagesLoading || !p.input.trim()} aria-label={sendLabel} title={sendLabel}><ArrowUp size={18} /></button>}
         </div>
       </form>
     {resourcePickerOpen && <AssistantResourcePicker key={p.resourceScope || "current"} open scope={p.resourceScope || "current"} resources={p.imageResources || []} available={Math.max(0, MAX_ASSISTANT_IMAGES - p.images.length)} onClose={() => setResourcePickerOpen(false)} onSelect={sources => { setReferencesExpanded(true); p.onAddImageSources?.(sources); }}/>}
-      {!p.signedIn && <p className="assistant-login-hint">登录后可使用 NewAPI 模型；当前可直接检索标签。</p>}
     </div>
   </section>;
 }

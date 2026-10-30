@@ -124,7 +124,7 @@
 /* One persistent workspace: all three pages use the prompt page's surfaces,
    gutters and chrome. Switching only changes which scroll pane is visible. */
 .mobile-studio-prompt-backdrop[hidden], .mobile-studio-workspace-content[hidden] { display: none; }
-.mobile-studio-workspace-dialog { --workspace-input: var(--paper); animation: none; }
+.mobile-studio-workspace-dialog { --workspace-input: var(--paper); animation: none; container: mobile-workspace / size; }
 .mobile-studio-prompt-backdrop:has(.mobile-studio-workspace-dialog) { animation: none; }
 .mobile-studio-workspace-content { --replica-control: var(--paper); --replica-input: var(--paper); --replica-text: var(--ink); --replica-muted: var(--muted); --replica-accent: var(--rose); --replica-line: var(--line); min-width: 0; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; padding: 20px 24px 16px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .mobile-studio-workspace-content .replica-controls[data-variant] .replica-controls-scroll { padding: 0; }
@@ -258,9 +258,28 @@ html[data-motion="reduced"] :is(.mobile-studio-sheet-backdrop, .mobile-studio-sh
 .mobile-studio-workspace-dialog:has(:is(textarea, input:not([type="file"]):not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"]), [contenteditable="true"]):focus) > .mobile-studio-prompt-actions {
   display: none;
 }
-.mobile-studio-workspace-content.is-prompt .replica-text-editor:focus-within,
-.mobile-studio-workspace-content.is-prompt .replica-shared-tag-editor:focus-within {
-  height: clamp(144px, calc(var(--lfn-viewport-height, 100dvh) - 260px), 480px) !important;
+/* Size the primary editor from its actual available pane, after headers,
+   safe-area padding and the optional footer have taken their space. Keep the
+   tools/characters in the pane's scroller and long text in its own scroller. */
+.mobile-studio-workspace-content.is-prompt { container-type: size; container-name: mobile-prompt-pane; }
+.mobile-studio-workspace-content.is-prompt .replica-prompt-main {
+  display: flex; flex-direction: column; min-height: 0;
+  height: min(580px, 100cqh);
+}
+.mobile-studio-workspace-content.is-prompt .replica-prompt-main > .replica-prompt-toolbar { flex: 0 0 auto; }
+.mobile-studio-workspace-content.is-prompt .replica-prompt-main > :is(.replica-text-editor, .replica-shared-tag-editor) {
+  flex: 1 1 0; min-height: 0; height: auto !important;
+}
+.mobile-studio-workspace-content.is-prompt .replica-text-editor .prompt-autocomplete-wrap { min-height: 0; }
+.mobile-studio-workspace-content.is-prompt .replica-raw-textarea,
+.mobile-studio-workspace-content.is-prompt .replica-shared-tag-editor { overscroll-behavior-y: contain; }
+@container mobile-prompt-pane (max-height: 240px) {
+  .mobile-studio-workspace-content.is-prompt .replica-prompt[data-variant="nlw"] .replica-prompt-toolbar { gap: 2px 6px; margin-bottom: 4px; }
+  .mobile-studio-workspace-content.is-prompt .replica-prompt[data-variant="nlw"] .replica-prompt-tabs button { min-height: 36px; }
+}
+@container mobile-workspace (max-height: 360px) {
+  .mobile-studio-sheet-header { min-height: 44px; }
+  .mobile-studio-workspace-switch button { min-height: 36px; }
 }
 .mobile-studio-workspace-content.is-assistant:not([hidden]) { display: flex; min-height: 0; padding: 0; overflow: hidden; }
 .mobile-studio-workspace-content.is-assistant .mobile-studio-assistant-content { display: flex; min-width: 0; min-height: 0; flex: 1; height: 100%; overflow: hidden; }

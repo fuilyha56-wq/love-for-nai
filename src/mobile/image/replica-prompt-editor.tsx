@@ -412,6 +412,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
   }
   return <section className={"replica-prompt" + (isCollapsed ? " is-collapsed" : "")} data-variant={variant} aria-label="提示词编辑器">
     {variant === "nlw" ? <>
+      <div className="replica-prompt-main">
       <div className="replica-prompt-toolbar">
         <div className="replica-prompt-tabs" role="tablist" aria-label="提示词类型">
           {(["positive", "negative"] as const).map((item) => <button type="button" key={item} ref={item === "positive" ? positiveButton : negativeButton} role="tab" aria-selected={target === item}
@@ -422,6 +423,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
         {presetButton("quality")}{presetButton("uc")}<PromptNotebook prompt={prompt} negativePrompt={negative} onPromptChange={onPromptChange} onNegativePromptChange={onNegativeChange} />
       </div>
       {editor(target)}
+      </div>
       <PromptResizeHandle height={editorHeight} onChange={setEditorHeight} />
       <footer className="replica-prompt-footer">
         <div className="replica-prompt-status">

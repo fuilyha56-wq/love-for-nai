@@ -19,7 +19,61 @@ expressed in CSS pixels. Fall back to the window dimensions when unavailable.
 - Keep overflow scrolling available in short screens. Desktop prompt components
   and their styling are separate and should not be changed for this behavior.
 
-## Manual verification — 2026-10-30
+## Keyboard layout follow-up — 2026-10-30
+
+The current branch already handled VisualViewport resize/scroll and body portals.
+The remaining reproduced defect was inside the sheet: at 390×360 the prompt
+textarea still ended at y=379, outside the visible area. Its 144px minimum and
+fixed viewport-minus-toolbar arithmetic did not reflect the actual pane height.
+The assistant also allowed the whole composer to scroll while reserving too
+little space for its transcript. The existing focus/footer selectors are valid;
+browser inspection confirmed they hide the footer correctly.
+
+- The prompt's primary toolbar/editor group now uses the available pane's
+  container height. The toolbar stays in flow; the editor uses `flex: 1`,
+  `min-height: 0`, and its own scrolling. Other prompt tools and characters remain
+  accessible through the pane scroller.
+- The assistant uses a column flex layout. The transcript receives remaining
+  space with `min-height: 0; overflow-y: auto`. The composer shrinks its textarea
+  and keeps its 44px send control in flow. Queue, usage, reference previews and
+  model options share an independently scrolling options panel.
+- Very short visible heights compact workspace navigation and the composer.
+  Neither page positions its input bar with `position: fixed`.
+- The provider also exposes `--lfn-keyboard-height` and `data-keyboard-open`.
+  A nonzero VirtualKeyboard bounding rectangle is preferred; otherwise an
+  editable-focus, thresholded height-loss estimate is used. A pre-focus baseline
+  covers browsers that resize both viewports, and scale normalization prevents
+  ordinary pinch zoom from being treated as a keyboard. Orientation changes reset
+  the baseline. Floating keyboards and other large resizes during editing cannot
+  always be distinguished without native keyboard geometry. This value is
+  advisory: **never subtract it from the VisualViewport height again**.
+
+Validation used Next.js 16.4.3 `next dev` at `http://127.0.0.1:3000/image`:
+
+| Check | Observed result |
+| --- | --- |
+| Long prompt, 22 lines | Native scrolling reached the last line; 169px textarea, 1100px scroll content, scrollTop 931. |
+| Visual-only keyboard simulation | Main-world innerHeight held at 844px while VisualViewport became 420px; keyboard estimate 424px; sheet height 420px. |
+| Assistant at 390×420 | Real guest tag-search results remained scrollable; transcript 128px; input 64px; send bottom y=412, inside the viewport. |
+| Expanded assistant at 390×280 | Transcript 39px, input 32px, 44px send button ending at y=272. |
+| Viewport pan | Simulated offsetTop 35px moved the sheet to y=35 without reducing its height twice. |
+| 110% scale and resize | Visual height 436.3636px; sheet height 436.3594px (rounding only). |
+| Options and switching panes | Options reachable; prompt/assistant drafts retained across pane changes. |
+| Desktop return | Mobile provider unmounted; geometry and keyboard properties removed. |
+| Checks | 7 viewport event/lifecycle tests and TypeScript check passed; no captured browser console errors. |
+
+Windows computer-use was initialized, but its URL safety check stopped the Edge
+window action because it could not identify the current URL confidently. Screenshots
+and interactive checks were completed in the supported in-app browser bound to the
+explicit local URL. This verifies browser layout and scrolling, not a physical
+Android/iOS IME. Temporary viewport/scale/property overrides and test drafts were
+restored after verification. No image generation or paid model request was used.
+
+References: [Chrome viewport resize behavior](https://developer.chrome.com/blog/viewport-resize-behavior),
+[VisualViewport](https://developer.mozilla.org/en-US/docs/Web/API/VisualViewport),
+[VirtualKeyboard boundingRect](https://developer.mozilla.org/en-US/docs/Web/API/VirtualKeyboard/boundingRect).
+
+## Earlier manual verification — 2026-10-30
 
 Used the in-app browser against `next dev` at `http://127.0.0.1:3000/image`.
 No automated test files/scripts or image/model requests were created or run.
