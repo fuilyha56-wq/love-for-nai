@@ -164,6 +164,7 @@ export type ExternalImageRequest = {
   contentType: string | null;
   generation: AffGeneration;
   prompt?: string;
+  samplingAudit?: import("@/lib/native-sampling-audit").NativeSamplingAudit;
 };
 
 export function bearerAuthorization(request: Request): string | Response {
@@ -500,7 +501,7 @@ export async function proxyImageWithCredits(
     username: logUser,
     operation: imageRequest.generation.operation,
     model: imageRequest.generation.model,
-    parameters: imageRequest.generation as unknown as Record<string, unknown>,
+    parameters: { ...imageRequest.generation, ...imageRequest.samplingAudit },
   });
   if (apiIdentity.authentication === "invalid") return auditedResponse(withExternalCors(Response.json({ error: { message: "API Key 无效或当前不可用于此入口，请检查是否已停用、过期、删除，或受到访问限制", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 401 })), audit, { error: "invalid_api_key", generatedSamples: 0 });
   const ipEvidence = await recordIpEvidence(request, audit.requestId, apiIdentity.userId ?? undefined, logUser, true).catch(() => null);
@@ -965,7 +966,7 @@ export async function proxyNaiNativeWithCredits(
     username: logUser,
     operation: imageRequest.generation.operation,
     model: imageRequest.generation.model,
-    parameters: imageRequest.generation as unknown as Record<string, unknown>,
+    parameters: { ...imageRequest.generation, ...imageRequest.samplingAudit },
   });
   if (apiIdentity.authentication === "invalid") return auditedResponse(withExternalCors(Response.json({ error: { message: "API Key 无效或当前不可用于此入口，请检查是否已停用、过期、删除，或受到访问限制", type: "invalid_request_error", code: "invalid_api_key" } }, { status: 401 })), audit, { error: "invalid_api_key", generatedSamples: 0 });
 

@@ -11,6 +11,7 @@ import {
   proxyNaiNativeWithCredits,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
+import { nativeSamplingAudit } from "@/lib/native-sampling-audit";
 import { resolvedNaiImageUpstream } from "@/lib/newapi";
 import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
 
@@ -73,6 +74,7 @@ export async function POST(request: Request): Promise<Response> {
         body: rawBody,
         contentType,
         generation,
+        samplingAudit: nativeSamplingAudit(body),
         prompt: typeof body.input === "string" ? body.input : undefined,
       },
       {
@@ -96,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       body: JSON.stringify(payload),
       contentType: "application/json",
       generation,
+      samplingAudit: nativeSamplingAudit(body),
       prompt: typeof body.input === "string" ? body.input : undefined,
     },
   );

@@ -114,7 +114,7 @@ export async function importLegacyEditorHistory(): Promise<number> {
     try {
       await recordStudioImageEdit({ image: item.image, operation, recordId: item.id, createdAt: item.createdAt, legacy: true,
         name: `${EDITOR_HISTORY_OPERATION_LABELS[operation]}作品.png`, prompt: item.prompt, negative: item.negative,
-        generation: { model: item.model, ...(item.parameters || {}) } });
+        generation: { model: item.model, ...(item.parameters || {}), ...(typeof item.parameters?.noise_schedule === "string" ? { noiseSchedule: item.parameters.noise_schedule } : {}) } });
     } catch { failures += 1; }
   }
   return failures;

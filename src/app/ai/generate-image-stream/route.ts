@@ -8,6 +8,7 @@ import {
   proxyNaiNativeWithCredits,
 } from "@/lib/compat-api";
 import { assertBodySize } from "@/lib/image-request";
+import { nativeSamplingAudit } from "@/lib/native-sampling-audit";
 import { externalCorsPreflight, withExternalCors } from "@/lib/external-cors";
 
 export function OPTIONS(): Response {
@@ -68,6 +69,7 @@ export async function POST(request: Request): Promise<Response> {
       body: rawBody,
       contentType,
       generation,
+      samplingAudit: nativeSamplingAudit(body),
       prompt: typeof body.input === "string" ? body.input : undefined,
     },
     {

@@ -1210,7 +1210,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         requestId: requestIds[index] || undefined,
         prompt: composedPromptLayout ? effectivePrompts.prompt : prompt,
         negative: composedPromptLayout ? effectivePrompts.negative : negative,
-        seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler,
+        seed: seed ? Number(seed) : undefined, width, height, steps, scale, sampler, noise_schedule: schedule,
         model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
         characterPrompts: ["generate", "img2img", "inpainting"].includes(sourceOperation) && modelCapabilities.characters && charactersEnabled
           ? readImageCharacterPrompts({ characterPrompts: characters.filter(character => character.prompt.trim()).map(character => ({ prompt: character.prompt, negativePrompt: mediumEffort ? "" : character.negative || "", center: { x: character.centerX, y: character.centerY } })) }) : [],
@@ -1240,7 +1240,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             negative: item.negative,
             model: item.model,
             operation: item.operation,
-            parameters: { prompt: item.prompt, negative_prompt: item.negative, characterPrompts: item.characterPrompts, use_coords: item.use_coords, providerId: item.providerId, imageProtocol: item.imageProtocol, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler },
+            parameters: { prompt: item.prompt, negative_prompt: item.negative, characterPrompts: item.characterPrompts, use_coords: item.use_coords, providerId: item.providerId, imageProtocol: item.imageProtocol, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, noise_schedule: item.noise_schedule },
           });
         } catch {
           setNotice("图片已生成，但浏览器无法保存本地历史；请检查存储空间或权限。");
@@ -1255,7 +1255,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             image: item.image, sourceImage: source?.data, name: source?.name,
             editorDraftId: source?.editorDraftId, editorNodeId: source?.editorNodeId, editorBranchId: source?.editorBranchId,
             operation: editOperation, prompt: item.prompt, negative: item.negative,
-            generation: { model: item.model, providerId: item.providerId, imageProtocol: item.imageProtocol, quality: item.quality, imageSize: item.imageSize, background: item.background, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, strength },
+            generation: { model: item.model, providerId: item.providerId, imageProtocol: item.imageProtocol, quality: item.quality, imageSize: item.imageSize, background: item.background, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, noiseSchedule: item.noise_schedule, strength },
             recordId: item.id, createdAt: item.createdAt,
           });
           setSessionHistory((current) => current.map((saved) => saved.id === item.id ? { ...saved, ...reference } : saved));
@@ -4976,7 +4976,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       const size = normalizeImageModelSize(targetModel, item.width, item.height, targetProtocol);
       if (metadataRestore.preferences.prompts) { setPrompt(item.prompt); setNegative(item.negative); }
       if (metadataRestore.preferences.dimensions) { setWidth(size.width); setHeight(size.height); }
-      if (metadataRestore.preferences.sampling) { setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); }
+      if (metadataRestore.preferences.sampling) { setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); if (item.noise_schedule) setSchedule(item.noise_schedule); }
       if (metadataRestore.preferences.seed) setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed));
       setOperation("generate");
     } else applyImageAsSource(item.image, nextOperation as Operation);
