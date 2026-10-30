@@ -21,7 +21,9 @@ const sorts = [
   { value: "uses", label: "导入使用最多" },
 ];
 
-export function GalleryFilters({ query, onQueryChange, tagFilter, onTagFilterChange, tagSuggestions, rating, onRatingChange, sort, onSortChange, total, loading, onReset, onRefresh, Select = PopupSelect }: {
+export function GalleryFilters({ query, onQueryChange, tagFilter, onTagFilterChange, tagSuggestions, rating, onRatingChange, category = "all", onCategoryChange, sort, onSortChange, total, loading, onReset, onRefresh, Select = PopupSelect }: {
+  category?: string;
+  onCategoryChange?: (value: string) => void;
   query: string;
   onQueryChange: (value: string) => void;
   tagFilter: string;
@@ -39,11 +41,12 @@ export function GalleryFilters({ query, onQueryChange, tagFilter, onTagFilterCha
 }) {
   const id = useId();
   const tags = [...new Set(tagFilter.split(/[,，\n]/).map((tag) => tag.trim()).filter(Boolean))];
-  const filtered = Boolean(query || tags.length || rating !== "all" || sort !== "newest");
+  const filtered = Boolean(query || tags.length || rating !== "all" || category !== "all" || sort !== "newest");
   return <section className={styles.panel} aria-label="图片广场搜索与筛选">
     <LfnSearchField label="搜索图片广场" value={query} onChange={onQueryChange} placeholder="搜索作品名、作者或标签…" />
     <div className={styles.filters}>
       <LfnSearchField label="按标签筛选作品" value={tagFilter} onChange={onTagFilterChange} placeholder="输入标签，多个标签用逗号分隔" suggestions={tagSuggestions} multiple />
+      <div className={`${styles.field} ${styles.select}`}><label className={styles.label} htmlFor={`${id}-category`}>原数据分类</label><Select id={`${id}-category`} ariaLabel="按原数据分类筛选" value={category} options={[{ value: "all", label: "全部图片" }, { value: "no-original-data", label: "无原数据图" }]} onChange={value => onCategoryChange?.(value)} menuClassName={styles.menu} /></div>
       <div className={`${styles.field} ${styles.select}`}>
         <label className={styles.label} htmlFor={`${id}-rating`}>作品分级</label>
         <Select id={`${id}-rating`} ariaLabel="按作品分级筛选" value={rating} options={ratings} onChange={onRatingChange} menuClassName={styles.menu} />

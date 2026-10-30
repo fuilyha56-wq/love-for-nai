@@ -146,16 +146,11 @@ export function GalleryPicker({
   async function select(item: GalleryPickerItem) {
     setSelectedId(item.id);
     setSelectError("");
-    if (!returnDataUrl) {
-      if (endpoint === "/api/gallery") void fetch(`/api/gallery/${encodeURIComponent(item.id)}/use`, { method: "POST" }).catch(() => undefined);
-      onSelect(item.imageUrl, item);
-      return;
-    }
     setSelectingId(item.id);
     try {
       const dataUrl = await imageUrlToDataUrl(item.imageUrl);
+      await onSelect(returnDataUrl ? dataUrl : item.imageUrl, item, returnDataUrl ? dataUrl : undefined);
       if (endpoint === "/api/gallery") void fetch(`/api/gallery/${encodeURIComponent(item.id)}/use`, { method: "POST" }).catch(() => undefined);
-      onSelect(dataUrl, item, dataUrl);
     } catch (error) {
       setSelectError(error instanceof Error ? error.message : "图片读取失败，请稍后重试");
       setSelectedId("");

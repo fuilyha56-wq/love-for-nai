@@ -6,9 +6,14 @@ import { invalidateCachedJsonFile, readCachedJsonFile } from "@/lib/server-json-
 import { findHistory, historyImagePath } from "@/lib/history";
 import { getRemoteHistoryImage } from "@/lib/remote-history";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
-import { hasImageCharacterPrompts, imagePromptText, restoreImageCharacterPrompts } from "@/lib/image-character-prompts";
+import { hasImageCharacterPrompts, restoreImageCharacterPrompts } from "@/lib/image-character-prompts";
 import { galleryComments } from "@/lib/gallery-comments";
 import { deleteCommentNotifications } from "@/lib/notifications";
+import sharp from "sharp";
+import { withDataFileLock } from "@/lib/data-file-lock";
+import { publicPublication, hasReadableGenerationMetadata, type GalleryPublicationInput, type GalleryPromptMode, type GalleryMetadataState } from "@/lib/gallery-publication";
+import type { GalleryActivityState, GalleryActivityRevision, GalleryActivityInteraction } from "@/lib/gallery-activity-types";
+import { canonicalGalleryTag } from "@/lib/gallery-tags";
 
 export type GalleryRating = "general" | "r13" | "r17" | "r18";
 export type GallerySource = "other" | "lfn" | "local";
@@ -34,6 +39,13 @@ export function isRestrictedRating(rating: GalleryRating): boolean {
   return rating === "r17" || rating === "r18";
 }
 export type GalleryItem = {
+  originalProofStatus?: "metadata-validated" | "reviewed";
+  originalFileName?: string;
+  promptMode?: GalleryPromptMode;
+  metadataState?: GalleryMetadataState;
+  noOriginalData?: boolean;
+  upscaled?: boolean;
+  publicationVersion?: string;
   id: string;
   ownerId: number;
   ownerName: string;
@@ -69,14 +81,15 @@ export type GalleryItem = {
   reviewNote?: string;
 };
 
-type GalleryStore = { items: GalleryItem[] };
+type GalleryStore = { items: GalleryItem[]; activityRevisions?: GalleryActivityRevision[]; activityInteractions?: GalleryActivityInteraction[] };
 const root = () => path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "gallery");
 const storePath = () => path.join(root(), "index.json");
 const imagePath = (file: string) => path.join(root(), path.basename(file));
 let lock: Promise<unknown> = Promise.resolve();
 
 function withLock<T>(task: () => Promise<T>): Promise<T> {
-  const current = lock.then(task, task);
+  const run = () => withDataFileLock("gallery", task);
+  const current = lock.then(run, run);
   lock = current.catch(() => undefined);
   return current;
 }
@@ -111,16 +124,95 @@ function normalizeItem(item: Partial<GalleryItem>): GalleryItem {
 async function readStore(readOnly = false): Promise<GalleryStore> {
   try { return await readCachedJsonFile(storePath(), (raw) => {
     const value = raw as GalleryStore;
-    return { items: (Array.isArray(value?.items) ? value.items : []).map((item) => normalizeItem(item)) };
-  }, { clone: !readOnly }); } catch { return { items: [] }; }
+    return { items: (Array.isArray(value?.items) ? value.items : []).map((item) => normalizeItem(item)), activityRevisions: value.activityRevisions || [], activityInteractions: value.activityInteractions || [] };
+  }, { clone: !readOnly }); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return { items: [], activityRevisions: [], activityInteractions: [] };
+  }
 }
 async function writeStore(store: GalleryStore): Promise<void> {
+  const now = new Date().toISOString();
+  store.activityRevisions ||= [];
+  const latest = new Map(store.activityRevisions.map(revision => [revision.id, revision]));
+  for (const item of store.items) {
+    const revision: GalleryActivityRevision = {
+      id: item.id, at: now, version: item.publicationVersion || item.id, ownerId: item.ownerId, ownerName: item.ownerName,
+      authorName: item.authorName, title: item.title, originalFileName: item.originalFileName, rating: item.rating,
+      source: item.source, tags: item.tags, status: item.status, submittedAt: item.submittedAt, reviewedAt: item.reviewedAt,
+      promptMode: item.promptMode, metadataState: item.metadataState, noOriginalData: item.noOriginalData, upscaled: item.upscaled, originalProofStatus: item.originalProofStatus,
+    };
+    const previous = latest.get(item.id);
+    if (!previous || JSON.stringify({ ...previous, at: now }) !== JSON.stringify(revision)) store.activityRevisions.push(revision);
+    latest.delete(item.id);
+  }
+  for (const revision of latest.values()) if (revision.status !== "withdrawn") store.activityRevisions.push({ ...revision, at: now, status: "withdrawn" });
   await mkdir(root(), { recursive: true });
   const target = storePath();
   const temp = `${target}.${randomUUID()}.tmp`;
   await writeFile(temp, JSON.stringify(store, null, 2), "utf8");
   await rename(temp, target);
   invalidateCachedJsonFile(target);
+}
+
+export async function galleryActivityState(): Promise<GalleryActivityState> {
+  const store = await readStore();
+  return { revisions: store.activityRevisions || [], interactions: store.activityInteractions || [] };
+}
+
+function galleryTitle(value: string, fallback = "未命名作品"): string {
+  if (value.trim().length > 500) throw new Error("作品名不能超过 500 字符");
+  return value.trim() || fallback;
+}
+
+type SubmissionInput = GalleryPublicationInput & { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; exposeParameters: boolean; requireLikeForParameters?: boolean; originalProofUpload?: { data: Buffer; fileName: string } };
+
+async function createGallerySubmission(ownerId: number, ownerName: string, buffer: Buffer, fileName: string | undefined, input: SubmissionInput, trustedParameters?: Record<string, unknown>): Promise<GalleryItem> {
+  if (buffer.length > MAX_GALLERY_IMAGE_BYTES) throw new Error("图片不能超过 20 MB");
+  const decoded = await sharp(buffer, { limitInputPixels: 80_000_000 }).metadata();
+  if (decoded.format !== "png" && decoded.format !== "jpeg") throw new Error("只支持 PNG 或 JPEG 图片");
+  await sharp(buffer, { limitInputPixels: 80_000_000 }).resize(1, 1).raw().toBuffer();
+  const authorName = input.authorName.trim();
+  if (!authorName || authorName.length > 80) throw new Error("请填写不超过 80 字符的作品作者或画师署名");
+  const originalFileName = fileName?.replaceAll("\\", "/").split("/").at(-1) || undefined;
+  if (originalFileName && originalFileName.length > 255) throw new Error("原始图片文件名不能超过 255 字符");
+  const title = galleryTitle(input.title, originalFileName?.replace(/\.[^.]+$/, ""));
+  const embedded = parseNaiImageMetadata(buffer);
+  let sourceParameters = hasReadableGenerationMetadata(trustedParameters) ? trustedParameters : embedded?.isNai ? embedded.parameters : null;
+  const displayMetadataReadable = hasReadableGenerationMetadata(sourceParameters);
+  let proofExtension: string | undefined;
+  if (input.originalProofUpload) {
+    const proof = input.originalProofUpload;
+    if (proof.data.length > MAX_GALLERY_IMAGE_BYTES) throw new Error("校验原图不能超过 20 MB");
+    const info = await sharp(proof.data, { limitInputPixels: 80_000_000 }).metadata();
+    if (info.format !== "png" && info.format !== "jpeg") throw new Error("校验原图只支持 PNG 或 JPEG");
+    await sharp(proof.data, { limitInputPixels: 80_000_000 }).resize(1, 1).raw().toBuffer();
+    const metadata = parseNaiImageMetadata(proof.data);
+    if (!metadata?.isNai || !hasReadableGenerationMetadata(metadata.parameters)) throw new Error("校验原图必须携带可读取的 NAI 原始生成元数据，不能用手填参数代替");
+    sourceParameters = metadata.parameters;
+    proofExtension = info.format === "jpeg" ? "jpg" : "png";
+  }
+  const publication = publicPublication(sourceParameters, input, input.exposeParameters);
+  const id = randomUUID();
+  const requireLikeForParameters = (publication.promptMode === "full" || publication.promptMode === "partial") && input.requireLikeForParameters === true;
+  const strip = Boolean(input.originalProofUpload) || publication.promptMode !== "full" || requireLikeForParameters;
+  const cleaned = strip ? await stripImageMetadata(buffer, originalFileName || "image.png") : null;
+  const imageFile = `${id}.${cleaned?.extension || (decoded.format === "jpeg" ? "jpg" : "png")}`;
+  await mkdir(path.join(root(), "private"), { recursive: true });
+  // This directory has no HTTP route. Only server-side revalidation reads it.
+  const proofFile = proofExtension ? `${id}-original.${proofExtension}` : undefined;
+  if (proofFile) await writeFile(path.join(root(), "private", proofFile), input.originalProofUpload!.data, { mode: 0o600 });
+  await writeFile(path.join(root(), "private", `${id}.json`), JSON.stringify({ parameters: sourceParameters, proofFile }), { mode: 0o600 });
+  await writeFile(imagePath(imageFile), cleaned?.data || buffer);
+  const now = new Date().toISOString();
+  const item: GalleryItem = {
+    id, ownerId, ownerName, authorName, title, originalFileName, rating: assertGalleryRating(input.rating), source: input.source,
+    tags: input.tags.map(tag => tag.trim()).filter(Boolean).slice(0, 40), ...publication,
+    ...(input.originalProofUpload ? { originalProofStatus: "metadata-validated" as const, metadataState: displayMetadataReadable ? "readable" as const : "missing" as const, noOriginalData: true } : {}),
+    upscaled: input.upscaled === true || /upscale|superres/i.test(String(sourceParameters?.operation || sourceParameters?.action || "")), publicationVersion: randomUUID(), imageFile, imageMetadataStripped: strip, requireLikeForParameters,
+    createdAt: now, submittedAt: now, status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
+  };
+  const store = await readStore(); store.items.unshift(item); await writeStore(store);
+  return item;
 }
 export function galleryWeekKey(date = new Date()): string {
   const monday = new Date(date);
@@ -160,43 +252,20 @@ export async function publishFromHistory(
   ownerId: number,
   ownerName: string,
   historyId: string,
-  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; exposeParameters: boolean; requireLikeForParameters?: boolean },
+  input: SubmissionInput,
 ): Promise<GalleryItem> {
   return withLock(async () => {
     const history = await findHistory(ownerId, historyId);
     if (!history) throw new Error("历史图片不存在");
-    const authorName = input.authorName.trim().slice(0, 80);
-    if (!authorName) throw new Error("请填写作品作者或画师署名");
-    const rating = assertGalleryRating(input.rating);
-    if (!["other", "lfn", "local"].includes(input.source))
-      throw new Error("图片来源不合法");
-    const id = randomUUID();
-    await mkdir(root(), { recursive: true });
+    if (!["other", "lfn", "local"].includes(input.source)) throw new Error("图片来源不合法");
     const source = history.remote
       ? (await getRemoteHistoryImage(ownerId, history.imagePath))?.data
       : await readFile(historyImagePath(ownerId, history.imagePath));
     if (!source) throw new Error("历史图片读取失败");
     const parameters = restoreImageCharacterPrompts(history.parameters, parseNaiImageMetadata(source)?.parameters || {});
-    const { prompt: sourcePrompt, negativePrompt: sourceNegative } = imagePromptText(parameters);
-    const originalExtension = path.extname(history.imagePath).replace(/^\./, "") || "png";
-    const requireLikeForParameters = input.exposeParameters && input.requireLikeForParameters === true;
-    const cleaned = input.exposeParameters && !requireLikeForParameters ? null : await stripImageMetadata(source, history.imagePath);
-    const file = `${id}.${cleaned?.extension || originalExtension}`;
-    await writeFile(imagePath(file), cleaned?.data || source);
-    const item: GalleryItem = {
-      id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
-      rating, source: input.source,
-      tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
-      prompt: input.exposeParameters ? sourcePrompt : "", negativePrompt: input.exposeParameters ? sourceNegative : "",
-      parameters: input.exposeParameters ? parameters : {}, imageFile: file,
-      imageMetadataStripped: !input.exposeParameters || requireLikeForParameters,
-      requireLikeForParameters,
-      createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
-    };
-    const store = await readStore();
-    store.items.unshift(item);
-    await writeStore(store);
-    return item;
+    const upscaled = input.upscaled === true || /upscale|superres/i.test(String(parameters.operation || parameters.action || parameters.mode || ""));
+    // History imagePath is an internal storage key, not an original upload filename.
+    return createGallerySubmission(ownerId, ownerName, source, undefined, { ...input, upscaled }, parameters);
   });
 }
 
@@ -229,6 +298,12 @@ export async function listGallery(): Promise<GalleryItem[]> {
     ownerName: item.ownerName,
     authorName: item.authorName,
     title: item.title,
+    originalFileName: item.originalFileName,
+    promptMode: item.promptMode,
+    metadataState: item.metadataState,
+    noOriginalData: item.noOriginalData,
+    upscaled: item.upscaled,
+    originalProofStatus: item.originalProofStatus,
     rating: item.rating,
     source: item.source,
     tags: [...item.tags],
@@ -249,6 +324,7 @@ export async function listGallery(): Promise<GalleryItem[]> {
 
 export type GallerySort = "newest" | "likes" | "downloads" | "uses";
 export type GalleryQuery = {
+  category?: string;
   q?: string;
   tags?: string[];
   rating?: string;
@@ -269,7 +345,7 @@ export type GalleryQueryResult = {
 export async function queryGallery(query: GalleryQuery = {}): Promise<GalleryQueryResult> {
   const all = await listGallery();
   const search = (query.q || "").trim().toLocaleLowerCase();
-  const selectedTags = (query.tags || []).map((tag) => tag.trim().toLocaleLowerCase()).filter(Boolean);
+  const selectedTags = (query.tags || []).map(canonicalGalleryTag).filter(Boolean);
   const rating = query.rating && ["general", "r13", "r17", "r18"].includes(query.rating) ? query.rating : "all";
   const tagFrequency = new Map<string, number>();
   for (const item of all) for (const tag of item.tags) {
@@ -281,8 +357,9 @@ export async function queryGallery(query: GalleryQuery = {}): Promise<GalleryQue
     .slice(0, 200)
     .map(([tag]) => tag);
   const filtered = all.filter((item) => {
+    if (query.category === "no-original-data" && item.noOriginalData !== true) return false;
     if (rating !== "all" && item.rating !== rating) return false;
-    const itemTags = item.tags.map((tag) => tag.toLocaleLowerCase());
+    const itemTags = item.tags.map(canonicalGalleryTag);
     if (selectedTags.some((tag) => !itemTags.includes(tag))) return false;
     if (!search) return true;
     const searchable = [item.title, item.authorName, item.ownerName, ...item.tags].join(" ").toLocaleLowerCase();
@@ -300,7 +377,7 @@ export async function queryGallery(query: GalleryQuery = {}): Promise<GalleryQue
   return { items: filtered.slice((page - 1) * pageSize, page * pageSize), tags, total, page, pageSize, pageCount };
 }
 
-export async function recordGalleryMetric(id: string, kind: "download" | "use"): Promise<{ downloads?: number; uses?: number } | null> {
+export async function recordGalleryMetric(id: string, kind: "download" | "use", userId?: number): Promise<{ downloads?: number; uses?: number } | null> {
   return withLock(async () => {
     const store = await readStore();
     const item = store.items.find((entry) => entry.id === id && entry.status === "approved");
@@ -316,6 +393,10 @@ export async function recordGalleryMetric(id: string, kind: "download" | "use"):
     item.uses = (item.uses || 0) + 1;
     item.weeklyUses ||= {};
     item.weeklyUses[week] = (item.weeklyUses[week] || 0) + 1;
+    if (userId && userId !== item.ownerId) {
+      store.activityInteractions ||= [];
+      store.activityInteractions.push({ id, userId, at: new Date().toISOString(), version: item.publicationVersion || item.id, kind: "import" });
+    }
     await writeStore(store);
     return { uses: item.uses };
   });
@@ -344,6 +425,7 @@ export async function updateGalleryItem(
     status?: GalleryStatus;
     reviewNote?: string;
     reviewedBy?: number;
+    confirmOriginalProof?: boolean;
   },
 ): Promise<GalleryItem> {
   return withLock(async () => {
@@ -351,16 +433,22 @@ export async function updateGalleryItem(
     const item = store.items.find((entry) => entry.id === id);
     if (!item) throw new Error("图库作品不存在");
     if (typeof patch.title === "string")
-      item.title = patch.title.trim().slice(0, 80) || item.title;
+      item.title = galleryTitle(patch.title, item.title);
     if (typeof patch.authorName === "string") {
       const authorName = patch.authorName.trim().slice(0, 80);
       if (!authorName) throw new Error("请填写作品作者或画师署名");
       item.authorName = authorName;
     }
     if (patch.rating) item.rating = assertGalleryRating(patch.rating);
-    if (patch.tags)
+    if (patch.tags) {
       item.tags = patch.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40);
+      item.publicationVersion = randomUUID();
+    }
     if (patch.status) {
+      if (patch.status === "approved" && item.originalProofStatus === "metadata-validated") {
+        if (!patch.confirmOriginalProof) throw new Error("请先查看校验原图，并确认它与修改后参赛图属于同一创作，再通过审核");
+        item.originalProofStatus = "reviewed";
+      }
       item.status = patch.status;
       item.reviewedAt = new Date().toISOString();
       if (patch.reviewedBy !== undefined) item.reviewedBy = patch.reviewedBy;
@@ -379,11 +467,43 @@ export async function deleteGalleryItem(id: string): Promise<boolean> {
     store.items = store.items.filter((entry) => entry.id !== id);
     await writeStore(store);
     await unlink(imagePath(item.imageFile)).catch(() => undefined);
+    await unlink(path.join(root(), "private", `${item.id}.json`)).catch(() => undefined);
+    for (const extension of ["png", "jpg"]) await unlink(path.join(root(), "private", `${item.id}-original.${extension}`)).catch(() => undefined);
     const comments = await galleryComments.listComments(id);
     await galleryComments.deleteCommentsForResource(id);
     await deleteCommentNotifications("gallery", comments.map(comment => comment.id));
     return true;
   });
+}
+
+/** A failed revalidation leaves the previous publication untouched. Changes require a fresh review. */
+export async function updateGalleryPublication(ownerId: number, id: string, input: GalleryPublicationInput & { requireLikeForParameters?: boolean }): Promise<GalleryItem> {
+  return withLock(async () => {
+    const store = await readStore();
+    const item = store.items.find(i => i.id === id && i.ownerId === ownerId);
+    if (!item) throw new Error("投稿不存在");
+    let source: Record<string, unknown> | null = null;
+    try { source = (JSON.parse(await readFile(path.join(root(), "private", `${item.id}.json`), "utf8")) as { parameters: Record<string, unknown> | null }).parameters; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    if (!source && (!item.promptMode || item.promptMode === "full") && Object.keys(item.parameters).length) source = item.parameters;
+    const publication = publicPublication(source, input, true);
+    const cleaned = await stripImageMetadata(await readFile(imagePath(item.imageFile)), item.imageFile);
+    const temp = `${imagePath(item.imageFile)}.${randomUUID()}.tmp`;
+    await writeFile(temp, cleaned.data); await rename(temp, imagePath(item.imageFile));
+    Object.assign(item, publication, { metadataState: item.metadataState || publication.metadataState, noOriginalData: Boolean(item.originalProofStatus) || item.metadataState === "missing" || publication.noOriginalData, upscaled: item.upscaled || input.upscaled === true, imageMetadataStripped: true,
+      requireLikeForParameters: (publication.promptMode === "full" || publication.promptMode === "partial") && input.requireLikeForParameters === true,
+      publicationVersion: randomUUID(), submittedAt: new Date().toISOString(), status: "pending", reviewedAt: undefined, reviewedBy: undefined, reviewNote: undefined });
+    await writeStore(store);
+    return ownerGalleryItem(item);
+  });
+}
+
+export async function readGalleryOriginalProof(id: string): Promise<{ data: Buffer; extension: string } | null> {
+  const item = await getGalleryItem(id);
+  if (!item?.originalProofStatus) return null;
+  const privateInfo = JSON.parse(await readFile(path.join(root(), "private", `${item.id}.json`), "utf8")) as { proofFile?: string };
+  if (!privateInfo.proofFile || ![`${id}-original.png`, `${id}-original.jpg`].includes(privateInfo.proofFile)) return null;
+  return { data: await readFile(path.join(root(), "private", privateInfo.proofFile)), extension: privateInfo.proofFile.endsWith(".jpg") ? "jpg" : "png" };
 }
 export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
   const item = (await readStore(true)).items.find((entry) => entry.id === id);
@@ -392,7 +512,7 @@ export async function getGalleryItem(id: string): Promise<GalleryItem | null> {
   // Old history submissions dropped characterPrompts, but the original image
   // often still contains them. Recover only inside parameters, so the existing
   // publication/like gate also protects every character's text.
-  if (!result.imageMetadataStripped && Object.keys(result.parameters).length && !hasImageCharacterPrompts(result.parameters)) {
+  if ((!result.promptMode || result.promptMode === "full") && !result.imageMetadataStripped && Object.keys(result.parameters).length && !hasImageCharacterPrompts(result.parameters)) {
     try {
       const metadata = parseNaiImageMetadata(await readFile(imagePath(result.imageFile)));
       if (metadata) result.parameters = restoreImageCharacterPrompts(result.parameters, metadata.parameters);
@@ -408,6 +528,7 @@ export async function resubmitGalleryItem(ownerId: number, id: string, note?: st
     if (!item) throw new Error("投稿不存在");
     if (item.status !== "rejected" && item.status !== "withdrawn") throw new Error("当前状态不能重新提交");
     item.status = "pending";
+    item.publicationVersion = randomUUID();
     item.submittedAt = new Date().toISOString();
     item.reviewedAt = undefined;
     item.reviewedBy = undefined;
@@ -465,6 +586,8 @@ export async function toggleGalleryLike(id: string, userId: number): Promise<{ l
     if (index >= 0) { item.likedBy.splice(index, 1); item.likes = Math.max(0, item.likes - 1); }
     else { item.likedBy.push(userId); item.likes += 1; item.weeklyLikes[week] = (item.weeklyLikes[week] || 0) + 1; }
     if (index >= 0) item.weeklyLikes[week] = Math.max(0, (item.weeklyLikes[week] || 0) - 1);
+    store.activityInteractions ||= [];
+    store.activityInteractions.push({ id, userId, at: new Date().toISOString(), version: item.publicationVersion || item.id, kind: index < 0 ? "like" : "unlike" });
     await writeStore(store);
     return { liked: index < 0, likes: item.likes };
   });
@@ -486,33 +609,8 @@ export async function publishLocalImage(
   ownerName: string,
   buffer: Buffer,
   fileName: string,
-  input: { title: string; authorName: string; rating: GalleryRating; source: GallerySource; tags: string[]; prompt: string; negativePrompt: string; parameters: Record<string, unknown>; exposeParameters: boolean; requireLikeForParameters?: boolean },
+  input: SubmissionInput & { prompt: string; negativePrompt: string; parameters: Record<string, unknown> },
 ): Promise<GalleryItem> {
-  return withLock(async () => {
-    if (input.source !== "local" && input.source !== "other") throw new Error("本地上传来源不合法");
-    const authorName = input.authorName.trim().slice(0, 80);
-    if (!authorName) throw new Error("请填写作品作者或画师署名");
-    const rating = assertGalleryRating(input.rating);
-    const metadata = assertNaiImage(buffer, fileName);
-    const id = randomUUID();
-    const requireLikeForParameters = input.exposeParameters && input.requireLikeForParameters === true;
-    const cleaned = input.exposeParameters && !requireLikeForParameters ? null : await stripImageMetadata(buffer, fileName);
-    const imageFile = `${id}.${cleaned?.extension || metadata.extension}`;
-    await mkdir(root(), { recursive: true });
-    await writeFile(imagePath(imageFile), cleaned?.data || buffer);
-    const item: GalleryItem = {
-      id, ownerId, ownerName, authorName, title: input.title.trim().slice(0, 80) || "未命名作品",
-      rating, source: input.source, tags: input.tags.map((tag) => tag.trim()).filter(Boolean).slice(0, 40),
-      prompt: input.exposeParameters ? String(metadata.parameters.prompt || input.prompt) : "",
-      negativePrompt: input.exposeParameters ? String(metadata.parameters.negative_prompt || metadata.parameters.negativePrompt || input.negativePrompt) : "",
-      parameters: input.exposeParameters ? metadata.parameters : {},
-      imageFile, createdAt: new Date().toISOString(), submittedAt: new Date().toISOString(), status: "pending", likes: 0, likedBy: [], weeklyLikes: {},
-      imageMetadataStripped: !input.exposeParameters || requireLikeForParameters,
-      requireLikeForParameters,
-    };
-    const store = await readStore();
-    store.items.unshift(item);
-    await writeStore(store);
-    return item;
-  });
+  if (input.source !== "local" && input.source !== "other") throw new Error("本地上传来源不合法");
+  return withLock(() => createGallerySubmission(ownerId, ownerName, buffer, fileName, input));
 }

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import Image from "next/image";
 import { publicCreatorRewardCampaigns } from "@/lib/creator-rewards";
 import { MarkdownView } from "@/mobile/markdown";
@@ -49,7 +50,12 @@ export async function CreatorActivities() {
                 <MarkdownView content={campaign.rules} />
               </div>
             )}
-            <div className="mt-5 rounded-lg bg-[var(--surface-muted)] p-4 text-sm">
+            {campaign.settlementMode === "deadline" ? <div className="mt-5 space-y-3 rounded-lg bg-[var(--surface-muted)] p-4 text-sm">
+              <p>综合分 = 有效点赞 × {campaign.scoring?.likes} + 有效导入 × {campaign.scoring?.imports}</p>
+              {campaign.boards?.map(board => <p key={board.id}><strong>{board.name}</strong>：{board.rewards.map((amount, rank) => `第 ${rank + 1} 名 ${amount} AFF`).join(" · ")} · 安慰奖 {board.consolationReward} AFF</p>)}
+              <p>统一发奖：{format(campaign.settlesAt || campaign.endsAt)}（北京时间）</p>
+              <Link href={`/gallery/activities?activity=${encodeURIComponent(campaign.id)}`} className="lfn-button">查看活动榜单与实时排名 →</Link>
+            </div> : (<div className="mt-5 rounded-lg bg-[var(--surface-muted)] p-4 text-sm">
               <p>审核通过的投稿奖励：{campaign.submissionReward} AFF</p>
               <p className="mt-2">
                 周榜奖励：
@@ -78,7 +84,8 @@ export async function CreatorActivities() {
                 活动预算 {campaign.budget ? `${campaign.budget} AFF` : "不限"}
                 。多个活动重叠时按优先级发放一份奖励。
               </p>
-            </div>
+            </div>)}
+
           </article>
         ))}
         {!campaigns.length && (

@@ -90,6 +90,7 @@ export default function GalleryPage() {
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
         {expired && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{expired}</p>}
         {message && <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
+        <Link href="/gallery/activities" className="mb-5 flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4"><span><strong>活动榜单</strong><span className="ml-3 text-sm text-[var(--muted)]">查看所有活动、点赞与导入排名</span></span><span>查看 →</span></Link>
         <div className="mb-6">
           <GalleryFilters
             query={gallery.query}
@@ -97,6 +98,8 @@ export default function GalleryPage() {
             tagFilter={gallery.tagFilter}
             onTagFilterChange={gallery.setTagFilter}
             tagSuggestions={gallery.tagSuggestions}
+            category={gallery.category}
+            onCategoryChange={gallery.setCategory}
             rating={gallery.rating}
             onRatingChange={gallery.setRating}
             sort={gallery.sort}
@@ -140,7 +143,7 @@ export default function GalleryPage() {
               )}
             </div>
             <div className="flex flex-1 flex-col p-3">
-              <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h2 className="line-clamp-2 font-semibold" title={item.title}>{item.title}</h2><p className="mt-1 text-xs text-[var(--muted)]">作者：{item.authorName || item.ownerName}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">上传者：{item.ownerName} · {ratingLabel(item.rating)} · {item.source}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => share(item)} className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--rose)]" title="复制分享链接" aria-label={`分享作品：${item.title}`}><Link2 size={15} aria-hidden="true" /></button><button type="button" onClick={() => like(item.id)} className="flex items-center gap-1 text-xs text-[var(--rose)]" aria-label={`点赞作品：${item.title}`}><Heart size={15} aria-hidden="true" />{item.likes}</button></div></div>
+              <div className="flex items-start justify-between gap-2"><div className="min-w-0"><h2 className="line-clamp-2 font-semibold" title={item.title}>{item.title}</h2><p className="mt-1 text-xs text-[var(--muted)]">作者：{item.authorName || item.ownerName}{item.noOriginalData ? " · 无原数据图" : ""}</p><p className="mt-0.5 text-[10px] text-[var(--muted)]">上传者：{item.ownerName} · {ratingLabel(item.rating)} · {item.source}</p></div><div className="flex shrink-0 items-center gap-1"><button type="button" onClick={() => share(item)} className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--rose)]" title="复制分享链接" aria-label={`分享作品：${item.title}`}><Link2 size={15} aria-hidden="true" /></button><button type="button" onClick={() => like(item.id)} className="flex items-center gap-1 text-xs text-[var(--rose)]" aria-label={`点赞作品：${item.title}`}><Heart size={15} aria-hidden="true" />{item.likes}</button></div></div>
               <p className="mt-2 text-[10px] text-[var(--muted)]">↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p>
               <div className="mt-3 flex min-h-[26px] flex-wrap gap-1">{item.tags.map((tag) => <span key={tag} className="rounded bg-[var(--surface-muted)] px-2 py-1 text-[10px]">{tag}</span>)}</div>
               <div className="mt-auto pt-4">

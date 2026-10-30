@@ -11,6 +11,8 @@ import {
   creatorRewardStore,
   type CreatorWeeklyMetric,
 } from "@/lib/creator-rewards";
+import { previewActivity, settleActivity } from "@/lib/activity-leaderboards";
+import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 
 export async function GET(request: Request) {
   const gate = await requireAdmin();
@@ -30,6 +32,11 @@ export async function POST(request: Request) {
   try {
     const body = await parseJsonBody<Record<string, unknown>>(request);
     const action = optionalString(body.action) || "manual";
+    if (action === "preview-activity" || action === "settle-activity") {
+      const campaign = (await creatorRewardStore()).campaigns.find(c => c.id === body.id && c.settlementMode === "deadline" && !c.deletedAt);
+      if (!campaign) throw new Error("限时活动不存在");
+      return NextResponse.json(action === "preview-activity" ? await previewActivity(campaign) : await settleActivity(campaign.id));
+    }
     if (action === "restore-campaign") {
       const id = optionalString(body.id);
       if (!id) throw new Error("缺少活动 ID");
@@ -54,6 +61,10 @@ export async function POST(request: Request) {
         if (body[key] !== undefined && typeof body[key] !== "boolean") throw new Error(`${key} 必须是布尔值`);
       }
       const campaign = await upsertCreatorRewardCampaign({
+        settlementMode: body.settlementMode as CreatorRewardCampaign["settlementMode"],
+        timezone: body.timezone as CreatorRewardCampaign["timezone"], settlesAt: optionalString(body.settlesAt),
+        scoring: body.scoring as CreatorRewardCampaign["scoring"], boards: body.boards as CreatorRewardCampaign["boards"],
+        partialPromptBoard: body.partialPromptBoard as CreatorRewardCampaign["partialPromptBoard"],
         id: optionalString(body.id), name: optionalString(body.name), enabled: body.enabled === undefined ? undefined : body.enabled,
         startsAt: optionalString(body.startsAt), endsAt: optionalString(body.endsAt), submissionReward: optionalNumber(body.submissionReward),
         weeklyRewards: Array.isArray(body.weeklyRewards) ? body.weeklyRewards.filter((value): value is number => typeof value === "number") as [number, number, number] : undefined,

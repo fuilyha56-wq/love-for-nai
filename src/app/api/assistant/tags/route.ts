@@ -565,7 +565,7 @@ export async function GET(request: Request) {
 }
 
 // 清空当前用户的助手对话记录（历史轮次 + 累积标签池）。
-export async function DELETE(request?: Request) {
+export async function DELETE(request: Request) {
   const session = await getSession();
   if (!session)
     return NextResponse.json(

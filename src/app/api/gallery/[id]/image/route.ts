@@ -11,6 +11,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { data, extension } = await readGalleryImage(item);
     const thumbnail = new URL(request.url).searchParams.get("variant") === "thumbnail";
     const bytes = thumbnail ? await createImageThumbnail(data) : data;
-    return new NextResponse(new Uint8Array(bytes), { headers: { "Content-Type": thumbnail ? "image/webp" : extension === "jpg" ? "image/jpeg" : `image/${extension}`, "Cache-Control": thumbnail ? item.status === "approved" ? "public, max-age=86400, stale-while-revalidate=604800" : "private, max-age=3600" : item.status === "approved" ? "public, max-age=3600" : "private, no-store" } });
+    return new NextResponse(new Uint8Array(bytes), { headers: { "Content-Type": thumbnail ? "image/webp" : extension === "jpg" ? "image/jpeg" : `image/${extension}`, "Cache-Control": thumbnail && item.status === "approved" ? "public, max-age=300" : "private, no-store" } });
   } catch { return new NextResponse(null, { status: 404 }); }
 }

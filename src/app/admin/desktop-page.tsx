@@ -1,4 +1,5 @@
 "use client";
+import NextImage from "next/image";
 import { SETTINGS_PAGES } from "@/lib/platform-settings-sections";
 import { LfnSelect } from "@/app/ui/lfn-select";
 import CachedImage from "@/app/cached-image";
@@ -99,6 +100,7 @@ type CreditRow = {
   usage?: { requests5h: number; requests7d: number; requests30d: number; retainedRecords: number };
 };
 type GalleryAdminItem = {
+  originalProofStatus?: "metadata-validated" | "reviewed";
   id: string;
   title: string;
   authorName: string;
@@ -1120,7 +1122,10 @@ function CreditsPanel({
   }
 
   async function review(id: string, action: "approve" | "reject" | "withdraw") {
-    const response = await fetch(`/api/admin/gallery/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) });
+    const proofItem = items.find(item => item.id === id);
+    const confirmOriginalProof = action === "approve" && proofItem?.originalProofStatus === "metadata-validated";
+    if (confirmOriginalProof && !await lfnConfirm("请先对照查看校验原图与参赛图。确认二者属于同一创作，并通过原图校验档审核？")) return;
+    const response = await fetch(`/api/admin/gallery/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirmOriginalProof }) });
     const result = await response.json();
     if (!response.ok) { setMessage(result.message || "审核操作失败"); return; }
     setMessage(action === "approve" ? "投稿已通过" : action === "reject" ? "投稿已拒绝" : "投稿已撤回");
@@ -1180,7 +1185,7 @@ function CreditsPanel({
               <p className="mt-0.5 text-[10px] text-[var(--muted)]">
                 {item.authorName} · {item.ownerName} · {RATING_LABELS[item.rating] || item.rating} · {item.likes} 赞
               </p>
-              <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>
+              <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>{item.originalProofStatus && <details className="mt-2 text-xs"><summary className="cursor-pointer font-semibold text-[var(--rose)]">原图校验档 · {item.originalProofStatus === "reviewed" ? "已确认创作关联" : "元数据已校验，待确认创作关联"}</summary><div className="mt-2 grid grid-cols-2 gap-2"><a href={`/api/admin/gallery/${encodeURIComponent(item.id)}/original`} target="_blank" rel="noreferrer"><NextImage unoptimized width={256} height={128} src={`/api/admin/gallery/${encodeURIComponent(item.id)}/original`} alt="私有校验原图，仅管理员可见" className="h-32 w-full object-contain" /><span>校验原图（仅管理员可见）</span></a><a href={item.imageUrl} target="_blank" rel="noreferrer"><NextImage unoptimized width={256} height={128} src={item.imageUrl} alt="修改后的参赛图" className="h-32 w-full object-contain" /><span>修改后的参赛图（公开展示）</span></a></div></details>}
             </div>
             <div className="creator-review-actions flex shrink-0 flex-wrap items-center justify-end gap-2 text-xs font-semibold">
               {mode === "creator" && item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}

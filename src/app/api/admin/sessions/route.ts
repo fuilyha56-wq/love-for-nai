@@ -126,7 +126,7 @@ export async function POST(request: Request) {
 }
 
 // 列出上游各用户的活跃登录会话数（定位撞上限的账号）。
-export async function GET(request?: Request) {
+export async function GET(request: Request) {
   const gate = await requireAdmin();
   if ("error" in gate)
     return NextResponse.json({ message: gate.error }, { status: 403 });

@@ -1,5 +1,6 @@
 "use client";
 import Image from "next/image";
+import { DeadlineControls } from "./deadline-controls";
 
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
@@ -22,12 +23,12 @@ const ratings = {
   r17: "R17",
   r18: "R18",
 } as const;
-const dateValue = (value?: string) => (value ? value.slice(0, 16) : "");
+const dateValue = (value?: string) => (value ? new Date(Date.parse(value) + 8 * 3600_000).toISOString().slice(0, 16) : "");
 const utcDate = (value: string) =>
   value &&
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(value) &&
-  Number.isFinite(Date.parse(`${value}:00Z`))
-    ? new Date(`${value}:00Z`).toISOString()
+  Number.isFinite(Date.parse(`${value}:00+08:00`))
+    ? new Date(`${value}:00+08:00`).toISOString()
     : value;
 
 export default function ActivitiesPanel() {
@@ -333,6 +334,7 @@ export default function ActivitiesPanel() {
                   : "不限总预算"}
               </p>
             </AdminCard>
+            <DeadlineControls key={draft.id} campaign={draft} onChange={edit} />
             {preview ? (
               <AdminCard title={draft.name} description={draft.summary}>
                 {draft.coverUrl && (
@@ -351,8 +353,7 @@ export default function ActivitiesPanel() {
                 <h3 className="mb-2 mt-5 font-semibold">参与规则</h3>
                 <MarkdownView content={draft.rules || "尚未填写参与规则"} />
                 <p className="mt-5 text-sm">
-                  投稿奖励 {draft.submissionReward} AFF · 周榜奖励{" "}
-                  {draft.weeklyRewards.join(" / ")} AFF
+                  {draft.settlementMode === "deadline" ? "限时多档榜单，截止后统一发放，详见多档榜单配置。" : `投稿奖励 ${draft.submissionReward} AFF · 周榜奖励 ${draft.weeklyRewards.join(" / ")} AFF`}
                 </p>
               </AdminCard>
             ) : (
@@ -424,11 +425,11 @@ export default function ActivitiesPanel() {
                 </AdminCard>
                 <AdminCard
                   title="时间与参与资格"
-                  description="时间使用 UTC；多个活动同时生效时，优先级高的活动发奖，奖励不叠加。"
+                  description="时间使用北京时间；限时活动按各自榜单结算，原有周榜保持原规则。"
                 >
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="text-xs font-semibold">
-                      开始时间（UTC）
+                      开始时间（北京时间）
                       <LfnDateInput
                         type="datetime-local"
                         value={dateValue(draft.startsAt)}
@@ -439,7 +440,7 @@ export default function ActivitiesPanel() {
                       />
                     </label>
                     <label className="text-xs font-semibold">
-                      结束时间（UTC）
+                      结束时间（北京时间）
                       <LfnDateInput
                         type="datetime-local"
                         value={dateValue(draft.endsAt)}

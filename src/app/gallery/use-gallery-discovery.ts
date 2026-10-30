@@ -5,6 +5,10 @@ import { GALLERY_POSITION_KEY, galleryPosition } from "@/lib/gallery-navigation"
 
 export type GallerySort = "newest" | "likes" | "downloads" | "uses";
 export type GalleryItem = {
+  noOriginalData?: boolean;
+  promptMode?: string;
+  upscaled?: boolean;
+  originalFileName?: string;
   id: string;
   title: string;
   ownerName: string;
@@ -39,6 +43,7 @@ export function useGalleryDiscovery() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [rating, setRating] = useState("all");
+  const [category, setCategory] = useState("all");
   const [sort, setSort] = useState<GallerySort>("newest");
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(1);
@@ -61,6 +66,7 @@ export function useGalleryDiscovery() {
       const params = url.searchParams;
       setQuery(params.get("q") || ""); setDebouncedQuery((params.get("q") || "").trim());
       setTagFilter(params.getAll("tag").join(", "));
+      setCategory(params.get("category") === "no-original-data" ? "no-original-data" : "all");
       setRating(["general", "r13", "r17", "r18"].includes(params.get("rating") || "") ? params.get("rating")! : "all");
       setSort(["likes", "downloads", "uses"].includes(params.get("sort") || "") ? params.get("sort") as GallerySort : "newest");
       setPage(Math.max(1, Math.floor(Number(params.get("page")) || 1)));
@@ -79,6 +85,7 @@ export function useGalleryDiscovery() {
     const params = new URLSearchParams({
       q: debouncedQuery,
       rating,
+      category,
       sort,
       page: String(page),
       pageSize: String(PAGE_SIZE),
@@ -89,6 +96,7 @@ export function useGalleryDiscovery() {
     locationParams.delete("pageSize");
     if (!debouncedQuery) locationParams.delete("q");
     if (rating === "all") locationParams.delete("rating");
+    if (category === "all") locationParams.delete("category");
     if (sort === "newest") locationParams.delete("sort");
     if (page === 1) locationParams.delete("page");
     const search = locationParams.toString();
@@ -115,7 +123,7 @@ export function useGalleryDiscovery() {
         setLoadState("error");
       });
     return () => controller.abort();
-  }, [debouncedQuery, tagFilter, rating, sort, page, refreshKey, ready]);
+  }, [debouncedQuery, tagFilter, rating, category, sort, page, refreshKey, ready]);
 
   useEffect(() => {
     if (loadState !== "loaded" || restoreY.current == null) return;
@@ -137,6 +145,7 @@ export function useGalleryDiscovery() {
   const updateQuery = useCallback((value: string) => { prepareLoad(); setQuery(value); setPage(1); }, [prepareLoad]);
   const updateTagFilter = useCallback((value: string) => { prepareLoad(); setTagFilter(value); setPage(1); }, [prepareLoad]);
   const updateRating = useCallback((value: string) => { prepareLoad(); setRating(value); setPage(1); }, [prepareLoad]);
+  const updateCategory = useCallback((value: string) => { prepareLoad(); setCategory(value); setPage(1); }, [prepareLoad]);
   const updateSort = useCallback((value: GallerySort) => { prepareLoad(); setSort(value); setPage(1); }, [prepareLoad]);
   const updatePage = useCallback((value: number) => { prepareLoad(); setPage(value); window.scrollTo({ top: 0, behavior: "instant" }); }, [prepareLoad]);
   const resetFilters = useCallback(() => {
@@ -145,6 +154,7 @@ export function useGalleryDiscovery() {
     setDebouncedQuery("");
     setTagFilter("");
     setRating("all");
+    setCategory("all");
     setSort("newest");
     setPage(1);
     setRefreshKey((value) => value + 1);
@@ -160,6 +170,8 @@ export function useGalleryDiscovery() {
     tagFilter,
     setTagFilter: updateTagFilter,
     rating,
+    category,
+    setCategory: updateCategory,
     setRating: updateRating,
     sort,
     setSort: updateSort,

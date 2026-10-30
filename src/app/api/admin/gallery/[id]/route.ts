@@ -49,6 +49,7 @@ export async function PATCH(
       status: nextStatus,
       reviewNote: optionalString(raw.reviewNote),
       reviewedBy: gate.session.userId,
+      confirmOriginalProof: raw.confirmOriginalProof === true,
     });
     const reward = before.status !== "approved" && item.status === "approved"
       ? await grantSubmissionReward(item.ownerId, item.id, gate.session.userId)

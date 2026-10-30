@@ -85,14 +85,16 @@ export default function GalleryPage() {
       <PublicHeader current="gallery" extraActions={<button type="button" className="lfn-button is-primary" onClick={() => setSubmitForm({ title: "", authorName: "", rating: "general", source: "local", tags: "", exposeParameters: true })}><Send size={16} />投稿</button>} />
       <WorkspaceNav />
       <section className="mx-auto max-w-7xl p-4 sm:p-7">
-        <div className="mb-5"><GalleryFilters
+        <div className="mb-5"><Link href="/gallery/activities" className="mb-4 block rounded-xl border border-[var(--line)] bg-[var(--panel)] p-4 font-semibold">活动榜单 · 查看所有活动排名 →</Link><GalleryFilters
           Select={PopupSelect}
           query={gallery.query}
           onQueryChange={gallery.setQuery}
           tagFilter={gallery.tagFilter}
           onTagFilterChange={gallery.setTagFilter}
           tagSuggestions={gallery.tagSuggestions}
-          rating={gallery.rating}
+          category={gallery.category}
+            onCategoryChange={gallery.setCategory}
+            rating={gallery.rating}
           onRatingChange={gallery.setRating}
           sort={gallery.sort}
           onSortChange={gallery.setSort}
@@ -131,7 +133,7 @@ export default function GalleryPage() {
               )}
               {!isHidden && <ImageCardMenu label={`作品操作：${item.title}`}><Link href={`/gallery/${item.id}`}><Eye size={17} />查看作品详情</Link><button type="button" onClick={() => setImportItem(item)}><RotateCcw size={17} />导入到画布</button><button type="button" onClick={() => void share(item)}><Link2 size={17} />分享作品</button><button type="button" onClick={() => void like(item.id)}><Heart size={17} />点赞 · {item.likes}</button>{(item.rating === "r17" || item.rating === "r18") && <button type="button" onClick={() => toggleReveal(item.id)}><EyeOff size={17} />重新隐藏内容</button>}</ImageCardMenu>}
             </div>
-            <div className="launcher-image-card-caption"><h2 title={item.title}>{item.title}</h2><p>{item.authorName || item.ownerName} · {ratingLabel(item.rating)} · ♥ {item.likes}</p><p>↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p></div>
+            <div className="launcher-image-card-caption"><h2 title={item.title}>{item.title}</h2><p>{item.authorName || item.ownerName}{item.noOriginalData ? " · 无原数据图" : ""} · {ratingLabel(item.rating)} · ♥ {item.likes}</p><p>↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p></div>
           </article>
           );
         })}</div><CollectionPagination page={gallery.page} pageCount={gallery.pageCount} total={gallery.total} onPageChange={gallery.setPage} /></> : <div className={styles.empty}><SearchX size={28} aria-hidden="true" /><h2>{gallery.query || gallery.tagFilter || gallery.rating !== "all" ? "没有找到相关作品" : "广场暂时还没有作品"}</h2><p>{gallery.query || gallery.tagFilter || gallery.rating !== "all" ? "试试其他关键词，或减少筛选条件。" : "分享你的创作，让灵感在这里相遇。"}</p>{(gallery.query || gallery.tagFilter || gallery.rating !== "all") && <button type="button" className="lfn-button" onClick={gallery.resetFilters}>清空筛选，查看全部作品</button>}</div>}

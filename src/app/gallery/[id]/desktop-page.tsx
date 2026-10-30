@@ -1,4 +1,5 @@
 "use client";
+import { GalleryPublicationEditor } from "@/app/ui/gallery-publication-editor";
 import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
 import Link from "next/link";
@@ -11,6 +12,10 @@ import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { useEffect, useState } from "react";
 
 type GalleryItem = {
+  noOriginalData?: boolean;
+  promptMode?: string;
+  originalFileName?: string;
+  ownerId?: number;
   id: string;
   title: string;
   ownerName: string;
@@ -188,7 +193,7 @@ export default function GalleryItemPage({
               <div>
                 <h1 className="font-[var(--font-display)] text-2xl font-semibold">
                   {item.title}
-                </h1>
+                </h1>{item.originalFileName && <p className="break-all text-xs text-[var(--muted)]">原文件：{item.originalFileName}</p>}{item.noOriginalData && <p className="text-sm text-[var(--muted)]">无原数据图 · 不公开原始提示词</p>}{item.promptMode === "partial" && <p className="text-sm text-[var(--muted)]">部分提示词公开 · 已通过来源删减校验</p>}<GalleryPublicationEditor item={item} />
                 <p className="mt-1 text-xs text-[var(--muted)]">
                   作者：{item.authorName || item.ownerName}
                 </p>

@@ -13,6 +13,7 @@ import { MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
 import { isAffAmount, roundAffAmount, type DailyImageQuote } from "@/lib/daily-image-pricing";
 import { dailyImagePolicy, reserveDailyImageQuote, settleDailyImageUsage } from "@/lib/daily-image-billing";
 import { assertFreeGrant } from "@/lib/light-risk";
+import { withDataFileLock } from "@/lib/data-file-lock";
 
 export type AffTransaction = {
   id: string;
@@ -49,6 +50,8 @@ export type ImagePackageOrder = {
 type PackageUsage = { id: string; at: number };
 
 type AffAccount = {
+  /** Permanent credit receipts, independent of the bounded transaction display history. */
+  creditedReferences?: Record<string, number>;
   avatar?: { hash: string; updatedAt: string; requestId: string };
   avatarRequests?: Record<string, string>;
   // 个人 AFF：签到、邀请、管理员发放都进入这里。
@@ -136,6 +139,7 @@ async function readAccount(userId: number): Promise<AffAccount> {
       | Partial<AffAccount>
       | undefined;
     return {
+      creditedReferences: parsed?.creditedReferences && typeof parsed.creditedReferences === "object" ? parsed.creditedReferences : {},
       avatar: parsed?.avatar && /^[a-f0-9]{64}$/.test(parsed.avatar.hash) ? parsed.avatar : undefined,
       avatarRequests: parsed?.avatarRequests && typeof parsed.avatarRequests === "object" ? parsed.avatarRequests : {},
       balance: validNonNegativeAmount(parsed?.balance),
@@ -192,7 +196,8 @@ async function writeAccount(userId: number, account: AffAccount): Promise<void> 
 
 function withUserLock<T>(userId: number, task: () => Promise<T>): Promise<T> {
   const previous = userLocks.get(userId) ?? Promise.resolve();
-  const current = previous.then(task, task);
+  const run = () => withDataFileLock(`aff-${userId}`, task);
+  const current = previous.then(run, run);
   const tail = current.catch(() => undefined);
   userLocks.set(userId, tail);
   void tail.then(() => {
@@ -591,8 +596,13 @@ export async function grantAffOnce(
     throw new Error("AFF 奖励金额必须为非负整数");
   return withUserLock(userId, async () => {
     const account = await readAccount(userId);
-    if (account.transactions.some((item) => item.referenceId === referenceId))
+    if (Object.hasOwn(account.creditedReferences || {}, referenceId) && account.creditedReferences![referenceId] !== amount) throw new Error("AFF 奖励引用与已入账金额不一致");
+    const previousTransaction = account.transactions.find((item) => item.referenceId === referenceId);
+    if (previousTransaction && previousTransaction.amount !== amount) throw new Error("AFF 奖励引用与已入账金额不一致");
+    if (Object.hasOwn(account.creditedReferences || {}, referenceId) || previousTransaction)
       return { balance: account.balance, granted: false };
+    account.creditedReferences ||= {};
+    Object.defineProperty(account.creditedReferences, referenceId, { value: amount, enumerable: true, writable: true, configurable: true });
     account.balance += amount;
     addTransaction(account, amount, "referral", description, referenceId, "personal", origin);
     await writeAccount(userId, account);

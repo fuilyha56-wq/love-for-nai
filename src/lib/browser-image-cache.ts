@@ -6,6 +6,7 @@ const pending = new Map<string, Promise<Blob>>();
 const revisions = new Map<string, number>();
 let pendingScope: Promise<string> | undefined;
 const familyKey = (scope: string, url: string) => `${scope}\n${new URL(url, "http://localhost").pathname}`;
+const galleryImage = (url: string) => /^\/api\/(?:gallery|admin\/gallery)\/[^/]+\/image$/.test(new URL(url, "http://localhost").pathname);
 
 function cacheUrl(source: string): string | null {
   if (!source.startsWith("/api/") && !source.startsWith("http")) return null;
@@ -65,8 +66,8 @@ async function write(scope: string, url: string, blob: Blob) {
   } finally { db.close(); }
 }
 
-async function fetchImage(source: string): Promise<Blob> {
-  const response = await fetch(source);
+async function fetchImage(source: string, revalidate = false): Promise<Blob> {
+  const response = await fetch(source, revalidate ? { cache: "no-store" } : undefined);
   if (!response.ok) throw new Error("图片读取失败，请稍后重试");
   const blob = await response.blob();
   if (!blob.type.startsWith("image/")) throw new Error("返回的不是图片文件");
@@ -96,7 +97,7 @@ async function thumbnailFrom(original: Blob): Promise<Blob> {
 /** Store a newly generated/local original without requesting its server copy. */
 export async function cacheImageBlob(source: string, blob: Blob): Promise<void> {
   const url = cacheUrl(source);
-  if (!url) return;
+  if (!url || galleryImage(url)) return;
   const scope = await imageScope();
   const family = familyKey(scope, url);
   const revision = revisions.get(family);
@@ -107,6 +108,9 @@ export async function cacheImageBlob(source: string, blob: Blob): Promise<void> 
 export async function fetchCachedImageBlob(source: string): Promise<Blob> {
   const url = cacheUrl(source);
   if (!url) return fetchImage(source);
+  // Gallery publication and approval can change without changing the image URL.
+  // Ignore legacy persistent copies and recheck the server's current visibility.
+  if (galleryImage(url)) return fetchImage(source, true);
   // Storage/scope failures must still allow displaying an image from the authenticated API.
   const scope = await imageScope().catch(() => null);
   if (!scope) return fetchImage(source);
