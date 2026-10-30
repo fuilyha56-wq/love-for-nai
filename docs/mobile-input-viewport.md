@@ -7,9 +7,32 @@ While the full-screen workspace owns VirtualKeyboard overlay mode, a validated
 bottom-docked keyboard rectangle determines the lower edge instead. Never guess
 a missing strip by adding a fixed height or taking `max(innerHeight, visualHeight)`.
 At scale 1, independently measured `100dvh` is an upper bound on that rectangle's
-height, so browser controls are never counted as page space. A hidden fixed
+height, intended to exclude browser controls from page space. A hidden fixed
 probe and ResizeObserver follow dynamic browser chrome without depending on the
 height variables being written. At other scales, retain VisualViewport geometry.
+
+## Current status: physical-phone regression remains unresolved (r19)
+
+The reporter confirmed that r18 still shifts after dismissal and flickers during
+keyboard changes. The synthetic traces below reproduce a possible input sequence,
+not the phone's actual sequence. They are not evidence that its issue is fixed.
+In particular, dvh and VisualViewport are not necessarily animation-synchronized,
+and browser caret reveal may programmatically scroll overflow-hidden ancestors.
+
+`/image#viewportTrace=<ticket>` enables a temporary opt-in recorder. Start its
+20-second capture before focusing the editor, then reproduce the failure with
+the phone's normal keyboard dismissal action. It records only a fixed numeric
+matrix of viewport dimensions, element rectangles/scroll offsets, and event bits;
+it never includes input values, selected text, account identity, cookies, or page URLs.
+The recorder does not change layout policy, focus, scroll, or input content.
+
+The collector is disabled unless an operator creates a 24-hour `session.json`
+in `data/viewport-diagnostics/`, with a random 32-hex `capture` ticket and an
+`expiresAt` timestamp. POST validates that ticket, enforces 256KiB/1200-row bounds
+and numeric column ranges, and writes at most ten exclusive files per ticket.
+There is no GET endpoint. Tickets stay in URL fragments, outside access-log URLs.
+Normal URLs mount no recorder or geometry observers. Actual phone traces must
+guide the next layout change; do not add another inferred height correction.
 
 - Never stop updating because `scale !== 1`. Pinch zoom or input zoom can coexist
   with a keyboard resize; retaining the old height creates a gap or clips content.

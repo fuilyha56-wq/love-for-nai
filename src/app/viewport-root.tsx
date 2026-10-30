@@ -12,6 +12,7 @@ import { LfnDialogHost as MobileDialogHost } from "@/mobile/ui/lfn-dialog";
 import { LayoutAnnouncements as MobileAnnouncements } from "@/mobile/layout-announcements";
 import { OnboardingGuide as MobileGuide } from "@/mobile/onboarding-guide";
 import { FeatureTutorialGuide } from "./tutorials/feature-tutorial-guide";
+import { ViewportDiagnostics } from "@/mobile/ui/viewport-diagnostics";
 
 export function ViewportRoot({ children }: { children: ReactNode }) {
   const mobile = useMobileViewportMatch();
@@ -22,5 +23,5 @@ export function ViewportRoot({ children }: { children: ReactNode }) {
   return <ViewportDeviceProvider mobile={mobile}>{mobile
     ? <MobileAppearanceProvider><LauncherShell>{children}</LauncherShell><MobileDialogHost /><MobileAnnouncements /><MobileGuide /></MobileAppearanceProvider>
     : <AppearanceProvider>{children}<LfnDialogHost /><LayoutAnnouncements /><OnboardingGuide /></AppearanceProvider>
-  }<FeatureTutorialGuide /></ViewportDeviceProvider>;
+  }<FeatureTutorialGuide /><ViewportDiagnostics /></ViewportDeviceProvider>;
 }
