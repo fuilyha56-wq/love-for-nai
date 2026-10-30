@@ -22,10 +22,14 @@ function browser(withViewport = true, withKeyboard = false, withDynamicViewport 
   const orientation = new EventTarget();
   const win = Object.assign(new EventTarget(), {
     innerWidth: 390, innerHeight: 800, visualViewport: withViewport ? viewport : undefined, screen: { orientation },
+    matchMedia: vi.fn(() => ({ matches: false })),
   });
   const doc = Object.assign(new EventTarget(), {
     documentElement: root,
-    activeElement: null as null | { matches: (selector: string) => boolean; isContentEditable?: boolean },
+    activeElement: null as null | {
+      matches: (selector: string) => boolean; isContentEditable?: boolean;
+      isConnected?: boolean; closest?: (selector: string) => object | null;
+    },
   });
   const dynamic = { height: 800, notify: () => {} };
   const probe = {
@@ -57,9 +61,10 @@ function browser(withViewport = true, withKeyboard = false, withDynamicViewport 
     pending.forEach(callback => callback(0));
   }
   function focus() {
-    doc.activeElement = { matches: () => true };
+    doc.activeElement = { matches: () => true, isConnected: true, closest: () => null };
     doc.dispatchEvent(new Event("focusin"));
     flush();
+    return doc.activeElement;
   }
   function resize() {
     (withViewport ? viewport : win).dispatchEvent(new Event("resize"));
@@ -84,16 +89,19 @@ function workspaceBrowser() {
   b.win.innerHeight = b.root.clientHeight = b.viewport.height = b.dynamic.height = 754;
   const workspace = vi.spyOn(workspaceKeyboard, "getWorkspaceViewport").mockReturnValue({ height: 754, width: 406 });
   const writes = vi.spyOn(b.root.style, "setProperty");
-  function resize(height: number, dynamicHeight = height) {
+  function setGeometry(height: number, dynamicHeight = height) {
     b.win.innerHeight = b.root.clientHeight = Math.floor(height);
     b.viewport.height = height;
     b.dynamic.height = dynamicHeight;
+  }
+  function resize(height: number, dynamicHeight = height) {
+    setGeometry(height, dynamicHeight);
     b.resize();
   }
   const appliedHeight = () => Number.parseFloat(b.properties.get("--lfn-viewport-height")!);
   const writtenHeights = () => writes.mock.calls.filter(([name]) => name === "--lfn-viewport-height")
     .map(([, value]) => Number.parseFloat(value));
-  return { ...b, workspace, resize, appliedHeight, writtenHeights };
+  return { ...b, workspace, setGeometry, resize, appliedHeight, writtenHeights };
 }
 
 describe("mobile visual viewport", () => {
@@ -261,36 +269,65 @@ describe("mobile visual viewport", () => {
     unmount = () => {};
   });
 
-  it("replays the phone's two-step opening and toolbar overshoot without a transient height write", () => {
+  it.each(["visual", "window"])("shrinks the workspace inside the %s resize event before any animation frame", target => {
     const b = workspaceBrowser();
     mount();
-    b.focus();
-    const focused = b.doc.activeElement;
+    const focused = b.focus();
+    b.setGeometry(374.67);
+    (target === "visual" ? b.viewport : b.win).dispatchEvent(new Event("resize"));
+    // Holding 754 here leaves the phone's composer behind the already-open IME.
+    // Deliberately do not flush RAF: the event itself must publish the shrink.
+    expect(b.appliedHeight()).toBe(374.67);
+    expect(b.appliedHeight()).toBeLessThanOrEqual(b.viewport.height);
+    expect(b.doc.activeElement).toBe(focused);
+    vi.advanceTimersByTime(16);
+    b.flush();
+    expect(b.appliedHeight()).toBe(374.67);
+  });
 
-    // Recorded HTTP Edge sequence: both viewport sources dip for about 32ms.
-    // Every visit retains focus, including Android's system-back dismissal.
+  it.each([16, 32])("eases a phone correction arriving after %sms within 80ms without exceeding the visible area", gap => {
+    const b = workspaceBrowser();
+    mount();
+    const focused = b.focus();
+    b.resize(374.67);
+    expect(b.appliedHeight()).toBe(374.67);
+    expect(Number.parseFloat(b.properties.get("--lfn-keyboard-height")!)).toBeCloseTo(379.33);
+    vi.advanceTimersByTime(gap);
+    b.resize(484.67);
+    expect(b.appliedHeight()).toBe(374.67);
+
+    const recovery = [b.appliedHeight()];
+    for (let frame = 0; frame < 5; frame++) {
+      // Keyboard state follows raw geometry, even while layout is interpolating.
+      expect(Number.parseFloat(b.properties.get("--lfn-keyboard-height")!)).toBeCloseTo(269.33);
+      expect(b.root.dataset.keyboardOpen).toBe("true");
+      vi.advanceTimersByTime(16);
+      b.flush();
+      recovery.push(b.appliedHeight());
+      expect(b.appliedHeight()).toBeLessThanOrEqual(b.viewport.height);
+      expect(b.appliedHeight()).toBeGreaterThanOrEqual(recovery.at(-2)!);
+    }
+    expect(recovery[1]).toBeGreaterThan(374.67);
+    expect(recovery[1]).toBeLessThan(484.67);
+    expect(recovery.at(-1)).toBe(484.67);
+    expect(b.doc.activeElement).toBe(focused);
+    vi.advanceTimersByTime(200);
+    b.flush();
+    expect(b.appliedHeight()).toBe(484.67);
+  });
+
+  it("keeps repeated retained-focus dismissals within the workspace even when both viewport sources overstate it", () => {
+    const b = workspaceBrowser();
+    mount();
+    const focused = b.focus();
     for (let visit = 0; visit < 3; visit++) {
-      b.resize(374.67);
-      expect(b.appliedHeight()).toBe(754);
-      vi.advanceTimersByTime(32);
       b.resize(484.67);
-      vi.advanceTimersByTime(17);
-      b.flush();
-      expect(b.appliedHeight()).toBe(754);
-      vi.advanceTimersByTime(1);
-      b.flush();
       expect(b.appliedHeight()).toBe(484.67);
-      expect(b.doc.activeElement).toBe(focused);
-
-      // Dismissal first enlarges all raw sources to 864, then dvh alone to 974.
-      // Neither value is trustworthy merely because it persists beyond polling.
-      vi.advanceTimersByTime(900);
       b.resize(864);
       expect(b.appliedHeight()).toBe(754);
       vi.advanceTimersByTime(34);
       b.dynamic.height = 974;
       b.dynamic.notify();
-      b.flush();
       expect(b.appliedHeight()).toBe(754);
       vi.advanceTimersByTime(900);
       b.flush();
@@ -299,8 +336,7 @@ describe("mobile visual viewport", () => {
       expect(b.properties.get("--lfn-viewport-top")).toBe("0px");
       b.resize(754);
     }
-
-    expect(b.writtenHeights()).toEqual([754, 484.67, 754, 484.67, 754, 484.67, 754]);
+    expect(Math.max(...b.writtenHeights())).toBe(754);
   });
 
   it("keeps the workspace ceiling through blur and restores dismissal without a merge delay", () => {
@@ -308,8 +344,6 @@ describe("mobile visual viewport", () => {
     mount();
     b.focus();
     b.resize(484.67);
-    vi.advanceTimersByTime(50);
-    b.flush();
     expect(b.appliedHeight()).toBe(484.67);
 
     b.doc.activeElement = null;
@@ -325,39 +359,73 @@ describe("mobile visual viewport", () => {
     expect(Math.max(...b.writtenHeights())).toBe(754);
   });
 
-  it("commits a single-stage opening at the fixed deadline without requiring another resize", () => {
+  it("applies a single-stage opening immediately and does not animate later clipboard resizing", () => {
     const b = workspaceBrowser();
     mount();
     b.focus();
     b.resize(400);
-    vi.advanceTimersByTime(49);
-    b.flush();
-    expect(b.appliedHeight()).toBe(754);
-    vi.advanceTimersByTime(1);
-    b.flush();
     expect(b.appliedHeight()).toBe(400);
-
-    // Once open, normal keyboard/clipboard resizing must remain responsive.
+    vi.advanceTimersByTime(200);
+    b.flush();
     b.resize(440);
     expect(b.appliedHeight()).toBe(440);
     b.resize(360);
     expect(b.appliedHeight()).toBe(360);
   });
 
-  it("cancels an opening candidate when dismissal arrives before the merge deadline", () => {
+  it.each(["dismissal", "smaller viewport", "smaller target", "zoom", "width", "blur"])("cancels an upward correction on %s without later replaying its old target", change => {
     const b = workspaceBrowser();
     mount();
     b.focus();
     b.resize(374.67);
-    vi.advanceTimersByTime(20);
-    b.resize(864, 974);
-    expect(b.appliedHeight()).toBe(754);
-    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(16);
+    b.resize(484.67);
+    vi.advanceTimersByTime(16);
     b.flush();
-    expect(b.writtenHeights()).toEqual([754]);
+    expect(b.appliedHeight()).toBeGreaterThan(374.67);
+    expect(b.appliedHeight()).toBeLessThan(484.67);
+
+    let expected: number;
+    if (change === "dismissal") {
+      b.setGeometry(864, 974);
+      b.viewport.dispatchEvent(new Event("resize"));
+      expected = 754;
+      // Closing must be synchronous too, rather than finishing the animation.
+      expect(b.appliedHeight()).toBe(expected);
+      expect(b.root.dataset.keyboardOpen).toBe("false");
+    } else if (change === "smaller viewport" || change === "smaller target") {
+      // 450 is below the former target but still above the current animation.
+      // It must cancel that target just as a shrink below the current height does.
+      expected = change === "smaller viewport" ? 350 : 450;
+      b.setGeometry(expected);
+      b.viewport.dispatchEvent(new Event("resize"));
+      expect(b.appliedHeight()).toBe(expected);
+    } else if (change === "zoom") {
+      Object.assign(b.viewport, { width: 203.33, offsetTop: 80, scale: 2 });
+      b.resize(300, 200);
+      expected = 300;
+      expect(b.properties.get("--lfn-viewport-top")).toBe("80px");
+    } else if (change === "width") {
+      b.win.innerWidth = b.viewport.width = 600;
+      // The getter owns width matching and invalidates the old snapshot.
+      b.workspace.mockReturnValue(undefined);
+      b.resize(900);
+      expected = 900;
+    } else {
+      b.doc.activeElement = null;
+      b.doc.dispatchEvent(new Event("focusout"));
+      expected = 484.67;
+    }
+    b.flush();
+    expect(b.appliedHeight()).toBe(expected);
+    const writesAfterCancellation = b.writtenHeights().length;
+    vi.advanceTimersByTime(200);
+    b.flush();
+    expect(b.appliedHeight()).toBe(expected);
+    expect(b.writtenHeights()).toHaveLength(writesAfterCancellation);
   });
 
-  it("does not apply the unscaled workspace ceiling or opening delay during pinch zoom", () => {
+  it("does not apply the unscaled workspace ceiling during pinch zoom", () => {
     const b = workspaceBrowser();
     mount();
     b.focus();
@@ -372,20 +440,108 @@ describe("mobile visual viewport", () => {
     expect(b.appliedHeight()).toBe(754);
   });
 
-  it("drops the old width's ceiling and pending opening when workspace geometry is invalidated", () => {
+  it.each(["hidden", "disconnected"])("coalesces the recorded closing undershoot only after the old editor is %s", disappearance => {
     const b = workspaceBrowser();
+    mount();
+    const editor = b.focus();
+    b.resize(484.67);
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    if (disappearance === "hidden") editor.closest = () => ({});
+    else editor.isConnected = false;
+    // trace2: the reverse shrink arrives 95ms after blur, not at blur itself.
+    vi.advanceTimersByTime(95);
+    b.resize(374.67);
+    expect(b.appliedHeight()).toBe(484.67);
+    vi.advanceTimersByTime(30);
+    b.setGeometry(754);
+    b.viewport.dispatchEvent(new Event("resize"));
+    expect(b.appliedHeight()).toBe(754);
+    vi.advanceTimersByTime(100);
+    b.flush();
+    expect(b.writtenHeights()).toEqual([754, 484.67, 754]);
+  });
+
+  it("does not postpone a persistent hidden-editor shrink beyond 50ms or restart for further shrinkage", () => {
+    const b = workspaceBrowser();
+    mount();
+    const editor = b.focus();
+    b.resize(484.67);
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    editor.closest = () => ({});
+    vi.advanceTimersByTime(95);
+    b.resize(374.67);
+    vi.advanceTimersByTime(49);
+    b.flush();
+    expect(b.appliedHeight()).toBe(484.67);
+    vi.advanceTimersByTime(1);
+    b.flush();
+    expect(b.appliedHeight()).toBe(374.67);
+    b.resize(350);
+    expect(b.appliedHeight()).toBe(350);
+    vi.advanceTimersByTime(16);
+    b.resize(320);
+    expect(b.appliedHeight()).toBe(320);
+    vi.advanceTimersByTime(100);
+    b.flush();
+    expect(b.appliedHeight()).toBe(320);
+  });
+
+  it.each(["offsetTop", "offsetLeft"] as const)("cancels hidden-editor waiting on a changed %s without starting a new wait", axis => {
+    const b = workspaceBrowser();
+    mount();
+    const editor = b.focus();
+    b.resize(484.67);
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    editor.closest = () => ({});
+    vi.advanceTimersByTime(95);
+    b.resize(374.67);
+    expect(b.appliedHeight()).toBe(484.67);
+
+    vi.advanceTimersByTime(20);
+    b.viewport[axis] = 12;
+    b.setGeometry(360);
+    b.viewport.dispatchEvent(new Event("scroll"));
+    expect(b.appliedHeight()).toBe(360);
+    expect(b.properties.get(axis === "offsetTop" ? "--lfn-viewport-top" : "--lfn-viewport-left")).toBe("12px");
+    // Another contraction must not restart the cancelled editor's allowance.
+    b.resize(340);
+    expect(b.appliedHeight()).toBe(340);
+    vi.advanceTimersByTime(100);
+    b.flush();
+    expect(b.appliedHeight()).toBe(340);
+  });
+
+  it("never holds an offscreen editor merely because it blurred while still visible", () => {
+    const b = workspaceBrowser();
+    mount();
+    const editor = b.focus();
+    b.resize(484.67);
+    b.doc.activeElement = null;
+    b.doc.dispatchEvent(new Event("focusout"));
+    vi.advanceTimersByTime(95);
+    b.setGeometry(374.67);
+    b.viewport.dispatchEvent(new Event("resize"));
+    expect(editor.isConnected).toBe(true);
+    expect(editor.closest?.("[hidden], [inert]")).toBeNull();
+    expect(b.appliedHeight()).toBe(374.67);
+  });
+
+  it("applies upward corrections immediately when reduced motion is requested", () => {
+    const b = workspaceBrowser();
+    b.win.matchMedia.mockReturnValue({ matches: true });
     mount();
     b.focus();
     b.resize(374.67);
-    vi.advanceTimersByTime(20);
-    b.win.innerWidth = b.viewport.width = 600;
-    // The getter owns width matching; a different width invalidates its snapshot.
-    b.workspace.mockReturnValue(undefined);
-    b.resize(900);
-    expect(b.appliedHeight()).toBe(900);
-    vi.advanceTimersByTime(100);
+    expect(b.appliedHeight()).toBe(374.67);
+    vi.advanceTimersByTime(16);
+    b.resize(484.67);
+    expect(b.appliedHeight()).toBe(484.67);
+    vi.advanceTimersByTime(16);
     b.flush();
-    expect(b.writtenHeights()).toEqual([754, 900]);
+    expect(b.writtenHeights()).toEqual([754, 374.67, 484.67]);
   });
 
   it("ignores invalid dynamic measurements and does not mix CSS dvh with pinch zoom", () => {
