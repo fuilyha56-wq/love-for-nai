@@ -1,4 +1,5 @@
 "use client";
+import { isCommentSubmitKey } from "@/lib/comment-submit-key";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
@@ -66,6 +67,11 @@ export function DiscussionComments({ resource, resourceId }: { resource: "galler
     try { await action(); } catch (error) { setMessage(error instanceof Error ? error.message : "评论操作失败"); }
     finally { setBusy(false); }
   }
+  function composeKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>, parentId: string | null) {
+    if (!isCommentSubmitKey({ ...event, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode })) return;
+    event.preventDefault();
+    if (!busy && (parentId ? replyDraft : draft).trim()) submit(parentId);
+  }
   function submit(parentId: string | null) {
     void act(async () => {
       const content = parentId ? replyDraft : draft;
@@ -129,7 +135,7 @@ export function DiscussionComments({ resource, resourceId }: { resource: "galler
             </div></details>}
           </div>
           {deleteId === item.id && <div className="mobile-discussion-confirm" role="alertdialog" aria-label="删除评论确认"><p>删除这条评论及其下所有回复？</p><button type="button" onClick={() => setDeleteId(null)} disabled={busy}>取消</button><button type="button" onClick={() => remove(item)} disabled={busy}>确认删除</button></div>}
-          {replyId === item.id && <div className="mobile-discussion-compose"><textarea aria-label={`回复 ${item.authorName}`} autoFocus rows={2} maxLength={2000} value={replyDraft} onChange={event => setReplyDraft(event.target.value)} placeholder={`回复 @${item.authorName}`} /><button type="button" disabled={busy || !replyDraft.trim()} onClick={() => submit(item.id)}>回复</button></div>}
+          {replyId === item.id && <div className="mobile-discussion-compose"><textarea aria-label={`回复 ${item.authorName}`} autoFocus rows={2} maxLength={2000} value={replyDraft} onKeyDown={event => composeKeyDown(event, item.id)} onChange={event => setReplyDraft(event.target.value)} placeholder={`回复 @${item.authorName}`} /><button type="button" disabled={busy || !replyDraft.trim()} onClick={() => submit(item.id)}>回复</button></div>}
         </>}
         {children.length > 0 && depth < 8 && <div className="mobile-discussion-replies">{children.map(child => renderComment(child, depth + 1))}</div>}
       </div>
@@ -137,7 +143,7 @@ export function DiscussionComments({ resource, resourceId }: { resource: "galler
   }
   return <section className="mobile-discussion-comments" id="comments" aria-label="评论区">
     <header className="mobile-discussion-heading"><h2>评论 <small>{items.length}</small></h2><div role="tablist" aria-label="评论排序"><button type="button" role="tab" aria-selected={sort === "hot"} onClick={() => setSort("hot")}>最热</button><button type="button" role="tab" aria-selected={sort === "new"} onClick={() => setSort("new")}>最新</button></div><button type="button" disabled={busy || loading} onClick={() => void load()}>刷新</button></header>
-    {viewerId ? <div className="mobile-discussion-compose"><UserAvatar userId={viewerId} name="我" /><textarea aria-label="发表评论" rows={3} maxLength={2000} value={draft} onChange={event => setDraft(event.target.value)} placeholder="发一条友善的评论吧" /><button type="button" disabled={busy || !draft.trim()} onClick={() => submit(null)}>{busy ? "处理中…" : "发布"}</button><small>{Array.from(draft).length} / 2000</small></div> : !loading && <p className="mobile-discussion-login"><Link href="/sign-in">登录</Link> 后参与评论</p>}
+    {viewerId ? <div className="mobile-discussion-compose"><UserAvatar userId={viewerId} name="我" /><textarea aria-label="发表评论" rows={3} maxLength={2000} value={draft} onKeyDown={event => composeKeyDown(event, null)} onChange={event => setDraft(event.target.value)} placeholder="Enter 发布，Shift+Enter 换行" /><button type="button" disabled={busy || !draft.trim()} onClick={() => submit(null)}>{busy ? "处理中…" : "发布"}</button><small>{Array.from(draft).length} / 2000</small></div> : !loading && <p className="mobile-discussion-login"><Link href="/sign-in">登录</Link> 后参与评论</p>}
     {message && <p role="status" className="mobile-discussion-message">{message}</p>}
     {(preferences.hiddenIds.length > 0 || preferences.blockedAuthorIds.length > 0) && <button type="button" className="mobile-discussion-blocked-toggle" onClick={() => setShowBlocked(value => !value)}>{showBlocked ? "隐藏已屏蔽内容" : "查看已屏蔽内容"}</button>}
     {loading ? <p role="status" className="mobile-discussion-empty">正在读取评论…</p> : !roots.length ? <p className="mobile-discussion-empty">还没有评论，来聊聊你的想法吧</p> : <div className="mobile-discussion-list">{shownRoots.map(item => renderComment(item))}{shownRoots.length < roots.length && <button type="button" className="lfn-button" onClick={() => setVisibleCount(value => value + 20)}>加载更多评论（还剩 {roots.length - shownRoots.length} 条）</button>}</div>}

@@ -125,7 +125,7 @@ export default function GalleryPage() {
           return (
           <article key={item.id} className="flex flex-col overflow-hidden rounded-md border border-[var(--line)] bg-[var(--panel)]">
             <div className="relative aspect-[4/5] bg-[var(--surface-muted)]">
-              <Link href={`/gallery/${item.id}`} tabIndex={isHidden ? -1 : undefined} aria-hidden={isHidden || undefined} className="absolute inset-0 block" aria-label={`查看作品详情：${item.title}`}>
+              <Link href={gallery.detailHref(item.id)} tabIndex={isHidden ? -1 : undefined} aria-hidden={isHidden || undefined} className="absolute inset-0 block" aria-label={`查看作品详情：${item.title}`}>
                 <Image src={item.thumbnailUrl || `${item.imageUrl}?variant=thumbnail`} alt={item.title} fill unoptimized className={`object-contain transition-[filter] duration-200 ${isHidden ? "blur-xl brightness-75" : ""}`} />
               </Link>
               {isHidden && (

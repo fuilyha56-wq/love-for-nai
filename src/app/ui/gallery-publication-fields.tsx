@@ -4,6 +4,9 @@ import { PopupSelect } from "@/app/ui/popup-select";
 import styles from "@/app/ui/discovery-controls.module.css";
 import { parseNaiImageMetadata } from "@/lib/nai-metadata";
 import { hasReadableGenerationMetadata } from "@/lib/gallery-publication";
+import { useGallerySubmissionOptions } from "@/app/gallery/use-gallery-submission-options";
+import { submissionActivityAllows } from "@/lib/gallery-submission-options";
+import { canonicalGalleryTag } from "@/lib/gallery-tags";
 import type {
   GalleryPublicationInput,
   GalleryPromptMode,
@@ -17,6 +20,8 @@ type Form = GalleryPublicationInput & {
   historyId?: string;
   source: string;
   originalFile?: File;
+  tags?: string;
+  rating?: string;
 };
 const publicationModes = [
   { value: "full", label: "完整公开原数据" },
@@ -38,11 +43,15 @@ export function GalleryPublicationFields({
       exposeParameters?: boolean;
       requireLikeForParameters?: boolean;
       originalFile?: File;
+      tags?: string;
     },
   ) => void;
 }) {
   const publicationModeId = useId();
   const [detected, setDetected] = useState("");
+  const options = useGallerySubmissionOptions(allowOriginalProof);
+  const activities = options.activities.filter(activity => submissionActivityAllows(activity, form, false));
+  const proofActivity = activities.find(activity => activity.proofBoard && submissionActivityAllows(activity, form));
   const files = form.files?.length ? form.files : form.file ? [form.file] : [];
   const first = files[0];
   const change = useRef(onChange);
@@ -63,7 +72,7 @@ export function GalleryPublicationFields({
           setDetected(
             readable
               ? `已读取 ${first.name} 的原始生成元数据。最终分类由服务端验证。`
-              : `${first.name} 未读取到有效原始生成元数据，提交后会自动归入“无原数据图”。${form.originalFile ? "校验原图通过数据校验和关联审核后，按 0.3 倍档参赛。" : "未提供合格校验原图时按低奖励档参赛。"}`,
+              : `${first.name} 未读取到有效原始生成元数据，提交后会自动归入“无原数据图”。`,
           );
       })
       .catch(() => {
@@ -73,6 +82,9 @@ export function GalleryPublicationFields({
       alive = false;
     };
   }, [first, form.source, form.originalFile]);
+  useEffect(() => {
+    if (!options.loading && (!proofActivity || files.length > 1) && form.originalFile) change.current({ originalFile: undefined });
+  }, [options.loading, proofActivity, files.length, form.originalFile]);
   const mode = form.promptMode || (form.exposeParameters ? "full" : "hidden");
   const characters = form.partialCharacters || [];
   return (
@@ -80,13 +92,25 @@ export function GalleryPublicationFields({
       <legend className="px-1 text-sm font-semibold">
         原数据与提示词公开方式
       </legend>
-      {allowOriginalProof && (
+      {activities.length > 0 && <section className="space-y-2 rounded-lg border border-[var(--line)] bg-[var(--panel)] p-3" aria-label="当前投稿活动">
+        <h3 className="text-sm font-semibold">当前开放的活动</h3>
+        {activities.map(activity => <div key={activity.id} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--surface-muted)] p-2 text-xs">
+          <div className="min-w-0"><strong className="block">{activity.name}</strong><span className="text-[var(--muted)]">{activity.requiredTags?.length ? `活动标签：${activity.requiredTags.join("、")}` : "符合条件的投稿可参与"}</span></div>
+          <button type="button" className="min-h-9 shrink-0 rounded-md border border-[var(--line)] px-3 font-semibold" disabled={submissionActivityAllows(activity, form)} onClick={() => {
+            const tags = (form.tags || "").split(/[,，\n]/).map(tag => tag.trim()).filter(Boolean);
+            const existing = new Set(tags.map(canonicalGalleryTag));
+            change.current({ tags: [...tags, ...(activity.requiredTags || []).filter(tag => !existing.has(canonicalGalleryTag(tag)))].join(", ") });
+          }}>{submissionActivityAllows(activity, form) ? "已匹配" : "添加活动标签"}</button>
+        </div>)}
+      </section>}
+      {proofActivity && (
         <div className="space-y-2 rounded-lg border border-[var(--line)] p-3">
           <label className="block text-sm font-semibold">
             校验原图（可选）
             <input
               type="file"
               accept="image/png,image/jpeg"
+              disabled={files.length > 1}
               className="mt-2 block w-full text-xs"
               onChange={(event) =>
                 change.current({
@@ -103,8 +127,8 @@ export function GalleryPublicationFields({
             />
           </label>
           <p className="text-xs leading-5 text-[var(--muted)]">
-            主上传区放修改后的参赛图；这里另传一张带原始生成元数据的原图。原图仅管理员可见，经数据校验与创作关联审核后进入
-            0.3 倍中间档：900 / 300 / 30 AFF，安慰奖 15 AFF。广场只展示参赛图。
+            {files.length > 1 ? "原图校验需逐件投稿，请先只选择一张参赛图。" : `为“${proofActivity.name}”提供携带生成元数据的校验原图。原图仅管理员可见，审核通过后按“${proofActivity.proofBoard!.name}”规则参赛。`}
+            {files.length <= 1 && ` 名次奖励：${proofActivity.proofBoard!.rewards.join(" / ")} AFF；参与奖励：${proofActivity.proofBoard!.consolationReward} AFF。`}
           </p>
           {form.originalFile && (
             <p className="break-all text-xs">
@@ -144,9 +168,7 @@ export function GalleryPublicationFields({
         />
       </div>
       <p className="text-xs leading-5 text-[var(--muted)]">
-        无法读取原始生成元数据时会自动归类为无原数据图。提供校验原图并通过审核时进入
-        0.3
-        倍档；否则完整公开且非超分作品进入正常榜，部分公开、不公开、无原数据及超分图进入低档。
+        无法读取生成元数据时会自动归类为无原数据图。公开方式决定其他用户能查看和复用的提示词；活动资格以当前活动规则及审核结果为准。
       </p>
       {mode === "partial" && (
         <div className="space-y-3">
@@ -274,7 +296,7 @@ export function GalleryPublicationFields({
           checked={form.upscaled === true}
           onChange={(e) => change.current({ upscaled: e.target.checked })}
         />
-        这是超分后的图片（按低奖励档参赛）
+        这是超分后的图片
       </label>
       {(mode === "full" || mode === "partial") && (
         <label className="flex items-center gap-2 text-sm">
@@ -288,10 +310,6 @@ export function GalleryPublicationFields({
           点赞后查看已公开的提示词
         </label>
       )}
-      <p className="text-xs leading-5 text-[var(--muted)]">
-        参与万圣节活动请在作品标签中加入“万圣节”或
-        halloween；无需填写进生成提示词。
-      </p>
     </fieldset>
   );
 }

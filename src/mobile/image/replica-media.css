@@ -10,16 +10,17 @@
 .replica-media-open img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .replica-media-grid { display: grid; box-sizing: border-box; width: 100%; align-items: start; gap: 12px; padding: 8px; }
 .replica-media-grid .replica-media-card { width: 100%; }
-.replica-media-actions { position: absolute; z-index: 1; bottom: 12px; left: 50%; display: flex; max-width: calc(100% - 12px); gap: 4px; overflow-x: auto; padding: 4px; border-radius: 8px; background: color-mix(in srgb, var(--panel) 94%, transparent); color: var(--ink); opacity: 1; transform: translateX(-50%); transition: opacity 150ms ease; }
-.replica-media-actions > :is(button, a, details) { display: grid; width: 40px; height: 40px; flex: 0 0 40px; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
-.replica-media-actions > :not(.replica-media-upscale) { display: none; }
-.replica-media-actions > .replica-media-upscale { display: inline-flex; width: auto; min-width: 92px; height: 36px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 7px; padding: 0 12px; border-radius: 6px; background: var(--rose); color: #fff; font: inherit; font-size: 12px; font-weight: 750; }
+.replica-media-item { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; }
+/* Keep touch actions outside the fitted image, as in the history gallery. */
+.replica-media-actions { display: grid; min-width: 0; flex: none; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 8px; background: var(--panel); color: var(--ink); }
+.replica-media-actions > :is(button, details) { position: static; display: flex; width: auto; height: auto; min-width: 0; min-height: 44px; align-items: center; justify-content: center; gap: 5px; padding: 0 5px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.replica-media-actions > .replica-download-menu { display: block; padding: 0; }
+.replica-media-actions > .replica-download-menu > summary { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: 5px; padding: 0 5px; }
+.replica-media-actions > .replica-media-upscale { border-color: var(--rose); background: var(--rose); color: #fff; font-weight: 750; }
 .replica-media-actions > .replica-media-upscale:hover { background: color-mix(in srgb, var(--rose) 84%, #000); }
 .replica-media-actions > .replica-media-upscale span { white-space: nowrap; }
 .replica-media-actions > :is(button, a, details):hover { background: color-mix(in srgb, var(--rose) 12%, var(--panel)); }
 .replica-media-actions svg { width: 16px; height: 16px; }
-.replica-media-card:is(:hover, :focus-within) .replica-media-actions { opacity: 1; }
-.replica-media-card:is(:hover, :focus-within) .replica-media-actions > :not(.replica-media-upscale) { display: grid; }
 .replica-media-card:focus-within { outline: 2px solid currentColor; outline-offset: -2px; }
 .replica-media-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 24px; text-align: center; }
 .replica-media-empty > svg { margin-bottom: 12px; color: var(--muted); }
@@ -35,6 +36,5 @@
   .replica-media-grid .replica-media-card { transition: transform 150ms ease, box-shadow 150ms ease; }
   .replica-media-grid .replica-media-card:hover { z-index: 1; transform: scale(1.01); box-shadow: 0 6px 14px color-mix(in srgb, var(--ink) 16%, transparent); }
 }
-@media (hover: none) { .replica-media-actions { opacity: 1; } .replica-media-actions > :not(.replica-media-upscale) { display: grid; } }
 
 }

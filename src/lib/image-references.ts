@@ -36,7 +36,31 @@ export function parseImageReferenceBundle(input: unknown): ImageReferenceBundle 
 }
 
 export function referenceEncodingKey(asset: Pick<ImageReferenceAsset, "data">, model: string, information: number): Promise<string> {
-  return crypto.subtle.digest("SHA-256", new TextEncoder().encode(asset.data)).then((buffer) => `${model}:${unit(information, 1)}:${Array.from(new Uint8Array(buffer), (value) => value.toString(16).padStart(2, "0")).join("")}`);
+  const value = `${model}:${unit(information, 1)}:`;
+  const input = new TextEncoder().encode(asset.data);
+  const subtle = globalThis.crypto?.subtle;
+  if (subtle) {
+    return subtle.digest("SHA-256", input).then((buffer) => `${value}${Array.from(new Uint8Array(buffer), (item) => item.toString(16).padStart(2, "0")).join("")}`);
+  }
+
+  // Some embedded/web-workbench contexts expose `crypto` without the Web
+  // Crypto `subtle` implementation. The digest is only a local cache key, so
+  // keep reference uploads usable with a deterministic non-cryptographic
+  // fallback instead of failing while a reference is being added.
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b1;
+  let third = 0x85ebca6b;
+  let fourth = 0xc2b2ae35;
+  for (const byte of input) {
+    first = Math.imul(first ^ byte, 0x01000193);
+    second = Math.imul(second ^ byte, 0x27d4eb2d);
+    third = Math.imul(third ^ byte, 0x165667b1);
+    fourth = Math.imul(fourth ^ byte, 0x9e3779b1);
+  }
+  const fallback = [first, second, third, fourth]
+    .map((item) => (item >>> 0).toString(16).padStart(8, "0"))
+    .join("");
+  return Promise.resolve(`${value}${fallback}`);
 }
 
 export function buildImageReferenceParameters(kind: ImageReferenceKind, selections: readonly ImageReferenceSelection[], cache: Readonly<Record<string, EncodedImageReference | undefined>> = {}, model?: string) {

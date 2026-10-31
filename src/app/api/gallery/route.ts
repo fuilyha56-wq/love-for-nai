@@ -9,6 +9,8 @@ import {
 } from "@/lib/gallery";
 import { getSession } from "@/lib/session";
 import type { GalleryPromptMode, PublicCharacterText } from "@/lib/gallery-publication";
+import { listCreatorRewardCampaigns } from "@/lib/creator-rewards";
+import { gallerySubmissionOptions, submissionActivityAllows } from "@/lib/gallery-submission-options";
 
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
@@ -60,6 +62,8 @@ export async function POST(request: Request) {
         partialCharacters: JSON.parse(String(form.get("partialCharacters") || "[]")) as PublicCharacterText[], upscaled: form.get("upscaled") === "true",
         originalProofUpload: original instanceof File && original.size ? { data: Buffer.from(await original.arrayBuffer()), fileName: original.name } : undefined,
       };
+      if (input.originalProofUpload && !gallerySubmissionOptions(await listCreatorRewardCampaigns()).activities.some(activity => activity.proofBoard && submissionActivityAllows(activity, { ...input, tags: input.tags.join(",") })))
+        throw new Error("当前作品未匹配开放原图校验的活动，请移除校验原图或调整活动标签后重新提交。");
       const item = historyId ? await publishFromHistory(session.userId, session.displayName || session.username, historyId, input)
         : await publishLocalImage(session.userId, session.displayName || session.username, Buffer.from(await (file as File).arrayBuffer()), (file as File).name, input);
       return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });

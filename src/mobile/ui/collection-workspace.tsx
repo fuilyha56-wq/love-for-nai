@@ -34,7 +34,7 @@ export function useCollectionView<T>(items: T[], searchText: (item: T) => string
 }
 
 /** Touch and pointer users get the same actions; menus escape image-card clipping. */
-export function ImageCardMenu({ label, children }: { label: string; children: ReactNode }) {
+export function ImageCardMenu({ label, children, triggerContent }: { label: string; children: ReactNode; triggerContent?: ReactNode }) {
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const button = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
@@ -61,5 +61,5 @@ export function ImageCardMenu({ label, children }: { label: string; children: Re
     if (position) { setPosition(null); return; }
     const rect = button.current!.getBoundingClientRect();
     setPosition({ left: Math.max(8, Math.min(innerWidth - 232, rect.right - 224)), top: rect.bottom + 4 });
-  }}><MoreHorizontal size={20} /></button>{position && createPortal(<div className="launcher-image-menu-backdrop" onClick={() => setPosition(null)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setPosition(null); } }}><div ref={menu} tabIndex={-1} role="menu" aria-label={label} className="launcher-image-menu" style={position} onClick={event => { event.stopPropagation(); if (event.target instanceof Element && event.target.closest("a,button") && !event.target.closest("[data-keep-menu-open]")) setPosition(null); }}>{children}</div></div>, document.body)}</>;
+  }}>{triggerContent ?? <MoreHorizontal size={20} />}</button>{position && createPortal(<div className="launcher-image-menu-backdrop" onClick={() => setPosition(null)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setPosition(null); } }}><div ref={menu} tabIndex={-1} role="menu" aria-label={label} className="launcher-image-menu" style={position} onClick={event => { event.stopPropagation(); if (event.target instanceof Element && event.target.closest("a,button") && !event.target.closest("[data-keep-menu-open]")) setPosition(null); }}>{children}</div></div>, document.body)}</>;
 }

@@ -120,7 +120,7 @@ export default function GalleryPage() {
           return (
           <article key={item.id} className="launcher-image-card flex flex-col">
             <div className="relative aspect-[4/5] bg-[#141414]">
-              <Link href={`/gallery/${item.id}`} tabIndex={isHidden ? -1 : undefined} aria-hidden={isHidden || undefined} className="absolute inset-0 block" aria-label={`查看作品详情：${item.title}`}>
+              <Link href={gallery.detailHref(item.id)} tabIndex={isHidden ? -1 : undefined} aria-hidden={isHidden || undefined} className="absolute inset-0 block" aria-label={`查看作品详情：${item.title}`}>
                 <Image src={item.thumbnailUrl || `${item.imageUrl}?variant=thumbnail`} alt={item.title} fill unoptimized className={`object-cover transition-[filter] duration-200 ${isHidden ? "blur-xl brightness-75" : ""}`} />
               </Link>
               {isHidden && (
@@ -131,7 +131,7 @@ export default function GalleryPage() {
                   </span>
                 </button>
               )}
-              {!isHidden && <ImageCardMenu label={`作品操作：${item.title}`}><Link href={`/gallery/${item.id}`}><Eye size={17} />查看作品详情</Link><button type="button" onClick={() => setImportItem(item)}><RotateCcw size={17} />导入到画布</button><button type="button" onClick={() => void share(item)}><Link2 size={17} />分享作品</button><button type="button" onClick={() => void like(item.id)}><Heart size={17} />点赞 · {item.likes}</button>{(item.rating === "r17" || item.rating === "r18") && <button type="button" onClick={() => toggleReveal(item.id)}><EyeOff size={17} />重新隐藏内容</button>}</ImageCardMenu>}
+              {!isHidden && <ImageCardMenu label={`作品操作：${item.title}`}><Link href={gallery.detailHref(item.id)}><Eye size={17} />查看作品详情</Link><button type="button" onClick={() => setImportItem(item)}><RotateCcw size={17} />导入到画布</button><button type="button" onClick={() => void share(item)}><Link2 size={17} />分享作品</button><button type="button" onClick={() => void like(item.id)}><Heart size={17} />点赞 · {item.likes}</button>{(item.rating === "r17" || item.rating === "r18") && <button type="button" onClick={() => toggleReveal(item.id)}><EyeOff size={17} />重新隐藏内容</button>}</ImageCardMenu>}
             </div>
             <div className="launcher-image-card-caption"><h2 title={item.title}>{item.title}</h2><p>{item.authorName || item.ownerName}{item.noOriginalData ? " · 无原数据图" : ""} · {ratingLabel(item.rating)} · ♥ {item.likes}</p><p>↓ {item.downloads || 0} 次下载 · ↗ {item.uses || 0} 次导入</p></div>
           </article>

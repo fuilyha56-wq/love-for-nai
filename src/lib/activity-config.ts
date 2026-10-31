@@ -1,5 +1,23 @@
 import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 
+export const defaultDailyTasks = {
+  enrollmentReward: 100,
+  generationTarget: 3,
+  generationReward: 50,
+  rankingRewards: [150, 50, 50, 50, 20, 20, 20, 20, 20, 20],
+};
+
+export function dailyTasksCampaign(startsAt: string): CreatorRewardCampaign {
+  return {
+    id: "daily-tasks", name: "日常任务", enabled: true, publicVisible: true,
+    priority: 50, settlementMode: "daily", timezone: "Asia/Shanghai", startsAt,
+    createdAt: startsAt, publishedAt: startsAt,
+    submissionReward: 0, weeklyRewards: [0],
+    dailyTasks: structuredClone(defaultDailyTasks),
+    summary: "报名领取初始 AFF，每日生成与 Gallery 获赞排名再领奖励。",
+  };
+}
+
 export const defaultActivityBoards: NonNullable<
   CreatorRewardCampaign["boards"]
 > = [

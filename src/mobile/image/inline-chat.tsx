@@ -6,6 +6,7 @@ import { storedAssistantReasoning } from "@/lib/client-assistant-reasoning";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Tooltip } from "@/mobile/ui/tooltip";
 import { placeTextMenu, readTextMenuViewport } from "@/mobile/ui/text-menu-placement";
+import { observePromptOverlay } from "./prompt-overlay";
 import {
   Check,
   Copy,
@@ -115,20 +116,12 @@ export function InlineChatMenu({
       }, readTextMenuViewport()));
     };
     place();
-    const viewport = window.visualViewport;
-    const observer = new MutationObserver(place);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     const sizeObserver = new ResizeObserver(place);
     if (ref.current) sizeObserver.observe(ref.current);
-    window.addEventListener("resize", place);
-    viewport?.addEventListener("resize", place);
-    viewport?.addEventListener("scroll", place);
+    const stopObserving = observePromptOverlay(place);
     return () => {
-      observer.disconnect();
+      stopObserving();
       sizeObserver.disconnect();
-      window.removeEventListener("resize", place);
-      viewport?.removeEventListener("resize", place);
-      viewport?.removeEventListener("scroll", place);
     };
   }, [position.x, position.y]);
   useEffect(() => {

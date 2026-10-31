@@ -12,6 +12,7 @@ import { estimatePoints, type ImagePricingGeneration } from "@/lib/image-pricing
 import { userDisplayNames } from "@/lib/user-display";
 import { settleDailyImageUsage } from "@/lib/daily-image-billing";
 import { listUserImageSettlements } from "@/lib/risk-settlement";
+import { dailyTaskGeneration } from "@/lib/daily-task-generation";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -328,6 +329,11 @@ export async function startRequestAudit(input: {
         const generation = auditGeneration(completed);
         const successful = completed.status >= 200 && completed.status < 300 && !/custom|personal-key|provider|newapi/.test(completed.paymentSource || "");
         await settleDailyImageUsage(completed.userId, requestId, generation, successful ? completed.generatedSamples ?? (completed.historyIds.length || generation?.samples || 0) : 0, Date.parse(completed.createdAt));
+        const dailyGeneration = dailyTaskGeneration(completed);
+        if (dailyGeneration) {
+          await import("@/lib/daily-tasks").then(module => module.recordDailyTaskGeneration(dailyGeneration))
+            .catch(error => console.error("[lfn] 保存日常生成进度失败", error));
+        }
       }
       if (completed.status !== undefined) releaseRiskContext(requestId);
     },

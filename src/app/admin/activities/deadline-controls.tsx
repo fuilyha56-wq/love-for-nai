@@ -6,7 +6,7 @@ import type {
   ActivityBoard,
   ActivitySettlement,
 } from "@/lib/activity-leaderboards";
-import { defaultActivityBoards } from "@/lib/activity-config";
+import { defaultActivityBoards, defaultDailyTasks } from "@/lib/activity-config";
 
 type Preview = { boards: ActivityBoard[]; settlement?: ActivitySettlement };
 const localDate = (value?: string) =>
@@ -48,7 +48,7 @@ export function DeadlineControls({
   }
   return (
     <section className="space-y-4 rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5">
-      <h3 className="font-semibold">结算方式与活动多档榜单</h3>
+      <h3 className="font-semibold">活动类型与结算方式</h3>
       <label className="block text-sm">
         结算方式
         <select
@@ -56,7 +56,10 @@ export function DeadlineControls({
           value={campaign.settlementMode || "weekly"}
           onChange={(e) =>
             onChange(
-              e.target.value === "deadline"
+              e.target.value === "daily" ? {
+                settlementMode: "daily", timezone: "Asia/Shanghai", dailyTasks: structuredClone(defaultDailyTasks),
+                submissionReward: 0, weeklyRewards: [0], budget: 0,
+              } : e.target.value === "deadline"
                 ? {
                     settlementMode: "deadline",
                     timezone: "Asia/Shanghai",
@@ -74,6 +77,7 @@ export function DeadlineControls({
           }
         >
           <option value="weekly">原有周榜结算</option>
+          <option value="daily">日常任务 · 北京时间每日结算</option>
           <option value="deadline">指定日期结榜 · 多档榜单自动发奖</option>
         </select>
       </label>

@@ -1,6 +1,36 @@
 /** Keep the model's working area separate from the pixels the user chose to edit. */
 export type InpaintMask = Uint8Array | Uint8ClampedArray;
 
+// Four latent cells keep the model's hard mask boundary away from the kept patch.
+export const NAI_INPAINT_CONTEXT_PADDING = 32;
+
+/** Expand model context without changing the exact user/composite selection. */
+export function expandInpaintMask(mask: InpaintMask, width: number, height: number, radius: number): Uint8ClampedArray {
+  assertMask(mask, width, height);
+  if (!Number.isSafeInteger(radius) || radius < 0) throw new RangeError("遮罩扩展半径必须为非负整数");
+  const horizontal = new Uint8ClampedArray(mask.length);
+  const result = new Uint8ClampedArray(mask.length);
+  for (let y = 0; y < height; y++) {
+    let count = 0;
+    for (let x = 0; x <= Math.min(radius, width - 1); x++) count += Number(mask[y * width + x] > 0);
+    for (let x = 0; x < width; x++) {
+      horizontal[y * width + x] = count > 0 ? 255 : 0;
+      if (x - radius >= 0) count -= Number(mask[y * width + x - radius] > 0);
+      if (x + radius + 1 < width) count += Number(mask[y * width + x + radius + 1] > 0);
+    }
+  }
+  for (let x = 0; x < width; x++) {
+    let count = 0;
+    for (let y = 0; y <= Math.min(radius, height - 1); y++) count += Number(horizontal[y * width + x] > 0);
+    for (let y = 0; y < height; y++) {
+      result[y * width + x] = count > 0 ? 255 : 0;
+      if (y - radius >= 0) count -= Number(horizontal[(y - radius) * width + x] > 0);
+      if (y + radius + 1 < height) count += Number(horizontal[(y + radius + 1) * width + x] > 0);
+    }
+  }
+  return result;
+}
+
 function assertMask(mask: InpaintMask, width: number, height: number) {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || !Number.isSafeInteger(width * height) || mask.length !== width * height) {
     throw new RangeError("重绘遮罩尺寸与画布不一致");

@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { alignInpaintMaskToGrid, expandInpaintMask, NAI_INPAINT_CONTEXT_PADDING } from "./inpaint-mask";
 import { isIP } from "node:net";
 import { isPublicIp } from "@/lib/provider/validation";
 import { ImageRequestValidationError, MAX_IMAGE_BODY_BYTES, normalizeDimension, normalizeSteps, validateImageShape, validateReferenceCount } from "@/lib/image-request";
@@ -123,7 +124,7 @@ export async function openAiAlphaMask(maskValue: unknown, imageValue: unknown): 
   if (dims.width !== maskDims.width || dims.height !== maskDims.height) invalid("蒙版尺寸必须与原图一致");
   const { data, info } = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   for (let offset = 0; offset < data.length; offset += 4) {
-    const amount = Math.round((data[offset] + data[offset + 1] + data[offset + 2]) / 3 * data[offset + 3] / 255);
+    const amount = Math.round(Math.max(data[offset], data[offset + 1], data[offset + 2]) * data[offset + 3] / 255);
     data[offset] = data[offset + 1] = data[offset + 2] = 0;
     data[offset + 3] = 255 - amount;
   }
@@ -138,16 +139,11 @@ export async function prepareMaskedImageEdit(body: Record<string, unknown>, late
   const original = await sharp(source.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer();
   const pixels = await sharp(mask.bytes, { limitInputPixels: MAX_INPUT_PIXELS }).toColourspace("srgb").ensureAlpha().raw().toBuffer();
   const coverage = new Uint8Array(dimensions.width * dimensions.height);
-  for (let i = 0; i < coverage.length; i++) coverage[i] = Math.round((pixels[i * 4] + pixels[i * 4 + 1] + pixels[i * 4 + 2]) / 3 * pixels[i * 4 + 3] / 255);
-  const requestMask = Buffer.from(coverage);
-  if (latentGrid > 1) {
-    for (let top = 0; top < dimensions.height; top += latentGrid) for (let left = 0; left < dimensions.width; left += latentGrid) {
-      const right = Math.min(left + latentGrid, dimensions.width), bottom = Math.min(top + latentGrid, dimensions.height);
-      let selected = false;
-      for (let y = top; y < bottom && !selected; y++) for (let x = left; x < right; x++) if (coverage[y * dimensions.width + x] > 0) { selected = true; break; }
-      for (let y = top; y < bottom; y++) requestMask.fill(selected ? 255 : 0, y * dimensions.width + left, y * dimensions.width + right);
-    }
-  }
+  // Match the launcher: colored/alpha masks use their brightest channel as coverage.
+  for (let i = 0; i < coverage.length; i++) coverage[i] = Math.round(Math.max(pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]) * pixels[i * 4 + 3] / 255);
+  const requestMask = latentGrid > 1
+    ? Buffer.from(alignInpaintMaskToGrid(expandInpaintMask(coverage, dimensions.width, dimensions.height, NAI_INPAINT_CONTEXT_PADDING), dimensions.width, dimensions.height, latentGrid))
+    : Buffer.from(coverage);
   // An opaque grayscale PNG removes ambiguous RGB/alpha interpretations in NAI gateways.
   const normalizedMask = pngUrl(await sharp(requestMask, { raw: { ...dimensions, channels: 1 } }).toColourspace("b-w").png().toBuffer());
   const finish = async (images: string[]): Promise<string[]> => {

@@ -2,8 +2,13 @@ import Link from "next/link";
 import Image from "next/image";
 import { publicCreatorRewardCampaigns } from "@/lib/creator-rewards";
 import { MarkdownView } from "@/app/markdown";
+import { getSession } from "@/lib/session";
+import { dailyTaskStatus } from "@/lib/daily-tasks";
+import { DailyTaskCard } from "./daily-task-card";
 export async function CreatorActivities() {
   const campaigns = await publicCreatorRewardCampaigns();
+  const session = await getSession();
+  const dailyStatuses = new Map(await Promise.all(campaigns.filter(c => c.settlementMode === "daily" && c.dailyTasks).map(async c => [c.id, await dailyTaskStatus(c, session?.userId)] as const)));
   const format = (value?: string) =>
     value
       ? new Date(value).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
@@ -16,6 +21,7 @@ export async function CreatorActivities() {
       <h2 className="mb-4 text-xl font-semibold">创作活动</h2>{" "}
       <div className="space-y-5">
         {campaigns.map((campaign) => (
+          campaign.settlementMode === "daily" && dailyStatuses.has(campaign.id) ? <DailyTaskCard key={campaign.id} campaignId={campaign.id} name={campaign.name} initial={dailyStatuses.get(campaign.id)!} /> :
           <article
             key={campaign.id}
             id={campaign.id}

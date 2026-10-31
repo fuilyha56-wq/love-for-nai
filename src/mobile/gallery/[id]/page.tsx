@@ -1,4 +1,5 @@
 "use client";
+import { useGalleryReturnTarget } from "@/app/gallery/use-gallery-navigation";
 import { GalleryPublicationEditor } from "@/app/ui/gallery-publication-editor";
 import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
@@ -72,6 +73,7 @@ export default function GalleryItemPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const backTarget = useGalleryReturnTarget();
   const [item, setItem] = useState<GalleryItem | null>(null);
   const [message, setMessage] = useState("");
   const [importItem, setImportItem] = useState<GalleryItem | null>(null);
@@ -133,7 +135,7 @@ export default function GalleryItemPage({
   const characterPrompts = readImageCharacterPrompts(item?.parameters || {});
   const isHidden = (item?.rating === "r17" || item?.rating === "r18") && !revealed;
 
-  return <>{importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}<ImageDetailWorkspace presentation="details" title={item?.title || "作品详情"} backHref="/gallery?restore=1" backLabel="图片广场" loading={!item && !message} error={!item ? message : undefined}
+  return <>{importItem && <GalleryImportDialog item={importItem} onClose={() => setImportItem(null)} />}<ImageDetailWorkspace presentation="details" title={item?.title || "作品详情"} backHref={backTarget.href} backLabel={backTarget.label} loading={!item && !message} error={!item ? message : undefined}
     notice={(rewardNotice || (item && message)) ? <><span>{rewardNotice && <><Trophy size={18} className="inline-block" /> {rewardNotice}</>}</span>{item && message && <p>{message}</p>}</> : undefined}
     image={item && (<div className={`launcher-detail-image ${rewardNotice ? "ring-4 ring-amber-400 shadow-[0_0_0_8px_rgba(245,158,11,.12)]" : ""}`}>
               <Image

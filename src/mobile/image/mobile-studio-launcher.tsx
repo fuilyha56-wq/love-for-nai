@@ -168,9 +168,11 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
       <section className={`mobile-studio-preview-section${!hasResults && sourcePreviewContent ? " has-source-preview" : ""}`} aria-label={hasResults ? "生成结果预览" : sourcePreviewContent ? "当前参考图片" : "生成结果预览"}>
         {(hasResults || hasSource) && onClearWorkspace && <div className="mobile-studio-preview-toolbar"><span>{hasResults ? "生成结果" : "参考图片"}</span><button type="button" disabled={generating} onClick={onClearWorkspace} title="清空当前预览与参考图片，保留历史记录"><X size={16} aria-hidden="true" />清空工作区</button></div>}
         {hasResults ? resultContent : sourcePreviewContent || <div className="mobile-studio-empty-preview"><Sparkles size={30} /><b>画布等待你的想象</b><span>{status}</span></div>}
-        {hasResults && sourceStatusContent && <div className="mobile-studio-source-status">{sourceStatusContent}</div>}
       </section>
-      <section className="mobile-studio-reference-panel" aria-label="参考图与编辑工具">{referenceContent}</section>
+      <section className="mobile-studio-reference-panel" aria-label="参考图与编辑工具">
+        {hasResults && sourceStatusContent && <div className="mobile-studio-source-status">{sourceStatusContent}</div>}
+        {referenceContent}
+      </section>
     </div>
     <section className={`mobile-studio-prompt-section is-compact${promptOpen ? " is-placeholder" : ""}`} aria-label="提示词区域" aria-hidden={promptOpen}>{renderPromptEntry(inlinePromptToggleRef)}</section>
   </>;

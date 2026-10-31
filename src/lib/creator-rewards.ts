@@ -11,8 +11,9 @@ import {
 } from "@/lib/gallery";
 import { withDataFileLock } from "@/lib/data-file-lock";
 import { canonicalGalleryTag } from "@/lib/gallery-tags";
+import { dailyTasksCampaign } from "@/lib/activity-config";
 
-export type CreatorRewardKind = "submission" | "weekly" | "manual" | "activity";
+export type CreatorRewardKind = "submission" | "weekly" | "manual" | "activity" | "daily";
 export type CreatorRewardStatus = "granted" | "skipped" | "failed";
 export type CreatorWeeklyMetric = "likes" | "downloads" | "uses";
 
@@ -31,7 +32,13 @@ export type CreatorRewardGrant = {
 };
 
 export type CreatorRewardCampaign = {
-  settlementMode?: "weekly" | "deadline";
+  settlementMode?: "weekly" | "deadline" | "daily";
+  dailyTasks?: {
+    enrollmentReward: number;
+    generationTarget: number;
+    generationReward: number;
+    rankingRewards: number[];
+  };
   timezone?: "Asia/Shanghai" | "UTC";
   settlesAt?: string;
   scoring?: { likes: number; imports: number };
@@ -95,16 +102,23 @@ function withLock<T>(task: () => Promise<T>): Promise<T> {
 }
 
 async function readStore(): Promise<CreatorRewardStore> {
+  let store: CreatorRewardStore;
   try {
     const parsed = JSON.parse(await readFile(storePath(), "utf8")) as Partial<CreatorRewardStore>;
-    return {
+    store = {
       campaigns: Array.isArray(parsed.campaigns) && parsed.campaigns.length ? parsed.campaigns : [defaultCampaign()],
       grants: Array.isArray(parsed.grants) ? parsed.grants : [],
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return { campaigns: [defaultCampaign()], grants: [] };
+    store = { campaigns: [defaultCampaign()], grants: [] };
   }
+  // Seed independently, preserving existing campaigns and deletion tombstones.
+  if (!store.campaigns.some((campaign) => campaign.id === "daily-tasks")) {
+    store.campaigns.push(dailyTasksCampaign(new Date().toISOString()));
+    await writeStore(store);
+  }
+  return store;
 }
 
 async function writeStore(store: CreatorRewardStore): Promise<void> {
@@ -126,7 +140,16 @@ function validDate(value: unknown): string | undefined {
 }
 
 function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorRewardCampaign {
-  if (value.settlementMode !== undefined && !["weekly", "deadline"].includes(value.settlementMode)) throw new Error("结算模式无效");
+  if (value.settlementMode !== undefined && !["weekly", "deadline", "daily"].includes(value.settlementMode)) throw new Error("结算模式无效");
+  if (value.settlementMode === "daily") {
+    const daily = value.dailyTasks;
+    if (!daily || typeof daily !== "object" || Array.isArray(daily) ||
+      ![daily.enrollmentReward, daily.generationReward].every(n => Number.isSafeInteger(n) && n >= 0 && n <= 10_000_000) ||
+      !Number.isSafeInteger(daily.generationTarget) || daily.generationTarget < 1 || daily.generationTarget > 1000 ||
+      !Array.isArray(daily.rankingRewards) || daily.rankingRewards.length < 1 || daily.rankingRewards.length > 20 ||
+      daily.rankingRewards.some(n => !Number.isSafeInteger(n) || n < 0 || n > 10_000_000)) throw new Error("日常任务奖励、生成目标或日榜名次配置无效");
+    if (value.budget) throw new Error("日常任务不得用预算截断承诺奖励");
+  }
   if (value.settlementMode === "deadline") {
     if (!value.startsAt || !value.endsAt) throw new Error("限时活动必须配置开始和截止时间");
     if (!value.boards || value.boards.length < 2 || value.boards.length > 3 || new Set(value.boards.map(b => b.id)).size !== value.boards.length || !value.boards.some(b => b.id === "original") || !value.boards.some(b => b.id === "reduced") || value.boards.some(b => !["original", "verified", "reduced"].includes(b.id))) throw new Error("限时活动须包含完整原数据榜和低档榜，并可增加原图校验中间榜");
@@ -182,14 +205,15 @@ function normalizeCampaign(value: Partial<CreatorRewardCampaign>): CreatorReward
   if (value.allowedRatings && !value.allowedRatings.length) throw new Error("活动至少需要允许一种作品评级");
   return {
     settlementMode: value.settlementMode || "weekly",
+    ...(value.settlementMode === "daily" ? { timezone: "Asia/Shanghai" as const, dailyTasks: structuredClone(value.dailyTasks!) } : {}),
     ...(value.settlementMode === "deadline" ? { timezone: value.timezone === "UTC" ? "UTC" as const : "Asia/Shanghai" as const, settlesAt: validDate(value.settlesAt || value.endsAt), scoring: value.scoring, boards: value.boards, partialPromptBoard: value.partialPromptBoard === "original" ? "original" as const : "reduced" as const } : {}),
     id: id || "default",
     name: typeof value.name === "string" && value.name.trim() ? value.name.trim().slice(0, 120) : base.name,
     enabled: typeof value.enabled === "boolean" ? value.enabled : base.enabled,
     ...(startsAt ? { startsAt } : {}),
     ...(endsAt ? { endsAt } : {}),
-    submissionReward: nonNegativeInteger(value.submissionReward, base.submissionReward),
-    weeklyRewards,
+    submissionReward: value.settlementMode === "daily" ? 0 : nonNegativeInteger(value.submissionReward, base.submissionReward),
+    weeklyRewards: value.settlementMode === "daily" ? [0] : weeklyRewards,
     ...(budget === undefined ? {} : { budget }),
     summary: text("summary", 300), description: text("description", 12000), rules: text("rules", 12000), requiredTag: requiredTags[0] || "", requiredTags, excludedTags, coverUrl,
     allowedRatings: (value.allowedRatings || ["general", "r13", "r17", "r18"]).filter((rating) => ["general", "r13", "r17", "r18"].includes(rating)),
@@ -267,6 +291,10 @@ export async function upsertCreatorRewardCampaign(input: Partial<CreatorRewardCa
     const base = existing || defaultCampaign();
     const definedInput = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
     const next = normalizeCampaign({ ...base, ...definedInput, id });
+    if (existing?.settlementMode === "daily" && next.settlementMode !== "daily") throw new Error("日常活动不能转换为其他结算方式");
+    if (existing?.settlementMode !== "daily" && existing && next.settlementMode === "daily") throw new Error("请新建独立的日常活动");
+    if (next.settlementMode === "daily" && !next.startsAt) next.startsAt = new Date().toISOString();
+    if (existing?.settlementMode === "daily" && Date.parse(existing.startsAt!) <= Date.now() && existing.startsAt !== next.startsAt) throw new Error("日常活动已开始，不能修改开始时间");
     if (existing?.settlementMode === "deadline" && (existing.enabled || existing.publishedAt) && Date.parse(existing.startsAt!) <= Date.now()) {
       const fixed = (c: CreatorRewardCampaign) => JSON.stringify([c.startsAt, c.endsAt, c.settlesAt, c.scoring, c.boards, c.partialPromptBoard, c.requiredTags, c.excludedTags, c.allowedRatings, c.allowedSources, c.oneWinnerPerUser, c.settlementMode]);
       if (fixed(existing) !== fixed(next)) throw new Error("活动已开始，计分、资格、时间与奖励规则已锁定");
@@ -369,7 +397,7 @@ export async function grantCreatorReward(input: {
       }
       const result = await grantAffOnce(input.userId, input.amount, record.description, referenceId, "creator-reward");
       // A permanent AFF receipt proves success even when recovering a lost activity record.
-      record.status = result.granted || input.kind === "activity" ? "granted" : "skipped";
+      record.status = result.granted || input.kind === "activity" || input.kind === "daily" ? "granted" : "skipped";
       store.grants.unshift(record);
       await writeStore(store);
       await notifyCreatorReward(record);
@@ -387,19 +415,19 @@ async function notifyCreatorReward(grant: CreatorRewardGrant): Promise<void> {
   if (grant.status !== "granted" || grant.amount <= 0) return;
   const parts = grant.referenceId.split(":");
   const rank = grant.kind === "weekly" ? grant.description.match(/第\s*(\d+)\s*名/)?.[1] : undefined;
-  const href = grant.kind === "activity" ? `/gallery/activities?activity=${encodeURIComponent(parts[1])}` : grant.kind === "weekly" && parts[2]
+  const href = grant.kind === "daily" ? "/studio#activities" : grant.kind === "activity" ? `/gallery/activities?activity=${encodeURIComponent(parts[1])}` : grant.kind === "weekly" && parts[2]
     ? `/gallery/${encodeURIComponent(parts[2])}?reward=1${rank ? `&rank=${rank}` : ""}`
     : grant.kind === "submission" && parts[2]
       ? `/gallery/${encodeURIComponent(parts[2])}?reward=1`
       : "/profile#profile-rewards";
-  const title = grant.kind === "activity" ? "活动奖励已到账" : grant.kind === "weekly" ? "图库周榜奖励已发放" : grant.kind === "submission" ? "图库投稿奖励已到账" : "创作者奖励已发放";
+  const title = grant.kind === "daily" ? "日常任务奖励已到账" : grant.kind === "activity" ? "活动奖励已到账" : grant.kind === "weekly" ? "图库周榜奖励已发放" : grant.kind === "submission" ? "图库投稿奖励已到账" : "创作者奖励已发放";
   await createUserNotification({
     userId: grant.userId,
     type: "creator-reward",
     title,
     body: `${grant.description}，已到账 ${grant.amount} AFF。`,
     href,
-    dedupeKey: `creator-reward:${grant.kind === "activity" ? grant.referenceId : grant.id}`,
+    dedupeKey: `creator-reward:${grant.kind === "activity" || grant.kind === "daily" ? grant.referenceId : grant.id}`,
     createdAt: grant.createdAt,
   }).catch((error) => console.error("[lfn] 保存创作者奖励通知失败", error));
 }
@@ -409,7 +437,7 @@ export async function grantSubmissionReward(userId: number, submissionId: string
   const campaigns = await listCreatorRewardCampaigns();
   const deadline = item && deadlineCampaignForItem(campaigns, item);
   if (deadline) return { id: `pending:${deadline.id}:${submissionId}`, kind: "submission", userId, amount: 0, description: "限时活动奖励将在结榜时统一发放", referenceId: `deadline-pending:${deadline.id}:${submissionId}`, status: "skipped", createdAt: new Date().toISOString(), campaignId: deadline.id };
-  const campaign = activeCampaign(campaigns.filter((entry) => entry.settlementMode !== "deadline" && campaignAllowsItem(entry, item)));
+  const campaign = activeCampaign(campaigns.filter((entry) => entry.settlementMode !== "deadline" && entry.settlementMode !== "daily" && campaignAllowsItem(entry, item)));
   return grantCreatorReward({
     kind: "submission",
     userId,
@@ -443,7 +471,7 @@ export async function settleWeeklyCreatorRewards(week = galleryWeekKey(new Date(
     throw new Error("周榜起点必须是 UTC 周一日期");
   const weekEnd = new Date(Date.parse(`${week}T00:00:00.000Z`) + 7 * 86_400_000 - 1);
   const campaigns = await listCreatorRewardCampaigns();
-  const campaign = activeCampaign(campaigns.filter(c => c.settlementMode !== "deadline"), weekEnd.getTime());
+  const campaign = activeCampaign(campaigns.filter(c => c.settlementMode !== "deadline" && c.settlementMode !== "daily"), weekEnd.getTime());
   const gallery = await listGalleryAdmin();
   const metricFor = (item: GalleryItem) => campaign.weeklyMetric === "downloads"
     ? item.weeklyDownloads?.[week] || 0
@@ -525,7 +553,10 @@ export function startAutomaticCreatorRewardSettlement(): void {
   console.info("[lfn] 活动自动结算任务已启动，每 30 秒检查到期活动，启动时补偿未完成结算");
   const settleActivities = () => {
     if (automaticActivitiesInFlight) return automaticActivitiesInFlight;
-    automaticActivitiesInFlight = import("@/lib/activity-leaderboards").then(module => module.settleDueActivities()).then(() => {
+    automaticActivitiesInFlight = Promise.all([
+      import("@/lib/activity-leaderboards").then(module => module.settleDueActivities()),
+      import("@/lib/daily-tasks").then(module => module.settleDueDailyTasks()),
+    ]).then(() => {
       activityRuntime.__lfnActivityAutomation!.lastCheckedAt = new Date().toISOString();
       delete activityRuntime.__lfnActivityAutomation!.lastError;
     }).catch(error => {

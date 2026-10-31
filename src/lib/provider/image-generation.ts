@@ -88,11 +88,9 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
         const saved = await saveHistory(session.userId, { ...normalized, _lfnRequestId: audit.requestId, _lfnRequestFingerprint: audit.requestFingerprint }, images, usage);
         historyIds = saved.map((item) => item.id);
         watermarkStatus = saved.some((item) => item.watermarkStatus === "embedded") ? "embedded" : saved[0]?.watermarkStatus || watermarkStatus;
-        await audit.finish({ historyIds, status: images.length ? 207 : status, paymentSource: options.paymentSource, watermarkStatus });
       } catch { /* generated output remains available if history storage fails */ }
-    } else {
-      await audit.finish({ status: images.length ? 207 : status, paymentSource: options.paymentSource });
     }
+    await audit.finish({ historyIds, generatedSamples: images.length, status: images.length ? 207 : status, paymentSource: options.paymentSource, watermarkStatus });
     return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${publicMessage}` : publicMessage, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   };
   try {
@@ -144,7 +142,7 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
       }
       catch { warning = "图片已生成，但暂时无法保存历史记录"; }
     }
-    await audit.finish({ historyIds, status: 200, paymentSource: options.paymentSource, watermarkStatus });
+    await audit.finish({ historyIds, generatedSamples: images.length, status: 200, paymentSource: options.paymentSource, watermarkStatus });
     return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, requestId: audit.requestId, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
   } catch (error) {
     const admission = riskAdmissionResponse(error);

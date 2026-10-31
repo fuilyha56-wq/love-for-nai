@@ -41,7 +41,7 @@ export const DEFAULT_REPLICA_PROMPT_CONFIG: ReplicaPromptConfig = {
   library: [],
   disabledPositive: [],
   disabledNegative: [],
-  settings: { autocomplete: true, autoFormat: true, highlight: true, sdConvert: false, resolveAliasesOnCopy: false, cooccurrence: true },
+  settings: { autocomplete: true, autoFormat: false, highlight: true, sdConvert: false, resolveAliasesOnCopy: false, cooccurrence: true },
   regexRules: [],
 };
 export const REPLICA_SHARED_PRESET_KEYS = { quality: "lfn-quality-custom", uc: "lfn-uc-custom" } as const;
@@ -141,7 +141,7 @@ export function parseReplicaPromptConfig(serialized: string | null): ReplicaProm
     disabledNegative: strings(source.disabledNegative),
     settings: {
       autocomplete: settings.autocomplete !== false,
-      autoFormat: settings.autoFormat !== false,
+      autoFormat: settings.autoFormat === true,
       highlight: settings.highlight !== false,
       sdConvert: settings.sdConvert === true,
       resolveAliasesOnCopy: settings.resolveAliasesOnCopy === true,

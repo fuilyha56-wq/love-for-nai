@@ -92,11 +92,11 @@ export async function handlePersonalProviderGeneration(request: Request, session
     images.splice(0, images.length, ...marked.images);
     const history = deferHistory ? [] : await saveHistory(session.userId, body, images, usage, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint, skipWatermark: true, watermarkStatus: marked.status });
     const historyIds = history.map((item) => item.id);
-    await audit.finish({ historyIds, status: 200, paymentSource: "personal-key", watermarkStatus: marked.status });
+    await audit.finish({ historyIds, generatedSamples: images.length, status: 200, paymentSource: "personal-key", watermarkStatus: marked.status });
     return NextResponse.json({ images, image: images[0], historyIds, requestId: audit.requestId, usage, payment: "personal-key", paymentSource: "personal-key", aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": "personal-key" }) });
   } catch (error) {
     const message = safeUpstreamMessage(error, { secrets: [key], urls: ["https://image.novelai.net"], fallback: "个人 API 生图失败" });
-    await audit.finish({ status: images.length ? 207 : 502, error: message });
+    await audit.finish({ generatedSamples: images.length, status: images.length ? 207 : 502, error: message });
     return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, requestId: audit.requestId, ...(images.length ? { images, image: images[0], partial: true } : {}) }, { status: images.length ? 207 : 502, headers: audit.responseHeaders() });
   }
 }

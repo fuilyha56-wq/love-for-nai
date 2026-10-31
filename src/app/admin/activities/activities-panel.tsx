@@ -3,6 +3,7 @@ import Image from "next/image";
 import { DeadlineControls } from "./deadline-controls";
 
 import { useCallback, useEffect, useState } from "react";
+import { DailyControls, DailyTaskPreview } from "@/app/admin/activities/daily-controls";
 import { Copy, Plus, Save, Trash2, Undo2 } from "lucide-react";
 import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 import { clientUuid } from "@/lib/client-uuid";
@@ -40,6 +41,7 @@ export default function ActivitiesPanel() {
   const [showDeleted, setShowDeleted] = useState(false);
   const [preview, setPreview] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadedAt, setLoadedAt] = useState(0);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const load = useCallback(async (signal?: AbortSignal) => {
@@ -51,6 +53,7 @@ export default function ActivitiesPanel() {
     if (!response.ok) throw new Error(result.message || "读取活动失败");
     setCampaigns(result.campaigns || []);
     setCampaignSpent(result.campaignSpent || {});
+    setLoadedAt(Date.now());
   }, []);
   useEffect(() => {
     const controller = new AbortController();
@@ -334,8 +337,11 @@ export default function ActivitiesPanel() {
                   : "不限总预算"}
               </p>
             </AdminCard>
-            <DeadlineControls key={draft.id} campaign={draft} onChange={edit} />
+            <fieldset disabled={busy || Boolean(draft.deletedAt)}>
+              <DeadlineControls key={draft.id} campaign={draft} onChange={edit} />
+            </fieldset>
             {preview ? (
+              draft.settlementMode === "daily" ? <DailyTaskPreview campaign={draft} /> :
               <AdminCard title={draft.name} description={draft.summary}>
                 {draft.coverUrl && (
                   <Image
@@ -363,7 +369,7 @@ export default function ActivitiesPanel() {
               >
                 <AdminCard
                   title="活动信息"
-                  description="活动简介、内容与规则会显示在公开活动页。"
+                  description={draft.settlementMode === "daily" ? "名称显示在工作台，简介用于后台活动列表；任务说明根据奖励配置生成。" : "活动简介、内容与规则会显示在公开活动页。"}
                 >
                   <div className="grid gap-4 sm:grid-cols-2">
                     <label className="text-xs font-semibold">
@@ -376,7 +382,8 @@ export default function ActivitiesPanel() {
                       />
                     </label>
                     <label className="text-xs font-semibold">
-                      封面图片 URL
+                      {draft.settlementMode === "daily" ? "日常刷新时间" : "封面图片 URL"}
+                      {draft.settlementMode === "daily" ? <p className="mt-3 text-sm font-normal">每日 00:00（北京时间）</p> :
                       <input
                         className="field mt-1.5 w-full p-2.5"
                         value={draft.coverUrl || ""}
@@ -385,6 +392,7 @@ export default function ActivitiesPanel() {
                           edit({ coverUrl: event.target.value })
                         }
                       />
+                      }
                     </label>
                   </div>
                   <label className="mt-4 block text-xs font-semibold">
@@ -398,7 +406,7 @@ export default function ActivitiesPanel() {
                       }
                     />
                   </label>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  {draft.settlementMode !== "daily" && <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="text-xs font-semibold">
                       活动内容（Markdown）
                       <textarea
@@ -422,8 +430,19 @@ export default function ActivitiesPanel() {
                       />
                     </label>
                   </div>
+                  }
                 </AdminCard>
-                <AdminCard
+                {draft.settlementMode === "daily" ? <AdminCard title="日常活动展示与时间">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="text-xs font-semibold">开始时间（开始后锁定）<LfnDateInput type="datetime-local" disabled={campaigns.some(c => c.id === draft.id) && !!draft.startsAt && Date.parse(draft.startsAt) <= loadedAt} value={dateValue(draft.startsAt)} onChange={event => edit({ startsAt: utcDate(event.target.value) })} className="mt-1.5" /></label>
+                    <label className="text-xs font-semibold">结束时间（北京时间，可留空）<LfnDateInput type="datetime-local" value={dateValue(draft.endsAt)} onChange={event => edit({ endsAt: utcDate(event.target.value) })} className="mt-1.5" /></label>
+                    {numberField("展示优先级", "priority")}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-4 text-xs">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.publicVisible !== false} onChange={event => edit({ publicVisible: event.target.checked })} />在创作者工作台公开展示</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={draft.featured === true} onChange={event => edit({ featured: event.target.checked })} />置顶展示</label>
+                  </div>
+                </AdminCard> : <AdminCard
                   title="时间与参与资格"
                   description="时间使用北京时间；限时活动按各自榜单结算，原有周榜保持原规则。"
                 >
@@ -524,7 +543,8 @@ export default function ActivitiesPanel() {
                     <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={draft.featured === true} onChange={(event) => edit({ featured: event.target.checked })} />置顶展示</label>
                   </div>
                 </AdminCard>
-                <AdminCard
+                }
+                {draft.settlementMode === "daily" ? <DailyControls campaign={draft} onChange={edit} /> : <AdminCard
                   title="奖励与预算"
                   description="0 预算或个人次数表示不限。投稿奖励仅在审核通过后发放，周榜自动结算上一完整 UTC 周。"
                 >
@@ -599,6 +619,7 @@ export default function ActivitiesPanel() {
                     ))}
                   </div>
                 </AdminCard>
+                }
               </fieldset>
             )}
           </>

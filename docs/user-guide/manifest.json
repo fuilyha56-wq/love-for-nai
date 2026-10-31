@@ -1,5 +1,5 @@
 {
-  "revision": 2026102404,
+  "revision": 2026103101,
   "guides": [
     { "id": "docs-quickstart", "slug": "quickstart", "title": "快速开始：生成你的第一张图片", "category": "入门与使用", "summary": "从注册登录、钱包和模型选择，到生成、下载与继续编辑。", "sortOrder": 10 },
     { "id": "docs-workspace-guide", "slug": "workspace-guide", "title": "图像工作台与编辑器教程", "category": "入门与使用", "summary": "提示词、角色、参考图、图生图、局部重绘、扩图和手机操作。", "sortOrder": 20 },

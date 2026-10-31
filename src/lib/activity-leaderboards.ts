@@ -324,7 +324,7 @@ export async function settleDueActivities(now = Date.now()) {
 
 export async function publicActivityList(page = 1) {
   const campaigns = (await listCreatorRewardCampaigns())
-    .filter((c) => (c.enabled || c.publishedAt) && c.publicVisible !== false)
+    .filter((c) => c.settlementMode !== "daily" && (c.enabled || c.publishedAt) && c.publicVisible !== false)
     .sort(
       (a, b) =>
         Number(b.featured) - Number(a.featured) ||
@@ -356,7 +356,7 @@ export async function publicActivityDetail(id: string, page = 1) {
   const campaigns = await listCreatorRewardCampaigns();
   const campaign = campaigns.find(
     (c) =>
-      c.id === id && (c.enabled || c.publishedAt) && c.publicVisible !== false,
+      c.id === id && c.settlementMode !== "daily" && (c.enabled || c.publishedAt) && c.publicVisible !== false,
   );
   if (!campaign) return null;
   if (campaign.settlementMode === "deadline") {

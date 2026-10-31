@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { GALLERY_POSITION_KEY, galleryPosition } from "@/lib/gallery-navigation";
+import { useCallback, useEffect, useState } from "react";
+import { galleryDetailHref, GALLERY_POSITION_KEY, galleryPosition } from "@/lib/gallery-navigation";
+
+import { useGalleryScrollRestoration } from "./use-gallery-navigation";
 
 export type GallerySort = "newest" | "likes" | "downloads" | "uses";
 export type GalleryItem = {
@@ -51,7 +53,7 @@ export function useGalleryDiscovery() {
   const [tagSuggestions, setTagSuggestions] = useState<string[]>([]);
   const [refreshKey, setRefreshKey] = useState(0);
   const [ready, setReady] = useState(false);
-  const restoreY = useRef<number | null>(null);
+  const rememberPosition = useGalleryScrollRestoration(loadState === "loaded");
 
   useEffect(() => {
     void Promise.resolve().then(() => {
@@ -59,7 +61,6 @@ export function useGalleryDiscovery() {
       try {
         const saved = galleryPosition(JSON.parse(sessionStorage.getItem(GALLERY_POSITION_KEY) || "null"), Date.now());
         if (saved && (url.searchParams.has("restore") || url.pathname + url.search === saved.href)) {
-          restoreY.current = saved.scrollY;
           if (url.searchParams.has("restore")) url = new URL(saved.href, url.origin);
         }
       } catch { /* URL state still works when browser storage is unavailable. */ }
@@ -125,22 +126,7 @@ export function useGalleryDiscovery() {
     return () => controller.abort();
   }, [debouncedQuery, tagFilter, rating, category, sort, page, refreshKey, ready]);
 
-  useEffect(() => {
-    if (loadState !== "loaded" || restoreY.current == null) return;
-    const y = restoreY.current;
-    const frame = requestAnimationFrame(() => {
-      window.scrollTo({ top: y, behavior: "instant" });
-      restoreY.current = null;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [loadState, items]);
-
-  const rememberPosition = useCallback(() => {
-    try { sessionStorage.setItem(GALLERY_POSITION_KEY, JSON.stringify({ href: window.location.pathname + window.location.search, scrollY: window.scrollY, savedAt: Date.now() })); }
-    catch { /* Navigation is available without storage. */ }
-  }, []);
-
-  const prepareLoad = useCallback(() => { restoreY.current = null; setLoadState("loading"); setError(""); }, []);
+  const prepareLoad = useCallback(() => { setLoadState("loading"); setError(""); }, []);
   const refresh = useCallback(() => { prepareLoad(); setRefreshKey((value) => value + 1); }, [prepareLoad]);
   const updateQuery = useCallback((value: string) => { prepareLoad(); setQuery(value); setPage(1); }, [prepareLoad]);
   const updateTagFilter = useCallback((value: string) => { prepareLoad(); setTagFilter(value); setPage(1); }, [prepareLoad]);
@@ -182,6 +168,7 @@ export function useGalleryDiscovery() {
     tagSuggestions,
     refresh,
     rememberPosition,
+    detailHref: (id: string) => galleryDetailHref(id, typeof window === "undefined" ? "/gallery" : window.location.pathname + window.location.search),
     resetFilters,
   };
 }

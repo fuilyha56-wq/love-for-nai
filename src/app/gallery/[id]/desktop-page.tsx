@@ -1,4 +1,5 @@
 "use client";
+import { useGalleryReturnTarget } from "@/app/gallery/use-gallery-navigation";
 import { GalleryPublicationEditor } from "@/app/ui/gallery-publication-editor";
 import { readImageCharacterPrompts } from "@/lib/image-character-prompts";
 
@@ -73,6 +74,7 @@ export default function GalleryItemPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  const backTarget = useGalleryReturnTarget();
   const [item, setItem] = useState<GalleryItem | null>(null);
   const [message, setMessage] = useState("");
   const [importItem, setImportItem] = useState<GalleryItem | null>(null);
@@ -138,7 +140,7 @@ export default function GalleryItemPage({
     <main className="min-h-screen bg-[var(--paper)] text-[var(--ink)]">
       <PublicHeader current="gallery" actionLabel="进入工作台" actionHref="/image" />
       <section className="mx-auto max-w-5xl p-4 sm:p-7">
-        <Link replace href="/gallery?restore=1" scroll={false} className="mb-5 inline-flex min-h-11 items-center gap-2 rounded border border-[var(--line)] bg-[var(--panel)] px-4 text-sm font-semibold"><ArrowLeft size={17} />返回图片广场</Link>
+        <Link replace href={backTarget.href} scroll={false} className="mb-5 inline-flex min-h-11 items-center gap-2 rounded border border-[var(--line)] bg-[var(--panel)] px-4 text-sm font-semibold"><ArrowLeft size={17} />返回{backTarget.label}</Link>
         {rewardNotice && <p role="status" className="mb-5 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm font-semibold text-amber-900 shadow-[0_0_0_3px_rgba(245,158,11,.12)]"><Trophy size={18} className="shrink-0" />{rewardNotice}</p>}
         {message && (
           <p className="mb-4 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

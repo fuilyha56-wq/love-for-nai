@@ -4,6 +4,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { createPortal } from "react-dom";
 import { insertPromptCompletion, loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, promptTokenAt, type PromptCompletion } from "@/lib/prompt-completion";
 import { tagZh } from "@/lib/tag-translations";
+import { observePromptOverlay, promptOverlayViewport } from "./prompt-overlay";
 
 export type TagHit = PromptCompletion;
 const RESULT_CACHE = new Map<string, TagHit[]>();
@@ -33,17 +34,18 @@ export function PromptAutocompleteTextarea({ value, onChange, className, placeho
     const place = () => {
       const bounds = textareaRef.current?.getBoundingClientRect();
       if (!bounds) return;
-      const below = window.innerHeight - bounds.bottom - 12;
-      const above = bounds.top - 12;
+      const viewport = promptOverlayViewport();
+      const below = Math.max(0, viewport.bottom - bounds.bottom - 4);
+      const above = Math.max(0, bounds.top - viewport.top - 4);
       const upward = below < 180 && above > below;
-      const width = Math.min(Math.max(bounds.width, 260), window.innerWidth - 16);
-      setPosition({ position: "fixed", left: Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8)), width,
-        top: upward ? undefined : Math.max(8, bounds.bottom + 4), bottom: upward ? window.innerHeight - bounds.top + 4 : undefined,
-        maxHeight: Math.min(240, Math.max(80, upward ? above : below)), zIndex: 110, visibility: "visible" });
+      const width = Math.min(Math.max(bounds.width, 260), viewport.width);
+      const maxHeight = Math.min(240, viewport.height, upward ? above : below);
+      setPosition({ position: "fixed", left: Math.max(viewport.left, Math.min(bounds.left, viewport.right - width)), width,
+        top: Math.max(viewport.top, Math.min(upward ? bounds.top - maxHeight - 4 : bounds.bottom + 4, viewport.bottom - maxHeight)),
+        bottom: "auto", right: "auto", maxHeight, zIndex: 1100, visibility: "visible" });
     };
     place();
-    window.addEventListener("resize", place); window.addEventListener("scroll", place, true);
-    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+    return observePromptOverlay(place);
   }, [showSuggestions]);
   function cancelPending() {
     requestNumber.current++;

@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { PublicHeader } from "@/app/public-header";
 import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 import type { ActivityRow } from "@/lib/activity-leaderboards";
+import { galleryDetailHref } from "@/lib/gallery-navigation";
+import { useGalleryScrollRestoration } from "../use-gallery-navigation";
 import "./rankings.css";
 
 type Campaign = CreatorRewardCampaign & { phase: string };
@@ -57,7 +59,20 @@ export default function ActivityRankingsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
+  const [ready, setReady] = useState(false);
+  const rememberPosition = useGalleryScrollRestoration(!loading && (!selected || Boolean(detail)));
+  const returnHref = `/gallery/activities?activity=${encodeURIComponent(selected)}&page=${page}&listPage=${listPage}`;
   useEffect(() => {
+    void Promise.resolve().then(() => {
+      const params = new URLSearchParams(window.location.search);
+      setSelected(params.get("activity") || "");
+      setPage(Math.max(1, Math.floor(Number(params.get("page")) || 1)));
+      setListPage(Math.max(1, Math.floor(Number(params.get("listPage")) || 1)));
+      setReady(true);
+    });
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
     const controller = new AbortController();
     void fetch(`/api/activities?page=${listPage}`, {
       cache: "no-store",
@@ -84,9 +99,9 @@ export default function ActivityRankingsPage() {
         }
       });
     return () => controller.abort();
-  }, [listPage, refresh]);
+  }, [listPage, refresh, ready]);
   useEffect(() => {
-    if (!selected) return;
+    if (!ready || !selected) return;
     const controller = new AbortController();
     void fetch(`/api/activities/${encodeURIComponent(selected)}?page=${page}`, {
       cache: "no-store",
@@ -98,28 +113,28 @@ export default function ActivityRankingsPage() {
         setDetail(result);
         setError("");
         window.history.replaceState(
-          null,
+          window.history.state,
           "",
-          `/gallery/activities?activity=${encodeURIComponent(selected)}`,
+          `/gallery/activities?activity=${encodeURIComponent(selected)}&page=${page}&listPage=${listPage}`,
         );
       })
       .catch((e) => {
         if (!controller.signal.aborted) setError(e.message);
       });
     return () => controller.abort();
-  }, [selected, page, refresh]);
+  }, [selected, page, listPage, refresh, ready]);
   useEffect(() => {
     const timer = setInterval(() => setRefresh((n) => n + 1), 30_000);
     return () => clearInterval(timer);
   }, []);
 
   return (
-    <main className="activity-page">
+    <main className="activity-page" onClickCapture={(event) => { if (event.target instanceof Element && event.target.closest('a[href^="/gallery"]')) rememberPosition(); }}>
       <PublicHeader current="gallery" />
       <div className="activity-shell">
         <header className="activity-heading">
           <div>
-            <Link href="/gallery">← 图片广场</Link>
+            <Link href="/gallery?restore=1" scroll={false}>← 图片广场</Link>
             <h1>活动榜单</h1>
             <p>查看创作活动、实时排名与奖励。所有时间均为北京时间。</p>
           </div>
@@ -246,7 +261,7 @@ export default function ActivityRankingsPage() {
                               <span className="activity-rank">#{row.rank}</span>
                               <Link
                                 className="activity-thumbnail"
-                                href={`/gallery/${encodeURIComponent(row.id)}`}
+                                href={galleryDetailHref(row.id, returnHref)}
                                 aria-label={`查看作品：${row.title}`}
                               >
                                 <Image
@@ -265,7 +280,7 @@ export default function ActivityRankingsPage() {
                               </Link>
                               <div className="activity-work">
                                 <Link
-                                  href={`/gallery/${encodeURIComponent(row.id)}`}
+                                  href={galleryDetailHref(row.id, returnHref)}
                                   className="activity-name"
                                 >
                                   {row.title}

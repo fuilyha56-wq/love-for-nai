@@ -444,7 +444,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const pointersRef = useRef(new Map<number, Point>());
   const [draft, setDraft] = useState<EditorDraft | null>(null);
   const [document, setDocument] = useState<EditorDocument | null>(null);
-  const [viewport, setViewport] = useState<GenerationViewport | null>(null);
+  const [canvasViewport, setViewport] = useState<GenerationViewport | null>(null);
+  const viewport = useMemo(() => mode === "inpaint" && document ? { ...document.worldRect } : canvasViewport, [mode, document, canvasViewport]);
   const [camera, setCamera] = useState<CameraState>({ x: 0, y: 0, zoom: 0.5 });
   const [tool, setTool] = useState<Tool>("pan");
   const [brushSize, setBrushSize] = useState(80);
@@ -730,7 +731,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         if (!loaded) throw new Error("编辑草稿不存在或已过期");
         const nextDocument = imageFromDraft(loaded);
         const generation = nextDocument.generation;
-        const output = normalizeEditorOutputSize(generation?.model || "nai-v5-full", generation?.width || DEFAULT_WIDTH, generation?.height || DEFAULT_HEIGHT, generation?.imageProtocol);
+        const output = normalizeEditorOutputSize(generation?.model || "nai-v5-full", loaded.mode === "inpaint" ? nextDocument.image.width : generation?.width || DEFAULT_WIDTH, loaded.mode === "inpaint" ? nextDocument.image.height : generation?.height || DEFAULT_HEIGHT, generation?.imageProtocol);
         const outputWidth = output.width;
         const outputHeight = output.height;
         const nextViewport = fitViewport(nextDocument, outputWidth, outputHeight);
@@ -840,7 +841,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       maskCanvas.width = maskWidth;
       maskCanvas.height = maskHeight;
       const maskContext = maskCanvas.getContext("2d");
-      if (maskContext && showMaskPreview) {
+      if (maskContext && showMaskPreview && !pending) {
         const [red, green, blue] = hexChannels(maskColor);
         const overlay = new Uint8ClampedArray(maskCanvas.width * maskCanvas.height * 4);
         for (let index = 0; index < previewMask.length; index += 1) {
@@ -854,7 +855,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         context.drawImage(maskCanvas, frame.x, frame.y, frame.width, frame.height);
       }
     }
-  }, [camera, canvasBackground, document, maskColor, maskOpacity, mode, showMaskPreview, strokes, viewport]);
+  }, [camera, canvasBackground, document, maskColor, maskOpacity, mode, pending, showMaskPreview, strokes, viewport]);
 
   useEffect(() => {
     render();
@@ -956,7 +957,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
 
   const beginViewportDrag = (event: React.PointerEvent, next: DragState) => {
     event.stopPropagation();
-    if (generating || pending) return;
+    if (mode !== "canvas" || generating || pending) return;
     (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
     dragRef.current = next;
   };
@@ -1397,6 +1398,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const refreshMaskPreview = () => {
     if (!document || !viewport) return;
     const prepared = viewportImage(document, viewport, outputSize);
+    if (mode === "inpaint") prepared.mask.fill(0);
     applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
     setMaskPreviewUrl(maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height));
   };
@@ -1687,10 +1689,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       if (reference && (mode !== "inpaint" || !supportsCharacterReferenceEdit(model, imageProtocol))) throw new Error("角色参考仅支持 NAI V4.5 / V5 非 Medium 模型的蒙版重绘，请恢复兼容的模型与模式。");
       if (reference && !strokes.some(stroke => stroke.mode !== "erase" && stroke.points.length)) throw new Error("请先涂选要重绘的角色区域。");
       const prepared = viewportImage(document, viewport, outputSize);
-      // A role edit never auto-selects transparent or out-of-canvas pixels.
-      if (reference) prepared.mask.fill(0);
+      // Local inpainting edits only painted pixels; canvas mode owns outpainting.
+      if (mode === "inpaint" || reference) prepared.mask.fill(0);
       applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
-      const { requestMask, compositeMask } = prepareInpaintMasks(prepared.mask, prepared.image.width, prepared.image.height, featherRadius);
+      const { compositeMask } = prepareInpaintMasks(prepared.mask, prepared.image.width, prepared.image.height, featherRadius);
       if (!prepared.mask.some((value) => value > 0))
         throw new Error("请先绘制重绘蒙版，或把生成框移动到原图外扩展画布。");
       const references = reference ? await characterReferencePayload(reference, userId, runController.signal) : undefined;
@@ -1717,7 +1719,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         inpaintImg2ImgStrength: strength,
         ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
         image: rgbaToDataUrl(prepared.image),
-        mask: maskToPngDataUrl(requestMask, prepared.image.width, prepared.image.height),
+        // Send the exact selection; the server adds model context once and keeps
+        // this selection for compositing, rather than saving latent-grid edges.
+        mask: maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height),
         response_format: "b64_json",
       };
       const response = await fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: runController.signal });
@@ -1928,9 +1932,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         if (!viewport) return;
         const normalized = normalizeEditorOutputSize(model, Math.round(viewport.width), Math.round(viewport.height), imageProtocol);
         setViewportSize(normalized);
-        setViewport((current) => current ? { ...current, x: Math.round(current.x), y: Math.round(current.y), width: normalized.width, height: normalized.height } : current);
-        setNotice("已将取景框与输出对齐为 " + normalized.width + "×" + normalized.height + " 原像素；尺寸按模型规则对齐，请检查取景边界后生成。");
-      }}>原像素取景</button>{!naturalImageModel && <button type="button" onClick={() => { setStrength(0.3); setFeatherRadius(2); setNotice("已设置低强度 0.3、向内羽化 2px。选区外保持原像素；选区内仍由模型重新生成。"); }}>低强度保真预设</button>}</div>
+        if (mode === "canvas") setViewport((current) => current ? { ...current, x: Math.round(current.x), y: Math.round(current.y), width: normalized.width, height: normalized.height } : current);
+        setNotice(mode === "inpaint" ? "输出已恢复为原图尺寸（按模型规则对齐），只修改涂选区域。" : "已将取景框与输出对齐为 " + normalized.width + "×" + normalized.height + " 原像素；尺寸按模型规则对齐，请检查取景边界后生成。");
+      }}>{mode === "inpaint" ? "原图尺寸" : "原像素取景"}</button>{!naturalImageModel && <button type="button" onClick={() => { setStrength(0.3); setFeatherRadius(2); setNotice("已设置低强度 0.3、向内羽化 2px。选区外保持原像素；选区内仍由模型重新生成。"); }}>低强度保真预设</button>}</div>
       {naturalImageModel ? <NaturalImageSettings model={model} imageProtocol={imageProtocol} width={outputSize.width} height={outputSize.height} setWidth={(width) => updateOutputSize({ width })} setHeight={(height) => updateOutputSize({ height })}
         setDimensions={updateOutputSize}
         quality={effectiveImageQuality} setQuality={setImageQuality} imageSize={effectiveImageResolution} setImageSize={setImageResolution} background={imageBackground} setBackground={setImageBackground} /> : <>
@@ -1940,7 +1944,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       </>}
       <label className="editor-field"><span>描述画面</span><textarea value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="描述要生成或补全的内容…" /></label>
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
-      <p className="editor-tip">{document?.characterReference ? "仅重绘手动涂选的角色区域。参考图不关联上游角色编号，区域隔离由本地蒙版合成保证。" : "生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。"}</p>
+      <p className="editor-tip">{document?.characterReference ? "仅重绘手动涂选的角色区域。参考图不关联上游角色编号，区域隔离由本地蒙版合成保证。" : mode === "inpaint" ? "仅重绘原图上手动涂选的区域，选区外保留原像素。结果只在点击“应用”后写入画布。" : "生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。"}</p>
     </>
   );
 
@@ -2027,6 +2031,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       tiledRestoreRef.current = null;
       setTileSourceState(null);
     }
+    if (next === "inpaint" && document) setViewportSize(normalizeEditorOutputSize(model, document.image.width, document.image.height, imageProtocol));
     setNotice("");
     replaceEditorModeInAddress(next, draftId);
   };
@@ -2062,7 +2067,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         <div className="editor-stage-wrap">
           <div className="editor-stage" ref={stageRef} onPointerMove={handlePointerMove} onPointerUp={finishPointer} onPointerCancel={finishPointer}>
             <canvas ref={canvasRef} onPointerDown={handlePointerDown} />
-            {screenViewport && mode !== "tiled-upscale" && <div className="generation-viewport" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height }}>
+            {screenViewport && mode === "canvas" && !pending && <div className="generation-viewport" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height }}>
               <button type="button" className="viewport-badge" onPointerDown={(event) => beginViewportDrag(event, { kind: "viewport", point: worldPoint(event), viewport })}><span>{outputSize.width} × {outputSize.height}</span><small>拖动取景</small></button>
               {(["nw", "ne", "sw", "se"] as const).map((corner) => <span key={corner} className={`viewport-corner ${corner}`} onPointerDown={(event) => beginViewportDrag(event, { kind: "resize", point: worldPoint(event), viewport, corner })} />)}
             </div>}
@@ -2096,7 +2101,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         </div>
       </section>
       <footer className="editor-bottombar">
-        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 并发 ${tileProgress.active}/${tileProgress.concurrency} 路 · 排队 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : "拖动生成框定位区域；双指缩放与平移画布")}</div>
+        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 并发 ${tileProgress.active}/${tileProgress.concurrency} 路 · 排队 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : mode === "inpaint" ? "在原图上涂选重绘区域；双指缩放与平移画布" : "拖动生成框定位区域；双指缩放与平移画布")}</div>
         <div className={`editor-actions${mode === "tiled-upscale" ? " is-tiled-upscale" : ""}`}>{generating && <button type="button" className="discard-button" onClick={() => editorGenerationAbortRef.current?.abort()}>取消生成</button>}{pending ? <><ImageDownloadMenu className="download-result-button" label="下载合成图" title="选择合成图下载方式" filename={`lfn-${mode}-${document?.image.width || 0}x${document?.image.height || 0}`} disabled={generating} getImage={() => document && pending ? rgbaImageToBlob(applyPendingCandidate(document, pending).image) : Promise.reject(new Error("没有可下载的合成图"))} /><button type="button" className="regenerate-button" disabled={generating} onClick={regeneratePending}><Sparkles size={16} />重新生成</button><button type="button" className="discard-button" disabled={generating} onClick={discard}><X size={16} />丢弃</button><button type="button" className="apply-button" disabled={generating} onClick={() => void apply()}><Check size={16} />应用到工作台</button></> : <>
           <button type="button" className="generate-button" disabled={generating || (mode === "tiled-upscale" && (!tilePlanState.plan || (usesGatewayImageCapacity && Boolean(gatewayImageCapacity && liveTileConcurrency < 1))))} onClick={() => void generate()}><Sparkles size={17} />{generating ? "生成中…" : mode === "tiled-upscale" ? "分块重绘并拼接" : "生成并预览"}</button>
         </>}</div>

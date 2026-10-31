@@ -175,8 +175,8 @@ export function GallerySubmitDialog({
       if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialogRef.current)) { event.preventDefault(); first?.focus(); }
     }}>
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="提交作品" className="max-h-[min(720px,calc(100dvh-32px))] w-full max-w-xl overflow-y-auto rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)] sm:p-6">
-        <div className="flex items-start justify-between gap-5">
+      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="提交作品" className="flex max-h-[calc(100dvh-32px)] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)] text-[var(--ink)] shadow-[0_24px_70px_rgba(32,35,40,.24)]">
+        <div className="flex shrink-0 items-start justify-between gap-5 border-b border-[var(--line)] p-5 sm:p-6">
           <div>
             <p className="text-xs font-semibold tracking-[0.12em] text-[var(--rose)]">PUBLIC SQUARE</p>
             <h2 className="mt-1 font-[var(--font-display)] text-2xl font-semibold">提交作品</h2>
@@ -184,8 +184,8 @@ export function GallerySubmitDialog({
           </div>
           <button type="button" onClick={onClose} aria-label="关闭" className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-[var(--line)] bg-[var(--surface)] text-[var(--muted)] hover:text-[var(--ink)]"><X size={18} /></button>
         </div>
-        {error && <div role="alert" className="mt-4 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--accent-text,var(--rose))]">{error}</div>}
-        <div className="mt-6 space-y-5">
+        {error && <div role="alert" className="mx-5 mt-4 shrink-0 rounded-lg border border-[var(--line)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--accent-text,var(--rose))]">{error}</div>}
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
           <label className="block text-sm font-semibold">标题<input className="field mt-2 h-11 w-full px-4" value={form.title} onChange={(event) => onChange({ ...form, title: event.target.value })} maxLength={500} /></label>
           <label className="block text-sm font-semibold">作者 / 画师<input className="field mt-2 h-11 w-full px-4" value={form.authorName} onChange={(event) => onChange({ ...form, authorName: event.target.value })} placeholder="请填写作品作者或画师署名" maxLength={80} required /><small className="mt-1 block font-normal text-[var(--muted)]">将公开显示在作品信息中；请为转载作品正确署名。</small></label>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -197,7 +197,7 @@ export function GallerySubmitDialog({
           <label className="block text-sm font-semibold">公开标签<span className="field mt-2 flex h-11 items-center px-4"><input className="w-full bg-transparent outline-none" value={form.tags} onChange={(event) => onChange({ ...form, tags: event.target.value })} placeholder="例如：azure lane, blue hair, night" /></span><small className="mt-1 block font-normal text-[var(--muted)]">使用英文逗号分隔标签。</small></label>
           <GalleryPublicationFields allowOriginalProof form={form} onChange={patch => onChange({ ...form, ...patch })} />
         </div>
-        <div className="mt-6 flex justify-end gap-3 border-t border-[var(--line)] pt-5"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-[var(--surface)] px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "提交审核"}</button></div>
+        <div className="flex shrink-0 justify-end gap-3 border-t border-[var(--line)] bg-[var(--surface-muted)] px-5 py-4 sm:px-6"><button type="button" onClick={onClose} className="h-10 rounded-full border border-[var(--line)] bg-[var(--surface)] px-5 text-sm font-semibold text-[var(--muted)] hover:text-[var(--ink)]">取消</button><button type="button" onClick={publish} disabled={publishing} className="flex h-10 items-center gap-2 rounded-full bg-[var(--rose)] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[var(--rose-dark)] disabled:opacity-50"><Send size={15} />{publishing ? "提交中…" : "提交审核"}</button></div>
       </div>
     </div>, document.body
   );

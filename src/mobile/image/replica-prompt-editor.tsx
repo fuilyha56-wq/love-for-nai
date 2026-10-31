@@ -22,6 +22,7 @@ import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib
 import { composeModelPrompt, transformModelPromptOnBlur } from "@/lib/model-prompt";
 import { copyTextToClipboard } from "@/lib/client-clipboard";
 import { lfnPrompt } from "@/mobile/ui/lfn-dialog";
+import { observePromptOverlay, promptOverlayViewport } from "./prompt-overlay";
 
 export type ReplicaPromptEditorProps = {
   variant: ReplicaVariant;
@@ -135,19 +136,30 @@ function usePromptEditorHeight(variant: ReplicaVariant, target: PromptTarget) {
   const serialized = useSyncExternalStore(subscribe, () => readStorage(key), () => null);
   const fallback = variant === "nai" ? 112 : 144;
   const height = serialized && Number.isFinite(Number(serialized)) ? clampPromptEditorHeight(Number(serialized)) : fallback;
-  return [height, (next: number | null) => writeStorage(key, next === null ? null : String(clampPromptEditorHeight(next)))] as const;
+  return [height, (next: number | null) => writeStorage(key, next === null ? null : String(clampPromptEditorHeight(next))), serialized !== null] as const;
 }
 
 function PromptResizeHandle({ height, onChange }: { height: number; onChange: (height: number | null) => void }) {
+  const handle = useRef<HTMLDivElement>(null);
+  const [renderedHeight, setRenderedHeight] = useState(height);
   const drag = useRef<{ y: number; height: number } | null>(null);
-  return <div className="replica-prompt-resize-mark" role="separator" tabIndex={0} aria-label="调整提示词输入框高度" aria-orientation="horizontal"
-    aria-valuemin={PROMPT_EDITOR_HEIGHTS.minimum} aria-valuemax={PROMPT_EDITOR_HEIGHTS.maximum} aria-valuenow={height}
+  useLayoutEffect(() => {
+    const editor = handle.current?.parentElement?.querySelector<HTMLElement>(".replica-text-editor, .replica-shared-tag-editor");
+    if (!editor) return;
+    const measure = () => setRenderedHeight(editor.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(editor);
+    return () => observer.disconnect();
+  }, [height]);
+  return <div ref={handle} className="replica-prompt-resize-mark" role="separator" tabIndex={0} aria-label="调整提示词输入框高度" aria-orientation="horizontal"
+    aria-valuemin={PROMPT_EDITOR_HEIGHTS.minimum} aria-valuemax={PROMPT_EDITOR_HEIGHTS.maximum} aria-valuenow={Math.round(renderedHeight)}
     title="拖动调整高度；方向键调整；双击或 Home 恢复默认"
-    onPointerDown={(event) => { if (event.button !== 0) return; event.preventDefault(); drag.current = { y: event.clientY, height }; event.currentTarget.setPointerCapture(event.pointerId); }}
+    onPointerDown={(event) => { if (event.button !== 0) return; event.preventDefault(); drag.current = { y: event.clientY, height: renderedHeight }; event.currentTarget.setPointerCapture(event.pointerId); }}
     onPointerMove={(event) => { if (drag.current) onChange(drag.current.height + event.clientY - drag.current.y); }}
     onPointerUp={(event) => { drag.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }}
-    onPointerCancel={() => { drag.current = null; }} onDoubleClick={() => onChange(null)}
-    onKeyDown={(event) => { if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); onChange(event.key === "Home" ? null : event.key === "End" ? PROMPT_EDITOR_HEIGHTS.maximum : height + (event.key === "ArrowDown" ? 24 : -24)); } }}><span /></div>;
+    onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }} onDoubleClick={() => onChange(null)}
+    onKeyDown={(event) => { if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) { event.preventDefault(); onChange(event.key === "Home" ? null : event.key === "End" ? PROMPT_EDITOR_HEIGHTS.maximum : renderedHeight + (event.key === "ArrowDown" ? 24 : -24)); } }}><span /></div>;
 }
 
 function FloatingPanel({ variant, anchor, children, label, width = 400, onClose, onMouseEnter, onMouseLeave }: {
@@ -160,30 +172,31 @@ function FloatingPanel({ variant, anchor, children, label, width = 400, onClose,
       const bounds = anchor.current?.getBoundingClientRect();
       const node = panel.current;
       if (!bounds || !node) return;
-      const availableWidth = Math.max(0, window.innerWidth - 16);
-      const actualWidth = Math.min(width, availableWidth);
+      const viewport = promptOverlayViewport();
+      const actualWidth = Math.min(width, viewport.width);
       node.style.width = actualWidth + "px";
-      node.style.left = Math.max(8, Math.min(bounds.left, window.innerWidth - actualWidth - 8)) + "px";
-      const below = window.innerHeight - bounds.bottom - 16;
-      const above = bounds.top - 16;
+      node.style.left = Math.max(viewport.left, Math.min(bounds.left, viewport.right - actualWidth)) + "px";
+      const below = Math.max(0, viewport.bottom - bounds.bottom - 8);
+      const above = Math.max(0, bounds.top - viewport.top - 8);
       const openAbove = below < 200 && above > below;
-      node.style.maxHeight = Math.max(80, openAbove ? above : below) + "px";
-      node.style.top = openAbove ? "auto" : bounds.bottom + 8 + "px";
-      node.style.bottom = openAbove ? window.innerHeight - bounds.top + 8 + "px" : "auto";
+      node.style.maxHeight = Math.min(viewport.height, openAbove ? above : below) + "px";
+      const panelHeight = node.getBoundingClientRect().height;
+      node.style.top = Math.max(viewport.top, Math.min(openAbove ? bounds.top - panelHeight - 8 : bounds.bottom + 8, viewport.bottom - panelHeight)) + "px";
+      node.style.bottom = "auto";
       node.style.visibility = "visible";
     };
     place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
+    const stopObserving = observePromptOverlay(place);
     const outside = (event: PointerEvent) => {
       if (!panel.current?.contains(event.target as Node) && !anchor.current?.contains(event.target as Node)) onClose();
     };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); anchor.current?.focus({ preventScroll: true }); } };
+    // Capture Escape even while focus remains on the trigger in the workspace.
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); onClose(); anchor.current?.focus({ preventScroll: true }); } };
     document.addEventListener("pointerdown", outside);
-    document.addEventListener("keydown", escape);
+    document.addEventListener("keydown", escape, { capture: true });
     return () => {
-      window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true);
-      document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape);
+      stopObserving();
+      document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape, { capture: true });
     };
   }, [anchor, width, onClose]);
   return createPortal(<div ref={panel} data-variant={variant} data-replica-menu className="replica-prompt-overlay" role="dialog" aria-label={label}
@@ -327,7 +340,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
   const [config, saveConfig] = usePromptConfig(variant);
   const [selectedTarget, setTarget] = useState<PromptTarget>("positive");
   const target = acceptsNegative ? selectedTarget : "positive";
-  const [editorHeight, setEditorHeight] = usePromptEditorHeight(variant, target);
+  const [editorHeight, setEditorHeight, editorResized] = usePromptEditorHeight(variant, target);
   const [tagModes, setTagModes] = useState({ positive: false, negative: false });
   const [fixedOpen, setFixedOpen] = useState(false);
   const [menu, setMenu] = useState<"quality" | "uc" | "settings" | null>(null);
@@ -410,7 +423,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
     const value = config.settings.resolveAliasesOnCopy ? resolvePromptAliases(raw, config.library) : raw;
     void copyPromptText(value).then(() => setNotice("已复制提示词。")).catch(() => setNotice("未能复制，请选择文本复制。"));
   }
-  return <section className={"replica-prompt" + (isCollapsed ? " is-collapsed" : "")} data-variant={variant} aria-label="提示词编辑器">
+  return <section className={"replica-prompt" + (isCollapsed ? " is-collapsed" : "")} data-variant={variant} data-editor-resized={editorResized || undefined} aria-label="提示词编辑器">
     {variant === "nlw" ? <>
       <div className="replica-prompt-main">
       <div className="replica-prompt-toolbar">
@@ -424,7 +437,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
       </div>
       {editor(target)}
       </div>
-      <PromptResizeHandle height={editorHeight} onChange={setEditorHeight} />
+      <PromptResizeHandle key={target + (tagModes[target] ? "-tags" : "-text")} height={editorHeight} onChange={setEditorHeight} />
       <footer className="replica-prompt-footer">
         <div className="replica-prompt-status">
         <button type="button" className="replica-transparent-toggle" aria-pressed={config.transparent} onClick={() => saveConfig({ ...config, transparent: !config.transparent })}>透明背景</button>
@@ -451,7 +464,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
           }}><ChevronDown size={16} /></button>}</div>
         </header>
         {!isCollapsed && <>{editor(target)}
-        <PromptResizeHandle height={editorHeight} onChange={setEditorHeight} />
+        <PromptResizeHandle key={target + (tagModes[target] ? "-tags" : "-text")} height={editorHeight} onChange={setEditorHeight} />
         <footer>{target === "positive" ? <button type="button" className="replica-transparent-toggle" aria-pressed={config.transparent} onClick={() => saveConfig({ ...config, transparent: !config.transparent })}>{config.transparent ? <Check size={11} /> : <X size={11} />} 透明背景</button> : <span>{natural ? "排除要求" : "负向提示词"}</span>}{presetButton(target === "positive" ? "quality" : "uc", true)}</footer>
         <div className="replica-nai-editor-tools">{modeToggle(target)}<button type="button" className="replica-fixed-button" aria-label="管理固定词" title="管理固定词" onClick={() => setFixedOpen(true)}><Pin size={16} /></button><button type="button" ref={settingsButton} aria-label="提示词设置" title="提示词设置" aria-expanded={menu === "settings"} onClick={() => toggleMenu("settings")}><Settings2 size={18} /></button><button type="button" className="replica-prompt-tag-count" title={natural ? "复制描述" : "复制提示词"} onClick={copyCurrent}>{promptCount(target === "positive" ? composition.prompt : composition.negative, natural)}</button></div></>}
       </div>

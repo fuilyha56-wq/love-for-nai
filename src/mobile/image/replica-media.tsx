@@ -5,6 +5,7 @@ import { Brush, Dice5, ImageIcon, ImagePlus, Maximize2, Ruler, Sparkles, WandSpa
 import { useEffect, useRef, useState, type CSSProperties, type ReactElement } from "react";
 import "./replica-media.css";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
+import { ImageCardMenu } from "@/mobile/ui/collection-workspace";
 
 export type ReplicaMediaProps = {
   variant: "nai" | "nlw";
@@ -29,7 +30,7 @@ export function fitMediaSize(width: number, height: number, availableWidth: numb
 export function resolveMediaColumns(imageCount: number, availableWidth: number): number {
   const ideal = imageCount <= 1 ? 1 : imageCount <= 4 ? 2 : imageCount <= 6 ? 3 : 4;
   const usable = Math.max(0, Number.isFinite(availableWidth) ? availableWidth - 16 : 0);
-  return Math.min(ideal, Math.max(1, Math.floor((usable + 12) / (150 + 12))));
+  return Math.min(ideal, Math.max(1, Math.floor((usable + 12) / (240 + 12))));
 }
 
 export function ReplicaMedia({ variant, images, width, height, seed, progress, onOpen, onUse, onClear }: ReplicaMediaProps): ReactElement {
@@ -86,7 +87,7 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
     const dimensions = natural.get(image);
     const cardWidth = dimensions?.width ?? fallbackWidth;
     const cardHeight = dimensions?.height ?? fallbackHeight;
-    return (
+    const card = (
       <div className="replica-media-card" key={`${index}-${image}`} style={single ? singleStyle : { aspectRatio: `${cardWidth} / ${cardHeight}` }}>
         <button className="replica-media-open" type="button" aria-label={`放大查看第 ${index + 1} 张图像`} onClick={() => onOpen(index)}>
           <Image
@@ -115,16 +116,22 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
             }}
           />
         </button>
-        <div className="replica-media-actions" role="group" aria-label={`第 ${index + 1} 张图像操作`}>
-          <ImageDownloadMenu src={image} filename={`lfn-${index + 1}`} className="replica-download-menu" title={`下载第 ${index + 1} 张图像`} />
-          <button type="button" title="用于图生图" aria-label={`第 ${index + 1} 张用于图生图`} onClick={() => onUse(image, "img2img")}><ImagePlus size={16} /></button>
-          <button type="button" title="用于局部重绘" aria-label={`第 ${index + 1} 张用于局部重绘`} onClick={() => onUse(image, "inpainting")}><Brush size={16} /></button>
-          <button type="button" title="用于导演工具" aria-label={`第 ${index + 1} 张用于导演工具`} onClick={() => onUse(image, "director-lineart")}><WandSparkles size={16} /></button>
-          <button type="button" title="用作 Vibe 参考" aria-label={`第 ${index + 1} 张用作 Vibe 参考`} onClick={() => onUse(image, "vibe-transfer")}><Sparkles size={16} /></button>
-          <button type="button" className="replica-media-upscale" title="V5 扩散超分" aria-label={`第 ${index + 1} 张用于 V5 超分`} onClick={() => onUse(image, "upscale")}><Maximize2 size={16} /><span>V5 超分</span></button>
-        </div>
       </div>
     );
+    return single ? card : <div className="replica-media-item" key={`${index}-${image}`}>{card}{imageActions(image, index)}</div>;
+  }
+
+  function imageActions(image: string, index: number): ReactElement {
+    return <div className="replica-media-actions" role="group" aria-label={`第 ${index + 1} 张图像操作`}>
+      <ImageDownloadMenu src={image} filename={`lfn-${index + 1}`} className="replica-download-menu" title={`下载第 ${index + 1} 张图像`} label="下载" />
+      <ImageCardMenu label={`使用第 ${index + 1} 张图片`} triggerContent={<><ImagePlus size={16} /><span>使用图片</span></>}>
+        <button type="button" onClick={() => onUse(image, "img2img")}><ImagePlus size={16} />用于图生图</button>
+        <button type="button" onClick={() => onUse(image, "inpainting")}><Brush size={16} />用于局部重绘</button>
+        <button type="button" onClick={() => onUse(image, "director-lineart")}><WandSparkles size={16} />用于导演工具</button>
+        <button type="button" onClick={() => onUse(image, "vibe-transfer")}><Sparkles size={16} />用作 Vibe 参考</button>
+      </ImageCardMenu>
+      <button type="button" className="replica-media-upscale" title="V5 扩散超分" aria-label={`第 ${index + 1} 张用于 V5 超分`} onClick={() => onUse(image, "upscale")}><Maximize2 size={16} /><span>V5 超分</span></button>
+    </div>;
   }
 
   return (
@@ -142,6 +149,7 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
           </div>
         )}
       </div>
+      {images.length === 1 && imageActions(firstImage, 0)}
       {progress && <div className="replica-media-progress" role="status">{progress}</div>}
       {images.length > 0 && <footer className="replica-media-info">
         <span><Ruler size={14} />{imageWidth} × {imageHeight}</span>

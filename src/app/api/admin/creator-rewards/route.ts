@@ -62,6 +62,7 @@ export async function POST(request: Request) {
       }
       const campaign = await upsertCreatorRewardCampaign({
         settlementMode: body.settlementMode as CreatorRewardCampaign["settlementMode"],
+        dailyTasks: body.dailyTasks as CreatorRewardCampaign["dailyTasks"],
         timezone: body.timezone as CreatorRewardCampaign["timezone"], settlesAt: optionalString(body.settlesAt),
         scoring: body.scoring as CreatorRewardCampaign["scoring"], boards: body.boards as CreatorRewardCampaign["boards"],
         partialPromptBoard: body.partialPromptBoard as CreatorRewardCampaign["partialPromptBoard"],
