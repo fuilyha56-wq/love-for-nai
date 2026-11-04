@@ -17,7 +17,7 @@
 .credit-price-quote h3 b { font-size: 20px; color: var(--rose); }
 .credit-price-quote h3 small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .credit-price-quote p, .credit-price-note, .credit-price-warning { font-size: 12px; line-height: 1.8; margin: 8px 0 14px; color: var(--muted); }
-.credit-price-warning { color: #946014; }
+.credit-price-warning { color: var(--ink); background: color-mix(in srgb, var(--gold, #c5913d) 12%, var(--panel, #fffefa)); border: 1px solid color-mix(in srgb, var(--gold, #c5913d) 35%, var(--line)); border-radius: 8px; padding: 10px 12px; }
 .credit-price-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 14px 0; border: 1px solid var(--line); border-radius: 9px; }
 .credit-price-table-scroll table { border-collapse: collapse; width: 100%; text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--panel, #fffefa); }
 .credit-price-table-scroll caption { text-align: left; font-size: 13px; font-weight: 700; padding: 12px; color: var(--ink); }

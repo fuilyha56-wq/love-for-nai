@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { LfnSwitch } from "@/mobile/ui/lfn-switch";
 import { AdminButton, AdminCard } from "./ui/admin-primitives";
-import { V5_BASE_AFF_PER_IMAGE } from "@/lib/image-pricing";
+import { DEFAULT_IMAGE_BASE_FEES } from "@/lib/image-pricing";
 import {
   CNY_PER_AFF,
   DEFAULT_DAILY_IMAGE_POLICY,
@@ -63,7 +63,7 @@ export default function DailyBillingPanel() {
       if (!response.ok) throw new Error(result.message || "保存计费失败");
       setData(result);
       setPolicy(result.policy);
-      setMessage("每日阶梯已保存，后续请求立即使用新规则。");
+      setMessage("计费规则已保存，后续请求立即使用新规则。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "保存计费失败");
     } finally {
@@ -79,8 +79,9 @@ export default function DailyBillingPanel() {
   const cnyPerAff = CNY_PER_AFF;
   return (
     <AdminCard
-      title="每日分段计费"
-      description="个人 AFF 与图包使用相同阶梯。按用户合并同系列模型，limit 计入对应普通模型；北京时间零点重置。固定模型单价优先于每日阶梯。"
+      className="max-sm:[&>.admin-card-header]:flex-col [&_.admin-card-actions]:shrink-0 [&_.admin-button]:whitespace-nowrap"
+      title="基础费用与每日分段计费"
+      description="个人 AFF 与图包使用相同计价。基础费按模型与档内条件选取；每日张数按用户合并同系列模型，Limit 计入对应普通模型，北京时间零点重置。固定模型单价优先。"
       actions={
         <>
           <AdminButton
@@ -97,7 +98,7 @@ export default function DailyBillingPanel() {
             onClick={() => void save()}
           >
             <Save size={14} />
-            保存阶梯
+            保存计费
           </AdminButton>
         </>
       }
@@ -128,6 +129,63 @@ export default function DailyBillingPanel() {
             {dirty && (
               <span className="text-xs text-amber-700">有未保存修改</span>
             )}
+          </div>
+          <div className="space-y-4 rounded-lg border border-[var(--line)] p-4">
+            <h3 className="text-sm font-semibold">生图基础费（AFF / 张）</h3>
+            <div className="grid gap-4 lg:grid-cols-3">
+              {([
+                {
+                  label: "V4.5",
+                  fields: [
+                    { key: "v45LimitBaseAff", label: "Limit 小图" },
+                    { key: "v45BaseAff", label: "常规 / 档外" },
+                  ],
+                },
+                {
+                  label: "V5 High",
+                  fields: [
+                    { key: "v5LimitBaseAff", label: "Limit 小图" },
+                    { key: "v5BaseAff", label: "常规 / 档外" },
+                  ],
+                },
+                {
+                  label: "V5 Medium",
+                  fields: [
+                    { key: "v5MediumLimitBaseAff", label: "Limit 小图" },
+                    { key: "v5MediumBaseAff", label: "常规 / 档外" },
+                  ],
+                },
+              ] as const).map((family) => (
+                <div key={family.label} className="rounded-lg bg-[var(--surface-muted)] p-3">
+                  <h4 className="mb-3 text-xs font-semibold">{family.label}</h4>
+                  <div className="grid grid-cols-2 gap-3">
+                    {family.fields.map((field) => (
+                      <label key={field.key} className="text-xs text-[var(--ink)]">
+                        {field.label}
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.0001}
+                          aria-label={`${family.label} ${field.label}基础费（AFF / 张）`}
+                          value={policy[field.key] ?? DEFAULT_IMAGE_BASE_FEES[field.key]}
+                          className="field billing-base-fee-input mt-1.5 w-full"
+                          onChange={(event) =>
+                            setPolicy({
+                              ...policy,
+                              [field.key]: Number(event.target.value),
+                            })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="text-xs leading-6 text-[var(--muted)]">
+              基础费可设为 0。Limit 小图价适用单张、≤28 步、≤1024² 像素且无付费参考等档内条件；普通 Full、Curated 和重绘模型满足条件时同样适用。工作台逐张生成分别判定，一次请求多张按档外规则计费。独立工具和 NewAPI 使用各自计费规则。
+            </p>
           </div>
           <div className="grid gap-4 rounded-lg bg-[var(--surface-muted)] p-4 sm:grid-cols-3">
             <label className="text-xs font-semibold">
@@ -182,7 +240,7 @@ export default function DailyBillingPanel() {
           <p className="text-xs leading-6 text-[var(--muted)]">
             当前图包售价：{data?.affPerPackage} AFF ≈ ¥
             {packageCny.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}；计价面值固定为 1 AFF = ¥{cnyPerAff}，不随图包折扣变化。
-            LFN 小图保留当前 AFF 阶梯：V4.5 基础 1 AFF、V5 High 基础 {V5_BASE_AFF_PER_IMAGE} AFF、Medium 基础 1 AFF。人民币基准价只计算相对首档的附加费；NewAPI 的独立小图价格不套用这里的 AFF 基础价。
+            生图基础费使用上方对应模型与档位的配置。下方“附加价参考值”只计算相对首档的附加费，不是生图基础费；NewAPI 的独立价格不套用这里的 AFF 基础价。
             Anlas 单价以当前配置为准。官方消耗量按模型计算，销售倍率只应用一次。超范围每 Anlas 分别为 {Number((policy.v45AnlasCny / cnyPerAff).toFixed(4))}/{Number((policy.v5AnlasCny / cnyPerAff).toFixed(4))} AFF。
             日阶梯只影响 LFN AFF/图包。转交 NewAPI 后由 NewAPI 生成、记录请求并按其模型配置计费，不参与本站每日张数阶梯。
           </p>

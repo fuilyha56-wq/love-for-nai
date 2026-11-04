@@ -17,7 +17,7 @@
 .mobile-credit-price-quote h3 b { font-size: 20px; color: var(--rose); }
 .mobile-credit-price-quote h3 small { font-size: 12px; font-weight: 500; color: var(--muted); }
 .mobile-credit-price-quote p, .mobile-credit-price-note, .mobile-credit-price-warning { font-size: 12px; line-height: 1.8; margin: 8px 0 14px; color: var(--muted); }
-.mobile-credit-price-warning { color: #946014; }
+.mobile-credit-price-warning { color: var(--ink); background: color-mix(in srgb, var(--gold, #c5913d) 12%, var(--panel, #fffefa)); border: 1px solid color-mix(in srgb, var(--gold, #c5913d) 35%, var(--line)); border-radius: 8px; padding: 10px 12px; }
 .mobile-credit-price-table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; margin: 14px 0; border: 1px solid var(--line); border-radius: 9px; }
 .mobile-credit-price-table-scroll table { border-collapse: collapse; width: 100%; text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; background: var(--panel, #fffefa); }
 .mobile-credit-price-table-scroll caption { text-align: left; font-size: 13px; font-weight: 700; padding: 12px; color: var(--ink); }
