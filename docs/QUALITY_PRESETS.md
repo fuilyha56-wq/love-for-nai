@@ -17,4 +17,4 @@
 - 浏览器 4 组通过：1254px 的 LFN、NovelAI Local、NAI 工作台，以及 390px 手机端；实际选择“无/None”并刷新，确认选择被保留。结果见 `.tmp/quality-preset-ui-results.json`。
 - TypeScript 检查通过；ESLint 无错误，桌面历史记录 Effect 保留已有的依赖提示；两仓库相关文件的差异空白检查通过。
 
-相关源码为 `src/lib/nai-native-request.ts`、`src/lib/image-transport.ts`、`src/app/api/images/operate/route.ts` 与两端 `image/studio.tsx`；网关修复位于 `E:/novelai-gateway/src/proxy/openai.py`。测试使用替代上游生成结果，没有执行真实图像生成。
+相关源码为 `src/lib/nai-native-request.ts`、`src/lib/image-transport.ts`、`src/app/api/images/operate/route.ts` 与两端 `image/studio.tsx`；网关修复位于 `${WORKSPACE_ROOT}/novelai-gateway/src/proxy/openai.py`。测试使用替代上游生成结果，没有执行真实图像生成。

@@ -2,6 +2,17 @@
 [data-replica-history] { position: relative; display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0; flex-direction: column; background: var(--panel); color: var(--ink); font-family: var(--font-sans); }
 [data-replica-history] .replica-history-list { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; gap: 8px; overflow-y: auto; padding: 8px; }
 [data-replica-history] .replica-history-card { position: relative; width: 100%; min-width: 0; flex: none; border-radius: 12px; background: var(--surface); }
+[data-replica-history] .replica-history-card.is-selected { outline: 2px solid var(--rose); outline-offset: -2px; }
+[data-replica-history] .replica-history-select { position: absolute; z-index: 2; top: 4px; left: 4px; display: grid; width: 44px; height: 44px; place-items: center; cursor: pointer; }
+[data-replica-history] .replica-history-select input { width: 22px; height: 22px; accent-color: var(--rose); }
+[data-replica-history] .replica-history-actions[hidden] { display: none; }
+[data-replica-history] .replica-history-bulk-heading { display: flex; flex: none; justify-content: flex-end; padding: 4px 12px; }
+[data-replica-history] .replica-history-bulk-heading > button,
+[data-replica-history] .replica-history-bulk-toolbar > button { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 4px; min-height: 44px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 11px; font-weight: 600; white-space: nowrap; }
+[data-replica-history] .replica-history-bulk-toolbar { display: flex; min-width: 0; flex: none; align-items: center; gap: 6px; padding: 4px 12px 8px; overflow-x: auto; white-space: nowrap; }
+[data-replica-history] .replica-history-bulk-toolbar > span { flex: none; color: var(--muted); font-size: 11px; }
+[data-replica-history] .replica-history-bulk-toolbar > button.is-danger { background: var(--rose); color: white; }
+[data-replica-history] .replica-history-bulk-toolbar > button:disabled { opacity: .5; cursor: default; }
 [data-replica-history] .replica-history-preview { display: block; width: 100%; overflow: hidden; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: zoom-in; }
 [data-replica-history] .replica-history-preview img { display: block; width: 100%; height: auto; object-fit: contain; }
 [data-replica-history] .replica-history-preview:focus-visible { outline: 2px solid var(--rose); outline-offset: -2px; }

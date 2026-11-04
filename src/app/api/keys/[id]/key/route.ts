@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { readUpstreamJson, upstreamClientHeaders, RateLimitError, upstreamFailureResponse } from "@/lib/upstream-request";
 
 export async function POST(
   _request: Request,
@@ -18,23 +19,24 @@ export async function POST(
     return NextResponse.json({ message: "无效的密钥 ID" }, { status: 400 });
 
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/token/${id}/key`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/token/${id}/key`, {
       method: "POST",
-      headers: userHeaders(session),
+      headers: { ...userHeaders(session), ...await upstreamClientHeaders() },
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    const result = (await upstream.json()) as {
+    const result = await readUpstreamJson<{
       success: boolean;
       message?: string;
       data?: { key?: string };
-    };
+    }>(upstream, "读取密钥");
     if (!upstream.ok || !result.success || !result.data?.key)
       throw new Error(result.message || "无法读取密钥明文");
     // 上游返回裸密钥，调用方按 OpenAI 习惯需要 sk- 前缀。
     const key = result.data.key;
     return NextResponse.json({ key: key.startsWith("sk-") ? key : `sk-${key}` });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     const message = error instanceof Error ? error.message : "无法读取密钥明文";
     if (isUpstreamAuthError(message))
       return NextResponse.json(

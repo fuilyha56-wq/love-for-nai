@@ -11,6 +11,7 @@ import { getSession } from "@/lib/session";
 import type { GalleryPromptMode, PublicCharacterText } from "@/lib/gallery-publication";
 import { listCreatorRewardCampaigns } from "@/lib/creator-rewards";
 import { gallerySubmissionOptions, submissionActivityAllows } from "@/lib/gallery-submission-options";
+import { GalleryRequestTooLargeError, readGalleryBody } from "@/lib/gallery-request";
 
 export async function GET(request: Request) {
   const query = new URL(request.url).searchParams;
@@ -45,7 +46,9 @@ export async function POST(request: Request) {
     if (declaredLength > 2 * MAX_GALLERY_IMAGE_BYTES + 2 * 1024 * 1024)
       return NextResponse.json({ message: "投稿请求体过大，图片不能超过 20 MB" }, { status: 413 });
     if (contentType.includes("multipart/form-data")) {
-      const form = await request.formData();
+      const form = await new Response(await readGalleryBody(request), {
+        headers: { "Content-Type": contentType },
+      }).formData();
       const file = form.get("file");
       const original = form.get("originalFile");
       const historyId = String(form.get("historyId") || "").trim();
@@ -69,7 +72,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });
     }
     if (declaredLength > 256 * 1024) return NextResponse.json({ message: "投稿请求体过大" }, { status: 413 });
-    const body = (await request.json()) as Record<string, unknown>;
+    const body = (await new Response(await readGalleryBody(request, 256 * 1024)).json()) as Record<string, unknown>;
     const item = await publishFromHistory(session.userId, session.displayName || session.username, String(body.historyId || ""), {
       title: String(body.title || ""), authorName: String(body.authorName || ""), rating: assertGalleryRating(body.rating),
       source: ["other", "lfn", "local"].includes(body.source as string) ? body.source as GallerySource : "lfn",
@@ -81,5 +84,5 @@ export async function POST(request: Request) {
       partialCharacters: body.partialCharacters as PublicCharacterText[] | undefined, upscaled: body.upscaled === true,
     });
     return NextResponse.json({ item: { ...item, imageUrl: `/api/gallery/${item.id}/image` } });
-  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "发布失败" }, { status: 400 }); }
+  } catch (error) { return NextResponse.json({ message: error instanceof Error ? error.message : "发布失败" }, { status: error instanceof GalleryRequestTooLargeError ? 413 : 400 }); }
 }

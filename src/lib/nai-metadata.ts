@@ -19,10 +19,10 @@ export type NaiImageMetadata = {
 };
 
 function latin1(bytes: Uint8Array): string {
-  let out = "";
-  for (let index = 0; index < bytes.length; index++)
-    out += String.fromCharCode(bytes[index]);
-  return out;
+  const parts: string[] = [];
+  for (let index = 0; index < bytes.length; index += 8192)
+    parts.push(String.fromCharCode(...bytes.subarray(index, index + 8192)));
+  return parts.join("");
 }
 
 function utf8(bytes: Uint8Array): string {

@@ -1,3 +1,4 @@
+import { RateLimitError, upstreamFailureResponse } from "@/lib/upstream-request";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError } from "@/lib/newapi";
@@ -13,6 +14,7 @@ export async function GET() {
   try {
     return NextResponse.json({ items: await loadNewApiModels(session) });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     const message = error instanceof Error ? error.message : "无法读取可用模型";
     if (isUpstreamAuthError(message))
       return NextResponse.json(

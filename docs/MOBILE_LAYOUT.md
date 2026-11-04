@@ -42,7 +42,7 @@
 先在一个终端启动使用独立数据目录的开发服务器，临时密钥需至少 32 个字符。不要将这套测试配置用于线上服务。
 
 ```powershell
-$env:LFN_DATA_DIR = 'E:/love-for-nai/.tmp/mobile/data'
+$env:LFN_DATA_DIR = '${WORKSPACE_ROOT}/love-for-nai/.tmp/mobile/data'
 $env:LFN_SESSION_SECRET = '<临时测试密钥，至少 32 字符>'
 npm run dev -- --hostname 127.0.0.1 --port 3000
 ```

@@ -4,6 +4,8 @@ import { getSession } from "@/lib/session";
 import { LFN_MODEL_GROUP, resolvedNewApiBaseUrl, selectModelGroup, userHeaders } from "@/lib/newapi";
 import { snapshotFromRawPricing } from "@/lib/image-pricing";
 import { runtimeModelFixedCost } from "@/lib/runtime-config";
+import { cachedUpstreamRead } from "@/lib/upstream-read-cache";
+import { readUpstreamJson, upstreamFailureResponse } from "@/lib/upstream-request";
 
 // 计费预期：把当前模型的 NewAPI 计价信息 + 用户分组倍率发给前端，
 // 前端用实测公式实时估算消耗。
@@ -15,23 +17,18 @@ export async function GET(request: Request) {
   if (!model)
     return NextResponse.json({ message: "缺少 model 参数" }, { status: 400 });
 
-  const headers = userHeaders(session);
   try {
+    const headers = userHeaders(session);
     // 与实际取图像密钥时使用同一组用户权限和模型渠道。
     const baseUrl = await resolvedNewApiBaseUrl();
     const [pricingResponse, selfResponse, groupsResponse] = await Promise.all([
-      fetch(`${baseUrl}/api/pricing`, {
-        headers,
-        cache: "no-store",
-        signal: AbortSignal.timeout(15_000),
-      }),
+      cachedUpstreamRead(`${baseUrl}/api/pricing`, headers, 30_000),
       fetchNewApiSelf(baseUrl, headers),
-      fetch(`${baseUrl}/api/user/self/groups`, {
-        headers,
-        cache: "no-store",
-        signal: AbortSignal.timeout(10_000),
-      }),
+      cachedUpstreamRead(`${baseUrl}/api/user/self/groups`, headers, 30_000),
     ]);
+    for (const response of [pricingResponse, selfResponse, groupsResponse]) {
+      if (response.status === 429) await readUpstreamJson(response, "模型计价");
+    }
     if (!pricingResponse.ok)
       return NextResponse.json({ message: "无法读取模型计价" }, { status: 502 });
     if (!selfResponse.ok || !groupsResponse.ok)
@@ -78,7 +75,7 @@ export async function GET(request: Request) {
     // 管理员配置了固定 AFF 单价时透出给前端，Studio 优先按它估算。
     const affFixedCost = await runtimeModelFixedCost(model);
     return NextResponse.json({ ...snapshot, affFixedCost });
-  } catch {
-    return NextResponse.json({ message: "暂时无法连接账号服务" }, { status: 502 });
+  } catch (error) {
+    return upstreamFailureResponse(error);
   }
 }

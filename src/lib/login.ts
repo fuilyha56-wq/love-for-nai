@@ -7,6 +7,8 @@ import {
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
 import { resolveTrustedClientIp } from "@/lib/risk-ip";
 import type { LocalUser } from "@/lib/local-users";
+import { newApiIdentity } from "@/lib/newapi-user";
+import { loginCookie } from "@/lib/upstream-session";
 
 export type NewApiUser = {
   id?: number;
@@ -23,6 +25,7 @@ export type NewApiLoginResponse = {
   data?: NewApiUser & {
     user?: NewApiUser;
     access_token?: string;
+    access_expires_at?: number;
     require_2fa?: boolean;
     two_fa_required?: boolean;
     flow_token?: string;
@@ -108,7 +111,7 @@ export function newApiRateLimitResponse(response: Response): NextResponse {
 }
 
 export function upstreamCookieOf(response: Response): string {
-  return response.headers.get("set-cookie")?.split(";")[0] || "";
+  return loginCookie(response);
 }
 
 export function requiresTwoFactor(result: NewApiLoginResponse): boolean {
@@ -129,8 +132,8 @@ export async function establishSession(
   remember = false,
 ): Promise<NextResponse> {
   const data = result.data;
-  const user = data?.user ?? data;
-  if (!user || typeof user.id !== "number" || !user.username)
+  const user = result.success === true ? newApiIdentity(data) : null;
+  if (!user)
     return NextResponse.json(
       { message: "上游未返回可用的账号信息" },
       { status: 502 },
@@ -156,6 +159,7 @@ export async function establishSession(
       displayName: user.display_name || user.username,
       upstreamCookie,
       accessToken,
+      accessExpiresAt: typeof data?.access_expires_at === "number" ? data.access_expires_at * 1000 : undefined,
       expiresAt: Date.now() + keepLoginTtlMs(remember),
     }),
     cookie.options,

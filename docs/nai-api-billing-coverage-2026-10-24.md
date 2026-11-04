@@ -60,6 +60,6 @@ Linux 回归 **9 个测试文件、164 项测试全部通过**，其中 47 项�
 
 发布后验证：线上编译的 API 参数解析与 11 组金额通过，Limit 覆盖参数超限被拒绝；17 组 LFN/Gateway 模式报价一致；8 组已部署 Gateway 处理函数的计费 token 与实际 NewAPI 表达式结果一致；14 模型计费配置、分组倍率和每日策略保持不变；服务健康正常。Gateway 容器没有重启或修改。
 
-原 compose 备份：`/home/ikun/love-for-nai-deploy/compose.prod.yml.bak-nai-api-coverage-20261024-r1-20261024021122`。可恢复该 compose 并重建 `lfn-web` 回滚应用；本次没有修改价格配置或数据库。
+原 compose 备份：`${HOME}/love-for-nai-deploy/compose.prod.yml.bak-nai-api-coverage-20261024-r1-20261024021122`。可恢复该 compose 并重建 `lfn-web` 回滚应用；本次没有修改价格配置或数据库。
 
 [结构化部署与验证记录](nai-api-billing-deployed-2026-10-24.json)。核查脚本未发起付费生成，未修改线上用户余额。

@@ -1,7 +1,9 @@
 "use client";
 
-import { ArrowLeft, Bell, Brush, ChevronDown, History, Images, Tags, MoreHorizontal, RefreshCw, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
+import { ArrowLeft, Bell, Brush, ChevronDown, History, RefreshCw, SlidersHorizontal, Sparkles, WandSparkles, X } from "lucide-react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { MobileBottomNav } from "@/mobile/ui/mobile-bottom-nav";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { memo, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
@@ -71,7 +73,16 @@ const sheetTitles: Record<MobileStudioSheet, string> = {
 };
 
 export function MobileStudioLauncher({ promptSummary, model, operation, operationId = "generate", operationOptions, generating = false, isInpainting = false, width, height, hasResults, hasSource = false, resultContent, sourcePreviewContent, sourceStatusContent, historyContent, historyToolbar, moreContent, promptContent, parameterContent, assistantContent, onRefreshHistory, onSelectOperation, onClearWorkspace, onOpenSheet, sheet, sheetRequestId = 0, onCloseSheet, sheetRef, sheetContent, footerContent, referenceContent, notice, onDismissNotice }: Props) {
-  const [page, setPage] = useState<MobileStudioPage>("generate");
+  const searchParams = useSearchParams();
+  const view = searchParams.get("view");
+  const page: MobileStudioPage = view === "history" || view === "more" ? view : "generate";
+  function setPage(next: MobileStudioPage) {
+    if (next === page) return;
+    const url = new URL(window.location.href);
+    if (next === "generate") url.searchParams.delete("view");
+    else url.searchParams.set("view", next);
+    window.history.pushState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }
   const [workspace, setWorkspace] = useState<{ requestId: number; pane: WorkspacePane | null; visited: WorkspacePane[]; backToPrompt: boolean }>({ requestId: sheetRequestId, pane: isWorkspacePane(sheet) ? sheet : null, visited: isWorkspacePane(sheet) ? [sheet] : [], backToPrompt: false });
   // External actions (for example the prompt editor's assistant shortcut) may
   // request the same panel repeatedly. Reconcile that event once; tab clicks
@@ -85,7 +96,6 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
   const legacySheet = sheet && !isWorkspacePane(sheet) ? sheet : null;
   const activePane = legacySheet ? null : workspace.pane;
   const activeSheet = legacySheet ?? activePane;
-  usePanelHistory("lfnStudioPage", page === "generate" ? null : page, (next) => setPage(next === "history" || next === "more" ? next : "generate"));
   usePanelHistory("lfnStudioPanel", activeSheet, (next) => {
     const pane = isWorkspacePane(next as MobileStudioSheet) ? next as WorkspacePane : null;
     setWorkspace(previous => ({ ...previous, pane, backToPrompt: false,
@@ -195,13 +205,7 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
     </main>
     {notice && <div className="mobile-studio-notice" role="status" inert={dialogOpen}><span>{notice}</span><button type="button" aria-label="关闭工作台提示" onClick={onDismissNotice}><X size={18} /></button></div>}
     <div className="mobile-studio-footer" hidden={page !== "generate"} inert={dialogOpen}>{footerContent}</div>
-    <nav className="mobile-studio-bottom-nav" aria-label="移动工作台导航" inert={dialogOpen}>
-      <button type="button" aria-current={page === "generate" ? "page" : undefined} onClick={() => setPage("generate")}><Sparkles size={21} /><span>生成</span></button>
-      <button type="button" aria-current={page === "history" ? "page" : undefined} onClick={() => setPage("history")}><History size={21} /><span>历史</span></button>
-      <Link href="/gallery"><Images size={21} /><span>广场</span></Link>
-      <Link href="/tags"><Tags size={21} /><span>词库</span></Link>
-      <button type="button" aria-current={page === "more" ? "page" : undefined} onClick={() => setPage("more")}><MoreHorizontal size={21} /><span>更多</span></button>
-    </nav>
+    <MobileBottomNav className="mobile-studio-bottom-nav" active={page} inert={dialogOpen} onWorkspacePage={setPage} />
     {portalTarget && (workspace.visited.length > 0 || legacySheet) && createPortal(<div className="mobile-studio-prompt-backdrop" role="presentation" hidden={!dialogOpen} inert={!dialogOpen} onClick={goBack}>
       <section ref={activeSheetRef} tabIndex={-1} className="mobile-studio-prompt-dialog mobile-studio-workspace-dialog" data-active-pane={activePane || undefined} role="dialog" aria-modal={dialogOpen ? "true" : undefined} aria-label={activeSheet === "prompt" ? "提示词区域" : activeSheet ? sheetTitles[activeSheet] : undefined} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); goBack(); } }}>
         <header className="mobile-studio-sheet-header"><button type="button" aria-label={activePane === "prompt" ? "收起提示词" : `关闭${activeSheet ? sheetTitles[activeSheet] : "工作面板"}`} onClick={goBack}><ArrowLeft size={20} /></button><b>{activeSheet ? sheetTitles[activeSheet] : "工作面板"}{activePane === "parameters" && <small className="mobile-studio-workspace-dimensions">{width}×{height}</small>}</b>{activePane && <button type="button" className="mobile-studio-workspace-done" onClick={closeWorkspace}>完成</button>}</header>

@@ -166,6 +166,6 @@ curl -X POST http://<gateway>:41555/v1/images/upscale \
 
 ## 6. 上游快照存档
 
-- webui JS chunk 存档：`E:\tmp_nai_research\chunks\`（buildId 3102745-production）
+- webui JS chunk 存档：`${LOCAL_PATH}`（buildId 3102745-production）
 - 关键常量来源：module 44868（`gb="nai-diffusion-5-curated"`, `Kx=0`, `aS=2`）、module 50464（价格表）、module 85097（`xM=3145728`）
-- 实测脚本与样本：`E:\tmp_nai_research\`（ups_body.json / ups_out.bin / upscaled_result.png）
+- 实测脚本与样本：`${LOCAL_PATH}`（ups_body.json / ups_out.bin / upscaled_result.png）

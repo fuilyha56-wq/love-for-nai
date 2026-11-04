@@ -57,6 +57,7 @@ export type EditorDocument = {
 
 export type GenerationViewport = WorldRect;
 export type ViewportCorner = "nw" | "ne" | "sw" | "se";
+export type ViewportHandle = ViewportCorner | "n" | "e" | "s" | "w";
 
 export type MaskStroke = {
   points: Point[];
@@ -102,6 +103,7 @@ export type ResizeViewportOptions = {
   aspect?: number;
   minWidth?: number;
   minHeight?: number;
+  free?: boolean;
 };
 
 export type SnapOptions = {
@@ -272,7 +274,7 @@ export const moveGenerationViewport = moveViewport;
 
 export function resizeViewport(
   viewport: GenerationViewport,
-  corner: ViewportCorner,
+  corner: ViewportHandle,
   pointer: Point,
   options: ResizeViewportOptions = {},
 ): GenerationViewport {
@@ -286,8 +288,16 @@ export function resizeViewport(
     x: corner.includes("w") ? rectRight(viewport) : viewport.x,
     y: corner.includes("n") ? rectBottom(viewport) : viewport.y,
   };
-  const horizontal = Math.max(minWidth, Math.abs(pointer.x - anchor.x));
-  const vertical = Math.max(minHeight, Math.abs(pointer.y - anchor.y));
+  const horizontal = corner === "n" || corner === "s" ? viewport.width : Math.max(minWidth, Math.abs(pointer.x - anchor.x));
+  const vertical = corner === "w" || corner === "e" ? viewport.height : Math.max(minHeight, Math.abs(pointer.y - anchor.y));
+  if (options.free) {
+    return {
+      x: corner.includes("w") ? anchor.x - horizontal : anchor.x,
+      y: corner.includes("n") ? anchor.y - vertical : anchor.y,
+      width: horizontal,
+      height: vertical,
+    };
+  }
   let width = Math.max(horizontal, vertical * aspect);
   let height = width / aspect;
   if (height < minHeight) {

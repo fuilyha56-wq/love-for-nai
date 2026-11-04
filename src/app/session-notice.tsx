@@ -2,19 +2,7 @@
 
 import Link from "next/link";
 
-// 后端在会话失效时返回 sessionExpired，前端据此引导重新登录而不是只显示错误。
-export class SessionExpiredError extends Error {}
-
-export async function readJson<T>(
-  response: Response,
-  fallback: string,
-): Promise<T> {
-  const result = await response.json();
-  if (response.ok) return result as T;
-  if (response.status === 401 || result?.sessionExpired)
-    throw new SessionExpiredError(result?.message || "登录状态已过期");
-  throw new Error(result?.message || fallback);
-}
+export { readJson, SessionExpiredError } from "@/lib/client-json";
 
 export function SessionExpiredNotice({ message }: { message: string }) {
   return (

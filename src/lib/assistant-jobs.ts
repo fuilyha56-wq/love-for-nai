@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentStep } from "@/lib/tag-agent";
+import type { AgentStep, TagAgentCheckpoint, runTagAgent } from "@/lib/tag-agent";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import type { AssistantErrorInfo } from "@/lib/assistant-model-error";
 import type { AssistantCallUsage } from "./assistant-usage";
@@ -40,7 +40,19 @@ export type AssistantJob = {
   userId: number;
   conversationId?: string;
   createdAt: number;
-  status: "running" | "done" | "error" | "cancelled";
+  status: "running" | "done" | "error" | "cancelled" | "paused";
+  active?: boolean;
+  attempt?: number;
+  updatedAt?: number;
+  checkpoint?: TagAgentCheckpoint;
+  input?: {
+    model: string;
+    request: string;
+    providerId?: string;
+    group?: string;
+    context: Parameters<typeof runTagAgent>[3] & { reasoningEffort?: string };
+    images: string[];
+  };
   steps: AgentStep[];
   usage: AssistantCallUsage[];
   usageCheckedAt?: number;
@@ -61,7 +73,7 @@ const JOB_LIMIT = 100;
 function pruneJobs() {
   const now = Date.now();
   for (const [id, job] of jobs) {
-    if (now - job.createdAt > JOB_TTL_MS) { abortAssistantJob(job, "助手任务已过期"); jobs.delete(id); }
+    if (now - (job.updatedAt ?? job.createdAt) > JOB_TTL_MS) { abortAssistantJob(job, "助手任务已过期"); jobs.delete(id); }
   }
   while (jobs.size >= JOB_LIMIT) {
     const oldest = [...jobs.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
@@ -93,7 +105,7 @@ export function findAssistantJob(
 ): AssistantJob | null {
   const job = jobs.get(id);
   if (!job || job.userId !== userId) return null;
-  if (Date.now() - job.createdAt > JOB_TTL_MS) {
+  if (Date.now() - (job.updatedAt ?? job.createdAt) > JOB_TTL_MS) {
     abortAssistantJob(job, "助手任务已过期"); jobs.delete(id); return null;
   }
   return job;
@@ -107,6 +119,27 @@ export function assistantJobSignal(job: AssistantJob): AbortSignal {
   if (!controller) { controller = new AbortController(); jobControllers.set(job, controller); }
   return controller.signal;
 }
+export function canResumeAssistantJob(job: AssistantJob): boolean {
+  return Boolean(job.input && job.checkpoint && !job.active && !job.error && ["paused", "cancelled", "error"].includes(job.status));
+}
+
+export function beginAssistantJob(job: AssistantJob): boolean {
+  if (job.active) return false;
+  job.active = true;
+  job.attempt = (job.attempt ?? 0) + 1;
+  job.status = "running";
+  job.updatedAt = Date.now();
+  job.message = undefined;
+  jobControllers.set(job, new AbortController());
+  return true;
+}
+
+export function finishAssistantJob(job: AssistantJob): void {
+  job.active = false;
+  job.updatedAt = Date.now();
+  if (job.status === "done") { delete job.checkpoint; delete job.input; }
+}
+
 function abortAssistantJob(job: AssistantJob, message: string) {
   if (job.status !== "running") return;
   assistantJobSignal(job);
@@ -124,7 +157,10 @@ export function cancelAssistantJob(userId: number, id: string): boolean {
 export function cancelConversationJobs(userId: number, conversationId: string): number {
   let cancelled = 0;
   for (const job of jobs.values()) {
-    if (job.userId === userId && (job.conversationId || "default") === conversationId && job.status === "running") { abortAssistantJob(job, "会话已关闭或清空"); cancelled++; }
+    if (job.userId !== userId || (job.conversationId || "default") !== conversationId) continue;
+    if (job.status === "running") { abortAssistantJob(job, "会话已关闭或清空"); cancelled++; }
+    delete job.input;
+    delete job.checkpoint;
   }
   return cancelled;
 }

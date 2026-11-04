@@ -46,6 +46,26 @@ export type AgentStep = {
   summary?: string;
 };
 
+type PendingTool = { id?: string; name: string; arguments: string };
+export type TagAgentCheckpoint = {
+  messages?: Message[];
+  steps?: AgentStep[];
+  pendingTools?: PendingTool[];
+  protocol?: { native: boolean; parallel?: boolean };
+  catalogRecoveryAttempted?: boolean;
+  quickCandidates?: Array<{ codexId: string; entryId: string; title: unknown }>;
+  quickReadCompleted?: boolean;
+  quickReadReminderSent?: boolean;
+  partialContent?: string;
+  completedContent?: string;
+};
+export class AssistantPausedError extends Error {
+  constructor(message = "本次工具预算已用完，进度已保留，请点击继续从断点执行。") {
+    super(message);
+    this.name = "AssistantPausedError";
+  }
+}
+
 // Prefer native tool calls. Keep JSON actions for compatible text-only upstreams.
 const SYSTEM_PROMPT = `你是 NovelAI 提示词 agent。目标是把用户需求转成经 Danbooru 验证的英文标签。
 
@@ -91,7 +111,7 @@ async function callModel(
   onUsage?: (usage: AssistantCallUsage) => void,
   wikipediaEnabled = true,
   externalEnabled = true,
-): Promise<{ content: string; toolCalls: NativeToolCall[]; replay: Message }> {
+): Promise<{ content: string; toolCalls: NativeToolCall[]; replay: Message; truncated?: boolean }> {
   const response = await fetchAssistantModel(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: {
@@ -129,9 +149,12 @@ async function callModel(
       throw new Error("助手上游拒绝了对话或工具消息格式（prompt / tool context）。本次建议未应用，请刷新模型列表后重试；若持续出现，请检查上游模型的工具调用兼容性。");
     throw new Error(result.error?.message || "模型助手调用失败");
   }
-  if (result.choices?.[0]?.finish_reason === "length")
-    throw new Error("助手输出达到模型长度上限，结果不完整，本次建议未应用。请减少本轮任务范围后重试。");
+  const truncated = result.choices?.[0]?.finish_reason === "length";
   const message = result.choices?.[0]?.message;
+  if (truncated) {
+    const content = typeof message?.content === "string" ? message.content : "";
+    return { content, toolCalls: [], replay: { role: "assistant", content }, truncated: true };
+  }
   const toolCalls = message?.tool_calls || [];
   if (toolCalls.some((call) => !call.id || call.type !== "function" || !call.function?.name || typeof call.function.arguments !== "string"))
     throw new Error("上游模型返回了不完整的工具调用，请检查该模型的工具支持。");
@@ -224,6 +247,7 @@ export async function runTagAgent(
   context: { currentPrompt?: string; currentNegativePrompt?: string; localTags?: string[]; creativeMemory?: AssistantCreativeMemory[]; allowWikipedia?: boolean; allowExternalTools?: boolean } & AssistantImageContext,
   maxRounds = 8,
   options?: {
+    checkpoint?: TagAgentCheckpoint;
     onStep?: (step: AgentStep) => void;
     onUsage?: (usage: AssistantCallUsage) => void;
     // 兼容旧调用方的单图字段；新调用方可传最多 4 张图。
@@ -303,19 +327,28 @@ export async function runTagAgent(
       ]
     : requestText;
   messages.push({ role: "user", content: currentContent });
-  const steps: AgentStep[] = [];
-  let catalogRecoveryAttempted = false;
-  let quickCandidates: Array<{ codexId: string; entryId: string; title: unknown }> = [];
-  let quickReadCompleted = false;
-  let quickReadReminderSent = false;
+  const checkpoint = options?.checkpoint ?? {};
+  if (checkpoint.messages) messages.splice(0, messages.length, ...checkpoint.messages);
+  else checkpoint.messages = messages;
+  // Keep the exact transcript object across invocations, including tool-call IDs.
+  checkpoint.messages = messages;
+  const steps = checkpoint.steps ??= [];
+  if (checkpoint.completedContent) return { content: checkpoint.completedContent, steps };
+  const toolLimit = steps.length + maxRounds;
+  let catalogRecoveryAttempted = checkpoint.catalogRecoveryAttempted ?? false;
+  let quickCandidates = checkpoint.quickCandidates ?? [];
+  let quickReadCompleted = checkpoint.quickReadCompleted ?? false;
+  let quickReadReminderSent = checkpoint.quickReadReminderSent ?? false;
+  const save = () => {
+    Object.assign(checkpoint, { catalogRecoveryAttempted, quickCandidates, quickReadCompleted, quickReadReminderSent });
+  };
   const researchRequest = [userRequest, context.goalMode ? context.goal : ""].filter(Boolean).join("\n");
   const researchRequired = requestsCatalogResearch(researchRequest);
   // Newer GPT reasoning models do not support Chat Completions function calls.
   // Use the existing JSON action/tool-result protocol while retaining reasoning.
-  const protocol = { native: !assistantReasoningProfile(model).responses };
+  const protocol = checkpoint.protocol ??= { native: !assistantReasoningProfile(model).responses };
 
   const recordStep = (name: string, args: Record<string, unknown>, result: { ok: boolean; data: unknown }) => {
-    options?.signal?.throwIfAborted();
     const step: AgentStep = {
       tool: name,
       query: String(
@@ -355,37 +388,70 @@ export async function runTagAgent(
       ? { truncated: true, note: "工具内容过长，以下仅为节选；需要时请缩小查询或读取指定词条。", excerpt: serialized.slice(0, 12_000) }
       : result.data;
     return JSON.stringify({
-    tool: name, ok: result.ok, result: bounded, remainingToolCalls: Math.max(0, maxRounds - steps.length),
+    tool: name, ok: result.ok, result: bounded, remainingToolCalls: Math.max(0, toolLimit - steps.length),
     ...(quickCandidates.length && !quickReadCompleted ? { nextStep: "QuickTagCloud 已有候选，下一步选择相关 entryId 读取完整原文。搜索摘要不等于已读原文。" } : {}),
     });
   };
 
-  for (let round = 0; round < maxRounds && steps.length < maxRounds; round += 1) {
+  const drainTools = async () => {
+    while (checkpoint.pendingTools?.length) {
+      options?.signal?.throwIfAborted();
+      if (steps.length >= toolLimit) { save(); throw new AssistantPausedError(); }
+      const call = checkpoint.pendingTools[0];
+      let args: Record<string, unknown> = {};
+      let result: { ok: boolean; data: unknown };
+      try {
+        const parsed: unknown = JSON.parse(call.arguments);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("工具参数必须是对象");
+        args = parsed as Record<string, unknown>;
+        result = await runTool(call.name, args, toolOptions);
+        if (!result.ok) options?.signal?.throwIfAborted();
+      } catch (error) {
+        if (options?.signal?.aborted) throw error;
+        result = { ok: false, data: error instanceof Error ? error.message : "工具执行失败" };
+      }
+      trackResult(call.name, args, result);
+      messages.push(call.id
+        ? { role: "tool", tool_call_id: call.id, name: call.name, content: toolPayload(call.name, result) }
+        : { role: "user", content: toolPayload(call.name, result) });
+      checkpoint.pendingTools.shift();
+      save();
+      options?.signal?.throwIfAborted();
+    }
+  };
+  const checkpointReply = (reply: Awaited<ReturnType<typeof callModel>>) => {
+    if (reply.truncated) {
+      if (reply.content) {
+        checkpoint.partialContent = (checkpoint.partialContent || "") + reply.content;
+        messages.push(reply.replay);
+        messages.push({ role: "user", content: "上一条输出被长度限制截断。请从中断位置继续剩余 JSON，不重复已经输出的内容，不重新开始任务或工具检索。" });
+      }
+      save();
+      throw new AssistantPausedError("助手输出达到长度上限，结果不完整，已保留未完成内容，请点击继续。");
+    }
+    let content = reply.content;
+    if (checkpoint.partialContent) {
+      if (parseDecision(content).kind !== "final") content = checkpoint.partialContent + content;
+      checkpoint.partialContent = undefined;
+    }
+    return content;
+  };
+  await drainTools();
+  for (let round = 0; round < maxRounds && steps.length < toolLimit; round += 1) {
+    options?.signal?.throwIfAborted();
     const reply = await callModel(baseUrl, auth, model, messages, options?.signal, researchRequired && !steps.length ? "required" : "auto", protocol, options?.onUsage, wikipediaEnabled, externalEnabled);
-    const { content } = reply;
+    const content = checkpointReply(reply);
     if (reply.toolCalls.length) {
       messages.push(reply.replay);
-      for (const call of reply.toolCalls) {
-        let args: Record<string, unknown> = {};
-        let result: { ok: boolean; data: unknown };
-        try {
-          const parsed: unknown = JSON.parse(call.function.arguments);
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("工具参数必须是对象");
-          args = parsed as Record<string, unknown>;
-          result = steps.length >= maxRounds ? { ok: false, data: "工具预算已耗尽，请根据已有结果回答。" } : await runTool(call.function.name, args, toolOptions);
-        } catch (error) {
-          result = { ok: false, data: error instanceof Error ? error.message : "工具执行失败" };
-        }
-        if (steps.length < maxRounds) trackResult(call.function.name, args, result);
-        // Gemini converters need both the call ID and function name, including on errors.
-        messages.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: toolPayload(call.function.name, result) });
-      }
+      checkpoint.pendingTools = reply.toolCalls.map(call => ({ id: call.id, name: call.function.name, arguments: call.function.arguments }));
+      await drainTools();
       continue;
     }
     const decision = parseDecision(content);
     if (decision.kind === "final") {
       if (quickCandidates.length && !quickReadCompleted && !quickReadReminderSent && round < maxRounds - 1) {
         quickReadReminderSent = true;
+        save();
         messages.push({ role: "assistant", content });
         messages.push({ role: "user", content: JSON.stringify({
           instruction: "你只搜索了在线 QuickTagCloud 候选，尚未读取任何完整词条。先从相关候选选择一个调用 read_quicktagcloud_entry，读取成功后才能解释完整组合或声称已读原文。若均不相关，明确说明，不能编造完整介绍。",
@@ -394,34 +460,32 @@ export async function runTagAgent(
         }) });
         continue;
       }
-      if (quickCandidates.length && !quickReadCompleted)
-        throw new Error("已在线检索到 QuickTagCloud 候选，但尚未读取完整词条，任务已暂停。请缩小到一个概念或指定一个目录后重试；本次建议未应用。");
+      if (quickCandidates.length && !quickReadCompleted) {
+        save();
+        throw new AssistantPausedError("已在线检索到 QuickTagCloud 候选，但尚未读取完整词条，进度已保留，请点击继续。");
+      }
       if (!steps.length && !catalogRecoveryAttempted && researchRequired) {
         catalogRecoveryAttempted = true;
+        save();
         const localRequested = /数据库|本地|\bcatalog\b/i.test(userRequest) && !/在线|实时|联网|\bonline\b/i.test(userRequest);
         const queries = localRequested ? explicitCatalogQueries(userRequest, context.currentPrompt) : [];
         if (queries.length) {
           const searchArgs = { queries };
           const searchResult = await runTool("search_tag_catalog", searchArgs, toolOptions);
+          if (!searchResult.ok) options?.signal?.throwIfAborted();
           recordStep("search_tag_catalog", searchArgs, searchResult);
           const keys = exactCatalogKeys(searchResult.data, queries);
-          const toolResults: Array<{ name: string; result: { ok: boolean; data: unknown } }> = [
-            { name: "search_tag_catalog", result: searchResult },
-          ];
-          if (keys.length) {
-            const readArgs = { keys };
-            const readResult = await runTool("read_tag_catalog", readArgs, toolOptions);
-            recordStep("read_tag_catalog", readArgs, readResult);
-            toolResults.push({ name: "read_tag_catalog", result: readResult });
-          }
           messages.push({ role: "assistant", content });
           messages.push({
             role: "user",
             content: JSON.stringify({
               instruction: "服务器已按当前请求实际查询标签数据库。依据下面的工具结果修正上一条答复；明确区分已命中、未命中和来源没有独立介绍的标签，不要再声称工具不可用。",
-              tools: toolResults.map(({ name, result }) => ({ name, ok: result.ok, result: result.data })),
+              tools: [{ name: "search_tag_catalog", ok: searchResult.ok, result: searchResult.data }],
             }),
           });
+          if (keys.length) checkpoint.pendingTools = [{ name: "read_tag_catalog", arguments: JSON.stringify({ keys }) }];
+          save();
+          await drainTools();
           continue;
         }
         messages.push({ role: "assistant", content });
@@ -433,6 +497,8 @@ export async function runTagAgent(
       }
       if (researchRequired && !steps.length)
         throw new Error("该模型未执行本轮要求的检索工具，不能把文字中的‘已查询’当成真实来源。本次未应用建议，请使用支持工具调用的对话模型。");
+      checkpoint.completedContent = decision.content;
+      save();
       return { content: decision.content, steps };
     }
 
@@ -445,16 +511,14 @@ export async function runTagAgent(
       continue;
     }
 
-    const result = await runTool(decision.name, decision.args, toolOptions);
-    trackResult(decision.name, decision.args, result);
-    messages.push({
-      role: "user",
-      content: toolPayload(decision.name, result),
-    });
+    checkpoint.pendingTools = [{ name: decision.name, arguments: JSON.stringify(decision.args) }];
+    await drainTools();
   }
 
+  save();
   if (quickCandidates.length && !quickReadCompleted)
-    throw new Error("在线 QuickTagCloud 检索已达到工具预算，但尚未读取完整词条，任务已暂停。请缩小到一个概念或指定一个目录后重试；本次建议未应用。");
+    throw new AssistantPausedError("在线 QuickTagCloud 检索已达到工具预算，但尚未读取完整词条，进度已保留，请点击继续。");
+  if (options?.checkpoint) throw new AssistantPausedError();
   if (researchRequired && !steps.length)
     throw new Error("该模型未执行检索工具，未生成未经核实的查询结论。");
   // 轮次用尽时收口，要求模型基于已有工具结果直接给出 JSON。
@@ -466,6 +530,7 @@ export async function runTagAgent(
   });
   const final = await callModel(baseUrl, auth, model, messages, options?.signal, "none", protocol, options?.onUsage, wikipediaEnabled, externalEnabled);
   if (final.toolCalls.length) throw new Error("工具预算已用尽，但模型没有返回最终建议；本次建议未应用。");
+  checkpointReply(final);
   const decision = parseDecision(final.content);
   return {
     content: decision.kind === "final" ? decision.content : final.content,

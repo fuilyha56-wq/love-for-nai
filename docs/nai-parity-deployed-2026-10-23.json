@@ -3,7 +3,7 @@
   "approved": true,
   "applied": true,
   "startedAt": "20261023013643",
-  "backupDirectory": "/home/ikun/love-for-nai-deploy/.release-backups/nai-parity-20261023-r1-20261023013643",
+  "backupDirectory": "${HOME}/love-for-nai-deploy/.release-backups/nai-parity-20261023-r1-20261023013643",
   "previousLfnImage": "love-for-nai:nai-official-20261022-r1",
   "gatewayFiles": [
     {

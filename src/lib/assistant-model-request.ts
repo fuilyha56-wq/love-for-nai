@@ -28,10 +28,21 @@ export async function fetchAssistantModel(
       init = { ...init, body: JSON.stringify({ ...body, ...assistantReasoningParams(body.model, requested) }) };
     }
   }
-  const send = () => {
+  const send = async () => {
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${auth.key}`);
-    return auth.transport ? auth.transport({ ...init, headers }) : fetchWithModelConcurrency(url, { ...init, headers });
+    try {
+      return await (auth.transport ? auth.transport({ ...init, headers }) : fetchWithModelConcurrency(url, { ...init, headers }));
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+      if (error instanceof TypeError && /fetch failed|failed to fetch/i.test(error.message)) {
+        const cause = error.cause as { code?: unknown } | undefined;
+        const code = typeof cause?.code === "string" && /^[A-Z0-9_]+$/.test(cause.code) ? cause.code : "NETWORK_ERROR";
+        console.error("[assistant] model connection failed", { host: new URL(url).hostname, code });
+        throw new Error(`无法连接助手模型服务（${code}），请检查模型来源或联系管理员。为避免重复计费，本次请求未自动重试。`, { cause: error });
+      }
+      throw error;
+    }
   };
   const response = await send();
   if (

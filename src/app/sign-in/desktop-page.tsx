@@ -11,6 +11,7 @@ import CachedImage from "@/app/cached-image";
 import { useAuthOptions, type AuthMode as Mode } from "@/app/sign-in/use-auth-options";
 import { RegistrationFields } from "@/app/sign-in/registration-fields";
 import type { RegistrationMethod } from "@/lib/auth-policy";
+import { useRequestCooldown } from "@/app/ui/use-request-cooldown";
 type GalleryBackground = { imageUrl: string; thumbnailUrl?: string; title: string };
 type AuthResult = {
   message?: string;
@@ -20,7 +21,7 @@ type AuthResult = {
   twoFactorRequired?: boolean;
 };
 
-async function readAuthResult(response: Response): Promise<AuthResult> {
+async function parseAuthResult(response: Response): Promise<AuthResult> {
   const body = await response.text();
   if (!body) throw new Error("服务器返回了空响应");
   try {
@@ -72,6 +73,8 @@ export default function SignInPage() {
   const router = useRouter();
   const { preferences: appearancePreferences, backgroundUrl } = useAppearance();
   const authOptions = useAuthOptions();
+  const cooldown = useRequestCooldown();
+  async function readAuthResult(response: Response) { cooldown.observe(response); return parseAuthResult(response); }
   const [selectedMode, setMode] = useState<Mode>("password");
   const [selectedRegistrationMethod, setRegistrationMethod] = useState<RegistrationMethod>("email");
   const mode = authOptions.modes.some(([value]) => value === selectedMode) ? selectedMode : authOptions.modes[0]?.[0];
@@ -158,6 +161,7 @@ export default function SignInPage() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading || cooldown.remaining > 0) return;
     setLoading(true);
     setError("");
     const form = new FormData(event.currentTarget);
@@ -187,6 +191,7 @@ export default function SignInPage() {
 
   async function submitToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading || cooldown.remaining > 0) return;
     setLoading(true);
     setError("");
     try {
@@ -208,7 +213,7 @@ export default function SignInPage() {
   }
 
   async function sendCode() {
-    if (sendingCode) return;
+    if (sendingCode || cooldown.remaining > 0) return;
     setSendingCode(true);
     setError("");
     setInfo("");
@@ -230,6 +235,7 @@ export default function SignInPage() {
 
   async function submitRegister(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading || cooldown.remaining > 0) return;
     setLoading(true);
     setError("");
     setInfo("");
@@ -272,6 +278,7 @@ export default function SignInPage() {
 
   async function verify(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (loading || cooldown.remaining > 0) return;
     setLoading(true);
     setError("");
     try {
@@ -294,6 +301,7 @@ export default function SignInPage() {
 
   const notices = (
     <>
+      {cooldown.remaining > 0 && <p role="status" className="mt-3 text-sm text-[var(--muted)]">请求过于频繁，请等待 {cooldown.remaining} 秒后再试，无需反复点击。</p>}
       {error && (
         <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
@@ -403,7 +411,7 @@ export default function SignInPage() {
               </label>
               {notices}
               <button
-                disabled={loading}
+                disabled={loading || cooldown.remaining > 0}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
               >
                 {loading ? (
@@ -452,7 +460,7 @@ export default function SignInPage() {
                 保持登录 30 天
               </label>
               <button
-                disabled={loading}
+                disabled={loading || cooldown.remaining > 0}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
               >
                 {loading ? (
@@ -466,10 +474,10 @@ export default function SignInPage() {
             </form>
           ) : mode === "register" ? (
             <form className="mt-6 space-y-5" onSubmit={submitRegister}>
-              {authOptions.policy && <RegistrationFields policy={authOptions.policy} provider={authOptions.provider} methods={authOptions.methods} method={registrationMethod} onMethodChange={(value) => { setRegistrationMethod(value); setEmailCode(""); setError(""); setInfo(""); }} email={email} onEmailChange={setEmail} emailCode={emailCode} onEmailCodeChange={setEmailCode} inviteCode={inviteCode} onInviteCodeChange={setInviteCode} sendCode={sendCode} sendingCode={sendingCode} />}
+              {authOptions.policy && <RegistrationFields policy={authOptions.policy} provider={authOptions.provider} methods={authOptions.methods} method={registrationMethod} onMethodChange={(value) => { setRegistrationMethod(value); setEmailCode(""); setError(""); setInfo(""); }} email={email} onEmailChange={setEmail} emailCode={emailCode} onEmailCodeChange={setEmailCode} inviteCode={inviteCode} onInviteCodeChange={setInviteCode} sendCode={sendCode} sendingCode={sendingCode || cooldown.remaining > 0} />}
               {notices}
               <button
-                disabled={loading}
+                disabled={loading || cooldown.remaining > 0}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
               >
                 {loading ? (
@@ -523,7 +531,7 @@ export default function SignInPage() {
                 保持登录 30 天
               </label>
               <button
-                disabled={loading}
+                disabled={loading || cooldown.remaining > 0}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-md bg-[var(--rose)] font-semibold text-white hover:bg-[var(--rose-dark)] disabled:opacity-60"
               >
                 {loading ? (

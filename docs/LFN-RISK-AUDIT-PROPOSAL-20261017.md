@@ -2,7 +2,7 @@
 
 日期：2026-10-17。状态：设计提案，尚未实现或部署。依据为当前工作区代码静态检查，未核验线上配置、线上记录或真实用户行为。
 
-策略强度和实施优先级已由 [高强度账号安全与反中转方案 V2](E:/love-for-nai/docs/LFN-ACCOUNT-SECURITY-RISK-V2-20261017.md) 更新；本篇继续作为 IP 去重、地址信任、范围查询及链路结算的基础说明。
+策略强度和实施优先级已由 [高强度账号安全与反中转方案 V2](${WORKSPACE_ROOT}/love-for-nai/docs/LFN-ACCOUNT-SECURITY-RISK-V2-20261017.md) 更新；本篇继续作为 IP 去重、地址信任、范围查询及链路结算的基础说明。
 
 目标：同一账号重复使用同一 IP 时，IP 历史始终只显示一行；管理员能按地址范围和业务范围审核；对站内操作、外部 API、代理调用及上下游转接执行一致且可追溯的封控。
 
@@ -235,15 +235,15 @@ PostgreSQL 保存主体、IP 关系、案件、限制、操作日志与结算关
 
 **代码定位**
 
-- [IP 证据与地址解析](E:/love-for-nai/src/lib/risk-ip.ts)
-- [用户 IP 聚合](E:/love-for-nai/src/lib/user-ip-history.ts)
-- [会话读取与 IP 采集](E:/love-for-nai/src/lib/session.ts)
-- [请求审计](E:/love-for-nai/src/lib/request-audit.ts)
-- [风控规则](E:/love-for-nai/src/lib/risk-control.ts)
-- [外部与原生转发](E:/love-for-nai/src/lib/compat-api.ts)
-- [现有封禁动作](E:/love-for-nai/src/app/api/admin/risk/users/[id]/action/route.ts)
-- [LFN 边缘 Nginx](E:/love-for-nai/deploy/nginx-lfn.conf)
-- [个人供应商出站防护](E:/love-for-nai/src/lib/provider/http.ts)
-- [Gateway 转发头处理](E:/novelai-gateway/src/proxy/forwarder.py)
+- [IP 证据与地址解析](${WORKSPACE_ROOT}/love-for-nai/src/lib/risk-ip.ts)
+- [用户 IP 聚合](${WORKSPACE_ROOT}/love-for-nai/src/lib/user-ip-history.ts)
+- [会话读取与 IP 采集](${WORKSPACE_ROOT}/love-for-nai/src/lib/session.ts)
+- [请求审计](${WORKSPACE_ROOT}/love-for-nai/src/lib/request-audit.ts)
+- [风控规则](${WORKSPACE_ROOT}/love-for-nai/src/lib/risk-control.ts)
+- [外部与原生转发](${WORKSPACE_ROOT}/love-for-nai/src/lib/compat-api.ts)
+- [现有封禁动作](${WORKSPACE_ROOT}/love-for-nai/src/app/api/admin/risk${HOME}/action/route.ts)
+- [LFN 边缘 Nginx](${WORKSPACE_ROOT}/love-for-nai/deploy/nginx-lfn.conf)
+- [个人供应商出站防护](${WORKSPACE_ROOT}/love-for-nai/src/lib/provider/http.ts)
+- [Gateway 转发头处理](${WORKSPACE_ROOT}/novelai-gateway/src/proxy/forwarder.py)
 
 数据库地址类型参考：[PostgreSQL 网络地址类型](https://www.postgresql.org/docs/current/datatype-net-types.html)。

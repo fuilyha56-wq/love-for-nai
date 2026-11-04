@@ -1,6 +1,16 @@
 import { lookup } from "node:dns/promises";
 import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici";
 import { isPublicIp, validateProviderBaseUrl } from "./validation";
+import type { LookupFunction } from "node:net";
+import type { LookupAddress } from "node:dns";
+
+export function pinnedLookup(address: LookupAddress): LookupFunction {
+  return (_host, options, callback) => {
+    // Node's family autoselection requests an address array, even for one pinned IP.
+    if (options.all) callback(null, [address]);
+    else callback(null, address.address, address.family);
+  };
+}
 
 /** Resolve and pin a public address for each request so a later DNS answer cannot reach the LAN. */
 export async function safeProviderFetch(baseUrl: string, path: string, init: { method?: string; headers?: Record<string,string>; body?: string | FormData; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<Response> {
@@ -17,7 +27,7 @@ export async function safeProviderFetch(baseUrl: string, path: string, init: { m
   if (!addresses.length || addresses.some(({ address }) => !isPublicIp(address)))
     throw new Error("第三方 API 域名解析到了非公网地址");
   const chosen = addresses[0];
-  const agent = new Agent({ connect: { lookup: (_host, _options, callback) => callback(null, chosen.address, chosen.family) } });
+  const agent = new Agent({ connect: { lookup: pinnedLookup(chosen) } });
   try {
     const response = await undiciFetch(endpoint, {
       method: init.method ?? "GET",
@@ -63,7 +73,7 @@ export async function downloadProviderImage(rawUrl: string, signal?: AbortSignal
   const addresses = await lookup(hostname, { all: true, verbatim: true });
   if (!addresses.length || addresses.some(({ address }) => !isPublicIp(address))) throw new Error("上游图片地址解析到了非公网地址");
   const chosen = addresses[0];
-  const agent = new Agent({ connect: { lookup: (_host, _options, callback) => callback(null, chosen.address, chosen.family) } });
+  const agent = new Agent({ connect: { lookup: pinnedLookup(chosen) } });
   try {
     const response = await undiciFetch(endpoint, { headers: { Accept: "image/png,image/jpeg,image/webp" }, redirect: "manual", dispatcher: agent, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) });
     if (!response.ok) { await response.body?.cancel(); throw new Error(`上游图片下载失败（${response.status}）`); }

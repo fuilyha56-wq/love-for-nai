@@ -125,3 +125,19 @@ __pycache__/
 /playwright-report/
 **/known_hosts*
 /.kilo/
+
+# Local verification runners and sample uploads are not part of the public release.
+/scripts/seed-*-fixtures.cjs
+/scripts/ui-*-fixture*.cjs
+/scripts/verify-nai-*.py
+/public/tutorials/gallery-submit/source-fixture.png
+*.backup
+*.bak
+*.orig
+
+# Local release evidence and host-specific maintenance helpers stay private.
+/docs/nai-pricing-live-code-2026-10-22.json
+/scripts/activate-nai-parity-release.py
+/scripts/activate-nai-release.py
+/scripts/compact-docker-data.ps1
+/scripts/snapshot-nai-modes.py

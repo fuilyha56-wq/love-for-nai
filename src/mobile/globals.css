@@ -2130,8 +2130,11 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
 .tag-chip-weight { font-size: 10px; font-weight: 700; color: var(--rose); font-variant-numeric: tabular-nums; }
 .tag-chip-disabled-mark { font-size: 9px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 .tag-chip-menu {
-  z-index: 80;
-  min-width: 190px;
+  z-index: 30000;
+  width: 220px;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 4px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -2141,6 +2144,7 @@ html[data-theme="nai"] .nai-menu-sub .nai-menu-item { min-height: 36px; font-siz
 .tag-chip-menu-item {
   display: block;
   width: 100%;
+  min-height: 44px;
   padding: 7px 10px;
   border-radius: 6px;
   text-align: left;

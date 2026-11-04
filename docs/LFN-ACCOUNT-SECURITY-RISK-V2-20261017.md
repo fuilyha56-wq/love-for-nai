@@ -260,8 +260,8 @@ R 引擎关注：单 Key 异常多来源并发、不同客户端配置下的持�
 
 **资料与代码定位**
 
-- [前版 IP/审计基础方案](E:/love-for-nai/docs/LFN-RISK-AUDIT-PROPOSAL-20261017.md)
-- [注册入口](E:/love-for-nai/src/app/api/auth/register/route.ts)、[登录入口](E:/love-for-nai/src/app/api/auth/login/route.ts)、[令牌导入](E:/love-for-nai/src/app/api/auth/token/route.ts)、[2FA](E:/love-for-nai/src/app/api/auth/2fa/route.ts)
-- [本地账号](E:/love-for-nai/src/lib/local-users.ts)、[会话](E:/love-for-nai/src/lib/session.ts)、[限流器](E:/love-for-nai/src/lib/rate-limit.ts)
-- [风控](E:/love-for-nai/src/lib/risk-control.ts)、[IP 归属地](E:/love-for-nai/src/lib/ip-geolocation.ts)、[封禁动作](E:/love-for-nai/src/app/api/admin/risk/users/[id]/action/route.ts)
+- [前版 IP/审计基础方案](${WORKSPACE_ROOT}/love-for-nai/docs/LFN-RISK-AUDIT-PROPOSAL-20261017.md)
+- [注册入口](${WORKSPACE_ROOT}/love-for-nai/src/app/api/auth/register/route.ts)、[登录入口](${WORKSPACE_ROOT}/love-for-nai/src/app/api/auth/login/route.ts)、[令牌导入](${WORKSPACE_ROOT}/love-for-nai/src/app/api/auth/token/route.ts)、[2FA](${WORKSPACE_ROOT}/love-for-nai/src/app/api/auth/2fa/route.ts)
+- [本地账号](${WORKSPACE_ROOT}/love-for-nai/src/lib/local-users.ts)、[会话](${WORKSPACE_ROOT}/love-for-nai/src/lib/session.ts)、[限流器](${WORKSPACE_ROOT}/love-for-nai/src/lib/rate-limit.ts)
+- [风控](${WORKSPACE_ROOT}/love-for-nai/src/lib/risk-control.ts)、[IP 归属地](${WORKSPACE_ROOT}/love-for-nai/src/lib/ip-geolocation.ts)、[封禁动作](${WORKSPACE_ROOT}/love-for-nai/src/app/api/admin/risk${HOME}/action/route.ts)
 - 额度/资源约束参考 [OWASP API4](https://api-security.owasp.org/editions/2023/en/0xa4-unrestricted-resource-consumption/)，批量业务滥用参考 [OWASP API6](https://api-security.owasp.org/editions/2023/en/0xa6-unrestricted-access-to-sensitive-business-flows/)。本文具体评分、阈值及架构均为 LFN 提案，不是这些资料给出的生产参数。

@@ -1,3 +1,4 @@
+import { RateLimitError, upstreamFailureResponse } from "@/lib/upstream-request";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { isUpstreamAuthError } from "@/lib/newapi";
@@ -10,6 +11,7 @@ export async function GET() {
   try {
     return NextResponse.json(await loadAssistantCatalog(session), { headers });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     const message = error instanceof Error ? error.message : "无法读取可用模型";
     if (isUpstreamAuthError(message)) return NextResponse.json({ message: "登录状态已过期，请重新登录", sessionExpired: true }, { status: 401, headers });
     return NextResponse.json({ message }, { status: 502, headers });

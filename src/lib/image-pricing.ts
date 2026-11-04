@@ -319,14 +319,20 @@ export function upscaleBillingModel(model: string): string {
   return model === "nai-diffusion-5-full" ? "nai-v5-full" : "nai-v5-curated";
 }
 
-export function upscaleAnlasCost(width: number, height: number): number {
+/** UI callers can validate a source before invoking the strict billing quote. */
+export function upscaleSizeError(width: number, height: number): string | null {
   const pixels = width * height;
-  if (!Number.isSafeInteger(pixels) || pixels <= 0)
-    throw new Error("超分图片尺寸无效");
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width <= 0 || height <= 0 || !Number.isSafeInteger(pixels))
+    return "超分图片尺寸无效";
   if (pixels > UPSCALE_MAX_PIXELS)
-    throw new Error(
-      `图片超出超分上限：${pixels} 像素，最大 ${UPSCALE_MAX_PIXELS}（1536x2048）`,
-    );
+    return `图片超出超分上限：${pixels} 像素，最大 ${UPSCALE_MAX_PIXELS}（1536x2048）`;
+  return null;
+}
+
+export function upscaleAnlasCost(width: number, height: number): number {
+  const error = upscaleSizeError(width, height);
+  if (error) throw new Error(error);
+  const pixels = width * height;
   // 档位边界来自 NAI webui 价格表：1048576→1、1747627→2、2446678→3、3145728→4。
   if (pixels <= 1_048_576) return 1;
   if (pixels <= 1_747_627) return 2;

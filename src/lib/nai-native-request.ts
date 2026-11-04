@@ -65,9 +65,12 @@ export function isNaiMediumModel(model: string): boolean {
  * qualityToggle. Send both opt-outs so composed/custom/disabled presets survive
  * buffering and stream fallback without an extra default suffix. */
 export function naiGatewayGenerationBody(body: Record<string, unknown>): Record<string, unknown> {
+  const model = typeof body.model === "string" ? naiGatewayModel(body.model) : null;
+  const v4Infill = model && /^nai-diffusion-4-(?:full|curated-preview)$/.test(model) &&
+    ["inpainting", "edits", "outpainting"].includes(String(body.operation));
   return {
     ...body,
-    ...(typeof body.model === "string" ? { model: naiGatewayModel(body.model) } : {}),
+    ...(model ? { model: v4Infill ? modelForAction(model, "infill") : model } : {}),
     ...(body.qualityToggle === false ? { quality_tags: "" } : {}),
   };
 }
@@ -97,6 +100,8 @@ function modelForAction(model: string, action: string): string {
     return "nai-diffusion-5-full-inpainting";
   if (upstream.startsWith("nai-diffusion-4-5"))
     return "nai-diffusion-4-5-full-inpainting";
+  if (upstream === "nai-diffusion-4-curated-preview") return "nai-diffusion-4-curated-inpainting";
+  if (upstream === "nai-diffusion-4-full") return "nai-diffusion-4-full-inpainting";
   return upstream;
 }
 

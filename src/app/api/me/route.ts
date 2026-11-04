@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { fetchNewApiSelf } from "@/lib/shared-user-self";
+import { readUpstreamJson, RateLimitError } from "@/lib/upstream-request";
 import { findLocalUserById, updateLocalUser } from "@/lib/local-users";
-import { authProviderId } from "@/lib/platform";
+import { resolvedAuthProviderId } from "@/lib/platform";
 import {
   invalidJsonResponse,
   optionalString,
@@ -12,7 +14,16 @@ import {
 export async function GET() {
   const session = await getSession();
   if (!session) return NextResponse.json({ authenticated: false });
-  if (authProviderId() === "local") {
+  if (session.upstreamRetryAt && session.upstreamRetryAt > Date.now()) {
+    return NextResponse.json({
+      authenticated: true,
+      upstreamUnavailable: true,
+      retryAfter: Math.max(1, Math.ceil((session.upstreamRetryAt - Date.now()) / 1000)),
+      message: "账号服务暂时繁忙，登录身份已保留，请稍后重试。",
+      user: { id: session.userId, username: session.username, displayName: session.displayName, name: session.displayName, email: "", group: "未知", balance: null },
+    }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (await resolvedAuthProviderId() === "local") {
     const user = await findLocalUserById(session.userId);
     if (!user) return NextResponse.json({ authenticated: false }, { status: 401 });
     return NextResponse.json({
@@ -29,13 +40,11 @@ export async function GET() {
     });
   }
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
-      headers: userHeaders(session),
-      cache: "no-store",
-    });
-    const result = await upstream.json();
-    if (!result.success)
-      return NextResponse.json({ authenticated: false }, { status: 401 });
+    const upstream = await fetchNewApiSelf(await resolvedNewApiBaseUrl(), userHeaders(session));
+    if (upstream.status === 401 || upstream.status === 403)
+      return NextResponse.json({ authenticated: false, sessionExpired: true }, { status: 401 });
+    const result = await readUpstreamJson<{ success?: boolean; data?: { user?: Record<string, unknown> } & Record<string, unknown> }>(upstream, "读取账号资料");
+    if (!upstream.ok || result.success !== true || !result.data) throw new Error("账号资料暂不可读");
     const user = result.data?.user ?? result.data;
     return NextResponse.json({
       authenticated: true,
@@ -51,9 +60,12 @@ export async function GET() {
           Number(process.env.QUOTA_PER_UNIT || 500000),
       },
     });
-  } catch {
+  } catch (error) {
     return NextResponse.json({
       authenticated: true,
+      upstreamUnavailable: true,
+      message: "账号服务暂时繁忙，登录身份已保留，请稍后重试。",
+      ...(error instanceof RateLimitError ? { retryAfter: error.retryAfter } : {}),
       user: {
         id: session.userId,
         username: session.username,
@@ -93,14 +105,14 @@ export async function PUT(request: Request) {
       { status: 400 },
     );
   try {
-    if (authProviderId() === "local") {
+    if (await resolvedAuthProviderId() === "local") {
       const user = await updateLocalUser(session.userId, {
         displayName,
         username: username || undefined,
       });
       return NextResponse.json({ success: true, user: { id: user.id, username: user.username, displayName: user.displayName } });
     }
-    const upstream = await fetch(`${newApiBaseUrl()}/api/user/self`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
       method: "PUT",
       headers: userHeaders(session),
       body: JSON.stringify({

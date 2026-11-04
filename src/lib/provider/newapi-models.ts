@@ -2,6 +2,8 @@ import { resolvedNewApiBaseUrl, userHeaders, type Session } from "@/lib/newapi";
 import { isKnownImageModel } from "@/lib/image-model-capabilities";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { safeUpstreamMessage } from "@/lib/upstream-error";
+import { cachedUpstreamRead } from "@/lib/upstream-read-cache";
+import { readUpstreamJson } from "@/lib/upstream-request";
 
 export type AvailableModel = { id: string; kind: "图像模型" | "助手模型"; groups?: string[] };
 
@@ -33,15 +35,15 @@ export async function loadNewApiModels(session: Session, includeGroups = false):
   const base = await resolvedNewApiBaseUrl();
   const headers = userHeaders(session);
   const privacy = { secrets: [session.accessToken || "", session.systemToken || "", session.upstreamCookie || ""], urls: [base], fallback: "无法读取可用模型" };
-  const response = await fetch(`${base}/api/user/models`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) }).catch((error) => { throw new Error(safeUpstreamMessage(error, privacy)); });
-  const payload = await response.json().catch(() => { throw new Error("模型列表返回格式无效，请稍后重试"); }) as { success?: boolean; message?: string; data?: unknown };
+  const response = await cachedUpstreamRead(`${base}/api/user/models`, headers, 30_000).catch((error) => { throw new Error(safeUpstreamMessage(error, privacy)); });
+  const payload = await readUpstreamJson<{ success?: boolean; message?: string; data?: unknown }>(response, "读取模型列表");
   if (!response.ok || payload.success === false) throw new Error(safeUpstreamMessage(payload.message, privacy));
   const models = new Map<string, boolean>();
   inspect(payload.data ?? payload, models);
   const groups = new Map<string, string[]>();
   // NewAPI pricing provides the actual Draw-channel grouping when /api/user/models only lists IDs.
   try {
-    const pricing = await fetch(`${base}/api/pricing`, { headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
+    const pricing = await cachedUpstreamRead(`${base}/api/pricing`, headers, 30_000);
     if (pricing.ok) {
       const result = await pricing.json() as { data?: Array<{ model_name?: string; enable_groups?: string[] }> };
       for (const entry of result.data ?? []) {

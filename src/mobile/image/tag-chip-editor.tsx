@@ -1,8 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { renderPromptWeight as renderWeighted, stepPromptWeight } from "@/lib/prompt-weight";
 import { loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, type PromptCompletion } from "@/lib/prompt-completion";
+import { placeTextMenu, readTextMenuViewport } from "@/mobile/ui/text-menu-placement";
+import { observePromptOverlay } from "./prompt-overlay";
 
 // Tag 模式胶囊编辑器（移植 Aaalice TagEditorView/tag_editor_commands，MIT）：
 // 提示词解析为 tag 胶囊（识别 {}/[] 权重层数、数字 ::权重::、/*disabled:*/
@@ -297,13 +300,45 @@ export function TagChipEditor({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const place = () => {
+      const node = menuRef.current;
+      if (!node) return;
+      const viewport = readTextMenuViewport();
+      node.style.maxWidth = Math.max(0, viewport.width - 16) + "px";
+      const placement = placeTextMenu(menu, {
+        width: node.getBoundingClientRect().width, height: node.scrollHeight + 2,
+      }, viewport);
+      node.style.left = placement.left + "px";
+      node.style.top = placement.top + "px";
+      node.style.maxHeight = placement.maxHeight + "px";
+      node.style.visibility = "visible";
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    if (menuRef.current) observer.observe(menuRef.current);
+    const stopObserving = observePromptOverlay(place);
+    return () => { observer.disconnect(); stopObserving(); };
+  }, [menu]);
+
   useEffect(() => {
     if (!menu) return;
-    const close = (event: MouseEvent) => {
+    const close = (event: PointerEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenu(null);
     };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMenu(null);
+    };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", escape, true);
+    return () => {
+      document.removeEventListener("pointerdown", close);
+      document.removeEventListener("keydown", escape, true);
+    };
   }, [menu]);
 
   const validSelected = selected.filter((start) =>
@@ -501,13 +536,14 @@ export function TagChipEditor({
         单击选中，Ctrl 加减选，Shift 范围选，双击改词，拖拽排序，右键调权重/禁用/词库菜单。
       </p>
       {notice && <p className="mt-1 text-[10px] text-[var(--rose)]">{notice}</p>}
-      {menu && (
+      {menu && createPortal(
         <div
           ref={menuRef}
           data-replica-menu
           className="tag-chip-menu"
-          style={{ position: "fixed", left: menu.x, top: menu.y }}
+          style={{ position: "fixed", visibility: "hidden" }}
           role="menu"
+          aria-label="标签操作"
         >
           {menuItems.map((item) => (
             <button
@@ -524,7 +560,7 @@ export function TagChipEditor({
               {item.label}
             </button>
           ))}
-        </div>
+        </div>, document.body,
       )}
     </div>
   );

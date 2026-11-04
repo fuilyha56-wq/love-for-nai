@@ -4,8 +4,10 @@ import {
   resolvedPendingCookie,
   resolvedSessionCookie,
 } from "@/lib/session";
-import { resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { resolvedNewApiBaseUrl, invalidateUserTokenCache } from "@/lib/newapi";
+import { upstreamClientHeaders } from "@/lib/upstream-request";
 import type { LfnSession } from "@/lib/session";
+import { forgetUpstreamSession } from "@/lib/upstream-session";
 
 // 撤销上游 NewAPI 登录会话（POST /api/user/auth/logout）。
 // 上游按 Bearer access_token 优先、refresh cookie 兜底的顺序撤销；
@@ -21,6 +23,7 @@ async function revokeUpstreamSession(session: LfnSession | null): Promise<void> 
     await fetch(`${await resolvedNewApiBaseUrl()}/api/user/auth/logout`, {
       method: "POST",
       headers: {
+        ...await upstreamClientHeaders(),
         "New-Api-User": String(session.userId),
         ...(session.upstreamCookie ? { Cookie: session.upstreamCookie } : {}),
         ...(session.accessToken
@@ -38,6 +41,10 @@ async function revokeUpstreamSession(session: LfnSession | null): Promise<void> 
 export async function POST() {
   const session = await getSession();
   await revokeUpstreamSession(session);
+  if (session) {
+    await invalidateUserTokenCache(session);
+    await forgetUpstreamSession(session);
+  }
   const response = NextResponse.json({ success: true });
   const [sessionCookie, pendingCookie] = await Promise.all([
     resolvedSessionCookie(),

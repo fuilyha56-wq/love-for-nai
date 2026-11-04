@@ -47,8 +47,8 @@ Tablet/Scroll/Opus 月费分别为 $10/$15/$25，附带订阅 Anlas 分别为 10
 - Gateway 正式 `tests/`：135 项通过，16 个子用例通过。根目录手工 `_direct_test.py` 会阻断无路径的 pytest 收集；不是正式测试集。
 - LFN Medium、三类扣费和退款定向测试通过。生产构建与 TypeScript 通过。全量首次 587 项中有 10 项失败，其中 8 项是已修正的旧 8-token 价格断言，另外 2 项是既有历史接口返回字段契约差异。
 - 本机 Edge 已提交一次 Medium 512²/14 步请求，服务端保存历史 `327e9ba6-0099-470c-98d4-93243d2fe987`，图包 7370→7369，个人 AFF 220 未变。浏览器停在预览后暴露 SSE 等待 EOF 的问题，已补模拟连接不关闭/取消不返回的回归测试和完成事件收尾修复；最终浏览器展示仍需发布后复验。
-- NewAPI 配置备份：`/home/ikun/newapi-backups/newapi-medium-20261010-072643.sql.gz`，权限 600。不要整库覆盖恢复，以免覆盖之后的其他管理员修改；回退仅删除本次两个 Medium 的 ModelPrice、渠道 115 模型名和对应 abilities，再重载 new-api。
-- Gateway 文件回退目录：`/home/ikun/novelai-gateway/backups/medium-20261010-0748/`。恢复其中 `openai.py`、`app.py`、`models.toml` 到原路径并重启 Gateway。
+- NewAPI 配置备份：`${HOME}/newapi-backups/newapi-medium-20261010-072643.sql.gz`，权限 600。不要整库覆盖恢复，以免覆盖之后的其他管理员修改；回退仅删除本次两个 Medium 的 ModelPrice、渠道 115 模型名和对应 abilities，再重载 new-api。
+- Gateway 文件回退目录：`${HOME}/novelai-gateway/backups/medium-20261010-0748/`。恢复其中 `openai.py`、`app.py`、`models.toml` 到原路径并重启 Gateway。
 - LFN 初版镜像 `love-for-nai:medium-20261010-0755`；原镜像 `love-for-nai:stream-final-fallback-20261007-` 保留。compose 回退备份 `compose.prod.yml.bak-medium-20261010-0808`；只替换 LFN 镜像，保留同文件的 `nginx:alpine` 和生产数据卷。
 
 ## ✅ 编译检查

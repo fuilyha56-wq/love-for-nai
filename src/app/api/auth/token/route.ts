@@ -3,6 +3,8 @@ import { getRuntimeSettings } from "@/lib/runtime-config";
 import { NextResponse } from "next/server";
 import { encodeSession, keepLoginTtlMs, resolvedSessionCookie } from "@/lib/session";
 import { resolvedNewApiBaseUrl } from "@/lib/newapi";
+import { newApiIdentity } from "@/lib/newapi-user";
+import { readUpstreamJson, upstreamClientHeaders, upstreamFailureResponse } from "@/lib/upstream-request";
 import {
   invalidJsonResponse,
   optionalString,
@@ -29,23 +31,24 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  const token = optionalString(raw.token)?.trim() || "";
+  const token = (optionalString(raw.token)?.trim() || "").replace(/^Bearer\s+/i, "");
   if (!token)
     return NextResponse.json({ message: "请输入访问令牌" }, { status: 400 });
-  if (token.length > 200)
+  if (token.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(token))
     return NextResponse.json({ message: "访问令牌格式不正确" }, { status: 400 });
   const remember = raw.remember === true;
 
   try {
     // 系统访问令牌可直接鉴权并反查用户，因此不需要用户名。
     const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/user/self`, {
-      headers: { Authorization: token },
+      headers: { Authorization: token, ...await upstreamClientHeaders() },
       cache: "no-store",
       signal: AbortSignal.timeout(20_000),
     });
-    const result = (await upstream.json()) as SelfResponse;
-    const user = result.data?.user ?? result.data;
-    if (!upstream.ok || !result.success || !user?.id || !user.username)
+    const result = await readUpstreamJson<SelfResponse>(upstream, "登录账号");
+    if (upstream.status >= 500) return NextResponse.json({ message: "账号服务暂时不可用，请稍后重试" }, { status: 502 });
+    const user = newApiIdentity(result.data);
+    if (!upstream.ok || result.success !== true || !user)
       return NextResponse.json(
         { message: result.message || "访问令牌无效或已失效" },
         { status: 401 },
@@ -68,10 +71,7 @@ export async function POST(request: Request) {
       cookie.options,
     );
     return response;
-  } catch {
-    return NextResponse.json(
-      { message: "暂时无法连接账号服务" },
-      { status: 502 },
-    );
+  } catch (error) {
+    return upstreamFailureResponse(error);
   }
 }

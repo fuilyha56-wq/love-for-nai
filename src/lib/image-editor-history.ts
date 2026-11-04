@@ -435,6 +435,9 @@ export async function saveEditorHistoryCheckpoint(
         parentRequest.onsuccess = () => {
           const parent = parentRequest.result as EditorHistoryNode | undefined;
           if (!parent || parent.draftId !== draftId) { transaction.abort(); return; }
+          // Fast consecutive commits can share a millisecond. Preserve ancestry
+          // order rather than letting random node IDs determine the latest result.
+          if (options.createdAt === undefined) node.createdAt = Math.max(now, parent.createdAt + 1);
           // Continuing an older revision must keep the existing branch head reachable.
           const targetBranch = branch.headId === parentId ? branch : {
             ...branch, id: createEditorHistoryId("edit-branch-"),
@@ -442,7 +445,7 @@ export async function saveEditorHistoryCheckpoint(
           };
           node.branchId = targetBranch.id;
           targetBranch.headId = node.id;
-          targetBranch.updatedAt = now;
+          targetBranch.updatedAt = node.createdAt;
           branches.put(targetBranch);
           const images = transaction.objectStore(IMAGE_STORE);
           const imageRequest = images.get(imageId);

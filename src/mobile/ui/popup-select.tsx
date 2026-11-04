@@ -95,6 +95,7 @@ export function PopupSelect({
     const trigger = rootRef.current?.getBoundingClientRect();
     if (!trigger) return;
     const viewport = window.visualViewport;
+    const viewportLeft = viewport?.offsetLeft ?? 0;
     const viewportTop = viewport?.offsetTop || 0;
     const viewportHeight = viewport?.height || window.innerHeight;
     const viewportWidth = viewport?.width || window.innerWidth;
@@ -121,7 +122,7 @@ export function PopupSelect({
     setMenuStyle({
       position: "fixed",
       visibility: "visible",
-      left: Math.max(8, Math.min(trigger.left, viewportWidth - width - 8)),
+      left: Math.max(viewportLeft + 8, Math.min(trigger.left, viewportLeft + viewportWidth - width - 8)),
       top: openAbove ? Math.max(viewportTop + 8, trigger.top - gap - height) : trigger.bottom + gap,
       width,
       height,

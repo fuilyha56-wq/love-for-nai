@@ -1,7 +1,9 @@
+import { naiUpstreamModel, naiUsageModel } from "./nai-native-request";
+
 /**
  * Canonical NAI model directory shared by the studio, editor, pricing and
- * public catalog. Keep provider aliases (nai-diffusion-*) out of the image
- * model list; they are transport names used only by the native API.
+ * public catalog. Billing IDs remain stable while selectors display native
+ * model names and collapse equivalent transport aliases.
  */
 export type NaiModelKind = "image" | "chat";
 
@@ -44,11 +46,37 @@ export const NAI_MODEL_CATALOG: readonly NaiModelCatalogEntry[] = [
 
 export const NAI_IMAGE_MODEL_CATALOG = IMAGE_MODELS;
 export const NAI_IMAGE_MODEL_IDS = IMAGE_MODELS.map(({ id }) => id);
-export const NAI_IMAGE_MODEL_OPTIONS = IMAGE_MODELS.map(({ id, label }) => ({ value: id, label }));
+export const NAI_IMAGE_MODEL_OPTIONS = IMAGE_MODELS.map(({ id }) => ({ value: id, label: imageModelLabel(id) }));
 
 export const NAI_INPAINT_MODEL_OPTIONS = IMAGE_MODELS
   .filter(({ inpaint }) => inpaint)
-  .map(({ id }) => [id, id.includes("v3-furry") ? "V3 兽人局部重绘" : `${id.startsWith("nai-v5") ? "V5" : id.startsWith("nai-v4.5") ? "V4.5" : "V3"}${id.includes("curated") ? " Curated" : ""} 局部重绘${id.endsWith("-limit") ? " · 受限" : ""}`] as const);
+  .map(({ id }) => [id, imageModelLabel(id)] as const);
+
+/** A billing tier remains a distinct choice even when it uses the same native model. */
+export function canonicalImageModelId(model: string): string {
+  if (!/^nai-(?!chat$)/i.test(model)) return model;
+  return naiUsageModel(model) + (/-limit$/i.test(model) ? "-limit" : "");
+}
+
+export function imageModelLabel(model: string): string {
+  if (!/^nai-(?!chat$)/i.test(model)) return model;
+  const limited = /-limit$/i.test(model);
+  return naiUpstreamModel(model.replace(/-limit$/i, "")) + (limited ? "-limit" : "");
+}
+
+/** Deduplicate transport aliases without inventing IDs the provider did not advertise. */
+export function normalizeImageModelOptions<T extends { value: string; label: string }>(options: readonly T[]): T[] {
+  const unique = new Map<string, T>();
+  for (const option of options) {
+    const key = canonicalImageModelId(option.value);
+    const existing = unique.get(key);
+    // Prefer the site's billing ID when both forms are available.
+    if (!existing || option.value === key) unique.set(key, {
+      ...option, label: /^nai-(?!chat$)/i.test(option.value) ? imageModelLabel(option.value) : option.label,
+    });
+  }
+  return [...unique.values()];
+}
 
 /** Native API names accepted by the standalone /ai/upscale endpoint. */
 export const NAI_UPSCALE_MODEL_OPTIONS = [
@@ -71,5 +99,7 @@ export function firstValidModel(
   fallback: string,
 ): string {
   const candidate = typeof current === "string" ? current : "";
-  return validModels.includes(candidate) ? candidate : validModels[0] || fallback;
+  if (validModels.includes(candidate)) return candidate;
+  const equivalent = validModels.find(model => canonicalImageModelId(model) === canonicalImageModelId(candidate));
+  return equivalent || validModels[0] || fallback;
 }

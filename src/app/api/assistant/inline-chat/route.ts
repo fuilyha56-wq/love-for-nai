@@ -1,3 +1,4 @@
+import { RateLimitError, upstreamFailureResponse } from "@/lib/upstream-request";
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { resolveAssistantSource, AssistantSourceError, type AssistantSource } from "@/lib/assistant-source";
@@ -118,6 +119,7 @@ export async function POST(request: Request) {
     target = resolveAssistantImageTarget(body);
     reasoningEffort = resolveAssistantReasoning(body.model, body.reasoningEffort);
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "图像目标无效" },
       { status: 400 },
@@ -175,6 +177,7 @@ export async function POST(request: Request) {
     void runJob(job, source, body.model, buildInlineAssistantPrompt(MODE_PROMPTS[mode], target), userContent, reasoningEffort);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     return NextResponse.json(
       {
         message:

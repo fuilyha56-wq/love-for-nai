@@ -7,6 +7,10 @@ import { isUpstreamAuthError, resolvedNewApiBaseUrl, userHeaders } from "@/lib/n
 import { getResolvedPlatformCapabilities } from "@/lib/platform";
 import { runtimeQuotaPerUnit } from "@/lib/runtime-config";
 import { dailyImageBillingState } from "@/lib/daily-image-billing";
+import { RateLimitError, readUpstreamJson, upstreamFailureResponse } from "@/lib/upstream-request";
+
+type WalletUser = { quota?: number; used_quota?: number; group?: string };
+type WalletSelf = { success?: boolean; message?: string; data?: WalletUser & { user?: WalletUser } };
 
 export async function GET() {
   const session = await getSession();
@@ -21,7 +25,7 @@ export async function GET() {
     let newApi: { balance: number; used: number; group: string } | null = null;
     if (capabilities.wallet.upstreamBalance) {
       const upstream = await fetchNewApiSelf(await resolvedNewApiBaseUrl(), userHeaders(session));
-      const result = await upstream.json();
+      const result = await readUpstreamJson<WalletSelf>(upstream, "钱包余额");
       if (!upstream.ok || !result.success)
         throw new Error(result.message || "无法读取钱包余额");
       const quotaPerUnit = await runtimeQuotaPerUnit();
@@ -49,6 +53,7 @@ export async function GET() {
       rechargeEnabled: false,
     });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     const message = error instanceof Error ? error.message : "无法读取钱包余额";
     if (isUpstreamAuthError(message))
       return NextResponse.json(

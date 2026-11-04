@@ -72,3 +72,12 @@ vitest.config.mts
 scripts/check-*.cjs
 scripts/audit-*
 scripts/tutorial-test-support.cjs
+scripts/seed-*-fixtures.cjs
+scripts/ui-*-fixture*.cjs
+scripts/verify-nai-*.py
+public/tutorials/gallery-submit/source-fixture.png
+docs/nai-pricing-live-code-2026-10-22.json
+scripts/activate-nai-parity-release.py
+scripts/activate-nai-release.py
+scripts/compact-docker-data.ps1
+scripts/snapshot-nai-modes.py

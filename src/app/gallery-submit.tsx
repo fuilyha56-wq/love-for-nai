@@ -114,7 +114,6 @@ export function GallerySubmitDialog({
         const result = await readJson<{ message?: string }>(response, "发布失败");
         if (!response.ok) throw new Error(result.message || "发布失败");
       } else {
-        const failedFiles: File[] = [];
         let succeeded = 0;
         const uploadFiles: Array<File | undefined> = form.source === "lfn" ? [undefined] : files;
         for (const file of uploadFiles) {
@@ -137,19 +136,19 @@ export function GallerySubmitDialog({
           data.set("parameters", "{}");
           data.set("exposeParameters", String(form.exposeParameters));
           data.set("requireLikeForParameters", String(form.exposeParameters && form.requireLikeForParameters === true));
-          const response = await fetch("/api/gallery", { method: "POST", body: data });
-          const result = await readJson<{ message?: string }>(response, "发布失败");
-          if (!response.ok) {
-            if (file) failedFiles.push(file);
-            if (uploadFiles.length === 1) throw new Error(result.message || "发布失败");
-          } else {
+          try {
+            const response = await fetch("/api/gallery", { method: "POST", body: data });
+            await readJson<{ message?: string }>(response, "发布失败");
             succeeded += 1;
+          } catch (error) {
+            const index = uploadFiles.indexOf(file);
+            const remaining = uploadFiles.slice(index).filter((item): item is File => Boolean(item));
+            if (remaining.length) onChange({ ...form, file: remaining[0], files: remaining });
+            if (error instanceof SessionExpiredError) throw error;
+            throw new Error(`${succeeded} 张已提交，剩余 ${remaining.length} 张尚未确认成功。${error instanceof Error ? error.message : "上传失败"} 网络中断时请先查看“我的投稿”，避免重复提交。`);
           }
         }
-        if (failedFiles.length) {
-          onChange({ ...form, file: failedFiles[0], files: failedFiles });
-          throw new Error(`${succeeded} 张已提交，${failedFiles.length} 张失败；请检查失败文件与公开提示词校验结果后重试。`);
-        }
+
       }
       onChange(null);
       onPublished();

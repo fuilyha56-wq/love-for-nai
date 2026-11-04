@@ -41,6 +41,7 @@ type Props = {
   usage: ReturnType<typeof useAssistantUsage>;
   input: string; onInputChange: (input: string) => void; onSubmit: (input?: string) => void | boolean | Promise<void>; onCancel: () => void;
   loading: boolean; searching: boolean; error: string;
+  canContinue?: boolean; onContinue?: () => void;
   resourceScope?: string; imageResources?: AssistantImageResource[]; onAddImageSources?: (sources: AssistantImageSource[]) => void; onCancelImageImport?: () => void;
   images: string[]; imagesLoading: boolean; onAddImages: (files: File[]) => void; onRemoveImage: (index: number) => void; onClearImages: () => void; onPreviewImage: (image: string) => void;
   conversation: { turns: Turn[]; tagPool: Tag[] }; onClearConversation: () => void;
@@ -93,7 +94,7 @@ export function TagAssistantPanel(p: Props) {
   const currentJobId = Object.keys(p.usage.state.jobs).at(-1);
   const turns = p.conversation.turns.filter((turn, index) => !(index === 0 && p.suggestion && turn.id === currentJobId));
   const visibleTurns = (allTurns ? turns : turns.slice(0, 6)).toReversed();
-  const hasCurrent = Boolean(p.suggestion || p.loading || p.steps.length || p.results.length || p.error);
+  const hasCurrent = Boolean(p.suggestion || p.loading || p.steps.length || p.results.length || p.error || p.canContinue);
   const showWelcome = !visibleTurns.length && !hasCurrent;
   const jumpToLatest = () => { const node = scrollRef.current; if (node) node.scrollTop = showWelcome ? 0 : node.scrollHeight; followingRef.current = true; setFollow(true); };
   // Resize callbacks survive session changes. Read the latest content state so
@@ -242,6 +243,7 @@ export function TagAssistantPanel(p: Props) {
           <ol>{p.steps.map((step, index) => <li key={`${step.tool}-${index}`}><span className={step.ok ? "is-success" : "is-error"}>{step.ok ? "✓" : "✕"}</span><div><b>{toolLabels[step.tool] || step.tool}</b>{step.query && <p>{step.query}</p>}{step.summary && <small>{step.summary}</small>}</div></li>)}{p.loading && <li>模型思考中…</li>}</ol>
         </details>}
         {p.error && <p role="alert" className="assistant-error-message">{p.error}</p>}
+        {p.canContinue && <button type="button" className="assistant-result-status" disabled={busy} onClick={p.onContinue}>继续未完成任务</button>}
         {p.suggestion && <div className="assistant-suggestion" aria-label="助手建议">
           {p.suggestion.message && <div className="assistant-message-markdown"><MarkdownView content={p.suggestion.message} /></div>}
           <MessageActions text={[p.suggestion.message, p.suggestion.prompt, p.suggestion.negativePrompt].filter(Boolean).join("\n\n")} onRetry={submitted || latest?.request ? () => retryMessage(submitted || latest?.request || "") : undefined} disabled={busy} />

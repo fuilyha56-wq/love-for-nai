@@ -57,4 +57,4 @@
 
 ## 参考与许可
 
-参考本地 `E:/Aaalice_NAI_Launcher` 及 [Aaalice NAI Launcher](https://github.com/Aaalice233/Aaalice_NAI_Launcher) 的手机导航、生成页面、集合及设置结构，保留 LFN 配色、品牌、账号和业务能力。Flutter 系统窗口、设备文件授权等浏览器无法直接移植的内容使用网页对应能力。许可保留于 `public/nai/LICENSE-Aaalice.txt`。
+参考本地 `${LOCAL_PATH}` 及 [Aaalice NAI Launcher](https://github.com/Aaalice233/Aaalice_NAI_Launcher) 的手机导航、生成页面、集合及设置结构，保留 LFN 配色、品牌、账号和业务能力。Flutter 系统窗口、设备文件授权等浏览器无法直接移植的内容使用网页对应能力。许可保留于 `public/nai/LICENSE-Aaalice.txt`。

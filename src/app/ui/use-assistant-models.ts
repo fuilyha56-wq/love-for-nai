@@ -4,6 +4,8 @@ import { useCallback, useRef, useState } from "react";
 import type { AssistantCatalogSource } from "@/lib/assistant-catalog";
 import { assistantModelsForGroup, assistantSourceGroups, reconcileAssistantSelection } from "@/lib/assistant-selection";
 import { isAssistantChatModel } from "@/lib/assistant-models";
+import { readJson } from "@/lib/client-json";
+import { retryAfterSeconds } from "@/lib/retry-after";
 
 type Selection = { providerId: string; model: string; group: string };
 const storageKey = "lfn-assistant-source-v1";
@@ -17,14 +19,16 @@ export function useAssistantModels() {
   const [selection, setSelection] = useState(initial);
   const loaded = useRef(false), loading = useRef<AbortSignal | null>(null);
   const choices = useRef(new Map<string, Selection>());
+  const retryAt = useRef(0);
   const [pending, setPending] = useState(false), [error, setError] = useState("");
   const refresh = useCallback(async (signal: AbortSignal) => {
+    if (Date.now() < retryAt.current) { setError(`请求过于频繁，请等待 ${Math.ceil((retryAt.current - Date.now()) / 1000)} 秒后刷新模型。`); return; }
     if (loading.current && !loading.current.aborted) return;
     loading.current = signal; setPending(true);
     try {
       const response = await fetch("/api/assistant/models", { cache: "no-store", signal });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "无法读取助手模型");
+      if (response.status === 429) retryAt.current = Date.now() + retryAfterSeconds(response.headers.get("retry-after")) * 1000;
+      const result = await readJson<{ sources?: AssistantCatalogSource[]; models?: string[]; message?: string }>(response, "无法读取助手模型");
       if (signal.aborted) return;
       // Keep old-server compatibility during rolling upgrades.
       const next: AssistantCatalogSource[] = Array.isArray(result.sources) ? result.sources : [{ id: "newapi", name: "NewAPI", models: (result.models || []).filter(isAssistantChatModel).map((id: string) => ({ id, groups: [] })) }];

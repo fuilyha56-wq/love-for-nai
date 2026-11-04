@@ -372,3 +372,22 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
   .image-editor-page .editor-actions .image-download-menu > summary { min-height: 42px; }
 }
 @media (max-width: 1023px) { .editor-quality-actions button { min-height: 44px; } }
+
+/* Generation frame editing and repeatable canvas preview sessions. */
+.generation-viewport .viewport-size-controls { pointer-events: auto; }
+.viewport-size-controls { position: absolute; left: 10px; bottom: 10px; z-index: 4; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 20px); padding: 5px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); box-shadow: var(--editor-shadow); }
+.viewport-size-controls label { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+.viewport-size-controls input { width: 62px; min-width: 0; padding: 3px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink); background: var(--editor-raised); font: inherit; font-size: 12px; }
+.viewport-corner.n { left: calc(50% - 11px); top: -12px; cursor: ns-resize; }
+.viewport-corner.s { left: calc(50% - 11px); bottom: -12px; cursor: ns-resize; }
+.viewport-corner.w { left: -12px; top: calc(50% - 11px); cursor: ew-resize; }
+.viewport-corner.e { right: -12px; top: calc(50% - 11px); cursor: ew-resize; }
+.viewport-corner { padding: 0; touch-action: none; }
+.image-editor-page .editor-actions.is-canvas:has(.apply-button) { display: flex; width: auto; max-width: 100%; flex-wrap: wrap; gap: 6px; }
+.image-editor-page .editor-actions.is-canvas:has(.apply-button) > * { width: auto; }
+.editor-candidate-picker { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; }
+.editor-candidate-picker button { min-width: 30px; padding: 4px 8px; }
+@media (max-width: 1023px) {
+  .image-editor-page .editor-actions.is-canvas:has(.apply-button) { width: 100%; }
+  .image-editor-page .editor-actions.is-canvas:has(.apply-button) > * { flex: 1 0 auto; }
+}

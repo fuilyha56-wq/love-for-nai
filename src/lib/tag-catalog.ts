@@ -91,7 +91,8 @@ function searchCatalogQuery(db: DatabaseSync, query: string, count: number, sour
   const sourceClause = source ? " AND t.source=?" : "";
   const sourceArgs = source ? [source] : [];
   // Prefix lookup remains usable during a resumable import, before FTS is built.
-  const prefix = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.name LIKE ? ESCAPE '\\'${sourceClause} ORDER BY CASE WHEN t.name=? THEN 0 ELSE 1 END,t.post_count DESC,t.key LIMIT ?`).all(likeText(normalized) + "%", ...sourceArgs, normalized, count);
+  // Rank with index-only columns before fetching large wiki/JSON rows.
+  const prefix = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.rowid IN (SELECT t.rowid FROM catalog_tags t WHERE t.name LIKE ? ESCAPE '\\'${sourceClause} ORDER BY CASE WHEN t.name=? THEN 0 ELSE 1 END,t.post_count DESC,t.key LIMIT ?) ORDER BY CASE WHEN t.name=? THEN 0 ELSE 1 END,t.post_count DESC,t.key`).all(likeText(normalized) + "%", ...sourceArgs, normalized, count, normalized);
   const found = new Map(prefix.map((row) => [String(row.key), row]));
   if (/[\u3400-\u9fff]/.test(query)) {
     try {
@@ -99,12 +100,13 @@ function searchCatalogQuery(db: DatabaseSync, query: string, count: number, sour
       translated.forEach((row) => found.set(String(row.key), row));
     } catch { /* the source import can still be running */ }
   }
-  if (found.size < count && normalized.length >= 3 && state(db, "catalog:status")?.searchIndex === "complete") {
-    const phrase = '"' + query.trim().replaceAll('"', '""') + '"';
+  const indexed = state(db, "catalog:status")?.searchIndex === "complete";
+  const phrase = '"' + query.trim().replaceAll('"', '""') + '"';
+  if (found.size < count && normalized.length >= 3 && indexed) {
     // Bound work per suggestion request; the complete corpus remains indexed.
     const rows = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.rowid IN (SELECT rowid FROM catalog_search WHERE catalog_search MATCH ? LIMIT ?)${sourceClause} ORDER BY t.post_count DESC,t.key LIMIT ?`).all(phrase, Math.min(2000, count * 20), ...sourceArgs, count);
     rows.forEach((row) => found.set(String(row.key), row));
-  } else if (source === "quicktagcloud") {
+  } else if (source === "quicktagcloud" && !indexed) {
     const rows = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.source='quicktagcloud' AND (t.display_name LIKE ? ESCAPE '\\' OR t.name LIKE ? ESCAPE '\\') LIMIT ?`).all("%" + likeText(query.trim()) + "%", "%" + likeText(query.trim()) + "%", count);
     rows.forEach((row) => found.set(String(row.key), row));
   }
@@ -117,7 +119,9 @@ function searchCatalogQuery(db: DatabaseSync, query: string, count: number, sour
       const terms = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.source='quicktagcloud' AND t.rowid IN (SELECT tag_rowid FROM catalog_terms WHERE term>=? AND term<? LIMIT 200) LIMIT ?`).all(normalized, normalized + "\uffff", curatedLimit);
       terms.forEach((row) => curatedMatches.set(String(row.key), row));
     } catch { /* the derived prompt-term index may still be building */ }
-    const direct = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.source='quicktagcloud' AND (t.display_name LIKE ? ESCAPE '\\' OR t.name LIKE ? ESCAPE '\\' OR t.description LIKE ? ESCAPE '\\') LIMIT ?`).all(pattern, pattern, pattern, curatedLimit);
+    const direct = indexed && normalized.length >= 3
+      ? db.prepare(`SELECT ${select} FROM catalog_search f CROSS JOIN catalog_tags t ON t.rowid=f.rowid WHERE catalog_search MATCH ? AND t.source='quicktagcloud' LIMIT ?`).all(phrase, curatedLimit)
+      : db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.source='quicktagcloud' AND (t.display_name LIKE ? ESCAPE '\\' OR t.name LIKE ? ESCAPE '\\' OR t.description LIKE ? ESCAPE '\\') LIMIT ?`).all(pattern, pattern, pattern, curatedLimit);
     direct.forEach((row) => curatedMatches.set(String(row.key), row));
     const curated = [...curatedMatches.values()].slice(0, curatedLimit);
     if (source) return [...curated, ...values.filter((row) => !curatedMatches.has(String(row.key)))].slice(0, count).map(hit);

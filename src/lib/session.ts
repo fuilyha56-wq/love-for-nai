@@ -18,6 +18,9 @@ export type LfnSession = {
   displayName: string;
   upstreamCookie: string;
   accessToken?: string;
+  accessExpiresAt?: number;
+  upstreamSessionKey?: string;
+  upstreamRetryAt?: number;
   // 系统访问令牌长期有效，与登录派发的 access_token 鉴权方式不同。
   systemToken?: string;
   expiresAt: number;
@@ -169,7 +172,8 @@ export async function getSession(): Promise<LfnSession | null> {
   let pending = requestSessions.get(store);
   if (!pending) {
     pending = (async () => {
-      const session = await validDecodedSession(store.get(COOKIE_NAME)?.value);
+      const decoded = await validDecodedSession(store.get(COOKIE_NAME)?.value);
+      const session = decoded ? await (await import("@/lib/upstream-session")).refreshedUpstreamSession(decoded) : null;
       if (session) {
         const requestHeaders = await headers();
         await recordIpEvidence(
@@ -227,21 +231,36 @@ export const pendingCookie = {
   options: { ...cookieOptions(), maxAge: 300 },
 };
 
-export async function resolvedSessionCookie(remember = false) {
+async function requestCookieSecure(): Promise<boolean> {
   const settings = await getRuntimeSettings().catch(() => null);
+  const configured = settings?.cookieSecure === true;
+  if (settings?.trustProxy) {
+    try {
+      const protocol = (await headers()).get("x-forwarded-proto")?.trim().toLowerCase();
+      // The configured edge must overwrite this header and be the only app ingress.
+      if (protocol === "https") return true;
+      if (protocol === "http") return false;
+    } catch {
+      // Outside a request, retain the configured production default.
+    }
+  }
+  return configured;
+}
+
+export async function resolvedSessionCookie(remember = false) {
+  const secure = await requestCookieSecure();
   return {
     name: COOKIE_NAME,
     options: {
-      ...cookieOptions(settings?.cookieSecure === true),
+      ...cookieOptions(secure),
       maxAge: remember ? KEEP_LOGIN_MAX_AGE : SESSION_MAX_AGE,
     },
   };
 }
 
 export async function resolvedPendingCookie() {
-  const settings = await getRuntimeSettings().catch(() => null);
   return {
     name: PENDING_COOKIE_NAME,
-    options: { ...cookieOptions(settings?.cookieSecure === true), maxAge: 300 },
+    options: { ...cookieOptions(await requestCookieSecure()), maxAge: 300 },
   };
 }

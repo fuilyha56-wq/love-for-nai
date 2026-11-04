@@ -1,5 +1,6 @@
+import { RateLimitError, upstreamFailureResponse } from "@/lib/upstream-request";
 import { isAssistantConversationId } from "@/lib/assistant-conversations";
-import { assistantJobSignal, cancelAssistantJob, cancelConversationJobs } from "@/lib/assistant-jobs";
+import { assistantJobSignal, beginAssistantJob, canResumeAssistantJob, finishAssistantJob, cancelAssistantJob, cancelConversationJobs } from "@/lib/assistant-jobs";
 import { parseAssistantCreativeMemory, type AssistantCreativeMemory } from "@/lib/assistant-memory";
 import { readFile } from "node:fs/promises";
 import { NextResponse } from "next/server";
@@ -42,6 +43,7 @@ import {
 } from "@/lib/assistant-conversations";
 
 type AssistantPayload = {
+  resumeJobId?: unknown;
   assistantProviderId?: unknown;
   assistantGroup?: unknown;
   reasoningEffort?: unknown;
@@ -244,6 +246,7 @@ async function runJob(
       .slice(-MODEL_HISTORY_TURNS)
       .map((turn) => ({ request: turn.request, answer: turn.answer }));
     const { content } = await runTagAgent(source.key, model, request, context, 6, {
+      checkpoint: job.checkpoint ??= {},
       // 每步实时写入 job，客户端轮询立即能看到检索轨迹。
       onStep: (step) => {
         job.steps.push(step);
@@ -337,9 +340,11 @@ async function runJob(
     if (assistantJobSignal(job).aborted) { job.status = "cancelled"; job.message = "已取消助手任务"; return; }
     if (error instanceof AssistantModelBlockedError) job.error = error.info;
     job.message = jobSignal.aborted
-      ? "助手处理超过时限，请减少标签数量后重试。"
+      ? "助手处理超过时限，进度已保留，可点击继续。"
       : error instanceof Error ? error.message : "智能标签助手调用失败";
-    job.status = "error";
+    job.status = error instanceof Error && error.name === "AssistantPausedError" ? "paused" : "error";
+  } finally {
+    finishAssistantJob(job);
   }
 }
 
@@ -356,6 +361,30 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
+  if (body.resumeJobId !== undefined) {
+    if (typeof body.resumeJobId !== "string" || !/^[a-zA-Z0-9-]{1,100}$/.test(body.resumeJobId))
+      return NextResponse.json({ message: "继续任务编号无效" }, { status: 400 });
+    const job = findAssistantJob(session.userId, body.resumeJobId);
+    if (!job || job.conversationId !== (body.conversationId ?? "default"))
+      return NextResponse.json({ message: "原任务不存在或已过期，无法从断点继续；请明确重新发送。" }, { status: 404 });
+    try {
+      await readConversation(session.userId, job.conversationId || "default");
+      if (job.active || job.status === "done") return NextResponse.json({ jobId: job.id });
+      if (!canResumeAssistantJob(job) || !job.input)
+        return NextResponse.json({ message: "此任务不能继续，请检查原错误信息。" }, { status: 409 });
+      const input = job.input;
+      const attempt = job.attempt;
+      const source = await resolveAssistantSource(session, input.model, input.providerId, input.group);
+      // Recheck after authorization: another continue or conversation deletion may win.
+      if (job.attempt !== attempt || job.active || String(job.status) === "done") return NextResponse.json({ jobId: job.id });
+      if (job.input !== input || !canResumeAssistantJob(job)) return NextResponse.json({ message: "原任务已清除或不可继续。" }, { status: 409 });
+      if (!beginAssistantJob(job)) return NextResponse.json({ jobId: job.id });
+      void runJob(job, session, source, input.model, input.request, input.context, input.images, resolveAssistantImageTarget(input.context));
+      return NextResponse.json({ jobId: job.id });
+    } catch (error) {
+      return upstreamFailureResponse(error, "原任务暂时无法继续，请检查会话或模型来源后重试。");
+    }
+  }
   if (typeof body.model !== "string" || !isAssistantChatModel(body.model))
     return NextResponse.json(
       { message: "请选择一个文本对话模型" },
@@ -367,6 +396,7 @@ export async function POST(request: Request) {
     target = resolveAssistantImageTarget(body);
     reasoningEffort = resolveAssistantReasoning(body.model, body.reasoningEffort);
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     return NextResponse.json(
       { message: error instanceof Error ? error.message : "图像目标无效" },
       { status: 400 },
@@ -485,13 +515,12 @@ export async function POST(request: Request) {
       );
     const source = await resolveAssistantSource(session, body.model, body.assistantProviderId, body.assistantGroup);
     const job = createAssistantJob(session.userId, conversationId);
-    void runJob(
-      job,
-      session,
-      source,
-      body.model,
-      body.request,
-      {
+    job.input = {
+      model: body.model, request: body.request,
+      providerId: typeof body.assistantProviderId === "string" ? body.assistantProviderId : undefined,
+      group: typeof body.assistantGroup === "string" ? body.assistantGroup : undefined,
+      images,
+      context: {
         currentPrompt: body.currentPrompt,
         reasoningEffort,
         allowWikipedia: body.allowWikipedia !== false,
@@ -510,11 +539,13 @@ export async function POST(request: Request) {
         } : {}),
         ...(Array.isArray(body.localTags) ? { localTags: body.localTags as string[] } : {}),
       },
-      images,
-      target,
-    );
+    };
+    job.checkpoint = {};
+    beginAssistantJob(job);
+    void runJob(job, session, source, body.model, body.request, job.input.context, images, target);
     return NextResponse.json({ jobId: job.id });
   } catch (error) {
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     return NextResponse.json(
       {
         message:
@@ -553,12 +584,14 @@ export async function GET(request: Request) {
       { status: 404 },
     );
   await refreshAssistantJobUsage(job);
-  if (job.status === "cancelled") return NextResponse.json({ status: "cancelled", message: job.message, steps: job.steps, usage: job.usage });
+  const resumable = canResumeAssistantJob(job);
+  if (job.status === "cancelled" && job.active) return NextResponse.json({ status: "running", steps: job.steps, usage: job.usage });
+  if (job.status === "cancelled" || job.status === "paused") return NextResponse.json({ status: job.status, resumable, message: job.message, steps: job.steps, usage: job.usage });
   if (job.status === "running")
     return NextResponse.json({ status: "running", steps: job.steps, usage: job.usage });
   if (job.status === "error")
     return NextResponse.json(
-      { status: "error", message: job.message, error: job.error, steps: job.steps, usage: job.usage },
+      { status: "error", resumable, message: job.message, error: job.error, steps: job.steps, usage: job.usage },
       { status: 200 },
     );
   return NextResponse.json({ status: "done", steps: job.steps, ...job.result, usage: job.usage });

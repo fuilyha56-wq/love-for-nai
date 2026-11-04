@@ -1,4 +1,6 @@
 "use client";
+import { useKeyedAction } from "@/app/ui/use-keyed-action";
+import { readJson } from "@/lib/client-json";
 import NextImage from "next/image";
 import { SETTINGS_PAGES } from "@/lib/platform-settings-sections";
 import { LfnSelect } from "@/app/ui/lfn-select";
@@ -1092,6 +1094,7 @@ function CreditsPanel({
   const [tags, setTags] = useState("");
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<GalleryAdminItem | null>(null);
+  const actions = useKeyedAction(setMessage);
   const [statusFilter, setStatusFilter] = useState<"all" | "approved" | "withdrawn">(mode === "gallery" ? "approved" : "all");
 
   const load = useCallback(async () => {
@@ -1125,11 +1128,12 @@ function CreditsPanel({
     const proofItem = items.find(item => item.id === id);
     const confirmOriginalProof = action === "approve" && proofItem?.originalProofStatus === "metadata-validated";
     if (confirmOriginalProof && !await lfnConfirm("请先对照查看校验原图与参赛图。确认二者属于同一创作，并通过原图校验档审核？")) return;
-    const response = await fetch(`/api/admin/gallery/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirmOriginalProof }) });
-    const result = await response.json();
-    if (!response.ok) { setMessage(result.message || "审核操作失败"); return; }
-    setMessage(action === "approve" ? "投稿已通过" : action === "reject" ? "投稿已拒绝" : "投稿已撤回");
-    load();
+    await actions.run(id, async () => {
+      const response = await fetch(`/api/admin/gallery/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, confirmOriginalProof }) });
+      await readJson(response, "审核操作失败");
+      setMessage(action === "approve" ? "投稿已通过" : action === "reject" ? "投稿已拒绝" : "投稿已撤回");
+      await load();
+    });
   }
 
   async function save() {
@@ -1158,14 +1162,12 @@ function CreditsPanel({
 
   async function remove(id: string) {
     if (!(await lfnConfirm("确定下架这件作品？图片文件会一并删除。"))) return;
-    const response = await fetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
-    const result = await response.json();
-    if (!response.ok) {
-      setMessage(result.message || "删除失败");
-      return;
-    }
-    setMessage("作品已下架");
-    load();
+    await actions.run(id, async () => {
+      const response = await fetch(`/api/admin/gallery/${id}`, { method: "DELETE" });
+      await readJson(response, "删除失败");
+      setMessage("作品已下架");
+      await load();
+    });
   }
 
   return (
@@ -1188,11 +1190,11 @@ function CreditsPanel({
               <p className="mt-1 text-[10px] font-semibold text-[var(--rose)]">{item.status === "pending" ? "待审核" : item.status === "approved" ? "已通过" : item.status === "rejected" ? "已拒绝" : "已撤回"}{item.reviewNote ? ` · ${item.reviewNote}` : ""}</p>{item.originalProofStatus && <details className="mt-2 text-xs"><summary className="cursor-pointer font-semibold text-[var(--rose)]">原图校验档 · {item.originalProofStatus === "reviewed" ? "已确认创作关联" : "元数据已校验，待确认创作关联"}</summary><div className="mt-2 grid grid-cols-2 gap-2"><a href={`/api/admin/gallery/${encodeURIComponent(item.id)}/original`} target="_blank" rel="noreferrer"><NextImage unoptimized width={256} height={128} src={`/api/admin/gallery/${encodeURIComponent(item.id)}/original`} alt="私有校验原图，仅管理员可见" className="h-32 w-full object-contain" /><span>校验原图（仅管理员可见）</span></a><a href={item.imageUrl} target="_blank" rel="noreferrer"><NextImage unoptimized width={256} height={128} src={item.imageUrl} alt="修改后的参赛图" className="h-32 w-full object-contain" /><span>修改后的参赛图（公开展示）</span></a></div></details>}
             </div>
             <div className="creator-review-actions flex shrink-0 flex-wrap items-center justify-end gap-2 text-xs font-semibold">
-              {mode === "creator" && item.status === "pending" && <><button type="button" onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
-              {item.status === "approved" && <button type="button" onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
+              {mode === "creator" && item.status === "pending" && <><button type="button" disabled={actions.pending.has(item.id)} onClick={() => review(item.id, "approve")} className="text-emerald-700 hover:underline">通过</button><button type="button" disabled={actions.pending.has(item.id)} onClick={() => review(item.id, "reject")} className="text-red-600 hover:underline">拒绝</button></>}
+              {item.status === "approved" && <button type="button" disabled={actions.pending.has(item.id)} onClick={() => review(item.id, "withdraw")} className="text-amber-700 hover:underline">撤回</button>}
               <a href={`/gallery/${encodeURIComponent(item.id)}#comments`} className="text-[var(--rose)] hover:underline">评论管理</a>
               <button type="button" onClick={() => open(item)} className="text-[var(--rose)] hover:underline">编辑</button>
-              <button type="button" onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
+              <button type="button" disabled={actions.pending.has(item.id)} onClick={() => remove(item.id)} className="text-red-600 hover:underline">删除</button>
             </div>
           </div>
         ))}

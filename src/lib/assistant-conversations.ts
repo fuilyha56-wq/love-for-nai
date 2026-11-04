@@ -160,6 +160,7 @@ export async function appendConversationTurn(
     await requireConversationSession(userId, conversationId);
     const conversation = await readConversationFile(userId, conversationId);
     signal?.throwIfAborted();
+    if (conversation.turns.some(existing => existing.id === turn.id)) return conversation;
     conversation.turns.push(turn);
     if (conversation.turns.length > MAX_TURNS)
       conversation.turns = conversation.turns.slice(-MAX_TURNS);

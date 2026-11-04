@@ -1,10 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { Copy, Ellipsis, History, Trash2, X } from "lucide-react";
+import { CheckSquare, Copy, Download, Ellipsis, History, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
 import "./replica-history.css";
 
 export type ReplicaHistoryItem = {
@@ -99,6 +100,7 @@ export type ReplicaHistoryProps = {
   onOpen: (item: ReplicaHistoryItem) => void;
   onUse: (item: ReplicaHistoryItem, operation: string) => void;
   onDelete: (index: number) => void;
+  onDeleteMany?: (items: ReplicaHistoryItem[]) => Promise<boolean>;
   onPublish?: (item: ReplicaHistoryItem) => void;
 };
 
@@ -111,9 +113,13 @@ type HistoryCardProps = {
   onUse: ReplicaHistoryProps["onUse"];
   onDelete: ReplicaHistoryProps["onDelete"];
   onPublish: ReplicaHistoryProps["onPublish"];
+  selecting: boolean;
+  selected: boolean;
+  busy: boolean;
+  onToggle: () => void;
 };
 
-function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, onPublish }: HistoryCardProps): ReactElement {
+function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, onPublish, selecting, selected, busy, onToggle }: HistoryCardProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false);
   const [natural, setNatural] = useState<{ image: string; width: number; height: number } | null>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -175,14 +181,15 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
   return (
     <article
       ref={cardRef}
-      className={`replica-history-card${menuOpen ? " is-menu-open" : ""}`}
-      onContextMenu={(event) => { event.preventDefault(); setMenuOpen(true); }}
+      className={`replica-history-card${menuOpen ? " is-menu-open" : ""}${selected ? " is-selected" : ""}`}
+      onContextMenu={(event) => { event.preventDefault(); if (!selecting) setMenuOpen(true); }}
       onKeyDown={(event) => {
         if (event.key === "Escape" && menuOpen) { event.preventDefault(); setMenuOpen(false); menuButtonRef.current?.focus(); }
-        if (event.shiftKey && event.key === "F10") { event.preventDefault(); setMenuOpen(true); }
+        if (!selecting && event.shiftKey && event.key === "F10") { event.preventDefault(); setMenuOpen(true); }
       }}
     >
-      <button className="replica-history-preview" style={{ aspectRatio: `${width} / ${height}` }} type="button" aria-label={`查看第 ${index + 1} 张历史图像`} title={item.prompt || "查看原图"} onClick={() => { setMenuOpen(false); onOpen(item); }}>
+      {selecting && <label className="replica-history-select"><input type="checkbox" aria-label={`选择第 ${index + 1} 张历史图像`} checked={selected} disabled={busy} onChange={onToggle} /></label>}
+      <button className="replica-history-preview" style={{ aspectRatio: `${width} / ${height}` }} type="button" disabled={selecting && busy} aria-label={`${selecting ? "切换选择" : "查看"}第 ${index + 1} 张历史图像`} title={item.prompt || "查看原图"} onClick={() => { setMenuOpen(false); if (selecting) onToggle(); else onOpen(item); }}>
         <Image
           src={item.image}
           alt={item.prompt || `历史图像 ${index + 1}`}
@@ -203,12 +210,12 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
         <summary className="cursor-pointer text-[var(--muted)]">参数详情</summary>
         <dl className="mt-2 space-y-1">{historyParameterEntries(item).map(([key, label, value]) => <div className="flex items-start gap-2" key={key}><dt className="shrink-0 text-[var(--muted)]">{label}</dt><dd className="min-w-0 break-all whitespace-pre-wrap">{displayHistoryParameter(value)}</dd></div>)}</dl>
       </details>}
-      <div className="replica-history-actions" role="group" aria-label={`第 ${index + 1} 张历史图像操作`}>
+      <div className="replica-history-actions" hidden={selecting} role="group" aria-label={`第 ${index + 1} 张历史图像操作`}>
         <button type="button" aria-label={`复制第 ${index + 1} 张历史原图`} title={copying ? "正在复制…" : "复制原图"} disabled={copying} onClick={() => void onCopy(item)}><Copy size={16} /></button>
         <button type="button" aria-label={`删除第 ${index + 1} 张历史图像`} title="删除" onClick={() => { setMenuOpen(false); onDelete(index); }}><Trash2 size={16} /></button>
         <button ref={menuButtonRef} type="button" aria-label={`第 ${index + 1} 张历史图像更多操作`} title="更多操作" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen((open) => !open)}><Ellipsis size={16} /></button>
       </div>
-      {menuOpen && (() => {
+      {menuOpen && !selecting && (() => {
         const menu = (
           <div
             className="replica-history-menu"
@@ -244,9 +251,60 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
   );
 }
 
-export function ReplicaHistory({ items, onOpen, onUse, onDelete, onPublish }: ReplicaHistoryProps): ReactElement {
+function historySelectionKey(item: ReplicaHistoryItem): string {
+  return item.historyId ? `account:${item.historyId}` : item.localId || item.id || item.image;
+}
+
+export function ReplicaHistory({ items, onOpen, onUse, onDelete, onDeleteMany, onPublish }: ReplicaHistoryProps): ReactElement {
   const [copyingImage, setCopyingImage] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const selectedItems = items.filter(item => selected.has(historySelectionKey(item)));
+  const allSelected = items.length > 0 && selectedItems.length === items.length;
+  function exitSelection() { setSelecting(false); setSelected(new Set()); }
+  function toggle(item: ReplicaHistoryItem) {
+    if (busy) return;
+    const key = historySelectionKey(item);
+    setSelected(current => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  }
+  async function downloadSelected(stripMetadata: boolean) {
+    if (busy || !selectedItems.length) return;
+    setBusy(true); setNotice(null);
+    try {
+      const { default: JSZip } = await import("jszip");
+      const zip = new JSZip();
+      let count = 0;
+      for (const [index, item] of selectedItems.entries()) {
+        try {
+          let blob = await fetchCachedImageBlob(item.image);
+          if (stripMetadata) {
+            const response = await fetch("/api/images/metadata-strip", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+            if (!response.ok) throw new Error("清理图片数据失败");
+            blob = await response.blob();
+          }
+          const ext = blob.type === "image/jpeg" ? "jpg" : blob.type === "image/webp" ? "webp" : "png";
+          zip.file(`lfn-${index + 1}.${ext}`, blob); count += 1;
+        } catch { /* Report failed files while retaining the selection for retry. */ }
+      }
+      if (!count) throw new Error("所选图片读取失败，请刷新历史后重试。");
+      const blob = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url; anchor.download = `lfn-images-${stripMetadata ? "clean-" : ""}${new Date().toISOString().slice(0, 10)}.zip`; anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setNotice({ text: `已打包 ${count} 张${stripMetadata ? "已清理 NAI 数据" : "原始"}图片。${count < selectedItems.length ? `另有 ${selectedItems.length - count} 张读取失败，可重试。` : ""}`, error: count < selectedItems.length });
+    } catch (error) { setNotice({ text: error instanceof Error ? error.message : "打包失败，请重试。", error: true }); }
+    finally { setBusy(false); }
+  }
+  async function deleteSelected() {
+    if (busy || !selectedItems.length || !onDeleteMany) return;
+    setBusy(true); setNotice(null);
+    try { if (await onDeleteMany(selectedItems)) exitSelection(); }
+    catch (error) { setNotice({ text: error instanceof Error ? error.message : "批量删除失败，请重试。", error: true }); }
+    finally { setBusy(false); }
+  }
 
   async function copyOriginal(item: ReplicaHistoryItem): Promise<void> {
     setNotice(null);
@@ -275,11 +333,21 @@ export function ReplicaHistory({ items, onOpen, onUse, onDelete, onPublish }: Re
 
   return (
     <div data-replica-history>
+      {items.length > 0 && <>
+        <div className="replica-history-bulk-heading"><button type="button" disabled={busy} onClick={() => selecting ? exitSelection() : setSelecting(true)}>{selecting ? <X size={15} /> : <CheckSquare size={15} />}{selecting ? "退出多选" : "批量管理"}</button></div>
+        {selecting && <div className="replica-history-bulk-toolbar" role="toolbar" aria-label="历史批量管理">
+          <button type="button" disabled={busy} onClick={() => setSelected(allSelected ? new Set() : new Set(items.map(historySelectionKey)))}>{allSelected ? "取消全选" : "全选"}</button>
+          <span>已选 {selectedItems.length}/{items.length} 张</span>
+          <button type="button" disabled={busy || !selectedItems.length} onClick={() => void downloadSelected(false)}><Download size={14} />原图 ZIP</button>
+          <button type="button" disabled={busy || !selectedItems.length} onClick={() => void downloadSelected(true)}>清理数据 ZIP</button>
+          {onDeleteMany && <button type="button" className="is-danger" disabled={busy || !selectedItems.length} onClick={() => void deleteSelected()}><Trash2 size={14} />删除（{selectedItems.length}）</button>}
+        </div>}
+      </>}
       {notice && <div className={`replica-history-notice${notice.error ? " is-error" : ""}`} role={notice.error ? "alert" : "status"}>
         <span>{notice.text}</span><button type="button" aria-label="关闭历史提示" onClick={() => setNotice(null)}><X size={14} /></button>
       </div>}
       {items.length ? <div className="replica-history-list">
-        {items.map((item, index) => <HistoryCard key={`${item.createdAt}-${index}`} item={item} index={index} copying={copyingImage === item.image} onCopy={copyOriginal} onOpen={onOpen} onUse={onUse} onDelete={onDelete} onPublish={onPublish} />)}
+        {items.map((item, index) => <HistoryCard key={historySelectionKey(item)} item={item} index={index} copying={copyingImage === item.image} onCopy={copyOriginal} onOpen={onOpen} onUse={onUse} onDelete={onDelete} onPublish={onPublish} selecting={selecting} selected={selected.has(historySelectionKey(item))} busy={busy} onToggle={() => toggle(item)} />)}
       </div> : <div className="replica-history-empty"><History size={48} strokeWidth={2} /><p>暂无历史记录</p></div>}
     </div>
   );

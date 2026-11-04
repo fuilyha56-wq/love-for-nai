@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 import { getSession } from "@/lib/session";
+import { cachedUpstreamRead } from "@/lib/upstream-read-cache";
+import { RateLimitError } from "@/lib/retry-after";
 import { fetchNewApiSelf } from "@/lib/shared-user-self";
+import { readUpstreamJson, upstreamClientHeaders } from "@/lib/upstream-request";
 import {
   runtimeAdminToken,
   runtimeAffGateway,
@@ -38,14 +42,21 @@ type TokenCacheEntry = {
   token?: string;
   expiresAt: number;
   pending?: Promise<string>;
+  error?: RateLimitError;
 };
 // Next 的各个路由可能打包出独立模块；缓存与创建锁必须在进程内共享。
 const tokenState = globalThis as typeof globalThis & {
   lfnNewApiTokens?: Map<string, TokenCacheEntry>;
   lfnNewApiTokenLocks?: Map<string, Promise<unknown>>;
+  lfnNewApiKeyReads?: Map<string, TokenCacheEntry>;
 };
 const tokenCache = (tokenState.lfnNewApiTokens ??= new Map());
 const tokenLocks = (tokenState.lfnNewApiTokenLocks ??= new Map());
+const keyReads = (tokenState.lfnNewApiKeyReads ??= new Map());
+
+function credentialScope(session: Session): string {
+  return createHash("sha256").update(JSON.stringify([session.userId, session.systemToken || session.upstreamSessionKey || session.upstreamCookie || session.accessToken, session.epoch, session.userEpoch])).digest("hex");
+}
 
 async function withTokenLock<T>(
   key: string,
@@ -176,6 +187,8 @@ export async function resolvedAdminToken(): Promise<string | null> {
 }
 
 export function userHeaders(session: Session): Record<string, string> {
+  if (session.upstreamRetryAt && session.upstreamRetryAt > Date.now())
+    throw new RateLimitError("账号服务暂时繁忙，登录身份已保留，请稍后重试。", Math.max(1, Math.ceil((session.upstreamRetryAt - Date.now()) / 1000)));
   // 系统访问令牌不带 Bearer 前缀；登录派发的 access_token 需要 Bearer。
   const authorization = session.systemToken
     ? session.systemToken
@@ -194,14 +207,8 @@ export async function readUsableGroups(
   baseUrl: string,
   headers: Record<string, string>,
 ): Promise<string[]> {
-  const response = await fetch(`${baseUrl}/api/user/self/groups`, {
-    headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
-  const result = (await response.json()) as ApiResult<
-    Record<string, unknown> | string[]
-  >;
+  const response = await cachedUpstreamRead(`${baseUrl}/api/user/self/groups`, headers, 30_000);
+  const result = await readUpstreamJson<ApiResult<Record<string, unknown> | string[]>>(response, "读取可用分组");
   if (!response.ok || !result.success || !result.data)
     throw new Error(result.message || "无法读取可用分组，请稍后重试");
   return Array.isArray(result.data)
@@ -215,15 +222,11 @@ async function readModelGroups(
   headers: Record<string, string>,
   model: string,
 ): Promise<string[]> {
-  const response = await fetch(`${baseUrl}/api/pricing`, {
-    headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(15_000),
-  });
-  const result = (await response.json()) as {
+  const response = await cachedUpstreamRead(`${baseUrl}/api/pricing`, headers, 30_000);
+  const result = await readUpstreamJson<{
     data?: Array<{ model_name?: string; enable_groups?: string[] }>;
     message?: string;
-  };
+  }>(response, "读取模型分组");
   if (!response.ok || !Array.isArray(result.data))
     throw new Error(result.message || "无法读取模型分组，请稍后重试");
   const entry = result.data?.find((item) => item.model_name === model);
@@ -260,12 +263,12 @@ async function resolveToken(
   baseUrl = newApiBaseUrl(),
   strictGroup = false,
 ): Promise<string> {
-  const headers = userHeaders(session);
+  const headers = { ...userHeaders(session), ...await upstreamClientHeaders() };
   const selfResponse = await fetchNewApiSelf(baseUrl, headers);
-  const selfResult = (await selfResponse.json()) as ApiResult<{
+  const selfResult = await readUpstreamJson<ApiResult<{
     group?: string;
     user?: { group?: string };
-  }>;
+  }>>(selfResponse, "读取账号资料");
   if (!selfResponse.ok || !selfResult.success)
     throw new Error(selfResult.message || "无法读取用户分组");
   const selfGroup = selfResult.data?.user?.group ?? selfResult.data?.group;
@@ -278,11 +281,12 @@ async function resolveToken(
   // 渠道）：优先取模型确实开放且用户可用的固定分组，否则在模型可用的
   // 渠道分组里挑一个当前用户有权使用的，保证没有图包余额、走 NewAPI
   // 计费的用户也能正常生图。
+  const automaticChat = prefix === LFN_CHAT_TOKEN_PREFIX && !strictGroup;
   const group = selectModelGroup(
     modelGroups,
     usableGroups,
     selfGroup,
-    requiredGroup,
+    automaticChat ? selfGroup : requiredGroup,
   );
   if (strictGroup && group !== requiredGroup)
     throw new Error("所选分组不支持此模型或当前账号无权使用，请刷新模型列表");
@@ -303,9 +307,9 @@ async function resolveToken(
           signal: AbortSignal.timeout(10_000),
         },
       );
-      const result = (await response.json()) as ApiResult<
+      const result = await readUpstreamJson<ApiResult<
         { items?: Token[]; total?: number } | Token[]
-      >;
+      >>(response, "读取 API 密钥列表");
       if (!response.ok || !result.success || !result.data)
         throw new Error(
           result.message || "无法读取 API 密钥，请重新登录或稍后重试",
@@ -359,7 +363,13 @@ async function resolveToken(
         .map((value) => value.trim())
         .includes(model));
   const usable = (await listTokens()).filter(isUsable);
+  // “自动（账号默认）” must not route through a newer key from a different
+  // compatible group. Keep reusing other owned keys only when no default key exists.
+  const preferred = automaticChat
+    ? usable.filter((item) => (item.group || selfGroup) === group)
+    : usable;
   let token: Token | undefined =
+    preferred.find((item) => item.name.startsWith(prefix)) ?? preferred[0] ??
     usable.find((item) => item.name.startsWith(prefix)) ?? usable[0];
 
   if (!token) {
@@ -380,7 +390,7 @@ async function resolveToken(
       }),
       signal: AbortSignal.timeout(10_000),
     });
-    const result = (await created.json()) as ApiResult<unknown>;
+    const result = await readUpstreamJson<ApiResult<unknown>>(created, "创建 LFN 密钥");
     if (!created.ok || !result.success)
       throw new Error(result.message || "无法创建 LFN 专用密钥");
     token = (await listTokens()).find(
@@ -391,19 +401,37 @@ async function resolveToken(
     );
   }
   if (!token) throw new Error("LFN 专用密钥创建后未找到");
-  const keyResponse = await fetch(`${baseUrl}/api/token/${token.id}/key`, {
-    method: "POST",
-    headers,
-    cache: "no-store",
-    signal: AbortSignal.timeout(10_000),
-  });
-  const keyResult = (await keyResponse.json()) as ApiResult<{ key?: string }>;
-  if (!keyResponse.ok || !keyResult.success || !keyResult.data?.key)
-    throw new Error(keyResult.message || "无法读取 LFN 专用密钥");
-  const key = keyResult.data.key.trim();
-  if (!key || /[*…\s\u0000-\u001f\u007f]/.test(key))
-    throw new Error("NewAPI 未返回完整密钥，请检查密钥读取权限");
-  return key;
+  const readKey = `${baseUrl}|${credentialScope(session)}|${token.id}`;
+  const previous = keyReads.get(readKey);
+  if (previous && previous.expiresAt > Date.now()) {
+    if (previous.error) throw new RateLimitError(previous.error.message, Math.max(1, Math.ceil((previous.expiresAt - Date.now()) / 1000)));
+    if (previous.token) return previous.token;
+    if (previous.pending) return previous.pending;
+  }
+  for (const [key, entry] of keyReads) if (!entry.pending && entry.expiresAt <= Date.now()) keyReads.delete(key);
+  if (keyReads.size >= TOKEN_CACHE_MAX_ENTRIES) {
+    const oldest = [...keyReads].find(([, entry]) => !entry.pending);
+    if (oldest) keyReads.delete(oldest[0]);
+  }
+  const entry: TokenCacheEntry = { expiresAt: Date.now() + TOKEN_CACHE_TTL_MS };
+  const pending = (async () => {
+    try {
+      const keyResponse = await fetch(`${baseUrl}/api/token/${token.id}/key`, { method: "POST", headers, cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      const keyResult = await readUpstreamJson<ApiResult<{ key?: string }>>(keyResponse, "读取助手密钥");
+      if (!keyResponse.ok || !keyResult.success || !keyResult.data?.key) throw new Error(keyResult.message || "无法读取 LFN 专用密钥");
+      const key = keyResult.data.key.trim();
+      if (!key || /[*…\s\u0000-\u001f\u007f]/.test(key)) throw new Error("NewAPI 未返回完整密钥，请检查密钥读取权限");
+      entry.token = key;
+      return key;
+    } catch (error) {
+      if (error instanceof RateLimitError) { entry.error = error; entry.expiresAt = Date.now() + error.retryAfter * 1000; }
+      else keyReads.delete(readKey);
+      throw error;
+    } finally { entry.pending = undefined; }
+  })();
+  entry.pending = pending;
+  keyReads.set(readKey, entry);
+  return pending;
 }
 
 function tokenCacheKey(
@@ -413,7 +441,7 @@ function tokenCacheKey(
   baseUrl: string,
   requiredGroup?: string,
 ): string {
-  return `${baseUrl}|${session.userId}|${prefix}|${model}|${requiredGroup || "auto"}`;
+  return `${baseUrl}|${session.userId}|${credentialScope(session)}|${prefix}|${model}|${requiredGroup || "auto"}`;
 }
 
 function pruneTokenCache(now: number): void {
@@ -442,6 +470,7 @@ async function cachedToken(
   const now = Date.now();
   const existing = tokenCache.get(key);
   if (existing?.pending) return existing.pending;
+  if (existing?.error && existing.expiresAt > now) throw new RateLimitError(existing.error.message, Math.max(1, Math.ceil((existing.expiresAt - now) / 1000)));
   if (existing?.token && existing.expiresAt > now)
     return Promise.resolve(existing.token);
 
@@ -459,8 +488,9 @@ async function cachedToken(
       entry.expiresAt = Date.now() + TOKEN_CACHE_TTL_MS;
       delete entry.pending;
     },
-    () => {
-      if (tokenCache.get(key) === entry) tokenCache.delete(key);
+    (error) => {
+      if (error instanceof RateLimitError) { entry.error = error; entry.expiresAt = Date.now() + error.retryAfter * 1000; delete entry.pending; }
+      else if (tokenCache.get(key) === entry) tokenCache.delete(key);
     },
   );
   return pending;
@@ -484,6 +514,13 @@ export function getStoryToken(
   return cachedToken(session, model, LFN_CHAT_TOKEN_PREFIX, LFN_MODEL_GROUP);
 }
 
+export async function invalidateUserTokenCache(session: Session): Promise<void> {
+  const base = await resolvedNewApiBaseUrl();
+  for (const key of tokenCache.keys()) if (key.startsWith(`${base}|${session.userId}|`)) tokenCache.delete(key);
+  const scope = `${base}|${credentialScope(session)}|`;
+  for (const key of keyReads.keys()) if (key.startsWith(scope)) keyReads.delete(key);
+}
+
 /** 只清除被拒绝的旧密钥；重新查全用户已有密钥，不因一次鉴权错误盲目新建。 */
 export async function refreshChatToken(
   session: Session,
@@ -497,6 +534,8 @@ export async function refreshChatToken(
     if (key.startsWith(scope) && entry.token === rejectedKey)
       tokenCache.delete(key);
   }
+  const readScope = `${baseUrl}|${credentialScope(session)}|`;
+  for (const [key, entry] of keyReads) if (key.startsWith(readScope) && entry.token === rejectedKey) keyReads.delete(key);
   return getChatToken(session, model, group);
 }
 

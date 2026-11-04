@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS catalog_tags (
   raw_json TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS catalog_tags_name ON catalog_tags(name COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS catalog_tags_suggest ON catalog_tags(name COLLATE NOCASE, source, post_count DESC, key);
 CREATE INDEX IF NOT EXISTS catalog_tags_source ON catalog_tags(source, source_id);
 CREATE TABLE IF NOT EXISTS catalog_wikis (
   id INTEGER PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL,

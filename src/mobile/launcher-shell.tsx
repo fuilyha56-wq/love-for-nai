@@ -6,15 +6,16 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Aperture, Bell, BookOpen, BookText, Brush, ChartNoAxesColumn, ChevronLeft, ChevronRight, Coins, Folder, Images, KeyRound, LayoutDashboard, Megaphone, MoreHorizontal, Scan, Settings, ShieldCheck, Tags, UserRound, Users, X } from "lucide-react";
 import { useDialogFocus } from "./ui/use-dialog-focus";
+import { MobileBottomNav } from "./ui/mobile-bottom-nav";
 import "./launcher-shell.css";
 
 // Same branch order and shell geometry as Aaalice's AppBranch/MainNavRail.
 // LFn-only destinations share the shell instead of creating a separate website nav.
 export const launcherDestinations = [
-  { href: "/image", label: "画布", icon: Brush },
-  { href: "/history", label: "图片历史", icon: Folder },
-  { href: "/gallery", label: "图片广场", icon: Images },
-  { href: "/tags", label: "标签词库", icon: Tags },
+  { href: "/image", label: "生成", icon: Brush },
+  { href: "/history", label: "历史", icon: Folder },
+  { href: "/gallery", label: "广场", icon: Images },
+  { href: "/tags", label: "词库", icon: Tags },
   { href: "/settings#prompts", label: "提示词库", icon: BookOpen },
   { href: "/image/editor", label: "图像编辑器", icon: Scan },
   { href: "/image/editor/history", label: "重绘历史", icon: Folder },
@@ -75,8 +76,6 @@ export function LauncherShell({ children }: { children: ReactNode }) {
   }, [pathname]);
   const imageViewer = pathname.startsWith("/gallery/") || pathname.startsWith("/history/");
   const immersive = imageViewer || pathname === "/image" || pathname === "/image/editor" || pathname === "/image/setting/layout";
-  const primary = launcherDestinations.slice(0, 4);
-  const primaryActive = primary.some(item => launcherPathActive(pathname, item.href));
   const changeRail = () => setExpanded(value => { try { localStorage.setItem("lfn-mobile-launcher-rail-expanded", value ? "0" : "1"); } catch { /* Keep the current session usable. */ } return !value; });
   return <div className="launcher-shell" data-rail-expanded={expanded} data-launcher-route={pathname} data-immersive={immersive} data-image-viewer={imageViewer}>
     <a href="#launcher-content" className="launcher-skip-link">跳到页面内容</a>
@@ -90,7 +89,7 @@ export function LauncherShell({ children }: { children: ReactNode }) {
       <button className="launcher-rail-toggle" type="button" onClick={changeRail} aria-label={expanded ? "折叠应用导航" : "展开应用导航"} aria-expanded={expanded}>{expanded ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}<span>收起导航</span></button>
     </aside>
     <div id="launcher-content" tabIndex={-1} className="launcher-content" inert={moreOpen}>{children}</div>
-    {!immersive && <nav className="launcher-bottom-nav" aria-label="移动应用导航">{primary.map(({ href, label, icon: Icon }) => <Link key={href} href={href} prefetch={false} aria-current={launcherPathActive(pathname, href) ? "page" : undefined}><Icon size={21} aria-hidden="true" /><span>{label}</span></Link>)}<button type="button" aria-label="更多页面" aria-haspopup="dialog" aria-expanded={moreOpen} aria-current={!primaryActive ? "page" : undefined} onClick={() => setMoreOpen(true)}><MoreHorizontal size={22} /><span>更多</span></button></nav>}
+    {!immersive && <MobileBottomNav className="launcher-bottom-nav" active={pathname.startsWith("/history") ? "history" : pathname.startsWith("/gallery") ? "gallery" : pathname.startsWith("/tags") ? "tags" : "more"} />}
     {moreOpen && createPortal(<div className="launcher-more-backdrop" onClick={() => setMoreOpen(false)} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setMoreOpen(false); } }}>
       <div ref={moreRef} tabIndex={-1} className="launcher-more" role="dialog" aria-modal="true" aria-label="更多页面" onClick={event => event.stopPropagation()}><header><b>更多</b><button type="button" aria-label="关闭更多页面" onClick={() => setMoreOpen(false)}><X size={20} /></button></header><LauncherDestinationGroups admin={admin} onNavigate={() => setMoreOpen(false)} /></div>
     </div>, document.body)}

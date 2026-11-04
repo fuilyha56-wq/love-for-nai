@@ -5,9 +5,10 @@ import { waitWithAbort } from "@/lib/abortable";
 
 import { prepareInpaintMasks } from "@/lib/inpaint-mask";
 
-import { filterTiledUpscaleModelOptions, generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
+import { filterInpaintModelOptions, filterTiledUpscaleModelOptions, generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, isNaiModelEnabledForPolicy, type ModelPolicy } from "@/lib/model-policy";
-import { NAI_IMAGE_MODEL_OPTIONS, NAI_INPAINT_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
+import { canonicalImageModelId, imageModelLabel, normalizeImageModelOptions, NAI_IMAGE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
+import { createEditorAutosave } from "@/lib/editor-autosave";
 import { normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { NaturalImageSettings } from "../natural-image-settings";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
@@ -66,6 +67,7 @@ import {
   moveViewport,
   panCamera,
   resizeViewport,
+  snapRectToEdges,
   screenToWorld,
   worldRectToScreen,
   zoomCameraAt,
@@ -76,6 +78,7 @@ import {
   type PendingCandidate,
   type Point,
   type RgbaImage,
+  type ViewportHandle,
 } from "@/lib/image-editor";
 import {
   createEditorDraft,
@@ -96,7 +99,7 @@ type DragState =
   | { kind: "pan"; screen: Point; camera: CameraState }
   | { kind: "pinch"; distance: number; midpoint: Point; camera: CameraState }
   | { kind: "viewport"; point: Point; viewport: GenerationViewport }
-  | { kind: "resize"; point: Point; viewport: GenerationViewport; corner: "nw" | "ne" | "sw" | "se" }
+  | { kind: "resize"; point: Point; viewport: GenerationViewport; corner: ViewportHandle }
   | { kind: "stroke"; stroke: EditorStroke };
 
 function replaceEditorModeInAddress(mode: EditorMode, draftId?: string | null) {
@@ -109,8 +112,6 @@ function replaceEditorModeInAddress(mode: EditorMode, draftId?: string | null) {
 const DEFAULT_WIDTH = 832;
 const DEFAULT_HEIGHT = 1216;
 const MASK_COLORS = ["#a83a4c", "#2d7567", "#6c7fff", "#b47c2a", "#f783ac"];
-type InpaintModelOption = readonly [string, string];
-const INPAINT_MODELS: readonly InpaintModelOption[] = NAI_INPAINT_MODEL_OPTIONS;
 const SAMPLERS = [
   ["k_euler_ancestral", "欧拉祖先"],
   ["k_euler", "欧拉"],
@@ -324,7 +325,7 @@ export function viewportImage(document: EditorDocument, viewport: GenerationView
       }
       const source = (Math.floor(sourceY) * document.image.width + Math.floor(sourceX)) * 4;
       image.data.set(document.image.data.subarray(source, source + 4), target);
-      if (document.image.data[source + 3] < 250) mask[y * width + x] = 255;
+      if (document.image.data[source + 3] === 0) mask[y * width + x] = 255;
     }
   }
   return { image, mask };
@@ -459,6 +460,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const [strokes, setStrokes] = useState<EditorStroke[]>([]);
   const [undone, setUndone] = useState<EditorStroke[]>([]);
   const [pending, setPending] = useState<PendingCandidate | null>(null);
+  const [canvasCandidates, setCanvasCandidates] = useState<PendingCandidate[]>([]);
+  const [primaryCanvasCandidateId, setPrimaryCanvasCandidateId] = useState("");
+  const [keptCanvasCandidateIds, setKeptCanvasCandidateIds] = useState<string[]>([]);
+  const canvasSessionParentRef = useRef<{ nodeId: string; branchId: string } | null>(null);
   const [compare, setCompare] = useState(0.5);
   const [tileScale, setTileScale] = useState<TileUpscaleFactor>(2);
   const [tileProgress, setTileProgress] = useState<TiledUpscaleProgress | null>(null);
@@ -481,7 +486,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const activeHistoryBranchIdRef = useRef("");
   const currentHistoryNodeIdRef = useRef("");
   const historyClearedRef = useRef(false);
-  const historySkipAutoRef = useRef(false);
   const historyFingerprintRef = useRef("");
   const historyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const historyObjectIdentityRef = useRef(new WeakMap<object, number>());
@@ -497,7 +501,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const [model, setModel] = useState("nai-v5-inpaint");
   const [modelPolicy, setModelPolicy] = useState<ModelPolicy>(DEFAULT_CLIENT_MODEL_POLICY);
   const [modelPolicyReady, setModelPolicyReady] = useState(false);
-  const [availableInpaintModels, setAvailableInpaintModels] = useState<readonly InpaintModelOption[]>(INPAINT_MODELS);
   const [tiledModelCatalog, setTiledModelCatalog] = useState<{ key: string; options: SelectOption[] } | null>(null);
   const [tiledModelCatalogError, setTiledModelCatalogError] = useState<{ key: string; message: string } | null>(null);
   const tiledRestoreRef = useRef<TiledUpscaleRestore | null>(null);
@@ -512,11 +515,11 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const imageProviderId = document?.generation?.providerId || "newapi";
   const tiledModelSourceReady = Boolean(document);
   const tiledModelSourceKey = `${imageProviderId}:${imageProtocol || "auto"}`;
-  const tiledModelsLoading = tiledModelSourceReady && mode === "tiled-upscale" && tiledModelCatalog?.key !== tiledModelSourceKey && tiledModelCatalogError?.key !== tiledModelSourceKey;
+  const tiledModelsLoading = tiledModelSourceReady && tiledModelCatalog?.key !== tiledModelSourceKey && tiledModelCatalogError?.key !== tiledModelSourceKey;
   const tiledModelsError = tiledModelCatalogError?.key === tiledModelSourceKey ? tiledModelCatalogError.message : "";
   const modelCapabilities = resolveImageModelCapabilities(model, imageProtocol);
   const naturalImageModel = modelCapabilities.promptStyle === "natural";
-  const generationModel = generationModelFor(model);
+  const generationModel = mode === "tiled-upscale" ? model : generationModelFor(model);
   const refreshGatewayImageCapacity = useCallback(async (signal?: AbortSignal): Promise<TileUpscaleGatewayCapacity | null> => {
     try {
       const response = await fetch("/api/image-capacity", { cache: "no-store", signal });
@@ -560,63 +563,21 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     } finally { if (!signal?.aborted) setModelPolicyReady(true); }
   }, []);
 
-  const refreshInpaintModels = useCallback(async (signal?: AbortSignal) => {
-    if (imageProviderId !== "newapi") { setAvailableInpaintModels(INPAINT_MODELS); return; }
-    try {
-      const response = await fetch("/api/public/catalog", { cache: "no-store", signal });
-      const result = await response.json() as { models?: Array<{ id?: string; kind?: string }> };
-      if (signal?.aborted) return;
-      const ids = new Set((result.models || [])
-        .filter((item) => item.kind === "image" && typeof item.id === "string")
-        .map((item) => item.id as string));
-      // Some gateways advertise only base IDs and select infill through the
-      // operation field. Preserve that advertised ID in requests and billing.
-      const catalogOptions: InpaintModelOption[] = INPAINT_MODELS.flatMap(([id, label]) => {
-        if (ids.has(id)) return [[id, label] as InpaintModelOption];
-        const base = generationModelFor(id);
-        return ids.has(base) ? [[base, label] as InpaintModelOption] : [];
-      });
-      // A catalog outage must not erase the usable legacy list.
-      if (catalogOptions.length) setAvailableInpaintModels(catalogOptions);
-    } catch {
-      // Keep the static list when the public catalog is unavailable.
-    }
-  }, [imageProviderId]);
-
   useEffect(() => {
     const controller = new AbortController();
     void Promise.resolve().then(() => refreshModelPolicy(controller.signal));
-    void Promise.resolve().then(() => refreshInpaintModels(controller.signal));
-    const refresh = () => {
-      void refreshModelPolicy();
-      void refreshInpaintModels();
-    };
+    const refresh = () => { void refreshModelPolicy(); };
     window.addEventListener("focus", refresh);
-    const timer = window.setInterval(refresh, 60_000);
+    const timer = window.setInterval(refresh, 30_000);
     return () => {
       controller.abort();
       window.removeEventListener("focus", refresh);
       window.clearInterval(timer);
     };
-  }, [refreshInpaintModels, refreshModelPolicy]);
+  }, [refreshModelPolicy]);
 
   useEffect(() => {
-    const filtered = filterNaiModelOptions(
-      availableInpaintModels.map(([value, label]) => ({ value, label })),
-      modelPolicy,
-    );
-    if (!document || !modelPolicyReady || mode === "tiled-upscale" || !filtered.length) return;
-    void Promise.resolve().then(() => setModel(current => {
-      if (!current.startsWith("nai-") || filtered.some(({ value }) => value === current)) return current;
-      const sameFamily = filtered.find(({ value }) => value === generationModelFor(current));
-      if (sameFamily) return sameFamily.value;
-      // Never downgrade a role reference to an incompatible model while loading.
-      return document.characterReference ? current : filtered[0].value;
-    }));
-  }, [availableInpaintModels, modelPolicy, modelPolicyReady, mode, document]);
-
-  useEffect(() => {
-    if (!tiledModelSourceReady || mode !== "tiled-upscale") return;
+    if (!tiledModelSourceReady) return;
     const controller = new AbortController();
     const load = async () => {
       try {
@@ -648,7 +609,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     };
     void load();
     return () => controller.abort();
-  }, [imageProviderId, imageProtocol, mode, tiledModelSourceKey, tiledModelSourceReady]);
+  }, [imageProviderId, imageProtocol, tiledModelSourceKey, tiledModelSourceReady]);
   const outputSize = normalizeEditorOutputSize(model, viewportSize.width, viewportSize.height, imageProtocol);
   const outputStep = naturalImageModel ? modelCapabilities.sizeConstraints?.multipleOf || 16 : 64;
   const outputMaxEdge = modelCapabilities.sizeConstraints?.maxEdge || 4096;
@@ -684,21 +645,34 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       : "当前步数超过 28，每块可能消耗 Anlas；并发按 Gateway 允许 Anlas 的账号数实时调整。"
     : "每块会按所选来源的图生图规则计费；并发受当前来源的 LFN 限流控制。";
   const pendingPreviewUrl = useMemo(() => pending ? maskedPatchDataUrl(pending) : "", [pending]);
+  const sourceModelOptions = useMemo(() => normalizeImageModelOptions(
+    tiledModelCatalog?.key === tiledModelSourceKey ? tiledModelCatalog.options
+      : imageProviderId === "newapi" || imageProviderId === "novelai" ? NAI_IMAGE_MODEL_OPTIONS : [{ value: model, label: imageModelLabel(model) }],
+  ), [tiledModelCatalog, tiledModelSourceKey, imageProviderId, model]);
   const filteredInpaintModels = useMemo(
-    () => filterNaiModelOptions(availableInpaintModels.map(([value, label]) => ({ value, label })), modelPolicy)
+    () => filterInpaintModelOptions(sourceModelOptions, imageProtocol, modelPolicy)
       .filter(({ value }) => !document?.characterReference || supportsCharacterReferenceEdit(value, imageProtocol)),
-    [availableInpaintModels, modelPolicy, document?.characterReference, imageProtocol],
+    [sourceModelOptions, modelPolicy, document?.characterReference, imageProtocol],
   );
+  const canvasModelOptions = useMemo(() => filterNaiModelOptions(sourceModelOptions, modelPolicy)
+    .filter(({ value }) => resolveImageModelCapabilities(value, imageProtocol).edit),
+    [sourceModelOptions, modelPolicy, imageProtocol]);
   const tiledModelOptions = useMemo(
-    () => filterTiledUpscaleModelOptions(
-      tiledModelCatalog?.key === tiledModelSourceKey ? tiledModelCatalog.options : [],
-      generationModel,
-      imageProtocol,
-      modelPolicy,
-    ),
-    [tiledModelCatalog, tiledModelSourceKey, generationModel, imageProtocol, modelPolicy],
+    () => filterTiledUpscaleModelOptions(sourceModelOptions, "", imageProtocol, modelPolicy),
+    [sourceModelOptions, imageProtocol, modelPolicy],
   );
-  const v45InpaintAvailable = filteredInpaintModels.some(({ value }) => value.startsWith("nai-v4.5-"));
+  const editorModelOptions = mode === "canvas" ? canvasModelOptions : mode === "tiled-upscale" ? tiledModelOptions : filteredInpaintModels;
+  useEffect(() => {
+    if (!document || !modelPolicyReady || tiledModelsLoading || !editorModelOptions.length) return;
+    void Promise.resolve().then(() => setModel(current => {
+      if (editorModelOptions.some(({ value }) => value === current)) return current;
+      const canonical = canonicalImageModelId(current);
+      const equivalent = editorModelOptions.find(({ value }) => canonicalImageModelId(value) === canonical);
+      const base = editorModelOptions.find(({ value }) => canonicalImageModelId(value) === generationModelFor(current));
+      return equivalent?.value || base?.value || editorModelOptions[0].value;
+    }));
+  }, [document, editorModelOptions, modelPolicyReady, tiledModelsLoading]);
+  const v45InpaintAvailable = filteredInpaintModels.some(({ value }) => canonicalImageModelId(value).startsWith("nai-v4.5-"));
 
   const fitCamera = useCallback((nextDocument: EditorDocument, nextViewport: GenerationViewport) => {
     const stage = stageRef.current;
@@ -744,7 +718,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setPrompt(nextDocument.prompt || "");
         setNegative(nextDocument.negativePrompt || "");
         if (!nextDocument.characterReference) syncEditorPromptToStudioForm(loaded.id, nextDocument.prompt || "", nextDocument.negativePrompt || "");
-        const nextModel = inpaintModelFor(generation?.model || "nai-v5-full", generation?.imageProtocol);
+        const sourceModel = generation?.model || "nai-v5-full";
+        const nextModel = loaded.mode === "canvas" || new URLSearchParams(window.location.search).get("mode") === "tiled-upscale" ? sourceModel : inpaintModelFor(sourceModel, generation?.imageProtocol) || sourceModel;
         if (!nextModel) throw new Error(`当前模型 ${generation?.model} 没有对应的重绘模型，请返回工作台选择支持重绘的模型。`);
         setModel(nextModel);
         setImageQuality(generation?.quality || "auto");
@@ -756,7 +731,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setSampler(generation?.sampler || "k_euler_ancestral");
         setSeed(nextDocument.seed == null || Number(nextDocument.seed) === 0 ? "" : String(nextDocument.seed));
         if (loaded.workspace) {
-          setViewport({ ...loaded.workspace.viewport, height: loaded.workspace.viewport.width / (outputWidth / outputHeight) });
+          setViewport({ ...loaded.workspace.viewport });
           setCamera({ ...loaded.workspace.camera });
           setStrokes(loaded.workspace.strokes.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
           setUndone(loaded.workspace.undone.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
@@ -938,8 +913,13 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setViewport(moveViewport(drag.viewport, delta));
       dragRef.current = { ...drag, point, viewport: moveViewport(drag.viewport, delta) };
     } else if (drag.kind === "resize") {
-      const next = resizeViewport(drag.viewport, drag.corner, point, { aspect: outputSize.width / outputSize.height, minWidth: 128, minHeight: 128 });
+      const resized = resizeViewport(drag.viewport, drag.corner, point, { free: true, minWidth: outputStep, minHeight: outputStep });
+      const size = normalizeEditorOutputSize(model, resized.width, resized.height, imageProtocol);
+      const next = { ...resized, ...size,
+        x: drag.corner.includes("w") ? drag.viewport.x + drag.viewport.width - size.width : drag.viewport.x,
+        y: drag.corner.includes("n") ? drag.viewport.y + drag.viewport.height - size.height : drag.viewport.y };
       setViewport(next);
+      setViewportSize(size);
     } else if (drag.kind === "stroke") {
       const next = { ...drag.stroke, points: [...drag.stroke.points, point] };
       dragRef.current = { kind: "stroke", stroke: next };
@@ -952,6 +932,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     const drag = dragRef.current;
     if (!drag) return;
     if (drag.kind === "stroke") setUndone([]);
+    if (drag.kind === "viewport" && document) setViewport(current => current ? snapRectToEdges(current, document.worldRect, { threshold: 5 / camera.zoom }) : current);
     dragRef.current = null;
   };
 
@@ -999,8 +980,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   };
 
   const createHistorySnapshot = (nextDocument: EditorDocument): EditorHistorySnapshot => {
-    // History autosave runs whenever editor state changes. Keep immutable state references
-    // here; the IndexedDB layer clones the snapshot only when a checkpoint is committed.
+    // Only explicit checkpoints and generated results enter the version tree.
+    // IndexedDB clones immutable state when committing the checkpoint.
     return {
       document: synchronizeDocument(nextDocument),
       workspace: {
@@ -1037,8 +1018,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       revision: snapshot.document.revision,
       documentMetadata,
       workspace: {
-        viewportId: objectIdentity(snapshot.workspace.viewport),
-        cameraId: objectIdentity(snapshot.workspace.camera),
+        viewport: snapshot.workspace.viewport,
         strokesId: objectIdentity(snapshot.workspace.strokes),
         undoneId: objectIdentity(snapshot.workspace.undone),
         tool: snapshot.workspace.tool,
@@ -1115,6 +1095,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     candidate: PendingCandidate,
     resultOperation: EditorHistoryOperation,
   ) => {
+    if (mode === "canvas" && canvasSessionParentRef.current) {
+      currentHistoryNodeIdRef.current = canvasSessionParentRef.current.nodeId;
+      activeHistoryBranchIdRef.current = canvasSessionParentRef.current.branchId;
+    }
     const parentNodeId = currentHistoryNodeIdRef.current;
     const parentBranchId = activeHistoryBranchIdRef.current;
     if (!historyReady || !draft?.id || !parentNodeId || !parentBranchId) {
@@ -1165,7 +1149,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setActiveHistoryBranchId(branch.id);
       setCurrentHistoryNodeId(selectedNodeId);
       historyFingerprintRef.current = historyFingerprint(createHistorySnapshot(document));
-      historySkipAutoRef.current = true;
       setHistoryReady(true);
     })().catch((error) => {
       if (active) setNotice(`无法初始化编辑历史：${error instanceof Error ? error.message : "浏览器存储不可用"}`);
@@ -1175,33 +1158,17 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft?.id, ready]);
 
-  useEffect(() => {
-    if (!historyReady || !ready || !draft?.id || !document || !viewport || pending || !activeHistoryBranchIdRef.current) return;
-    const snapshot = createHistorySnapshot(document);
-    const fingerprint = historyFingerprint(snapshot);
-    if (historySkipAutoRef.current) {
-      historySkipAutoRef.current = false;
-      historyFingerprintRef.current = fingerprint;
-      return;
-    }
-    if (fingerprint === historyFingerprintRef.current) return;
-    const timer = window.setTimeout(() => {
-      const label = `自动保存 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-      void persistHistorySnapshot(snapshot, label, fingerprint);
-    }, 1100);
-    return () => window.clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeHistoryBranchId, brushSize, canvasBackground, document, draft?.id, historyReady, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tileScale, tool, undone, viewport, outputSize.height, outputSize.width]);
-
   const checkoutHistoryNode = async (nodeId: string, branchOverride?: string) => {
-    if (!nodeId || historyBusy) return;
+    if (!nodeId || historyBusy || generating || pending) return;
+    await draftAutosave.flush();
     setHistoryBusy(true);
     try {
       const node = await loadEditorHistoryNode(nodeId);
       if (!node || node.draftId !== draft?.id) throw new Error("历史节点不存在或已损坏");
       const restoredDocument: EditorDocument = { ...node.document, image: node.image };
       const restoredGeneration = restoredDocument.generation;
-      const nextModel = inpaintModelFor(restoredGeneration?.model || model, restoredGeneration?.imageProtocol) || restoredGeneration?.model || model;
+      const restoredModel = restoredGeneration?.model || model;
+      const nextModel = node.mode === "inpaint" ? inpaintModelFor(restoredModel, restoredGeneration?.imageProtocol) || restoredModel : restoredModel;
       const normalizedSize = normalizeImageModelSize(nextModel, restoredGeneration?.width || restoredDocument.image.width, restoredGeneration?.height || restoredDocument.image.height, restoredGeneration?.imageProtocol);
       setDocument(restoredDocument);
       setTileScale(node.tileScale);
@@ -1229,6 +1196,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setSampler(restoredGeneration?.sampler || "k_euler_ancestral");
       setSeed(restoredDocument.seed == null ? "" : String(restoredDocument.seed));
       setPending(null);
+      setCanvasCandidates([]);
+      canvasSessionParentRef.current = null;
       tiledRestoreRef.current = null;
       tileCacheRef.current = null;
       setTileSourceState(null);
@@ -1238,7 +1207,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setActiveHistoryBranchId(branchId);
       setCurrentHistoryNodeId(node.id);
       historyFingerprintRef.current = historyFingerprint({ document: restoredDocument, workspace: node.workspace, mode: node.mode, tileScale: node.tileScale });
-      historySkipAutoRef.current = true;
       setNotice(`已切换到「${node.label}」，可以继续编辑或从此节点新建分支。`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "无法切换历史节点");
@@ -1277,7 +1245,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     if (name === null || !name.trim()) return;
     historyClearedRef.current = false;
     const snapshot = createHistorySnapshot(document);
-    await persistHistorySnapshot(snapshot, name, historyFingerprint(snapshot), true);
+    if (!await persistHistorySnapshot(snapshot, name, historyFingerprint(snapshot), true)) return;
     setNotice(`已保存历史节点「${name.trim()}」。`);
   };
 
@@ -1330,17 +1298,30 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     } finally { setHistoryBusy(false); }
   };
 
+  const [draftAutosave] = useState(() => createEditorAutosave((error) => {
+    setNotice(`草稿保存失败：${error instanceof Error ? error.message : "浏览器存储不可用"}`);
+  }));
   useEffect(() => {
     if (!ready || !document || !viewport || pending || !draft) return;
-    const timer = window.setTimeout(() => {
-      void saveEditorDraft(createDraftPayload(document))
-        .then((saved) => setDraft(saved))
-        .catch(() => undefined);
-    }, 500);
-    return () => window.clearTimeout(timer);
-  // createDraftPayload intentionally snapshots all listed editor state.
+    draftAutosave.schedule(async () => {
+      const saved = await saveEditorDraft(createDraftPayload(document));
+      setDraft(current => current?.id === saved.id ? saved : current);
+    });
+  // Keep only the latest state; clone image data when the debounced save actually runs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brushSize, camera, canvasBackground, document, draft?.id, effectiveImageQuality, effectiveImageResolution, imageBackground, imageQuality, imageResolution, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tool, undone, viewport, outputSize.height, outputSize.width]);
+  }, [activeHistoryBranchId, currentHistoryNodeId, brushSize, camera, canvasBackground, document, draft?.id, effectiveImageQuality, effectiveImageResolution, imageBackground, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tileScale, tool, undone, viewport, outputSize.height, outputSize.width]);
+
+  useEffect(() => {
+    const flush = () => { void draftAutosave.flush().catch(() => undefined); };
+    const onVisibility = () => { if (window.document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    window.document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.document.removeEventListener("visibilitychange", onVisibility);
+      flush();
+    };
+  }, [draftAutosave]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1387,12 +1368,13 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   };
 
   const updateOutputSize = (next: { width?: number; height?: number }) => {
+    if (generating || pending) return;
     const width = next.width ?? outputSize.width;
     const height = next.height ?? outputSize.height;
     if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
     const normalized = normalizeEditorOutputSize(model, width, height, imageProtocol);
     setViewportSize(normalized);
-    setViewport((current) => current ? { ...current, height: current.width / (normalized.width / normalized.height) } : current);
+    if (mode === "canvas") setViewport((current) => current ? { ...current, ...normalized } : current);
   };
 
   const refreshMaskPreview = () => {
@@ -1685,10 +1667,15 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     const runController = new AbortController(); editorGenerationAbortRef.current = runController;
     setGenerating(true); setNotice("");
     try {
+      await draftAutosave.flush();
+      if (mode === "canvas" && !canvasSessionParentRef.current) {
+        canvasSessionParentRef.current = { nodeId: currentHistoryNodeIdRef.current, branchId: activeHistoryBranchIdRef.current };
+      }
       const reference = document.characterReference;
       if (reference && (mode !== "inpaint" || !supportsCharacterReferenceEdit(model, imageProtocol))) throw new Error("角色参考仅支持 NAI V4.5 / V5 非 Medium 模型的蒙版重绘，请恢复兼容的模型与模式。");
       if (reference && !strokes.some(stroke => stroke.mode !== "erase" && stroke.points.length)) throw new Error("请先涂选要重绘的角色区域。");
       const prepared = viewportImage(document, viewport, outputSize);
+      const emptyCanvasRegion = mode === "canvas" && !prepared.image.data.some((value, index) => index % 4 === 3 && value > 0);
       // Local inpainting edits only painted pixels; canvas mode owns outpainting.
       if (mode === "inpaint" || reference) prepared.mask.fill(0);
       applyStrokes(prepared.mask, prepared.image.width, prepared.image.height, viewport, strokes);
@@ -1698,14 +1685,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const references = reference ? await characterReferencePayload(reference, userId, runController.signal) : undefined;
       const body = {
         ...(references ? { references } : {}),
-        operation: mode === "canvas" ? "outpainting" : "inpainting",
+        operation: emptyCanvasRegion ? "generate" : mode === "canvas" ? "outpainting" : "inpainting",
         editor_composite: true,
         providerId: document.generation?.providerId || "newapi",
         imageProtocol,
         quality: effectiveImageQuality,
         imageSize: effectiveImageResolution,
         background: imageBackground,
-        model,
+        model: emptyCanvasRegion ? generationModelFor(model) : model,
         prompt: prompt.trim(),
         negative_prompt: negative.trim(),
         width: prepared.image.width,
@@ -1718,10 +1705,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         strength,
         inpaintImg2ImgStrength: strength,
         ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
-        image: rgbaToDataUrl(prepared.image),
+        ...(!emptyCanvasRegion ? { image: rgbaToDataUrl(prepared.image) } : {}),
         // Send the exact selection; the server adds model context once and keeps
         // this selection for compositing, rather than saving latent-grid edges.
-        mask: maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height),
+        ...(!emptyCanvasRegion ? { mask: maskToPngDataUrl(prepared.mask, prepared.image.width, prepared.image.height) } : {}),
         response_format: "b64_json",
       };
       const response = await fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: runController.signal });
@@ -1732,21 +1719,24 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const operationLabel = mode === "canvas" ? "扩图" : "局部重绘";
       const candidate: PendingCandidate = {
         id: createEditorId(), patch, viewport: { ...viewport }, mask: compositeMask, prompt,
-        historyLabel: `${operationLabel} · ${model}${promptSummary ? ` · ${promptSummary}` : ""}`,
+        historyLabel: `${operationLabel} · ${imageModelLabel(model)}${promptSummary ? ` · ${promptSummary}` : ""}`,
         createdAt: Date.now(),
       };
       runController.signal.throwIfAborted();
       const recorded = await recordGeneratedCandidate(document, candidate, mode);
       runController.signal.throwIfAborted();
       setPending(recorded.candidate);
+      setMobileSheet(null);
+      if (mode === "canvas") setCanvasCandidates(current => [...current, recorded.candidate]);
       setCompare(0.5);
-      setNotice(`生成完成。${recorded.saved ? "已记入重绘历史；" : recorded.attempted ? "历史暂未保存，应用时会重试；" : "应用后会记入重绘历史；"}拖动中间分割线比较，确认后点击应用。`);
+      setNotice(`生成完成。${recorded.saved ? "已记入重绘历史；" : recorded.attempted ? "历史暂未保存，应用时会重试；" : "应用后会记入重绘历史；"}${mode === "canvas" ? "比较候选后合并到画布，即可继续下一次补全。" : "拖动中间分割线比较，确认后点击应用。"}`);
     } catch (error) {
       setNotice(runController.signal.aborted ? "已取消生成，原图保持不变。" : error instanceof Error ? error.message : "生成失败，请稍后重试");
     } finally { if (editorGenerationAbortRef.current === runController) editorGenerationAbortRef.current = null; setGenerating(false); }
   };
 
-  const returnToStudio = () => {
+  const returnToStudio = async () => {
+    try { await draftAutosave.flush(); } catch (error) { setNotice(error instanceof Error ? error.message : "保存草稿失败"); return; }
     if (draftId && document && !document.characterReference) syncEditorPromptToStudioForm(draftId, prompt, negative);
     router.replace(returnHref);
   };
@@ -1754,15 +1744,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const openHistoryLibrary = async () => {
     if (generating || pending) return;
     if (document && historyReady) {
-      const snapshot = createHistorySnapshot(document);
-      if (!await persistHistorySnapshot(snapshot, "离开编辑器前保存", historyFingerprint(snapshot))) return;
+      await draftAutosave.flush();
       await saveEditorDraft(createDraftPayload(document));
     }
     router.push("/image/editor/history");
   };
 
-  const apply = async () => {
-    if (!document || !pending) return;
+  const apply = async (returnToWorkbench = true, candidate = pending) => {
+    if (!document || (!candidate && mode !== "canvas")) return;
     try {
       historyClearedRef.current = false;
       const resultModel = mode === "tiled-upscale" ? generationModel : model;
@@ -1776,17 +1765,37 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setHistoryNodes((current) => current.some((item) => item.id === root.node.id) ? current : [...current, root.node].sort((a, b) => a.createdAt - b.createdAt));
         historyFingerprintRef.current = historyFingerprint(createHistorySnapshot(document));
       }
-      const applied = applyPendingCandidate(document, pending);
+      const applied = candidate ? applyPendingCandidate(document, candidate) : synchronizeDocument(document);
       const historySnapshot = createHistorySnapshot(applied);
-      const historySaved = pending.editorHistoryNodeId === currentHistoryNodeIdRef.current || await persistHistorySnapshot(
+      if (candidate?.editorHistoryNodeId) {
+        currentHistoryNodeIdRef.current = candidate.editorHistoryNodeId;
+        activeHistoryBranchIdRef.current = candidate.editorHistoryBranchId || activeHistoryBranchIdRef.current;
+        setCurrentHistoryNodeId(currentHistoryNodeIdRef.current);
+        setActiveHistoryBranchId(activeHistoryBranchIdRef.current);
+      }
+      const historySaved = !candidate || candidate.editorHistoryNodeId === currentHistoryNodeIdRef.current || await persistHistorySnapshot(
         historySnapshot,
-        pending.historyLabel || `${mode === "canvas" ? "扩图" : "重绘"} · ${resultModel}`,
+        candidate?.historyLabel || `${mode === "canvas" ? "扩图" : "重绘"} · ${resultModel}`,
         historyFingerprint(historySnapshot),
         true,
         mode,
       );
       if (!historySaved) throw new Error("无法保存重绘历史节点，请检查浏览器本地存储空间后重试。结果仍保留在当前预览中。");
+      await draftAutosave.flush();
       const nextDraft = await saveEditorDraft(createDraftPayload(applied));
+      if (!returnToWorkbench) {
+        setDocument(synchronizeDocument(applied));
+        setDraft(nextDraft);
+        setPending(null);
+        setCanvasCandidates([]);
+        setPrimaryCanvasCandidateId("");
+        setKeptCanvasCandidateIds([]);
+        canvasSessionParentRef.current = null;
+        setUndone([]);
+        setMobileSheet(null);
+        setNotice("已合并到当前画布。可以移动或调整生成框，继续下一次补全；蒙版已保留。");
+        return;
+      }
       const finalImage = rgbaToDataUrl(applied.image);
       let historyId = "";
       if (imageHistoryMode === "local") {
@@ -1819,6 +1828,16 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   };
 
   const discard = () => {
+    if (mode === "canvas" && pending && canvasCandidates.length > 1) {
+      const index = canvasCandidates.findIndex(candidate => candidate.id === pending.id);
+      const remaining = canvasCandidates.filter(candidate => candidate.id !== pending.id);
+      setCanvasCandidates(remaining);
+      setPending(remaining[Math.min(index, remaining.length - 1)]);
+      setKeptCanvasCandidateIds(ids => ids.filter(id => id !== pending.id));
+      if (primaryCanvasCandidateId === pending.id) setPrimaryCanvasCandidateId("");
+      setNotice("已丢弃当前候选，其他候选仍可比较和合并。");
+      return;
+    }
     const restore = tiledRestoreRef.current;
     if (pending?.editorHistoryNodeId && pending.editorHistoryNodeId === currentHistoryNodeIdRef.current) {
       const parentId = pending.editorHistoryParentNodeId;
@@ -1833,7 +1852,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const restoredDocument = restore?.document || document;
       if (restoredDocument) {
         historyFingerprintRef.current = historyFingerprint(createHistorySnapshot(restoredDocument));
-        historySkipAutoRef.current = true;
       }
     }
     if (mode === "tiled-upscale" && restore) {
@@ -1847,7 +1865,50 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       return;
     }
     setPending(null);
+    setCanvasCandidates([]);
+    setPrimaryCanvasCandidateId("");
+    setKeptCanvasCandidateIds([]);
+    canvasSessionParentRef.current = null;
     setNotice("已丢弃本次生成，原图未改变。");
+  };
+
+  const selectCanvasCandidate = (offset: number) => {
+    if (!pending || !canvasCandidates.length) return;
+    const index = canvasCandidates.findIndex(candidate => candidate.id === pending.id);
+    setPending(canvasCandidates[(index + offset + canvasCandidates.length) % canvasCandidates.length]);
+    setCompare(0.5);
+  };
+
+  const finishCanvasSession = async () => {
+    if (!document) return;
+    try {
+      for (const candidate of canvasCandidates.filter(item => keptCanvasCandidateIds.includes(item.id))) {
+        const result = applyPendingCandidate(document, candidate);
+        const image = rgbaToDataUrl(result.image);
+        if (imageHistoryMode === "account") {
+          await saveEditorComposite({ image, model, prompt, negative_prompt: negative,
+            providerId: imageProviderId, imageProtocol, width: result.image.width, height: result.image.height,
+            steps, scale, sampler, strength });
+        } else if (imageHistoryMode === "local") {
+          await saveLocalImageHistory({ id: createEditorId(), ownerId: userId ?? 0, createdAt: Date.now(),
+            image: await dataUrlToBlob(image), prompt, negative, model, operation: "editor-composite" });
+        }
+      }
+      const primary = canvasCandidates.find(candidate => candidate.id === primaryCanvasCandidateId);
+      if (primary) { await apply(false, primary); return; }
+      if (canvasSessionParentRef.current) {
+        currentHistoryNodeIdRef.current = canvasSessionParentRef.current.nodeId;
+        activeHistoryBranchIdRef.current = canvasSessionParentRef.current.branchId;
+        setCurrentHistoryNodeId(currentHistoryNodeIdRef.current);
+        setActiveHistoryBranchId(activeHistoryBranchIdRef.current);
+      }
+      setPending(null);
+      setCanvasCandidates([]);
+      setPrimaryCanvasCandidateId("");
+      setKeptCanvasCandidateIds([]);
+      canvasSessionParentRef.current = null;
+      setNotice("已结束本轮预览，保留的候选已保存；可继续编辑当前画布。");
+    } catch (error) { setNotice(error instanceof Error ? error.message : "保存候选失败，预览仍保留。"); }
   };
 
   const replaceSource = async (file?: File) => {
@@ -1885,6 +1946,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setUndone([]);
       setPending(null);
       fitCamera(nextDocument, nextViewport);
+      setCanvasCandidates([]);
+      setPrimaryCanvasCandidateId("");
+      setKeptCanvasCandidateIds([]);
+      canvasSessionParentRef.current = null;
       setNotice(`已替换源图：${file.name}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "替换源图失败");
@@ -1925,10 +1990,10 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     <>
       {document?.characterReference && <CharacterEditReferenceCard reference={document.characterReference} userId={userId} />}
       <div className="editor-panel-heading"><span><Settings2 size={15} />生成设置</span><small>{outputSize.width} × {outputSize.height}</small></div>
-      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} options={naturalImageModel ? [{ value: model, label: model }] : filteredInpaintModels} ariaLabel="重绘模型" /></label>
+      <label className="editor-field"><span>模型</span><PopupSelect value={model} onChange={setModel} disabled={generating || Boolean(pending)} options={editorModelOptions} ariaLabel={mode === "canvas" ? "无限画布模型" : "重绘模型"} /></label>
       {!naturalImageModel && !v45InpaintAvailable && <p className="editor-tip is-warning">V4.5 支持局部重绘；当前平台模型开关或上游公开目录未开放 V4.5 局部重绘模型。</p>}
       <div className="editor-size-row"><label><span>宽度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出宽度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.width} setValue={(value) => updateOutputSize({ width: value })} /></label><button type="button" aria-label="交换宽高" onClick={() => updateOutputSize({ width: outputSize.height, height: outputSize.width })}>×</button><label><span>高度</span><WheelNumberInput className="editor-number-input" ariaLabel="编辑器输出高度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.height} setValue={(value) => updateOutputSize({ height: value })} /></label></div>
-      <div className="editor-quality-actions"><button type="button" disabled={!viewport} onClick={() => {
+      <div className="editor-quality-actions"><button type="button" disabled={!viewport || generating || Boolean(pending)} onClick={() => {
         if (!viewport) return;
         const normalized = normalizeEditorOutputSize(model, Math.round(viewport.width), Math.round(viewport.height), imageProtocol);
         setViewportSize(normalized);
@@ -1944,7 +2009,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       </>}
       <label className="editor-field"><span>描述画面</span><textarea value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="描述要生成或补全的内容…" /></label>
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
-      <p className="editor-tip">{document?.characterReference ? "仅重绘手动涂选的角色区域。参考图不关联上游角色编号，区域隔离由本地蒙版合成保证。" : mode === "inpaint" ? "仅重绘原图上手动涂选的区域，选区外保留原像素。结果只在点击“应用”后写入画布。" : "生成框可越过原图边缘；透明部分会自动加入蒙版。结果只在点击“应用”后写入画布。"}</p>
+      <p className="editor-tip">{document?.characterReference ? "仅重绘手动涂选的角色区域。参考图不关联上游角色编号，区域隔离由本地蒙版合成保证。" : mode === "inpaint" ? "仅重绘原图上手动涂选的区域，选区外保留原像素。结果只在点击“应用”后写入画布。" : "生成框可越过原图边缘，透明部分自动加入蒙版；空白区域直接文生图。接受候选后合并到当前画布，可以连续补全。"}</p>
     </>
   );
 
@@ -1961,7 +2026,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         value={generationModel}
         options={tiledModelOptions}
         ariaLabel="分块超分重绘模型"
-        onChange={(value) => setModel(inpaintModelFor(value, imageProtocol) || value)}
+        onChange={setModel}
       /></label>
       {tiledModelsLoading && <p className="editor-tip">正在读取当前来源可用的图像模型…</p>}
       {tiledModelsError && <p className="editor-tip is-warning">{tiledModelsError}</p>}
@@ -1993,14 +2058,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     <>
       <div className="editor-panel-heading"><span><GitBranch size={15} />版本分支</span><small>{historyNodes.length} 个节点</small></div>
       <label className="editor-field"><span>当前分支</span><PopupSelect value={activeHistoryBranchId} onChange={checkoutHistoryBranch} options={historyBranches.map((branch) => ({ value: branch.id, label: branch.name }))} ariaLabel="编辑历史分支" /></label>
-      <div className="editor-history-branch-actions"><button type="button" disabled={!historyReady || historyBusy || !currentHistoryNodeId} onClick={() => void createHistoryBranch()}><GitBranch size={13} />从当前节点新建分支</button><button type="button" disabled={!historyReady || historyBusy || !document} onClick={() => void saveManualHistoryPoint()}><Save size={13} />保存历史节点</button></div>
-      <div className="editor-history-branch-actions"><button type="button" disabled={!currentHistoryNodeId || historyBusy} onClick={() => void removeHistoryNode(currentHistoryNodeId)}><Trash2 size={13} />删除选中节点</button><button type="button" className="is-danger" disabled={!draft?.id || historyBusy || historyNodes.length === 0} onClick={() => void clearCurrentHistory()}><Trash2 size={13} />清空本图历史</button></div>
+      <div className="editor-history-branch-actions"><button type="button" disabled={!historyReady || historyBusy || generating || Boolean(pending) || !currentHistoryNodeId} onClick={() => void createHistoryBranch()}><GitBranch size={13} />从当前节点新建分支</button><button type="button" disabled={!historyReady || historyBusy || generating || Boolean(pending) || !document} onClick={() => void saveManualHistoryPoint()}><Save size={13} />保存历史节点</button></div>
+      <div className="editor-history-branch-actions"><button type="button" disabled={!currentHistoryNodeId || historyBusy || generating || Boolean(pending)} onClick={() => void removeHistoryNode(currentHistoryNodeId)}><Trash2 size={13} />删除选中节点</button><button type="button" className="is-danger" disabled={!draft?.id || historyBusy || generating || Boolean(pending) || historyNodes.length === 0} onClick={() => void clearCurrentHistory()}><Trash2 size={13} />清空本图历史</button></div>
       <div className="editor-history-tree" role="tree" aria-label="图像编辑历史树">
         {!historyReady ? <p className="editor-tip">正在载入历史记录…</p> : historyNodes.length === 0 ? <p className="editor-tip">还没有历史节点。</p> : [...historyNodes].reverse().map((node) => {
           const branch = historyBranches.find((item) => item.id === node.branchId);
           const isHead = historyBranches.some((item) => item.headId === node.id);
           return <div className="editor-history-node-row" key={node.id} style={{ "--history-depth": historyNodeDepth(node) } as React.CSSProperties}>
-            <button type="button" role="treeitem" aria-selected={currentHistoryNodeId === node.id} className={`editor-history-node${currentHistoryNodeId === node.id ? " is-current" : ""}`} onClick={() => void checkoutHistoryNode(node.id)} disabled={historyBusy}>
+            <button type="button" role="treeitem" aria-selected={currentHistoryNodeId === node.id} className={`editor-history-node${currentHistoryNodeId === node.id ? " is-current" : ""}`} onClick={() => void checkoutHistoryNode(node.id)} disabled={historyBusy || generating || Boolean(pending)}>
               <NextImage src={node.thumbnail} alt="" width={36} height={44} unoptimized />
               <span className="editor-history-node-copy" title={node.document.prompt || node.label}><strong>{node.label}</strong><small>{branch?.name || "分支"} · {new Date(node.createdAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</small></span>
               {isHead && <small className="editor-history-head">HEAD</small>}
@@ -2008,7 +2073,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
           </div>;
         })}
       </div>
-      <p className="editor-tip">每次编辑状态稳定后会自动保存节点。切换到旧节点后可继续修改，或从该节点创建新分支。</p>
+      <p className="editor-tip">编辑内容自动保存为草稿；仅生成结果或手动保存时新增历史节点。切换到旧节点后可继续创作或新建分支。</p>
     </>
   );
   const generationPanel = mode === "tiled-upscale" ? tileGenerationPanel : standardGenerationPanel;
@@ -2031,6 +2096,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       tiledRestoreRef.current = null;
       setTileSourceState(null);
     }
+    if (next === "tiled-upscale") setModel(generationModelFor(model));
+    if (next === "inpaint") setModel(inpaintModelFor(model, imageProtocol) || model);
     if (next === "inpaint" && document) setViewportSize(normalizeEditorOutputSize(model, document.image.width, document.image.height, imageProtocol));
     setNotice("");
     replaceEditorModeInAddress(next, draftId);
@@ -2050,7 +2117,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       }
       return;
     }
-    setPending(null);
+    if (mode !== "canvas") setPending(null);
     void generate();
   };
 
@@ -2069,7 +2136,12 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
             <canvas ref={canvasRef} onPointerDown={handlePointerDown} />
             {screenViewport && mode === "canvas" && !pending && <div className="generation-viewport" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height }}>
               <button type="button" className="viewport-badge" onPointerDown={(event) => beginViewportDrag(event, { kind: "viewport", point: worldPoint(event), viewport })}><span>{outputSize.width} × {outputSize.height}</span><small>拖动取景</small></button>
-              {(["nw", "ne", "sw", "se"] as const).map((corner) => <span key={corner} className={`viewport-corner ${corner}`} onPointerDown={(event) => beginViewportDrag(event, { kind: "resize", point: worldPoint(event), viewport, corner })} />)}
+              {(["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const).map((corner) => <button type="button" key={corner} aria-label={`调整生成框 ${corner}`} title="拖动调整生成宽高" className={`viewport-corner ${corner}`} onPointerDown={(event) => beginViewportDrag(event, { kind: "resize", point: worldPoint(event), viewport, corner })} />)}
+              <div className="viewport-size-controls" onPointerDown={event => event.stopPropagation()}>
+                <label><span>宽</span><WheelNumberInput ariaLabel="生成框宽度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.width} setValue={width => updateOutputSize({ width })} /></label>
+                <span>×</span>
+                <label><span>高</span><WheelNumberInput ariaLabel="生成框高度" min={outputStep} max={outputMaxEdge} step={outputStep} value={outputSize.height} setValue={height => updateOutputSize({ height })} /></label>
+              </div>
             </div>}
             {pending && screenViewport && <div className="review-overlay" style={{ left: screenViewport.x, top: screenViewport.y, width: screenViewport.width, height: screenViewport.height, ["--compare" as string]: compare }}>
               <div className="review-patch" style={{ backgroundImage: `url(${pendingPreviewUrl})` }} />
@@ -2101,10 +2173,35 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         </div>
       </section>
       <footer className="editor-bottombar">
-        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 并发 ${tileProgress.active}/${tileProgress.concurrency} 路 · 排队 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : mode === "inpaint" ? "在原图上涂选重绘区域；双指缩放与平移画布" : "拖动生成框定位区域；双指缩放与平移画布")}</div>
-        <div className={`editor-actions${mode === "tiled-upscale" ? " is-tiled-upscale" : ""}`}>{generating && <button type="button" className="discard-button" onClick={() => editorGenerationAbortRef.current?.abort()}>取消生成</button>}{pending ? <><ImageDownloadMenu className="download-result-button" label="下载合成图" title="选择合成图下载方式" filename={`lfn-${mode}-${document?.image.width || 0}x${document?.image.height || 0}`} disabled={generating} getImage={() => document && pending ? rgbaImageToBlob(applyPendingCandidate(document, pending).image) : Promise.reject(new Error("没有可下载的合成图"))} /><button type="button" className="regenerate-button" disabled={generating} onClick={regeneratePending}><Sparkles size={16} />重新生成</button><button type="button" className="discard-button" disabled={generating} onClick={discard}><X size={16} />丢弃</button><button type="button" className="apply-button" disabled={generating} onClick={() => void apply()}><Check size={16} />应用到工作台</button></> : <>
-          <button type="button" className="generate-button" disabled={generating || (mode === "tiled-upscale" && (!tilePlanState.plan || (usesGatewayImageCapacity && Boolean(gatewayImageCapacity && liveTileConcurrency < 1))))} onClick={() => void generate()}><Sparkles size={17} />{generating ? "生成中…" : mode === "tiled-upscale" ? "分块重绘并拼接" : "生成并预览"}</button>
-        </>}</div>
+        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 并发 ${tileProgress.active}/${tileProgress.concurrency} 路 · 排队 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? mode === "canvas" ? "比较候选后合并到画布，继续补全" : "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : mode === "inpaint" ? "在原图上涂选重绘区域；双指缩放与平移画布" : "拖动生成框定位区域；双指缩放与平移画布")}</div>
+        <div className={`editor-actions${mode === "tiled-upscale" ? " is-tiled-upscale" : mode === "canvas" ? " is-canvas" : ""}`}>
+          {generating && <button type="button" className="discard-button" onClick={() => editorGenerationAbortRef.current?.abort()}>取消生成</button>}
+          {pending ? <>
+            {mode === "canvas" && canvasCandidates.length > 1 && <div className="editor-candidate-picker">
+              <button type="button" aria-label="上一个候选" disabled={generating} onClick={() => selectCanvasCandidate(-1)}>‹</button>
+              <span>{canvasCandidates.findIndex(candidate => candidate.id === pending.id) + 1} / {canvasCandidates.length}</span>
+              <button type="button" aria-label="下一个候选" disabled={generating} onClick={() => selectCanvasCandidate(1)}>›</button>
+            </div>}
+            <ImageDownloadMenu className="download-result-button" label="下载合成图" title="选择合成图下载方式" filename={`lfn-${mode}-${document.image.width}x${document.image.height}`} disabled={generating} getImage={() => rgbaImageToBlob(applyPendingCandidate(document, pending).image)} />
+            <button type="button" className="regenerate-button" disabled={generating} onClick={regeneratePending}><Sparkles size={16} />{mode === "canvas" ? "再生成一张" : "重新生成"}</button>
+            <button type="button" className="discard-button" disabled={generating} onClick={discard}><X size={16} />丢弃</button>
+            {mode === "canvas" && canvasCandidates.length > 1 && <>
+              <button type="button" disabled={generating} aria-pressed={primaryCanvasCandidateId === pending.id} onClick={() => {
+                setPrimaryCanvasCandidateId(pending.id);
+                setKeptCanvasCandidateIds(ids => ids.filter(id => id !== pending.id));
+              }}>{primaryCanvasCandidateId === pending.id ? "已选为主结果" : "设为主结果"}</button>
+              <button type="button" disabled={generating} aria-pressed={keptCanvasCandidateIds.includes(pending.id)} onClick={() => {
+                setKeptCanvasCandidateIds(ids => ids.includes(pending.id) ? ids.filter(id => id !== pending.id) : [...ids, pending.id]);
+                if (primaryCanvasCandidateId === pending.id) setPrimaryCanvasCandidateId("");
+              }}>{keptCanvasCandidateIds.includes(pending.id) ? "已保留" : "保留候选"}</button>
+              <button type="button" disabled={generating} onClick={() => void finishCanvasSession()}>结束本轮</button>
+            </>}
+            {(mode !== "canvas" || canvasCandidates.length < 2) && <button type="button" className="apply-button" disabled={generating} onClick={() => void apply(mode !== "canvas")}><Check size={16} />{mode === "canvas" ? "合并到画布" : "应用到工作台"}</button>}
+          </> : <>
+            {mode === "canvas" && <button type="button" className="apply-button" disabled={generating} onClick={() => void apply(true, null)}><Check size={16} />完成并返回工作台</button>}
+            <button type="button" className="generate-button" disabled={generating || tiledModelsLoading || !editorModelOptions.length || (mode === "tiled-upscale" && (!tilePlanState.plan || (usesGatewayImageCapacity && Boolean(gatewayImageCapacity && liveTileConcurrency < 1))))} onClick={() => void generate()}><Sparkles size={17} />{generating ? "生成中…" : mode === "tiled-upscale" ? "分块重绘并拼接" : "生成并预览"}</button>
+          </>}
+        </div>
       </footer>
     </main>
   );

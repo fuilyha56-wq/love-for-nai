@@ -140,7 +140,7 @@ import { NaturalImageSettings } from "./natural-image-settings";
 import { naiImageSizeError, naiDimensionLimit, naiMaxSamples, isNaiLimitModel, NAI_MAX_DIMENSION } from "@/lib/nai-image-limits";
 import { imageProductMode, isKnownImageModel, modelMatchesProductMode, nearestImageSize, normalizeImageModelSize, productModeProtocol, resolveImageModelCapabilities, resolveProviderImageProtocol, type ImageProductMode, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { DEFAULT_CLIENT_MODEL_POLICY, filterNaiModelOptions, type ModelPolicy } from "@/lib/model-policy";
-import { NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
+import { firstValidModel, normalizeImageModelOptions, NAI_IMAGE_MODEL_OPTIONS, NAI_UPSCALE_MODEL_OPTIONS } from "@/lib/nai-model-catalog";
 import { isNaiMediumModel } from "@/lib/nai-native-request";
 import { ReplicaPromptEditor, ReplicaPromptSettingsButton, useReplicaPromptConfig } from "./replica-prompt-editor";
 import { ReplicaMedia } from "./replica-media";
@@ -236,6 +236,7 @@ import {
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleBillingModel,
+  upscaleSizeError,
   type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
 
@@ -802,6 +803,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const autonomousGenerationRef = useRef(false);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [assistantTaskError, setAssistantTaskError] = useState("");
+  const [assistantCanContinue, setAssistantCanContinue] = useState(false);
+  const assistantContinuation = useRef<{ jobId: string; usageScope: string; request: string; conversationId: string; identityToken: number; goalRunId?: string } | null>(null);
   // 随需求发给视觉模型的参考图（data URL）。
   const [agentImages, setAgentImages] = useState<string[]>([]);
   const agentImagesRef = useRef<string[]>([]);
@@ -945,6 +948,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     || (imageProtocol === "gemini" ? "nano-banana" : imageProtocol === "openai-images" ? "gpt-image-1.5" : "");
   const displayCaps = resolveImageModelCapabilities(displayModel, imageProtocol);
   const naturalImageModel = modelCapabilities.promptStyle === "natural";
+  const nativeUpscale = operation === "upscale" && !naturalImageModel;
+  const upscaleInputError = !nativeUpscale ? null
+    : !source ? "请先上传要超分的图片。"
+    : !upscaleSource ? "正在读取源图尺寸，请稍候；若一直无法读取，请重新上传。"
+    : upscaleSizeError(upscaleSource.width, upscaleSource.height);
+  const upscaleQuoteReady = upscaleInputError === null;
   const outputCount = generationModes.has(operation) ? count : 1;
   const effectiveImageQuality = displayCaps.qualityOptions.includes(imageQuality) ? imageQuality : "auto";
   const effectiveImageResolution = displayCaps.imageSizes.includes(imageResolution) ? imageResolution : "1K";
@@ -969,7 +978,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       : customProviderModels.length
         ? customProviderModels
         : (selectedProvider?.models || []).map((id) => ({ value: id, label: id })), [providerId, newApiModelsLoaded, newApiModels, policyModelOptions, modelPolicy, customProviderModels, selectedProvider]);
-  const modelOptions = useMemo(() => allModelOptions.filter((item) => modelMatchesProductMode(item.value, productMode)), [allModelOptions, productMode]);
+  const modelOptions = useMemo(() => normalizeImageModelOptions(allModelOptions).filter((item) => modelMatchesProductMode(item.value, productMode)), [allModelOptions, productMode]);
   const modelSelectionOptions = useMemo(
     () => modelOptions.filter((item) => !isNaiMediumModel(item.value)),
     [modelOptions],
@@ -989,7 +998,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   }, [model, productMode, providerId]);
   useEffect(() => {
     if (!modelPolicyReady) return;
-    const next = modelOptions[0]?.value;
+    const next = firstValidModel(model, modelOptions.map(item => item.value), "");
     if (!next || modelOptions.some((item) => item.value === model)) return;
     void Promise.resolve().then(() => {
       setModel(next);
@@ -2151,7 +2160,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     // falling back during this window used to silently select nai-v4.5-curated.
     if (historyImportPending.current || !formCacheReady || !modelPolicyReady || !modelOptions.length || modelOptions.some((item) => item.value === model)) return;
     void Promise.resolve().then(() => setModel((current) =>
-      modelOptions.some((item) => item.value === current) ? current : modelOptions[0].value,
+      firstValidModel(current, modelOptions.map(item => item.value), modelOptions[0].value),
     ));
   }, [formCacheReady, modelPolicyReady, model, modelOptions]);
 
@@ -2394,10 +2403,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     assistantAbortRef.current?.abort("context-changed");
     assistantAbortRef.current = null;
     assistantActiveRequestRef.current = null;
+    assistantContinuation.current = null;
     if (assistantTimeoutRef.current != null) { window.clearTimeout(assistantTimeoutRef.current); assistantTimeoutRef.current = null; }
     void Promise.resolve().then(() => {
       if (controller.signal.aborted) return;
-      setAssistantLoading(false);
+      setAssistantLoading(false); setAssistantCanContinue(false);
       setConversation({ turns: [], tagPool: [] }); setAssistantSuggestion(null); setAgentSteps([]);
     });
     if (!signedIn) return () => controller.abort();
@@ -2473,6 +2483,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     setConversation({ turns: [], tagPool: [] });
     setAssistantSuggestion(null);
     setAgentSteps([]);
+    assistantContinuation.current = null; setAssistantCanContinue(false);
     setNotice("助手对话记录已清空。");
   }
 
@@ -2485,26 +2496,29 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   function inputImagesForAgent(): string[] {
     return [...agentImagesRef.current];
   }
-  async function askTagAssistant(request: string, options?: { snapshot?: AssistantRequestSnapshot; throwOnError?: boolean; localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalMaxRounds?: number; goalRunId?: string }) {
+  async function askTagAssistant(request: string, options?: { resume?: boolean; snapshot?: AssistantRequestSnapshot; throwOnError?: boolean; localTags?: string[]; signal?: AbortSignal; image?: string; images?: string[]; goalMode?: boolean; accessMode?: "approval" | "full"; goal?: string; goalIteration?: number; goalMaxRounds?: number; goalRunId?: string }) {
+    if (options?.resume && assistantActiveRequestRef.current) return null;
     const task = (async () => {
       if (!studioMountedRef.current) return null;
-    const requestIdentityToken = options?.snapshot?.identityToken ?? assistantConversations.getIdentityToken();
-  const requestConversationId = options?.snapshot?.body.conversationId ?? assistantConversations.getActiveId();
-  if (!options?.snapshot) await agentImageUploadQueue.current;
+    const continuation = options?.resume ? assistantContinuation.current : null;
+    if (options?.resume && (!continuation || assistantActiveRequestRef.current)) return null;
+    const requestIdentityToken = continuation?.identityToken ?? options?.snapshot?.identityToken ?? assistantConversations.getIdentityToken();
+  const requestConversationId = continuation?.conversationId ?? options?.snapshot?.body.conversationId ?? assistantConversations.getActiveId();
+  if (!options?.snapshot && !continuation) await agentImageUploadQueue.current;
   if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId() || options?.signal?.aborted) return null;
     const activeMemory = requestCreativeMemory();
   const selectedMemory = options?.snapshot ? options.snapshot.body.creativeMemory?.filter((note) => activeMemory?.some((current) => current.title === note.title && current.text === note.text)) : activeMemory;
   const requestMemory = selectedMemory?.length ? selectedMemory : undefined;
   const requestedAssistantModel = options?.snapshot?.body.model || assistantModel;
-  if (!requestedAssistantModel) {
+  if (!requestedAssistantModel && !continuation) {
       setNotice("当前账户没有可用的文本模型，请改用直接检索。");
       return null;
     }
     assistantAbortRef.current?.abort("cancel");
     const controller = new AbortController();
-    let serverJobId = "";
+    let serverJobId = continuation?.jobId || "";
     const cancelServerJob = () => { if (serverJobId) void fetch(`/api/assistant/tags?job=${encodeURIComponent(serverJobId)}`, { method: "DELETE", keepalive: true }).catch(() => {}); };
-    controller.signal.addEventListener("abort", cancelServerJob, { once: true });
+    controller.signal.addEventListener("abort", () => { if (controller.signal.reason !== "timeout") cancelServerJob(); }, { once: true });
     const abortFromCaller = () => controller.abort("cancel");
     options?.signal?.addEventListener("abort", abortFromCaller, { once: true });
     if (options?.signal?.aborted) controller.abort("cancel");
@@ -2517,15 +2531,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     setAssistantLoading(true);
     setAssistantTaskError("");
     setAssistantSuggestion(null);
-    setAgentSteps([]);
-    const usageScope = options?.goalRunId || createBrowserRequestId();
-    if (!options?.goalMode) assistantUsage.start(usageScope);
+    if (!continuation) { setAgentSteps([]); assistantContinuation.current = null; }
+    setAssistantCanContinue(false);
+    const usageScope = continuation?.usageScope || options?.goalRunId || createBrowserRequestId();
+    if (!options?.goalMode && !continuation) assistantUsage.start(usageScope);
     try {
       // 任务化轮询：避免长连接被移动端 WebView 掐断，同时让检索步骤实时可见。
       const response = await fetch("/api/assistant/tags", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(continuation ? { resumeJobId: continuation.jobId, conversationId: requestConversationId } : {
           ...(options?.snapshot?.body || {
             model: assistantModel, assistantProviderId, assistantGroup,
             reasoningEffort: storedAssistantReasoning(assistantModel), creativeMemory: requestCreativeMemory(),
@@ -2545,13 +2560,17 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         signal: AbortSignal.timeout(45_000),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message || "智能助手调用失败");
+      if (!response.ok) {
+        if (continuation && [404, 409].includes(response.status)) assistantContinuation.current = null;
+        throw new Error(result.message || "智能助手调用失败");
+      }
       const jobId = String(result.jobId || "");
       serverJobId = jobId;
-      if (controller.signal.aborted) cancelServerJob();
+      if (controller.signal.aborted && controller.signal.reason !== "timeout") cancelServerJob();
       if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId()) { controller.abort("context-changed"); return null; }
       if (!jobId) throw new Error("智能助手未返回任务编号");
-      assistantUsage.recordJob(usageScope, jobId, []);
+      assistantContinuation.current = { jobId, usageScope, request, conversationId: requestConversationId, identityToken: requestIdentityToken, goalRunId: continuation?.goalRunId || options?.goalRunId };
+      if (!continuation) assistantUsage.recordJob(usageScope, jobId, []);
       if (!studioMountedRef.current || requestIdentityToken !== assistantConversations.getIdentityToken() || requestConversationId !== assistantConversations.getActiveId()) { controller.abort("context-changed"); return null; }
       if (controller.signal.aborted || assistantAbortRef.current !== controller) return null;
       for (let pollCount = 0; pollCount < ASSISTANT_MAX_POLLS; pollCount += 1) {
@@ -2568,12 +2587,14 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         if (Array.isArray(progress.steps) && progress.steps.length)
           setAgentSteps(progress.steps);
         if (progress.status === "done") {
+          assistantContinuation.current = null;
           setAssistantSuggestion(progress.suggestion);
           // 本轮已落盘，刷新历史与标签池。
           void refreshConversation();
           return progress.suggestion as AssistantSuggestion;
         }
-        if (progress.status === "cancelled") throw new DOMException("助手任务已取消", "AbortError");
+        if (progress.resumable === false) assistantContinuation.current = null;
+        if (progress.status === "cancelled" || progress.status === "paused") throw new Error(progress.message || "助手已暂停，点击继续恢复原任务。");
         if (progress.status === "error")
           throw new Error(progress.message || "智能助手调用失败");
       }
@@ -2583,7 +2604,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (controller.signal.aborted) {
         setNotice(
           controller.signal.reason === "timeout"
-            ? "助手任务超时，任务仍可能在后台运行，请稍后重试。"
+            ? "等待超时，进度已保留；点击继续将连接原任务，不重新开始。"
             : "已取消助手任务。",
         );
       } else {
@@ -2603,6 +2624,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (assistantAbortRef.current === controller) {
         assistantAbortRef.current = null;
         setAssistantLoading(false);
+        setAssistantCanContinue(Boolean(assistantContinuation.current));
       }
     }
 
@@ -2611,6 +2633,23 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     const release = () => { if (assistantActiveRequestRef.current === task) assistantActiveRequestRef.current = null; };
     void task.then(release, release);
     return task;
+  }
+
+  async function continueAssistantTask() {
+    const saved = assistantContinuation.current;
+    if (!saved || assistantActiveRequestRef.current) return;
+    const goal = saved.goalRunId && goalRunRef.current?.id === saved.goalRunId ? goalRunRef.current : null;
+    if (goal) updateGoalRun({ ...goal, status: "running" });
+    const suggestion = await askTagAssistant(saved.request, { resume: true });
+    if (!goal || goalRunRef.current?.id !== goal.id || goalRunRef.current.status !== "running") return;
+    const current = goalRunRef.current;
+    if (!suggestion) { updateGoalRun({ ...current, status: "needs-attention" }); return; }
+    if (suggestion.goalComplete) { updateGoalRun({ ...current, status: "complete" }); return; }
+    if (current.accessMode !== "full") return;
+    if (current.completedGenerations >= current.maxGenerations) { updateGoalRun({ ...current, status: "limit" }); return; }
+    applySuggestionValues(suggestion, false);
+    setCount(1);
+    triggerGoalGeneration();
   }
 
   // “让助手处理”是明确的 Agent 入口。仅在无可用模型时降级到直接检索。
@@ -3941,15 +3980,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             </Control>
             <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
               V5 扩散超分：输出固定为源图的 2 倍，仅接受 PNG。
-              {upscaleSource
+              {upscaleSource && upscaleQuoteReady
                 ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，优先消耗 ${imageCreditCost({ model: upscaleBillingModel(upscaleModel), operation: "upscale", width: upscaleSource.width, height: upscaleSource.height, steps: 1, samples: 1 })} AFF；图包和个人 AFF 不足时使用站内余额。`
-                : "请先上传源图以确认费用档位。"}
-              {upscaleSource &&
-                upscaleSource.width * upscaleSource.height > UPSCALE_MAX_PIXELS && (
-                  <span className="mt-1 block text-amber-500">
-                    源图超过超分上限 1536×2048（3145728 像素），请缩小后再试。
-                  </span>
-                )}
+                : <span role="status">{upscaleInputError}{upscaleSource && " 请缩小图片后再试。"}</span>}
             </p>
           </>
         )}
@@ -4087,6 +4120,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         return;
       }
     }
+    if (upscaleInputError) { setNotice(upscaleInputError); return; }
     const validationError = validateGenerationParameters({
       imageModel: model,
       imageProtocol,
@@ -4554,11 +4588,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           characterPromptCount: activeCharacterCount,
         };
   const dailyFamily = dailyImageFamily(affGeneration);
-  const dailyQuote = wallet?.dailyBilling && localPricePolicy && dailyFamily && affFixedCost == null
+  const dailyQuote = upscaleQuoteReady && wallet?.dailyBilling && localPricePolicy && dailyFamily && affFixedCost == null
     ? quoteDailyImage(affGeneration, localPricePolicy, wallet.dailyBilling.cnyPerAff, wallet.dailyBilling.day === dailyImageDay() ? wallet.dailyBilling.counts[dailyFamily] : 0)
     : null;
-  const estimatedAffCost = dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost, localPricePolicy);
-  const estimatedNewApiCost = providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (operation === "upscale" && !naturalImageModel && !upscaleDims) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
+  const estimatedAffCost = !upscaleQuoteReady ? 0 : dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost, localPricePolicy);
+  const estimatedNewApiCost = !upscaleQuoteReady || providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
     model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
     height: upscaleDims?.height ?? height, steps,
     samples: outputCount,
@@ -4580,14 +4614,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling === true;
   const hasSufficientAff = Boolean(wallet?.aff?.enabled && wallet.aff.balance >= estimatedPersonalCost && wallet.aff.packageBalance >= estimatedPackageCost);
   // The price display follows the required wallet even when its balance is insufficient.
-  const canUseAffEstimate = providerId === "newapi" && !naturalImageModel && (requiresLocalBilling || hasSufficientAff);
+  const canUseAffEstimate = upscaleQuoteReady && providerId === "newapi" && !naturalImageModel && (requiresLocalBilling || hasSufficientAff);
   const localAffShortfall = Math.max(0, Math.round((estimatedPersonalCost - (wallet?.aff?.balance ?? 0)) * 10000) / 10000);
   const localCreditNotice = requiresLocalBilling && wallet?.aff
     ? !wallet.aff.enabled ? "当前模型的本站额度服务尚未就绪，请刷新后重试。"
       : localAffShortfall > 0 ? `本次预计消耗 ${estimatedAffCost} AFF，当前可用个人 AFF ${wallet.aff.balance}、图包 ${wallet.aff.packageBalance}，个人 AFF 尚缺 ${localAffShortfall}。此模型使用本站额度，NewAPI 余额不参与本次扣费。` : ""
     : "";
 
-  const pricingDetails = (children?: React.ReactNode, className?: string) => (
+  const pricingDetails = (children?: React.ReactNode, className?: string) => upscaleInputError
+    ? <p className={className} role="status">{upscaleInputError}</p> : (
     <CreditPricingButton pricing={creditPricing} generation={affGeneration} state={wallet?.dailyBilling}
       wallet={wallet?.aff} usesAff={canUseAffEstimate} onRefresh={refreshWallet} className={className}
       paymentNote={providerId !== "newapi" ? "当前使用个人 Key，实际费用以提供方账单为准。下面展示本站 AFF / 图包价格，供对比。" : canUseAffEstimate ? "当前使用本站 AFF / 图包，图包优先，个人 AFF 补足。" : "当前按 NewAPI 自身价格与余额计费。下面的 AFF / 图包规则仅作对比，不是本次 NewAPI 账单。"}>
@@ -4663,7 +4698,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       onClearQueued={() => assistantMessageQueue.pending.forEach((item) => assistantMessageQueue.queue.cancel(item.id))}
       onClearQueueHistory={() => assistantMessageQueue.queue.clearFinished()}
       onCancel={() => { const current = assistantMessageQueue.items.find((item) => item.status === "running"); if (current) assistantMessageQueue.queue.cancel(current.id); cancelAssistantTask(); }}
-      loading={assistantLoading} searching={tagSearching} error={assistantTaskError}
+      loading={assistantLoading} searching={tagSearching} error={assistantTaskError} canContinue={assistantCanContinue} onContinue={() => void continueAssistantTask()}
       resourceScope={assistantResourceScope} imageResources={[...sessionHistory.map((item, index) => ({ id: `history:${item.id}`, source: item.image, name: `生成图片 ${index + 1}`, kind: "history" as const, description: `${item.width}×${item.height} · ${item.prompt.slice(0, 160)}` })), ...imageReferences.library.map(item => ({ id: `library:${item.id}`, source: item.data, name: item.name, kind: "library" as const }))]}
       onAddImageSources={sources => { if (agentImagesRef.current.length >= MAX_ASSISTANT_IMAGES) { setNotice("参考图已满，请先移除不需要的图片。"); return; } void assistantImageSources.addSources(sources.slice(0, MAX_ASSISTANT_IMAGES - agentImagesRef.current.length)); }} onCancelImageImport={cancelAgentImageImport}
       images={agentImagesScope === assistantResourceScope ? agentImages : []} imagesLoading={(agentImagesScope === assistantResourceScope && agentImagesLoading) || assistantImageSources.loading} onAddImages={files => { void handleAgentImageFiles(files); }}
@@ -4780,7 +4815,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               data-studio-cancel={generating || undefined}
               aria-label={generating ? "取消当前生成" : undefined}
           onClick={generating ? () => cancelImageGeneration() : handleStudioGenerationClick}
-          disabled={!generating && (layoutEditorOpen || !model)}
+          disabled={!generating && (layoutEditorOpen || !model || !upscaleQuoteReady)}
           title={
             providerId !== "newapi"
               ? "使用个人 API Key；费用以提供方账单为准"
@@ -4884,7 +4919,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
     pricingControl={operation !== "suggest-tags" ? pricingDetails() : undefined}
     seedControl={modelCapabilities.seed ? <SeedModeNotice seed={seed} onRandom={() => setSeed("")} /> : undefined}
-    generating={generating} disabled={layoutEditorOpen || !model} progress={streamProgress || batchProgress}
+    generating={generating} disabled={layoutEditorOpen || !model || !upscaleQuoteReady} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
     balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
     count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={handleStudioGenerationClick}
@@ -5424,7 +5459,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               <button
                 data-studio-generate={generating ? undefined : true} data-studio-cancel={generating || undefined} aria-label={generating ? "取消当前生成" : undefined}
                 onClick={generating ? () => cancelImageGeneration() : handleStudioGenerationClick}
-                disabled={!generating && !model}
+                disabled={!generating && (!model || !upscaleQuoteReady)}
                 className="flex h-11 flex-1 items-center justify-center gap-2 rounded bg-[var(--rose)] text-sm font-semibold text-white disabled:opacity-60 sm:h-12 sm:text-base"
               >
                 <Sparkles size={18} />{generating && <span>取消当前生成</span>}

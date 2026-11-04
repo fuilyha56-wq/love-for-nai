@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, resolvedNewApiBaseUrl, userHeaders, invalidateUserTokenCache } from "@/lib/newapi";
+import { RateLimitError, readUpstreamJson, upstreamClientHeaders, upstreamFailureResponse } from "@/lib/upstream-request";
 import {
   invalidJsonResponse,
   optionalString,
@@ -10,10 +11,11 @@ import {
 async function requireSession() {
   const session = await getSession();
   if (!session) return null;
-  return { session, headers: userHeaders(session) };
+  return { session, headers: { ...await upstreamClientHeaders(), ...userHeaders(session) } };
 }
 
 function failure(error: unknown, fallback: string) {
+  if (error instanceof RateLimitError) return upstreamFailureResponse(error);
   const message = error instanceof Error ? error.message : fallback;
   if (isUpstreamAuthError(message))
     return NextResponse.json(
@@ -24,19 +26,20 @@ function failure(error: unknown, fallback: string) {
 }
 
 export async function GET() {
-  const auth = await requireSession();
+  let auth;
+  try { auth = await requireSession(); } catch (error) { return failure(error, "账号服务暂时不可用"); }
   if (!auth)
     return NextResponse.json(
       { message: "请先登录后管理 API 密钥", sessionExpired: true },
       { status: 401 },
     );
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/token/?p=1&size=100`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/token/?p=1&size=100`, {
       headers: auth.headers,
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    const result = await upstream.json();
+    const result = await readUpstreamJson<{ success: boolean; message?: string; data?: { items?: unknown[] } | unknown[] }>(upstream, "管理密钥");
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "无法读取 API 密钥");
     const source = result.data || {};
@@ -44,7 +47,7 @@ export async function GET() {
     let groups: Array<{ name: string; desc: string; ratio: number }> = [];
     try {
       const groupResponse = await fetch(
-        `${newApiBaseUrl()}/api/user/self/groups`,
+        `${await resolvedNewApiBaseUrl()}/api/user/self/groups`,
         {
           headers: auth.headers,
           cache: "no-store",
@@ -78,7 +81,8 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const auth = await requireSession();
+  let auth;
+  try { auth = await requireSession(); } catch (error) { return failure(error, "账号服务暂时不可用"); }
   if (!auth) return NextResponse.json({ message: "请先登录" }, { status: 401 });
   let raw: Record<string, unknown>;
   try {
@@ -140,7 +144,7 @@ export async function POST(request: Request) {
     );
 
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/token/`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/token/`, {
       method: "POST",
       headers: auth.headers,
       body: JSON.stringify({
@@ -157,20 +161,19 @@ export async function POST(request: Request) {
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    const result = await upstream.json();
+    const result = await readUpstreamJson<{ success: boolean; message?: string; data?: { items?: unknown[] } | unknown[] }>(upstream, "管理密钥");
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "创建 API 密钥失败");
+    await invalidateUserTokenCache(auth.session);
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "创建 API 密钥失败" },
-      { status: 502 },
-    );
+    return failure(error, "创建 API 密钥失败");
   }
 }
 
 export async function PUT(request: Request) {
-  const auth = await requireSession();
+  let auth;
+  try { auth = await requireSession(); } catch (error) { return failure(error, "账号服务暂时不可用"); }
   if (!auth) return NextResponse.json({ message: "请先登录" }, { status: 401 });
   let body: Record<string, unknown> & { id?: number };
   try {
@@ -185,7 +188,7 @@ export async function PUT(request: Request) {
   delete body.statusOnly;
   try {
     const upstream = await fetch(
-      `${newApiBaseUrl()}/api/token/${statusOnly ? "?status_only=true" : ""}`,
+      `${await resolvedNewApiBaseUrl()}/api/token/${statusOnly ? "?status_only=true" : ""}`,
       {
         method: "PUT",
         headers: auth.headers,
@@ -194,9 +197,10 @@ export async function PUT(request: Request) {
         signal: AbortSignal.timeout(10_000),
       },
     );
-    const result = await upstream.json();
+    const result = await readUpstreamJson<{ success: boolean; message?: string; data?: { items?: unknown[] } | unknown[] }>(upstream, "管理密钥");
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "更新 API 密钥失败");
+    await invalidateUserTokenCache(auth.session);
     return NextResponse.json({ success: true });
   } catch (error) {
     return failure(error, "更新 API 密钥失败");
@@ -204,26 +208,25 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const auth = await requireSession();
+  let auth;
+  try { auth = await requireSession(); } catch (error) { return failure(error, "账号服务暂时不可用"); }
   if (!auth) return NextResponse.json({ message: "请先登录" }, { status: 401 });
   const id = Number(request.nextUrl.searchParams.get("id"));
   if (!Number.isInteger(id) || id <= 0)
     return NextResponse.json({ message: "无效的密钥 ID" }, { status: 400 });
   try {
-    const upstream = await fetch(`${newApiBaseUrl()}/api/token/${id}`, {
+    const upstream = await fetch(`${await resolvedNewApiBaseUrl()}/api/token/${id}`, {
       method: "DELETE",
       headers: auth.headers,
       cache: "no-store",
       signal: AbortSignal.timeout(10_000),
     });
-    const result = await upstream.json();
+    const result = await readUpstreamJson<{ success: boolean; message?: string; data?: { items?: unknown[] } | unknown[] }>(upstream, "管理密钥");
     if (!upstream.ok || !result.success)
       throw new Error(result.message || "删除 API 密钥失败");
+    await invalidateUserTokenCache(auth.session);
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json(
-      { message: error instanceof Error ? error.message : "删除 API 密钥失败" },
-      { status: 502 },
-    );
+    return failure(error, "删除 API 密钥失败");
   }
 }

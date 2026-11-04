@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
-import { isUpstreamAuthError, newApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { isUpstreamAuthError, resolvedNewApiBaseUrl, userHeaders } from "@/lib/newapi";
+import { cachedUpstreamRead } from "@/lib/upstream-read-cache";
+import { RateLimitError, readUpstreamJson, upstreamFailureResponse } from "@/lib/upstream-request";
 import { listHistory } from "@/lib/history";
 import { listUserImageUsage } from "@/lib/request-audit";
 import { paymentMatches, usageOrigin } from "@/lib/usage-billing";
 
 type LogEntry = Record<string, unknown>;
 type UpstreamPage = { items: LogEntry[]; total: number };
+type LogResult = { success?: boolean; message?: string; data?: LogEntry[] | { items?: LogEntry[]; data?: LogEntry[]; total?: number; total_count?: number } };
 
 const PAGE_SIZE = 20;
 // 每个模型预取的条数：归并排序后可保证前 10 页精确。
@@ -135,29 +138,28 @@ async function fetchModelPage(
     start_timestamp: String(range.start),
     end_timestamp: String(range.end),
   });
-  const response = await fetch(
-    `${newApiBaseUrl()}/api/log/self?${params}`,
-    { headers, cache: "no-store", signal: AbortSignal.timeout(15_000) },
+  const response = await cachedUpstreamRead(
+    `${await resolvedNewApiBaseUrl()}/api/log/self?${params}`, headers,
   );
-  const result = await response.json();
+  const result = await readUpstreamJson<LogResult>(response, "使用记录");
   if (!response.ok || !result.success)
     throw new Error(result.message || "无法读取使用记录");
   const source = result.data || {};
   const items = Array.isArray(source)
     ? source
     : source.items || source.data || [];
-  return { items, total: Number(source.total || source.total_count || 0) };
+  return { items, total: Array.isArray(source) ? source.length : Number(source.total || source.total_count || 0) };
 }
 
 // 该版本 NewAPI 的 model_name 通配会全表扫描（约 9s），改为先发现
 // 用户组内的 nai-* 模型，再并行精确查询（索引命中，约 1s）。
 async function fetchNaiModelNames(headers: Record<string, string>) {
   try {
-    const response = await fetch(
-      `${newApiBaseUrl()}/api/user/models`,
-      { headers, cache: "no-store", signal: AbortSignal.timeout(8_000) },
+    const response = await cachedUpstreamRead(
+      `${await resolvedNewApiBaseUrl()}/api/user/models`, headers, 30_000,
     );
-    const result = await response.json();
+    const result = await readUpstreamJson<{ data?: unknown[] }>(response, "用量模型目录");
+    if (!response.ok) return null;
     const models: unknown[] = Array.isArray(result.data) ? result.data : [];
     return models
       .filter(
@@ -165,7 +167,8 @@ async function fetchNaiModelNames(headers: Record<string, string>) {
           typeof model === "string" && model.toLowerCase().startsWith("nai-"),
       )
       .slice(0, 24);
-  } catch {
+  } catch (error) {
+    if (error instanceof RateLimitError) throw error;
     return null;
   }
 }
@@ -181,7 +184,6 @@ export async function GET(request: NextRequest) {
   const page = Number.isInteger(requested)
     ? Math.min(Math.max(requested, 1), 1000)
     : 1;
-  const headers = userHeaders(session);
   const filters = resolveFilters(request);
   if (!["", "aff", "package", "mixed", "newapi"].includes(filters.payment))
     return NextResponse.json({ message: "付款来源筛选参数无效" }, { status: 400 });
@@ -199,9 +201,10 @@ export async function GET(request: NextRequest) {
     // and avoid contacting NewAPI entirely when only local payments are requested.
     if (["aff", "package", "mixed"].includes(filters.payment) || filters.source === "lfn")
       return usageResponse(session.userId, local, filters, page);
+    const headers = userHeaders(session);
     let pages: UpstreamPage[];
     let total: number;
-    const discoveredModels = await fetchNaiModelNames(headers);
+    const discoveredModels = filters.model ? null : await fetchNaiModelNames(headers);
     const models = filters.model
       ? [filters.model]
       : discoveredModels;
@@ -235,11 +238,10 @@ export async function GET(request: NextRequest) {
         start_timestamp: String(range.start),
         end_timestamp: String(range.end),
       });
-      const response = await fetch(
-        `${newApiBaseUrl()}/api/log/self?${params}`,
-        { headers, cache: "no-store", signal: AbortSignal.timeout(25_000) },
+      const response = await cachedUpstreamRead(
+        `${await resolvedNewApiBaseUrl()}/api/log/self?${params}`, headers,
       );
-      const result = await response.json();
+      const result = await readUpstreamJson<LogResult>(response, "使用记录");
       if (!response.ok || !result.success)
         throw new Error(result.message || "无法读取使用记录");
       const source = result.data || {};
@@ -249,7 +251,7 @@ export async function GET(request: NextRequest) {
       pages = [
         {
           items,
-          total: Number(source.total || source.total_count || 0),
+          total: Array.isArray(source) ? source.length : Number(source.total || source.total_count || 0),
         },
       ];
       total = pages[0].total;
@@ -261,6 +263,7 @@ export async function GET(request: NextRequest) {
     const message = error instanceof Error ? error.message : "无法读取使用记录";
     if (local.length && filters.payment !== "newapi" && filters.source !== "newapi")
       return usageResponse(session.userId, local, filters, page, "NewAPI 记录暂时不可用，当前仅显示本站保留的 AFF／图包记录。");
+    if (error instanceof RateLimitError) return upstreamFailureResponse(error);
     if (isUpstreamAuthError(message))
       return NextResponse.json(
         { message: "登录状态已过期，请重新登录", sessionExpired: true },
