@@ -4,6 +4,8 @@
   --editor-raised: color-mix(in srgb, var(--panel) 92%, var(--ink) 8%);
   --editor-hover: color-mix(in srgb, var(--rose) 8%, var(--panel));
   --editor-shadow: 0 16px 50px color-mix(in srgb, #000 16%, transparent);
+  position: fixed;
+  inset: var(--lfn-viewport-top, 0px) 0 auto;
   display: grid;
   box-sizing: border-box;
   width: 100%;
@@ -230,15 +232,20 @@
 .editor-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
 .generation-viewport,
 .review-overlay { position: absolute; z-index: 5; box-sizing: border-box; border: 2px solid var(--rose); touch-action: none; }
-.generation-viewport { pointer-events: none; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 50%, transparent), 0 8px 30px color-mix(in srgb, #000 20%, transparent); }
+.generation-viewport { pointer-events: none; border-width: 1px; border-color: var(--rose); box-shadow: 0 0 0 1px color-mix(in srgb, #fff 68%, transparent); }
 .generation-viewport .viewport-badge,
 .generation-viewport .viewport-corner { pointer-events: auto; }
-.viewport-badge,
 .review-label { position: absolute; z-index: 3; border: 0; border-radius: 18px; background: color-mix(in srgb, var(--ink) 88%, transparent); padding: 6px 11px; color: var(--panel); font: inherit; font-size: 11px; font-weight: 750; white-space: nowrap; }
-.viewport-badge { top: 8px; left: 8px; display: flex; min-height: 36px; cursor: move; align-items: center; gap: 7px; }
-.viewport-badge small { opacity: .65; font-size: 9px; font-weight: 500; }
+.viewport-badge { position: absolute; z-index: 3; top: 15px; left: 15px; display: grid; width: 44px; height: 44px; place-items: center; border: 0; background: transparent; color: var(--ink); cursor: move; touch-action: none; }
+.viewport-badge svg { width: 28px; height: 28px; padding: 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); pointer-events: none; }
 .viewport-corner { position: absolute; display: grid; width: 44px; height: 44px; place-items: center; padding: 0; border: 0; background: transparent; touch-action: none; }
-.viewport-corner::before { width: 22px; height: 22px; border: 2px solid var(--rose); border-radius: 50%; background: var(--panel); box-shadow: 0 2px 8px color-mix(in srgb, #000 20%, transparent); content: ""; }
+.viewport-corner::before { width: 18px; height: 18px; border: 0 solid var(--rose); filter: drop-shadow(0 0 1px #fff); content: ""; }
+.viewport-corner:is(.nw, .ne)::before { border-top-width: 3px; align-self: start; margin-top: 21px; }
+.viewport-corner:is(.sw, .se)::before { border-bottom-width: 3px; align-self: end; margin-bottom: 21px; }
+.viewport-corner:is(.nw, .sw)::before { border-left-width: 3px; justify-self: start; margin-left: 21px; }
+.viewport-corner:is(.ne, .se)::before { border-right-width: 3px; justify-self: end; margin-right: 21px; }
+.viewport-corner:is(.n, .s, .e, .w)::before { width: 18px; height: 4px; border-radius: 3px; background: var(--rose); }
+.viewport-corner:is(.e, .w)::before { rotate: 90deg; }
 .viewport-corner.n { left: calc(50% - 22px); top: -23px; cursor: ns-resize; }
 .viewport-corner.s { left: calc(50% - 22px); bottom: -23px; cursor: ns-resize; }
 .viewport-corner.w { left: -23px; top: calc(50% - 22px); cursor: ew-resize; }
@@ -255,8 +262,14 @@
 .review-compare-handle:focus-visible .review-compare-grip { outline: 2px solid var(--rose); outline-offset: 2px; }
 .review-label.merged { top: 8px; left: 8px; background: var(--rose); color: #fff; }
 .review-label.original { top: 8px; right: 8px; }
-.editor-canvas-meta { position: absolute; z-index: 10; top: 9px; left: max(8px, env(safe-area-inset-left)); display: flex; max-width: calc(100% - 188px); flex-wrap: wrap; gap: 4px; pointer-events: none; }
-.editor-canvas-meta span { border: 1px solid color-mix(in srgb, var(--line) 65%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--panel) 82%, transparent); padding: 5px 9px; color: var(--muted); font-size: 9px; backdrop-filter: blur(8px); }
+.editor-canvas-meta { position: absolute; z-index: 10; top: 6px; left: max(8px, env(safe-area-inset-left)); display: flex; min-height: 44px; max-width: calc(100% - 188px); align-items: center; pointer-events: none; }
+.editor-canvas-meta > span { border: 1px solid color-mix(in srgb, var(--line) 65%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--panel) 82%, transparent); padding: 5px 9px; color: var(--muted); font-size: 11px; backdrop-filter: blur(8px); }
+.editor-frame-settings { display: inline-flex; min-height: 44px; min-width: 0; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); font-size: 12px; font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; pointer-events: auto; }
+.editor-frame-settings svg { flex: none; color: var(--accent-text); }
+.editor-frame-settings[aria-expanded="true"] { border-color: var(--rose); background: var(--editor-hover); }
+.editor-frame-panel { display: grid; min-width: 0; gap: 7px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--editor-raised); }
+.editor-frame-panel h2 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+.editor-frame-panel p { color: var(--muted); font-size: 12px; line-height: 1.5; }
 .editor-zoom { position: absolute; z-index: 12; top: 6px; right: max(8px, env(safe-area-inset-right)); display: flex; align-items: center; padding: 0 2px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--panel) 90%, transparent); box-shadow: var(--editor-shadow); }
 .editor-zoom button { width: 44px; min-width: 44px; height: 44px; border: 0; background: transparent; }
 .editor-zoom span { min-width: 30px; text-align: center; color: var(--muted); font-size: 10px; }
@@ -293,7 +306,6 @@
 
 html[data-theme="night"] .image-editor-page,
 html[data-theme="nai"] .image-editor-page { --editor-shadow: 0 18px 60px rgba(0,0,0,.38); }
-html[data-theme="nai"] .viewport-badge,
 html[data-theme="nai"] .review-label { background: #f5f3c2; color: #13152c; }
 html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #fff; }
 
@@ -306,10 +318,6 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
 .editor-history-tree { max-height: 23dvh; }
 
 @keyframes editor-pulse { 50% { opacity: .3; scale: .8; } }
-
-@media (max-width: 520px) {
-  .viewport-badge small, .editor-canvas-meta span:last-child { display: none; }
-}
 
 @media (min-width: 600px) {
   .image-editor-page .editor-actions.editor-mobile-actions:has(> :nth-child(3)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }

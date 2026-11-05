@@ -107,10 +107,10 @@ export function revealTutorialTarget(step: TutorialStep, nextStep?: TutorialStep
     if (step.target?.includes('data-tutorial="precise"')) clickVisible('.replica-section[data-tutorial="precise"] .replica-section-heading button[aria-expanded="false"]');
   }
   if (step.path.startsWith("/image/editor")) {
-    const sheet = step.area === "editor-tools" ? "工具" : step.area === "editor-params" ? "生成" : step.area === "editor-files" ? "画布" : null;
+    const sheet = step.area === "editor-tools" ? "tools" : step.area === "editor-params" ? "generate" : step.area === "editor-files" ? "canvas" : null;
     if (sheet) {
-      const button = [...document.querySelectorAll<HTMLButtonElement>('.editor-mobile-tabs button')].find((item) => item.textContent?.trim() === sheet && tutorialElementVisible(item));
-      if (button && !button.classList.contains('is-active')) button.click();
+      const button = document.querySelector<HTMLButtonElement>(`.editor-mobile-tabs button[data-editor-panel="${sheet}"]`);
+      if (button && tutorialElementVisible(button) && !button.classList.contains('is-active')) button.click();
     }
     if (step.area === "editor-params" || step.area === "editor-files") {
       const details = document.querySelector<HTMLDetailsElement>(`[data-tutorial="${step.area}"]`);

@@ -1341,7 +1341,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
 
-  function applyImageAsSource(image: string, nextOperation: Operation = "img2img") {
+  function applyImageAsSource(image: string, nextOperation: Operation = "img2img", { openMobilePanel = true } = {}) {
     if (nextOperation !== "suggest-tags" && !modelCapabilities.operations.includes(nextOperation)) {
       setNotice("当前模型不支持这个操作，请先选择支持图像编辑的模型。");
       return;
@@ -1357,7 +1357,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
     setOperation(nextOperation);
     setSelectedImageIndex(0);
-    if (window.matchMedia("(max-width: 1023px)").matches)
+    if (openMobilePanel && window.matchMedia("(max-width: 1023px)").matches)
       setMobileSheet(nextOperation === "upscale" ? "parameters" : "reference");
     setNotice("已将当前图片载入工作台。");
   }
@@ -2292,15 +2292,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       .then(async (resultDraft) => {
         if (!active || !resultDraft) throw new Error("编辑器结果已过期，请重新打开编辑器。");
         const result = editorImageDataUrl(resultDraft.document.image);
+        applyImageAsSource(result, "inpainting", { openMobilePanel: false });
         if (!resultDraft.document.characterReference) {
           setPrompt(resultDraft.document.prompt || "");
           setNegative(resultDraft.document.negativePrompt || "");
           restoreGenerationParameters({ operation: "inpainting", ...resultDraft.document.generation, prompt: resultDraft.document.prompt, negative_prompt: resultDraft.document.negativePrompt });
         }
-        applyImageAsSource(result, "inpainting");
         const reference = { editorDraftId: resultId, editorNodeId: params.get("editorNodeId") || resultDraft.historyNodeId, editorBranchId: params.get("editorBranchId") || resultDraft.historyBranchId };
         setSource({ data: result, name: "编辑器结果.png", ...reference });
         setImages([result]);
+        setNotice("已将编辑结果载入工作台。");
         await addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting", {
           ...reference,
           ...resultDraft.document.generation, prompt: resultDraft.document.prompt || "", negative: resultDraft.document.negativePrompt || "", width: resultDraft.document.image.width, height: resultDraft.document.image.height,
@@ -5312,7 +5313,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
                 <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
                 <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
-                <button type="button" data-tutorial-editor={operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas"} className="mobile-reference-action" disabled={!source} onClick={() => void openImageEditor(operation === "inpainting" || operation === "edits" ? "inpaint" : "canvas")}><Scan size={18} />{operation === "inpainting" || operation === "edits" ? "绘制重绘蒙版" : "打开图像编辑器"}</button>
+                <button type="button" data-tutorial-editor="inpaint" className="mobile-reference-action" disabled={!source || generating} onClick={() => void openImageEditor("inpaint")}><Brush size={18} />精细重绘</button>
+                <button type="button" data-tutorial-editor="canvas" className="mobile-reference-action" disabled={!source || generating} onClick={() => void openImageEditor("canvas")}><Scan size={18} />无限画布</button>
               </div>}
               moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
               operationOptions={mobileOperationOptions}
