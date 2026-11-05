@@ -27,6 +27,8 @@ export type EditorWorkspaceState = {
   maskOpacity: number;
   showMaskPreview: boolean;
   canvasBackground: "checker" | "white" | "dark";
+  redrawStrength?: number;
+  tiledUpscaleStrength?: number;
 };
 
 export type EditorDraft = {

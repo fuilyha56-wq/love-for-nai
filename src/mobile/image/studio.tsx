@@ -4864,7 +4864,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                   : "处理中，请稍候..."
               : generationModes.has(operation)
                 ? `生成 ${count} 张图像`
-                : `执行${modes.find((item) => item.id === operation)?.label}`}
+                : nativeUpscale ? "开始 V5 超分" : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
           {!generating && operation !== "suggest-tags" && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
             <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "按当前 NewAPI 配置预估，实际以账单为准"}>
@@ -5085,18 +5085,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   </div>;
   const mobileOperationOptions = modes.filter((item) => item.id === "suggest-tags" || modelCapabilities.operations.includes(item.id)).map((item) => ({ value: item.id, label: item.label }));
   const mobileParameterContent = <div className="mobile-parameter-panel">
-    {nativeUpscale && upscaleInputError && <p role="status" className="rounded-lg border border-[var(--line)] bg-[var(--surface)] p-3 text-sm leading-6">{upscaleInputError}{upscaleSource && " 请缩小图片后再试。"}</p>}
+    {nativeUpscale && operationSettings}
     {providerAndModelControls}
     <div className={`mobile-parameter-routing${providerId !== "newapi" ? " is-single" : ""}`}>
       {imageProtocolControl}
       <Control label="图像操作"><PopupSelect appearance="filled" ariaLabel="图像操作" value={operation} options={mobileOperationOptions} onChange={(value) => selectOperation(value as Operation)} /></Control>
     </div>
-    <ReplicaImageSize model={model} variant="nlw" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
-    <ReplicaGenerationSettings mobileInline variant="nai" model={model} naturalSettings={naturalSettings}
-      steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
-      setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
-      count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />
-    {operationSettings}
+    {!nativeUpscale && <>
+      <ReplicaImageSize model={model} variant="nlw" width={width} height={height} count={count} setWidth={setWidth} setHeight={setHeight} setCount={setCount} />
+      <ReplicaGenerationSettings mobileInline variant="nai" model={model} naturalSettings={naturalSettings}
+        steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
+        setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
+        count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />
+      {operationSettings}
+    </>}
     <button className="mobile-reference-action" type="button" onClick={() => setMobileSheet("tools")}><WandSparkles size={17} />参考图与更多工具</button>
     {mobileWorkspaceExtras}
   </div>;
@@ -5287,6 +5289,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               width={width}
               height={height}
               isInpainting={operation === "inpainting"}
+              isV5Upscale={nativeUpscale}
               hasResults={displayedImages.length > 0}
               hasSource={Boolean(source)}
               notice={notice}
@@ -5313,7 +5316,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               </div>}
               moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
               operationOptions={mobileOperationOptions}
-              onSelectOperation={(next) => selectOperation(next as Operation)}
+              onSelectOperation={(next) => {
+                selectOperation(next as Operation);
+                if (next === "upscale") setMobileSheet("parameters");
+              }}
               onOpenSheet={(next) => setMobileSheet(next)}
               sheet={mobileSheet}
               sheetRequestId={mobileSheetRequest.id}

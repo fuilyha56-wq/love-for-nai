@@ -17,6 +17,8 @@ export type EditorHistoryWorkspace = {
   maskOpacity: number;
   showMaskPreview: boolean;
   canvasBackground: "checker" | "white" | "dark";
+  redrawStrength?: number;
+  tiledUpscaleStrength?: number;
 };
 export type EditorHistoryBranch = {
   id: string;

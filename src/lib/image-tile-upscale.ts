@@ -1,3 +1,4 @@
+export const TILE_UPSCALE_DEFAULT_STRENGTH = 0.1;
 export const TILE_UPSCALE_EDGE = 1024;
 export const TILE_UPSCALE_MAX_FREE_PIXELS = 1_048_576;
 export const TILE_UPSCALE_OVERLAP = 32;

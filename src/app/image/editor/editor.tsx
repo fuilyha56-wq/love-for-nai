@@ -58,7 +58,8 @@ import { PopupSelect, type SelectOption } from "@/app/ui/popup-select";
 import { WheelNumberInput } from "@/app/ui/wheel-number";
 import { syncEditorPromptToStudioForm } from "@/lib/image-studio-form";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
-import { planImageTileUpscale, tileUpscaleConcurrencyLimit, type ImageUpscalePlan, type ImageUpscaleTile, type TileUpscaleFactor, type TileUpscaleGatewayCapacity } from "@/lib/image-tile-upscale";
+import { planImageTileUpscale, TILE_UPSCALE_DEFAULT_STRENGTH, tileUpscaleConcurrencyLimit, type ImageUpscalePlan, type ImageUpscaleTile, type TileUpscaleFactor, type TileUpscaleGatewayCapacity } from "@/lib/image-tile-upscale";
+import { decodeCachedUpscaleTile, runImageUpscaleTiles, type TiledUpscaleProgress } from "@/lib/image-tile-upscale-requests";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyPendingCandidate,
@@ -94,7 +95,6 @@ type Tool = "pan" | "brush" | "eraser" | "rectangle";
 type EditorStroke = MaskStroke & { shape?: "freehand" | "rectangle" };
 type TiledUpscaleRestore = { document: EditorDocument; viewport: GenerationViewport; camera: CameraState };
 type TiledUpscaleCache = { sourceImage: RgbaImage; signature: string; tiles: Map<number, Blob> };
-type TiledUpscaleProgress = { completed: number; total: number; active: number; concurrency: number; waiting: number; source: "Gateway" | "LFN" };
 type DragState =
   | { kind: "pan"; screen: Point; camera: CameraState }
   | { kind: "pinch"; distance: number; midpoint: Point; camera: CameraState }
@@ -156,9 +156,7 @@ async function stitchUpscaleTiles(plan: ImageUpscalePlan, generated: Map<number,
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   for (const tile of plan.tiles) {
-    const blob = generated.get(tile.index);
-    if (!blob) throw new Error(`分块 ${tile.index + 1} 尚未生成`);
-    const output = await createImageBitmap(blob);
+    const output = await decodeCachedUpscaleTile(generated, tile.index, plan.tiles.length);
     try {
       const scaleX = output.width / tile.sourceWidth;
       const scaleY = output.height / tile.sourceHeight;
@@ -468,8 +466,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const [tileScale, setTileScale] = useState<TileUpscaleFactor>(2);
   const [tileProgress, setTileProgress] = useState<TiledUpscaleProgress | null>(null);
   const [gatewayImageCapacity, setGatewayImageCapacity] = useState<TileUpscaleGatewayCapacity | null>(null);
-  const [gatewayCapacityChecked, setGatewayCapacityChecked] = useState(false);
-  const gatewayImageCapacityRef = useRef<TileUpscaleGatewayCapacity | null>(null);
   const [tileSourceState, setTileSourceState] = useState<EditorDocument | null>(null);
   const [prompt, setPrompt] = useState("");
   const [negative, setNegative] = useState("");
@@ -527,17 +523,11 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const result = await response.json() as { available?: boolean; capacity?: TileUpscaleGatewayCapacity };
       const capacity = result.available && result.capacity ? result.capacity : null;
       if (signal?.aborted) return null;
-      gatewayImageCapacityRef.current = capacity;
       setGatewayImageCapacity(capacity);
       return capacity;
     } catch {
-      if (!signal?.aborted) {
-        gatewayImageCapacityRef.current = null;
-        setGatewayImageCapacity(null);
-      }
+      if (!signal?.aborted) setGatewayImageCapacity(null);
       return null;
-    } finally {
-      if (!signal?.aborted) setGatewayCapacityChecked(true);
     }
   }, []);
 
@@ -618,6 +608,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const [steps, setSteps] = useState(28);
   const [scale, setScale] = useState(5);
   const [strength, setStrength] = useState(0.7);
+  const [tiledUpscaleStrength, setTiledUpscaleStrength] = useState(TILE_UPSCALE_DEFAULT_STRENGTH);
   const [featherRadius, setFeatherRadius] = useState(0);
   const [sampler, setSampler] = useState("k_euler_ancestral");
   const [seed, setSeed] = useState("");
@@ -631,19 +622,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     }
   })();
   const usesGatewayImageCapacity = imageProviderId === "newapi" && /^nai-/i.test(generationModel);
-  const liveTileConcurrency = usesGatewayImageCapacity && gatewayImageCapacity
-    ? tileUpscaleConcurrencyLimit(generationModel, steps, gatewayImageCapacity)
-    : 2;
-  const tileCapacityDescription = usesGatewayImageCapacity
-    ? gatewayImageCapacity
-      ? `Gateway 实时可用 ${liveTileConcurrency} 路 · 启用 ${gatewayImageCapacity.total} 个账号 · V5 ${gatewayImageCapacity.v5} · V4.5 ${gatewayImageCapacity.v45} · 允许 Anlas ${gatewayImageCapacity.anlas}`
-      : gatewayCapacityChecked ? "Gateway 实时容量暂不可用，按 LFN 默认 2 路调度" : "正在读取 Gateway 实时账号容量…"
-    : "当前来源按 LFN 默认 2 路调度";
+  const tileGatewayUnavailable = usesGatewayImageCapacity && gatewayImageCapacity
+    ? tileUpscaleConcurrencyLimit(generationModel, steps, gatewayImageCapacity) < 1
+    : false;
   const tileBillingDescription = usesGatewayImageCapacity && /^nai-v(?:5|4\.5)/i.test(generationModel)
     ? steps <= 28
       ? "每块都是 1 张、至多 28 步且不超过 1MP 的图生图请求，符合 Gateway Opus 免费档条件。"
-      : "当前步数超过 28，每块可能消耗 Anlas；并发按 Gateway 允许 Anlas 的账号数实时调整。"
-    : "每块会按所选来源的图生图规则计费；并发受当前来源的 LFN 限流控制。";
+      : "当前步数超过 28，每块可能消耗 Anlas。"
+    : "每块会按所选来源的图生图规则计费。";
   const pendingPreviewUrl = useMemo(() => pending ? maskedPatchDataUrl(pending) : "", [pending]);
   const sourceModelOptions = useMemo(() => normalizeImageModelOptions(
     tiledModelCatalog?.key === tiledModelSourceKey ? tiledModelCatalog.options
@@ -727,7 +713,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setImageBackground(generation?.background || "auto");
         setSteps(generation?.steps || 28);
         setScale(generation?.scale ?? 5);
-        setStrength(generation?.strength ?? 0.7);
+        setStrength(loaded.workspace?.redrawStrength ?? generation?.strength ?? 0.7);
+        setTiledUpscaleStrength(loaded.workspace?.tiledUpscaleStrength ?? (entryNode?.mode === "tiled-upscale" ? generation?.strength : undefined) ?? TILE_UPSCALE_DEFAULT_STRENGTH);
         setSampler(generation?.sampler || "k_euler_ancestral");
         setSeed(nextDocument.seed == null || Number(nextDocument.seed) === 0 ? "" : String(nextDocument.seed));
         if (loaded.workspace) {
@@ -952,7 +939,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       prompt,
       negativePrompt: negative,
       seed: modelCapabilities.seed ? seed.trim() || null : null,
-      generation: { ...nextDocument.generation, model: savedModel, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width: savedWidth, height: savedHeight, steps, scale, strength, sampler, noiseSchedule: nextDocument.generation?.noiseSchedule || "native" },
+      generation: { ...nextDocument.generation, model: savedModel, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width: savedWidth, height: savedHeight, steps, scale, strength: mode === "tiled-upscale" ? tiledUpscaleStrength : strength, sampler, noiseSchedule: nextDocument.generation?.noiseSchedule || "native" },
     };
   };
 
@@ -975,6 +962,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         maskOpacity,
         showMaskPreview,
         canvasBackground,
+        redrawStrength: strength,
+        tiledUpscaleStrength,
       },
     };
   };
@@ -995,6 +984,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         maskOpacity,
         showMaskPreview,
         canvasBackground,
+        redrawStrength: strength,
+        tiledUpscaleStrength,
       },
       mode,
       tileScale,
@@ -1192,7 +1183,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setImageBackground(restoredGeneration?.background || "auto");
       setSteps(restoredGeneration?.steps || 28);
       setScale(restoredGeneration?.scale ?? 5);
-      setStrength(restoredGeneration?.strength ?? 0.7);
+      setStrength(node.workspace.redrawStrength ?? restoredGeneration?.strength ?? 0.7);
+      setTiledUpscaleStrength(node.workspace.tiledUpscaleStrength ?? (node.mode === "tiled-upscale" ? restoredGeneration?.strength : undefined) ?? TILE_UPSCALE_DEFAULT_STRENGTH);
       setSampler(restoredGeneration?.sampler || "k_euler_ancestral");
       setSeed(restoredDocument.seed == null ? "" : String(restoredDocument.seed));
       setPending(null);
@@ -1309,7 +1301,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     });
   // Keep only the latest state; clone image data when the debounced save actually runs.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeHistoryBranchId, currentHistoryNodeId, brushSize, camera, canvasBackground, document, draft?.id, effectiveImageQuality, effectiveImageResolution, imageBackground, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tileScale, tool, undone, viewport, outputSize.height, outputSize.width]);
+  }, [activeHistoryBranchId, currentHistoryNodeId, brushSize, camera, canvasBackground, document, draft?.id, effectiveImageQuality, effectiveImageResolution, imageBackground, maskColor, maskOpacity, mode, model, negative, pending, prompt, ready, sampler, scale, seed, showMaskPreview, steps, strength, strokes, tileScale, tiledUpscaleStrength, tool, undone, viewport, outputSize.height, outputSize.width]);
 
   useEffect(() => {
     const flush = () => { void draftAutosave.flush().catch(() => undefined); };
@@ -1427,7 +1419,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       scale: tileScale,
       steps,
       cfg: scale,
-      strength,
+      strength: tiledUpscaleStrength,
       sampler,
       seed,
       prompt,
@@ -1445,22 +1437,20 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     editorGenerationAbortRef.current = runController;
     setGenerating(true);
     setNotice("");
-    setTileProgress({ completed: cache.tiles.size, total: plan.tiles.length, active: 0, concurrency: 2, waiting: 0, source: "LFN" });
+    setTileProgress({ completed: cache.tiles.size, total: plan.tiles.length, waiting: plan.tiles.length - cache.tiles.size });
     try {
       const usesGateway = (sourceDocument.generation?.providerId || "newapi") === "newapi" && /^nai-/i.test(targetModel);
       let concurrency = 2;
-      let concurrencySource: "Gateway" | "LFN" = "LFN";
       if (usesGateway) {
         const capacity = await waitWithAbort(refreshGatewayImageCapacity(), runController.signal);
         if (capacity) {
           concurrency = tileUpscaleConcurrencyLimit(targetModel, steps, capacity);
-          concurrencySource = "Gateway";
           if (concurrency < 1) throw new Error("Gateway 当前没有启用符合该模型和计费条件的账号，请先在 Gateway 启用对应账号能力");
         }
       }
-      setNotice(`正在按 ${concurrencySource} 当前 ${concurrency} 路并发重绘分块；失败的分块可保留后续跑。`);
+      setNotice("正在重绘分块…");
 
-      const requestTile = async (tile: ImageUpscaleTile, signal: AbortSignal): Promise<Blob> => {
+      const requestTile = async (tile: ImageUpscaleTile, signal: AbortSignal): Promise<Response> => {
         const crop = cropRgbaImage(sourceDocument.image, tile);
         const body = {
           operation: "img2img",
@@ -1481,129 +1471,29 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
           n: 1,
           sampler,
           noise_schedule: sourceDocument.generation?.noiseSchedule || "native",
-          strength,
+          strength: tiledUpscaleStrength,
           ...(targetCapabilities.seed && seed.trim() ? { seed: (Number(seed) + tile.index) % 2 ** 32 } : {}),
           image: rgbaToDataUrl(crop),
           response_format: "b64_json",
         };
-        const response = await fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
-        const resultUrl = await readGenerationResponse(response);
-        return dataUrlToBlob(resultUrl);
+        return fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
       };
 
-      runController.signal.throwIfAborted();
-      const missingTiles = plan.tiles.filter((tile) => !cache.tiles.has(tile.index));
-      await new Promise<void>((resolve, reject) => {
-        let stopped = false;
-        let cursor = 0;
-        let active = 0;
-        let failure: Error | null = null;
-        let refreshing = false;
-        let timer: number | null = null;
-        const requests = new Map<number, { controller: AbortController; timeout: number }>();
-
-        const publish = () => {
-          if (stopped) return;
-          const progress = {
-            completed: cache.tiles.size,
-            total: plan.tiles.length,
-            active,
-            concurrency,
-            waiting: Math.max(0, missingTiles.length - cursor),
-            source: concurrencySource,
-          };
+      await runImageUpscaleTiles({
+        plan,
+        results: cache.tiles,
+        signal: runController.signal,
+        concurrency,
+        refreshConcurrency: usesGateway ? async (signal) => {
+          const capacity = await refreshGatewayImageCapacity(signal);
+          return capacity ? tileUpscaleConcurrencyLimit(targetModel, steps, capacity) : 2;
+        } : undefined,
+        requestTile,
+        readTile: async (response) => dataUrlToBlob(await readGenerationResponse(response)),
+        onProgress: (progress) => {
           setTileProgress(progress);
-          setNotice(`分块重绘中：已完成 ${progress.completed}/${progress.total} · 正在请求 ${progress.active} 路 · 排队 ${progress.waiting} 块（${progress.source}）`);
-        };
-        const finish = (error?: Error) => {
-          if (stopped) return;
-          stopped = true;
-          runController.signal.removeEventListener("abort", abortRun);
-          if (timer !== null) window.clearInterval(timer);
-          for (const { controller, timeout } of requests.values()) {
-            window.clearTimeout(timeout);
-            controller.abort();
-          }
-          requests.clear();
-          if (error) reject(error);
-          else resolve();
-        };
-        const abortRun = () => {
-          if (stopped) return;
-          failure = new DOMException("已取消分块重绘", "AbortError");
-          cursor = missingTiles.length;
-          if (timer !== null) window.clearInterval(timer);
-          for (const request of requests.values()) request.controller.abort();
-          setNotice("正在取消已发出的分块请求；已完成结果会保留。");
-          settleIfReady();
-        };
-        const settleIfReady = () => {
-          if (stopped) return;
-          if (active > 0) return;
-          if (failure) { finish(failure); return; }
-          if (cursor >= missingTiles.length) { finish(); return; }
-          if (concurrency < 1) finish(new Error("Gateway 当前没有可用并发账号；已完成分块已保存，恢复账号后可继续"));
-        };
-        const pump = () => {
-          if (stopped) return;
-          while (!failure && active < concurrency && cursor < missingTiles.length) {
-            const tile = missingTiles[cursor++];
-            const controller = new AbortController();
-            const timeout = window.setTimeout(() => controller.abort(new DOMException("请求超过 180 秒没有响应", "TimeoutError")), 180_000);
-            requests.set(tile.index, { controller, timeout });
-            active += 1;
-            publish();
-            void requestTile(tile, controller.signal)
-              .then((result) => { if (!stopped) cache.tiles.set(tile.index, result); })
-              .catch((error) => {
-                if (stopped) return;
-                if (!failure) {
-                  const timedOut = controller.signal.reason instanceof DOMException && controller.signal.reason.name === "TimeoutError";
-                  const detail = timedOut ? "单块请求超过 180 秒未返回；其他已发出的分块会先结算，失败块可重试" : error instanceof Error ? error.message : "图像请求失败";
-                  failure = new Error(`第 ${tile.index + 1}/${plan.tiles.length} 块失败：${detail}`);
-                }
-              })
-              .finally(() => {
-                if (stopped) return;
-                const request = requests.get(tile.index);
-                if (request) window.clearTimeout(request.timeout);
-                requests.delete(tile.index);
-                active -= 1;
-                publish();
-                if (failure) settleIfReady();
-                else pump();
-              });
-          }
-          publish();
-          settleIfReady();
-        };
-
-        if (usesGateway) {
-          timer = window.setInterval(() => {
-            if (refreshing || failure) return;
-            refreshing = true;
-            void refreshGatewayImageCapacity()
-              .then((capacity) => {
-                if (capacity) {
-                  const nextConcurrency = tileUpscaleConcurrencyLimit(targetModel, steps, capacity);
-                  concurrency = nextConcurrency;
-                  concurrencySource = "Gateway";
-                  if (nextConcurrency < 1) failure = new Error("Gateway 已没有符合条件的账号；等待中的分块已暂停，恢复账号后可继续");
-                } else {
-                  concurrency = 2;
-                  concurrencySource = "LFN";
-                }
-              })
-              .finally(() => {
-                refreshing = false;
-                publish();
-                pump();
-              });
-          }, 5_000);
-        }
-        runController.signal.addEventListener("abort", abortRun, { once: true });
-        if (runController.signal.aborted) { abortRun(); return; }
-        pump();
+          setNotice(`分块重绘中：已完成 ${progress.completed}/${progress.total} 块 · 等待 ${progress.waiting} 块`);
+        },
       });
 
       runController.signal.throwIfAborted();
@@ -1613,7 +1503,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         ...sourceDocument,
         image: sourceDocument.image,
         worldRect: { x: sourceDocument.worldRect.x, y: sourceDocument.worldRect.y, width: plan.outputWidth, height: plan.outputHeight },
-        generation: { ...sourceDocument.generation, model: targetModel, width: plan.outputWidth, height: plan.outputHeight, steps, scale, strength, sampler },
+        generation: { ...sourceDocument.generation, model: targetModel, width: plan.outputWidth, height: plan.outputHeight, steps, scale, strength: tiledUpscaleStrength, sampler },
       };
       const previewViewport = { ...previewDocument.worldRect };
       const promptSummary = prompt.trim().replace(/\s+/g, " ").slice(0, 42);
@@ -1634,7 +1524,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       window.setTimeout(() => fitCamera(previewDocument, previewViewport), 0);
       setPending(recorded.candidate);
       setCompare(0.5);
-      setNotice(`分块重绘完成（${plan.tiles.length} 次调用，峰值 ${concurrency} 路并发，${plan.outputWidth}×${plan.outputHeight}）。${recorded.saved ? "已记入重绘历史；" : recorded.attempted ? "历史暂未保存，应用时会重试；" : "应用后会记入重绘历史；"}可拖动中间分隔线对比，或下载 PNG。`);
+      setNotice(`分块重绘完成（${plan.tiles.length} 块，${plan.outputWidth}×${plan.outputHeight}）。${recorded.saved ? "已记入重绘历史。" : recorded.attempted ? "历史暂未保存，应用时会重试。" : "应用后会记入重绘历史。"}可拖动中间分隔线对比，或下载 PNG。`);
     } catch (error) {
       setNotice(`${error instanceof Error ? error.message : "分块重绘失败"}；已完成的分块保留，重新点击可从失败处继续。`);
     } finally {
@@ -2031,14 +1921,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       {tiledModelsLoading && <p className="editor-tip">正在读取当前来源可用的图像模型…</p>}
       {tiledModelsError && <p className="editor-tip is-warning">{tiledModelsError}</p>}
       {naturalImageModel ? <p className="editor-tip">当前模型按自身接口规格处理每块，输出边长最多 1024 像素；图像质量采用当前工作台设置。</p> : <>
-        <div className="editor-parameter-grid"><label><span>步数</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分采样步数" min={1} max={50} step={1} value={steps} setValue={setSteps} /></label><label><span>CFG</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分提示词相关性" min={0} max={10} step={0.1} value={scale} setValue={setScale} /></label><label><span>重绘强度</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分重绘强度" min={0} max={1} step={0.05} value={strength} setValue={setStrength} /></label><label><span>种子</span><input className="editor-text-input" inputMode="numeric" value={seed} onChange={(event) => setSeed(event.target.value)} placeholder="随机" /></label></div>
+        <div className="editor-parameter-grid"><label><span>步数</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分采样步数" min={1} max={50} step={1} value={steps} setValue={setSteps} /></label><label><span>CFG</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分提示词相关性" min={0} max={10} step={0.1} value={scale} setValue={setScale} /></label><label><span>重绘强度</span><WheelNumberInput className="editor-number-input" ariaLabel="分块超分重绘强度" min={0} max={1} step={0.05} value={tiledUpscaleStrength} setValue={setTiledUpscaleStrength} /></label><label><span>种子</span><input className="editor-text-input" inputMode="numeric" value={seed} onChange={(event) => setSeed(event.target.value)} placeholder="随机" /></label></div>
         <label className="editor-field"><span>采样器</span><PopupSelect value={sampler} onChange={setSampler} options={SAMPLERS.map(([value, label]) => ({ value, label }))} ariaLabel="分块超分采样器" /></label>
       </>}
       <label className="editor-field"><span>细节提示词</span><textarea value={prompt} onChange={(event) => updatePrompt(event.target.value)} placeholder="可补充希望重绘的细节；留空时沿用默认保真提示词。" /></label>
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
-      <p className="editor-tip">{tileCapacityDescription}{gatewayImageCapacity && usesGatewayImageCapacity ? ` · V5+Anlas ${gatewayImageCapacity.v5_and_anlas} · V4.5+Anlas ${gatewayImageCapacity.v45_and_anlas}` : ""}</p>
-      {tileProgress && <p className="editor-tip">本次进度：完成 {tileProgress.completed}/{tileProgress.total} · 正在生成 {tileProgress.active}/{tileProgress.concurrency} · 等待 {tileProgress.waiting} 块。</p>}
-      <p className="editor-tip is-warning">{tileBillingDescription} 分块会按 Gateway 实时可用账号并发处理；失败时保留已完成分块，修改参数则重新请求。</p>
+      {tileGatewayUnavailable && <p className="editor-tip is-warning">当前没有支持所选模型及计费条件的 Gateway 账号。</p>}
+      {tileProgress && <p className="editor-tip">本次进度：完成 {tileProgress.completed}/{tileProgress.total} 块 · 等待 {tileProgress.waiting} 块。</p>}
+      <p className="editor-tip is-warning">{tileBillingDescription} 临时失败的分块会自动重试。已完成的分块会保留，修改参数后会重新处理。</p>
     </>
   );
   const historyNodeDepth = (node: EditorHistoryNode) => {
@@ -2173,7 +2063,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         </div>
       </section>
       <footer className="editor-bottombar">
-        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 并发 ${tileProgress.active}/${tileProgress.concurrency} 路 · 排队 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? mode === "canvas" ? "比较候选后合并到画布，继续补全" : "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : mode === "inpaint" ? "在原图上涂选重绘区域；双指缩放与平移画布" : "拖动生成框定位区域；双指缩放与平移画布")}</div>
+        <div className="editor-status"><span className={generating ? "is-busy" : pending ? "is-review" : ""} />{notice || (generating ? mode === "tiled-upscale" && tileProgress ? `已完成 ${tileProgress.completed}/${tileProgress.total} 块 · 等待 ${tileProgress.waiting} 块` : "正在生成候选结果…" : pending ? mode === "canvas" ? "比较候选后合并到画布，继续补全" : "拖动分隔线比较原图与合成图，可下载 PNG 或应用结果" : mode === "tiled-upscale" ? `自动分块重绘；已完成 ${tileProgress?.completed ?? 0}/${tileProgress?.total ?? tilePlanState.plan?.tiles.length ?? 0} 块` : mode === "inpaint" ? "在原图上涂选重绘区域；双指缩放与平移画布" : "拖动生成框定位区域；双指缩放与平移画布")}</div>
         <div className={`editor-actions${mode === "tiled-upscale" ? " is-tiled-upscale" : mode === "canvas" ? " is-canvas" : ""}`}>
           {generating && <button type="button" className="discard-button" onClick={() => editorGenerationAbortRef.current?.abort()}>取消生成</button>}
           {pending ? <>
@@ -2199,7 +2089,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
             {(mode !== "canvas" || canvasCandidates.length < 2) && <button type="button" className="apply-button" disabled={generating} onClick={() => void apply(mode !== "canvas")}><Check size={16} />{mode === "canvas" ? "合并到画布" : "应用到工作台"}</button>}
           </> : <>
             {mode === "canvas" && <button type="button" className="apply-button" disabled={generating} onClick={() => void apply(true, null)}><Check size={16} />完成并返回工作台</button>}
-            <button type="button" className="generate-button" disabled={generating || tiledModelsLoading || !editorModelOptions.length || (mode === "tiled-upscale" && (!tilePlanState.plan || (usesGatewayImageCapacity && Boolean(gatewayImageCapacity && liveTileConcurrency < 1))))} onClick={() => void generate()}><Sparkles size={17} />{generating ? "生成中…" : mode === "tiled-upscale" ? "分块重绘并拼接" : "生成并预览"}</button>
+            <button type="button" className="generate-button" disabled={generating || tiledModelsLoading || !editorModelOptions.length || (mode === "tiled-upscale" && (!tilePlanState.plan || tileGatewayUnavailable))} onClick={() => void generate()}><Sparkles size={17} />{generating ? "生成中…" : mode === "tiled-upscale" ? "分块重绘并拼接" : "生成并预览"}</button>
           </>}
         </div>
       </footer>
