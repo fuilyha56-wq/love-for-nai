@@ -50,6 +50,7 @@
 .editor-icon-button,
 .editor-actions button,
 .editor-actions .image-download-menu,
+.editor-actions .editor-direct-download,
 .editor-zoom button,
 .editor-tool-grid button,
 .editor-mode-tabs button,
@@ -282,6 +283,7 @@
 .editor-generation-error strong { color: var(--ink); }
 .image-editor-page .editor-actions.editor-mobile-actions { display: grid; min-width: 0; width: 100%; flex: 0 0 auto; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 6px; }
 .image-editor-page .editor-actions.editor-mobile-actions > :is(button, .image-download-menu) { min-width: 0; min-height: 44px; height: auto; padding: 4px 7px; line-height: 1.3; white-space: normal; text-align: center; }
+.image-editor-page .editor-mobile-actions > .editor-direct-download { min-height: 44px; grid-column: 1 / -1; padding: 4px 8px; }
 .image-editor-page .editor-mobile-actions > :only-child { grid-column: 1 / -1; }
 .image-editor-page .editor-actions.editor-mobile-actions .image-download-menu { padding: 0; }
 .image-editor-page .editor-actions.editor-mobile-actions .image-download-menu > summary { display: flex; width: 100%; min-height: 42px; align-self: stretch; padding: 4px 7px; white-space: normal; }
@@ -303,6 +305,12 @@
 .editor-error p { font-size: 13px; line-height: 1.5; }
 .editor-error :is(button, a) { width: 100%; min-height: 44px; padding-inline: 10px; }
 .editor-error a { display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); font-size: 12px; font-weight: 650; }
+.editor-source-start { width: min(420px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; padding: 16px; gap: 10px; }
+.editor-source-start > svg { color: var(--accent-text); }
+.editor-source-start h1 { color: var(--ink); font-size: 18px; font-weight: 650; }
+.editor-source-start p { font-size: 13px; line-height: 1.5; }
+.editor-source-start button { width: 100%; min-height: 44px; }
+.editor-source-start .editor-source-primary { border-color: var(--rose); color: var(--accent-text); background: var(--editor-hover); font-weight: 650; }
 
 html[data-theme="night"] .image-editor-page,
 html[data-theme="nai"] .image-editor-page { --editor-shadow: 0 18px 60px rgba(0,0,0,.38); }

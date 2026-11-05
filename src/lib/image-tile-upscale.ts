@@ -1,10 +1,7 @@
 export const TILE_UPSCALE_DEFAULT_STRENGTH = 0.1;
 export const TILE_UPSCALE_EDGE = 1024;
-export const TILE_UPSCALE_MAX_FREE_PIXELS = 1_048_576;
+export const TILE_UPSCALE_MAX_FREE_PIXELS = TILE_UPSCALE_EDGE ** 2;
 export const TILE_UPSCALE_OVERLAP = 32;
-export const TILE_UPSCALE_MAX_OUTPUT_EDGE = 8192;
-export const TILE_UPSCALE_MAX_OUTPUT_PIXELS = 40_000_000;
-export const TILE_UPSCALE_MAX_TILES = 64;
 
 export type TileUpscaleFactor = 2 | 3 | 4 | 5 | 6;
 
@@ -34,117 +31,116 @@ export type ImageUpscaleTile = {
   index: number;
   row: number;
   column: number;
+  /** Integer crop in the source image. */
   sourceX: number;
   sourceY: number;
   sourceWidth: number;
   sourceHeight: number;
+  /** Core position and size in the final output. */
   coreX: number;
   coreY: number;
   coreWidth: number;
   coreHeight: number;
+  /** Resized source crop placed inside the padded request. */
+  inputX: number;
+  inputY: number;
+  inputWidth: number;
+  inputHeight: number;
+  /** Core origin in the returned request-sized tile. */
+  cropX: number;
+  cropY: number;
   requestWidth: number;
   requestHeight: number;
 };
 
-export type ImageUpscalePlan = {
+export type ImageUpscaleLayout = {
   sourceWidth: number;
   sourceHeight: number;
   scale: TileUpscaleFactor;
   outputWidth: number;
   outputHeight: number;
-  tiles: ImageUpscaleTile[];
+  rows: number;
+  columns: number;
 };
 
-function fitFreeTileRequest(sourceWidth: number, sourceHeight: number): { width: number; height: number } {
-  const idealScale = Math.min(
-    TILE_UPSCALE_EDGE / sourceWidth,
-    TILE_UPSCALE_EDGE / sourceHeight,
-    Math.sqrt(TILE_UPSCALE_MAX_FREE_PIXELS / (sourceWidth * sourceHeight)),
-  );
-  const targetWidth = sourceWidth * idealScale;
-  const targetHeight = sourceHeight * idealScale;
-  const maxWidth = TILE_UPSCALE_EDGE;
-  const maxHeight = TILE_UPSCALE_EDGE;
-  const idealArea = targetWidth * targetHeight;
-  let best: { width: number; height: number; score: number; area: number } | null = null;
+export type ImageUpscalePlan = ImageUpscaleLayout & { tiles: ImageUpscaleTile[] };
 
-  // NAI dimensions are multiples of 64. Choose the closest legal size while
-  // strongly favoring the crop's aspect ratio, within the 1024² free envelope.
-  for (let width = 64; width <= maxWidth; width += 64) {
-    for (let height = 64; height <= maxHeight; height += 64) {
-      const area = width * height;
-      if (area > TILE_UPSCALE_MAX_FREE_PIXELS) continue;
-      const ratioError = Math.abs(Math.log((width / height) / (targetWidth / targetHeight)));
-      const areaError = Math.abs(Math.log(area / idealArea));
-      const score = ratioError * 12 + areaError * 0.5;
-      if (!best || score < best.score - 1e-9 || (Math.abs(score - best.score) <= 1e-9 && area > best.area))
-        best = { width, height, score, area };
-    }
-  }
-  if (!best) throw new RangeError("无法为分块选择符合免费范围的请求尺寸");
-  return { width: best.width, height: best.height };
+function planTileAxis(length: number, parts: number, index: number, scale: TileUpscaleFactor, overlap: number) {
+  const base = Math.floor(length / parts);
+  const remainder = length % parts;
+  const coreStart = index * base + Math.min(index, remainder);
+  const coreLength = base + (index < remainder ? 1 : 0);
+  const sourceStart = Math.max(0, coreStart - overlap);
+  const sourceEnd = Math.min(length, coreStart + coreLength + overlap);
+  const sourceLength = sourceEnd - sourceStart;
+  const inputLength = sourceLength * scale;
+  const inputStart = Math.floor((TILE_UPSCALE_EDGE - inputLength) / 2);
+  return {
+    sourceStart, sourceLength, inputStart, inputLength,
+    coreStart: coreStart * scale,
+    coreLength: coreLength * scale,
+    cropStart: inputStart + (coreStart - sourceStart) * scale,
+  };
 }
 
-/** Split an image into overlapped source tiles whose redraw requests stay <= 1024px. */
-export function planImageTileUpscale(
+/** Describe the grid without allocating any tile objects. */
+export function describeImageTileUpscale(
   sourceWidth: number,
   sourceHeight: number,
   scale: TileUpscaleFactor,
-): ImageUpscalePlan {
-  if (!Number.isSafeInteger(sourceWidth) || !Number.isSafeInteger(sourceHeight) || sourceWidth < 64 || sourceHeight < 64)
-    throw new RangeError("源图尺寸至少为 64×64 像素");
+): ImageUpscaleLayout {
+  if (!Number.isSafeInteger(sourceWidth) || !Number.isSafeInteger(sourceHeight) || sourceWidth < 1 || sourceHeight < 1)
+    throw new RangeError("源图尺寸必须是正整数");
   if (![2, 3, 4, 5, 6].includes(scale)) throw new RangeError("分块超分仅支持 2× 至 6×");
 
   const outputWidth = sourceWidth * scale;
   const outputHeight = sourceHeight * scale;
-  if (outputWidth > TILE_UPSCALE_MAX_OUTPUT_EDGE || outputHeight > TILE_UPSCALE_MAX_OUTPUT_EDGE || outputWidth * outputHeight > TILE_UPSCALE_MAX_OUTPUT_PIXELS)
-    throw new RangeError(`目标图过大：${outputWidth}×${outputHeight}；上限为 ${TILE_UPSCALE_MAX_OUTPUT_EDGE} 边长且不超过 ${TILE_UPSCALE_MAX_OUTPUT_PIXELS.toLocaleString()} 像素`);
+  if (!Number.isSafeInteger(outputWidth) || !Number.isSafeInteger(outputHeight))
+    throw new RangeError("目标图尺寸超出可表示的整数范围");
 
-  // Keep more context at low scales; reduce source overlap at 5×/6× so
-  // common portrait images stay within the automatic 64-request limit.
-  const overlap = scale >= 5 ? TILE_UPSCALE_OVERLAP / 2 : TILE_UPSCALE_OVERLAP;
+  // Keep every boundary on a source pixel so all tiles use exactly the same
+  // scale and no rounding accumulates across joins.
+  const overlap = Math.ceil(TILE_UPSCALE_OVERLAP / scale);
   const coreEdge = Math.floor(TILE_UPSCALE_EDGE / scale) - overlap * 2;
-  const rows = Math.ceil(sourceHeight / coreEdge);
-  const columns = Math.ceil(sourceWidth / coreEdge);
-  const count = rows * columns;
-  if (count > TILE_UPSCALE_MAX_TILES)
-    throw new RangeError(`需要 ${count} 个分块，超过单次最多 ${TILE_UPSCALE_MAX_TILES} 块的限制`);
+  const rows = Math.max(Math.min(scale, sourceHeight), Math.ceil(sourceHeight / coreEdge));
+  const columns = Math.max(Math.min(scale, sourceWidth), Math.ceil(sourceWidth / coreEdge));
+  if (!Number.isSafeInteger(rows * columns)) throw new RangeError("分块数量超出可表示的整数范围");
+  return { sourceWidth, sourceHeight, scale, outputWidth, outputHeight, rows, columns };
+}
 
-  const tiles: ImageUpscaleTile[] = [];
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const coreX = column * coreEdge;
-      const coreY = row * coreEdge;
-      const coreWidth = Math.min(coreEdge, sourceWidth - coreX);
-      const coreHeight = Math.min(coreEdge, sourceHeight - coreY);
-      const sourceX = Math.max(0, coreX - overlap);
-      const sourceY = Math.max(0, coreY - overlap);
-      const sourceRight = Math.min(sourceWidth, coreX + coreWidth + overlap);
-      const sourceBottom = Math.min(sourceHeight, coreY + coreHeight + overlap);
-      const sourceTileWidth = sourceRight - sourceX;
-      const sourceTileHeight = sourceBottom - sourceY;
-      const request = fitFreeTileRequest(sourceTileWidth, sourceTileHeight);
-      const requestWidth = request.width;
-      const requestHeight = request.height;
-      if (requestWidth > TILE_UPSCALE_EDGE || requestHeight > TILE_UPSCALE_EDGE || requestWidth * requestHeight > TILE_UPSCALE_MAX_FREE_PIXELS)
-        throw new RangeError("分块尺寸超过 1024 像素，请减小源图或超分倍率");
-      tiles.push({
-        index: tiles.length,
-        row,
-        column,
-        sourceX,
-        sourceY,
-        sourceWidth: sourceTileWidth,
-        sourceHeight: sourceTileHeight,
-        coreX,
-        coreY,
-        coreWidth,
-        coreHeight,
-        requestWidth,
-        requestHeight,
-      });
-    }
-  }
+export function imageUpscaleTileAt(plan: ImageUpscaleLayout, index: number): ImageUpscaleTile {
+  const { sourceWidth, sourceHeight, rows, columns, scale } = plan;
+  if (!Number.isSafeInteger(index) || index < 0 || index >= rows * columns) throw new RangeError("图块编号无效");
+  const row = Math.floor(index / columns);
+  const column = index % columns;
+  const overlap = Math.ceil(TILE_UPSCALE_OVERLAP / scale);
+  const x = planTileAxis(sourceWidth, columns, column, scale, overlap);
+  const y = planTileAxis(sourceHeight, rows, row, scale, overlap);
+  return {
+    index, row, column,
+    sourceX: x.sourceStart,
+    sourceY: y.sourceStart,
+    sourceWidth: x.sourceLength,
+    sourceHeight: y.sourceLength,
+    coreX: x.coreStart,
+    coreY: y.coreStart,
+    coreWidth: x.coreLength,
+    coreHeight: y.coreLength,
+    inputX: x.inputStart,
+    inputY: y.inputStart,
+    inputWidth: x.inputLength,
+    inputHeight: y.inputLength,
+    cropX: x.cropStart,
+    cropY: y.cropStart,
+    requestWidth: TILE_UPSCALE_EDGE,
+    requestHeight: TILE_UPSCALE_EDGE,
+  };
+}
 
-  return { sourceWidth, sourceHeight, scale, outputWidth, outputHeight, tiles };
+/** Plan overlapped 1024² redraws without stretching cropped source pixels. */
+export function planImageTileUpscale(sourceWidth: number, sourceHeight: number, scale: TileUpscaleFactor): ImageUpscalePlan {
+  const layout = describeImageTileUpscale(sourceWidth, sourceHeight, scale);
+  const count = layout.rows * layout.columns;
+  if (count > 0xffffffff) throw new RangeError("分块数量超出浏览器可表示的范围");
+  return { ...layout, tiles: Array.from({ length: count }, (_, index) => imageUpscaleTileAt(layout, index)) };
 }

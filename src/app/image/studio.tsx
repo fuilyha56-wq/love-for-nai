@@ -181,10 +181,8 @@ import {
   selectionToPatch,
   type Rect,
 } from "@/lib/image-roi";
-import {
-  createEditorDocument,
-  createRgbaImage,
-} from "@/lib/image-editor";
+import { createEditorDocument } from "@/lib/image-editor";
+import { readEditorSource } from "@/lib/image-editor-source";
 import {
   createEditorDraft,
   loadEditorDraft,
@@ -1242,31 +1240,29 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         if (!await readReferenceAsset(String(userId), character.reference.assetId)) throw new Error("角色参考图已从本机图库移除，请重新选择。");
       }
       if (!character && source?.editorDraftId && image === source.data) {
-        if (source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId)) {
-          router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: source.editorNodeId, branchId: source.editorBranchId || "", mode }).toString()}`);
+        const node = source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId);
+        if (node) {
+          const editorMode = node.document.tiledSource ? "tiled-upscale" : mode;
+          router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: node.id, branchId: source.editorBranchId || "", mode: editorMode }).toString()}`);
           return;
         }
         const savedDraft = await loadEditorDraft(source.editorDraftId).catch(() => null);
         if (savedDraft) {
-          router.push(`/image/editor?draftId=${encodeURIComponent(source.editorDraftId)}&mode=${mode}`);
+          const editorMode = savedDraft.document.tiledSource ? "tiled-upscale" : mode;
+          router.push(`/image/editor?draftId=${encodeURIComponent(source.editorDraftId)}&mode=${editorMode}`);
           return;
         }
       }
-      const decoded = await loadImageElement(image);
-      const canvas = document.createElement("canvas");
-      canvas.width = decoded.naturalWidth;
-      canvas.height = decoded.naturalHeight;
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) throw new Error("当前浏览器不支持 Canvas");
-      context.drawImage(decoded, 0, 0);
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      const { image: editorImage, tiledSource } = await readEditorSource(image, { allowLarge: !character });
+      const editorMode = tiledSource ? "tiled-upscale" : mode;
       const editorDocument = createEditorDocument(
-        createRgbaImage(canvas.width, canvas.height, pixels.data),
-        { x: 0, y: 0, width: canvas.width, height: canvas.height },
+        editorImage,
+        { x: 0, y: 0, width: editorImage.width, height: editorImage.height },
         {
           prompt: character ? character.prompt : prompt,
           negativePrompt: character ? character.negative || "" : negative,
           ...(character?.reference ? { characterReference: { ...character.reference, label: `角色 ${characters.findIndex(item => item.id === character.id) + 1}` } } : {}),
+          ...(tiledSource ? { tiledSource } : {}),
           seed: seed || null,
           source: { name: source?.name || "工作区图片.png", mimeType: "image/png" },
           generation: { model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
@@ -1276,12 +1272,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       crypto.getRandomValues(random);
       const draftId = `editor-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
       if (!character) syncEditorPromptToStudioForm(draftId, prompt, negative);
-      await saveEditorDraft(createEditorDraft(draftId, mode, editorDocument));
+      await saveEditorDraft(createEditorDraft(draftId, editorMode === "inpaint" ? "inpaint" : "canvas", editorDocument));
       if (!character && source && image === source.data) {
         setSource({ ...source, editorDraftId: draftId, editorNodeId: undefined, editorBranchId: undefined });
         await sourcePersistenceTaskRef.current;
       }
-      router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${mode}`);
+      router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${editorMode}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "无法打开图像编辑器");
     }

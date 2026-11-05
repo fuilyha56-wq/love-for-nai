@@ -1,4 +1,5 @@
 import { dataUrlToBlob } from "./local-image-history";
+import { TILE_UPSCALE_EDGE } from "./image-tile-upscale";
 import { TileStreamEndedWithoutImageError } from "./image-tile-upscale-requests";
 
 type ImageResponse = {
@@ -87,11 +88,21 @@ export async function readEditorGenerationResponse(response: Response): Promise<
   return image;
 }
 
-export async function readEditorUpscaleTile(response: Response): Promise<Blob> {
+export async function readEditorUpscaleTile(
+  response: Response,
+  acceptImage?: (blob: Blob, bitmap: ImageBitmap) => Promise<void>,
+): Promise<Blob> {
   const blob = await dataUrlToBlob(await readEditorGenerationResponse(response));
   // Check that the tile can be stitched before saving it as a completed request.
   if (typeof createImageBitmap !== "function") throw new Error("当前浏览器不支持解码分块图像");
   const bitmap = await createImageBitmap(blob);
-  bitmap.close();
+  try {
+    if (bitmap.width !== TILE_UPSCALE_EDGE || bitmap.height !== TILE_UPSCALE_EDGE) {
+      throw new Error(`分块返回 ${bitmap.width}×${bitmap.height}，需要 ${TILE_UPSCALE_EDGE}×${TILE_UPSCALE_EDGE}`);
+    }
+    await acceptImage?.(blob, bitmap);
+  } finally {
+    bitmap.close();
+  }
   return blob;
 }

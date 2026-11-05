@@ -12,9 +12,9 @@ export const tutorialOverride: TutorialOverride = {
     },
     1: {
       target: '[data-tutorial="inpaint-source"], [data-tutorial-editor="inpaint"]',
-      body: "先在「上传重绘源图片」中选择本机 PNG、JPG 或 WebP。确认源图缩略图出现后，再点击高亮的编辑器入口（如「独立重绘编辑器」或「绘制蒙版与精确重绘」）进入编辑器。",
+      body: "先在「上传重绘源图片」中选择本机 PNG、JPG 或 WebP。确认源图缩略图出现后，桌面端点击高亮的「独立重绘编辑器」或「绘制蒙版与精确重绘」，手机端点击「进入图像编辑器」。",
       tip: "本步骤会停留在工作台，直到源图已就绪；教程不会替你选择或上传文件。",
-      keywords: ["上传重绘源图片", "独立重绘编辑器", "绘制蒙版与精确重绘", "源图缩略图"],
+      keywords: ["上传重绘源图片", "独立重绘编辑器", "绘制蒙版与精确重绘", "进入图像编辑器", "源图缩略图"],
       screenshot: { src: "/tutorials/inpaint/step-02.png", alt: "源图已上传并高亮局部重绘编辑器入口", width: 1440, height: 1000, caption: "本地实际界面截图；演示数据与源图仅用于教程。" },
     },
     2: {

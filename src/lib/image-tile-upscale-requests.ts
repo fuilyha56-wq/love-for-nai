@@ -28,7 +28,7 @@ type TileRunOptions = {
   concurrency: number;
   refreshConcurrency?: (signal: AbortSignal) => Promise<number>;
   requestTile: (tile: ImageUpscaleTile, signal: AbortSignal) => Promise<Response>;
-  readTile: (response: Response) => Promise<Blob>;
+  readTile: (response: Response, tile: ImageUpscaleTile, signal: AbortSignal) => Promise<Blob>;
   onProgress: (progress: TiledUpscaleProgress) => void;
 };
 
@@ -100,7 +100,7 @@ export async function runImageUpscaleTiles({
       let response: Response | undefined;
       try {
         response = await requestTile(tile, controller.signal);
-        const result = await readTile(response);
+        const result = await readTile(response, tile, controller.signal);
         controller.signal.throwIfAborted();
         results.set(tile.index, result);
       } catch (error) {

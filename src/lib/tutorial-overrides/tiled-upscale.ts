@@ -24,11 +24,11 @@ export const tutorialOverride: TutorialOverride = {
     },
     1: {
       title: "从源图打开图像编辑器",
-      body: "源图载入后，点击参考图旁的「独立重绘编辑器」或「绘制草图」入口。手机上可从画布下方的参考图片操作进入。编辑器会继续使用这张源图。",
-      tip: "必须先载入源图，编辑器入口才可用。没有图片时回到上一步上传；也可以随时退出教程回到教程中心。",
+      body: "源图载入后，点击参考图旁的「独立重绘编辑器」或「绘制草图」入口。手机上点击画布下方的「进入图像编辑器」。编辑器会继续使用这张源图。",
+      tip: "先载入源图，再进入编辑器跟随教程操作。也可以随时退出教程回到教程中心。",
       path: "/image",
       target: '[data-tutorial="source"], .mobile-studio-reference-panel, button[data-tutorial-editor="canvas"]',
-      keywords: ["源图", "独立重绘编辑器", "绘制草图", "参考图片", "编辑器"],
+      keywords: ["源图", "独立重绘编辑器", "绘制草图", "进入图像编辑器"],
       screenshot: shot(2, "工作台中已载入源图并显示图像编辑器入口"),
     },
     2: {

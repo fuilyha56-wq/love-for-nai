@@ -62,7 +62,7 @@ const builtinFeatureTutorials: FeatureTutorial[] = [
   },
   {
     id: "tiled-upscale", title: "分块超分", category: "图像编辑", summary: "分块重绘大图，自动拼接并保存。", preparation: "准备源图，选择可用的图像模型；分块流程会执行多次生成。", illustration: "upscale",
-    steps: [upload, image("打开编辑器", "从参考图片进入图像编辑器。进入后，在顶部选择「分块超分」。", "reference"), editor("设置倍率与分块", "在分块超分参数中选择放大倍率、分块边长和重叠区域，查看最终尺寸与块数。先用较小倍率测试。", "editor-params", "tiled-upscale", "块数越多通常耗时与总费用越高。"), editor("设置重绘模型与强度", "选择支持的模型和来源，填写整体画面描述，调节重绘强度。想保留原图时从较低强度开始。", "editor-params", "tiled-upscale"), editor("执行分块重绘", "核对任务规模后，亲自点击「分块重绘并拼接」。观察完成块数和排队进度，等待拼接完成。", "editor-actions", "tiled-upscale"), editor("检查拼接与保存", "放大检查接缝、纹理和人物细节。满意后下载合成图或应用到工作台；不满意可调整参数再尝试。", "editor-actions", "tiled-upscale")],
+    steps: [upload, image("打开编辑器", "从参考图片进入图像编辑器。进入后，在顶部选择「分块超分」。", "reference"), editor("设置倍率与分块", "选择原图倍率，查看自动计算的输出尺寸、行列数和图块总数。每块固定用 1024×1024 重绘。", "editor-params", "tiled-upscale", "块数越多通常耗时与总费用越高。"), editor("设置重绘模型与强度", "选择支持的模型和来源，填写整体画面描述，调节重绘强度。想保留原图时从较低强度开始。", "editor-params", "tiled-upscale"), editor("执行分块重绘", "核对任务规模后，亲自点击「分块重绘并拼接」。观察完成块数和排队进度，等待拼接完成。", "editor-actions", "tiled-upscale"), editor("检查拼接与保存", "放大检查接缝、纹理和人物细节。满意后下载合成图。可在浏览器画布中处理的结果也可以应用到工作台。", "editor-actions", "tiled-upscale")],
   },
   {
     id: "characters", title: "多角色与角色位置", category: "角色与参考", summary: "分别描述角色，安排各自的位置。", preparation: "选择支持角色提示词的 NAI 模型。", illustration: "characters",

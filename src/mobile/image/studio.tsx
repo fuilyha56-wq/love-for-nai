@@ -88,7 +88,6 @@ import {
   Paintbrush,
   Plus,
   Redo2,
-  Scan,
   RotateCcw,
   Save,
   ShieldCheck,
@@ -186,10 +185,8 @@ import {
   selectionToPatch,
   type Rect,
 } from "@/lib/image-roi";
-import {
-  createEditorDocument,
-  createRgbaImage,
-} from "@/lib/image-editor";
+import { createEditorDocument } from "@/lib/image-editor";
+import { needsTiledSource, readEditorSource, readEditorSourceSize } from "@/lib/image-editor-source";
 import {
   createEditorDraft,
   loadEditorDraft,
@@ -1279,7 +1276,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       goalReviewImageRef.current = results.at(-1)?.image ? { goalId: originGoalId, image: results.at(-1)!.image } : null;
   }
 
-  async function openImageEditor(mode: "inpaint" | "canvas", image = source?.data, character?: CharacterPromptUi) {
+  async function openImageEditor(mode: "inpaint" | "canvas" | "tiled-upscale", image: string | File | undefined = source?.data, character?: CharacterPromptUi) {
     if (!image && mode === "canvas") {
       const blank = document.createElement("canvas");
       blank.width = width; blank.height = height;
@@ -1296,33 +1293,33 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         if (!await readReferenceAsset(String(userId), character.reference.assetId)) throw new Error("角色参考图已从本机图库移除，请重新选择。");
       }
       if (!character && source?.editorDraftId && image === source.data) {
-        if (source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId)) {
-          router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: source.editorNodeId, branchId: source.editorBranchId || "", mode }).toString()}`);
+        const node = source.editorNodeId && await loadEditorHistoryNode(source.editorNodeId);
+        if (node && (mode !== "tiled-upscale" || !node.document.characterReference)) {
+          const editorMode = node.document.tiledSource ? "tiled-upscale" : mode;
+          router.push(`/image/editor?${new URLSearchParams({ draftId: source.editorDraftId, nodeId: node.id, branchId: source.editorBranchId || "", mode: editorMode }).toString()}`);
           return;
         }
         const savedDraft = await loadEditorDraft(source.editorDraftId).catch(() => null);
-        if (savedDraft) {
-          router.push(`/image/editor?draftId=${encodeURIComponent(source.editorDraftId)}&mode=${mode}`);
+        if (savedDraft && (mode !== "tiled-upscale" || (!node && !savedDraft.document.characterReference))) {
+          const editorMode = savedDraft.document.tiledSource ? "tiled-upscale" : mode;
+          router.push(`/image/editor?draftId=${encodeURIComponent(source.editorDraftId)}&mode=${editorMode}`);
           return;
         }
       }
-      const decoded = await loadImageElement(image);
-      const canvas = document.createElement("canvas");
-      canvas.width = decoded.naturalWidth;
-      canvas.height = decoded.naturalHeight;
-      const context = canvas.getContext("2d", { willReadFrequently: true });
-      if (!context) throw new Error("当前浏览器不支持 Canvas");
-      context.drawImage(decoded, 0, 0);
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+      const { image: editorImage, tiledSource } = await readEditorSource(image, { allowLarge: !character });
+      const editorMode = tiledSource ? "tiled-upscale" : mode;
       const editorDocument = createEditorDocument(
-        createRgbaImage(canvas.width, canvas.height, pixels.data),
-        { x: 0, y: 0, width: canvas.width, height: canvas.height },
+        editorImage,
+        { x: 0, y: 0, width: editorImage.width, height: editorImage.height },
         {
           prompt: character ? character.prompt : prompt,
           negativePrompt: character ? character.negative || "" : negative,
           ...(character?.reference ? { characterReference: { ...character.reference, label: `角色 ${characters.findIndex(item => item.id === character.id) + 1}` } } : {}),
+          ...(tiledSource ? { tiledSource } : {}),
           seed: seed || null,
-          source: { name: source?.name || "工作区图片.png", mimeType: "image/png" },
+          source: typeof image === "string"
+            ? { name: source?.name || "工作区图片.png", mimeType: "image/png" }
+            : { name: image.name, mimeType: image.type },
           generation: { model, providerId, imageProtocol, quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground, width, height, steps, scale, strength, sampler, noiseSchedule: schedule },
         },
       );
@@ -1330,12 +1327,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       crypto.getRandomValues(random);
       const draftId = `editor-${Date.now().toString(36)}-${random[0].toString(36)}${random[1].toString(36)}`;
       if (!character) syncEditorPromptToStudioForm(draftId, prompt, negative);
-      await saveEditorDraft(createEditorDraft(draftId, mode, editorDocument));
+      await saveEditorDraft(createEditorDraft(draftId, editorMode === "inpaint" ? "inpaint" : "canvas", editorDocument));
       if (!character && source && image === source.data) {
         setSource({ ...source, editorDraftId: draftId, editorNodeId: undefined, editorBranchId: undefined });
         await sourcePersistenceTaskRef.current;
       }
-      router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${mode}`);
+      router.push(`/image/editor?draftId=${encodeURIComponent(draftId)}&mode=${editorMode}`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "无法打开图像编辑器");
     }
@@ -4883,8 +4880,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   const assistantPanel = agentBlockInner;
 
-  function handleMobileReferenceUpload(file: File | undefined) {
+  async function handleMobileReferenceUpload(file: File | undefined) {
     if (!file) return;
+    if (acceptedUploadTypes.has(file.type)) {
+      const size = file.size <= MAX_UPLOAD_SIZE ? await readEditorSourceSize(file).catch(() => null) : null;
+      if (file.size > MAX_UPLOAD_SIZE || (size && needsTiledSource(size.width, size.height))) {
+        setNotice("正在准备大图，完成后将打开分块超分…");
+        await openImageEditor("tiled-upscale", file);
+        return;
+      }
+    }
     if (!modelCapabilities.edit) { setNotice("当前模型不支持参考图片，请在参数中选择支持图像编辑的模型。"); return; }
     const validation = validateUploadFile(file);
     if (validation) { setNotice(validation); return; }
@@ -5313,8 +5318,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
                 <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
                 <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
-                <button type="button" data-tutorial-editor="inpaint" className="mobile-reference-action" disabled={!source || generating} onClick={() => void openImageEditor("inpaint")}><Brush size={18} />精细重绘</button>
-                <button type="button" data-tutorial-editor="canvas" className="mobile-reference-action" disabled={!source || generating} onClick={() => void openImageEditor("canvas")}><Scan size={18} />无限画布</button>
+                <button type="button" data-tutorial-editor="inpaint" className="mobile-reference-action" disabled={generating} onClick={() => {
+                  if (source) void openImageEditor("inpaint");
+                  else router.push("/image/editor?mode=inpaint");
+                }}><Brush size={18} />进入图像编辑器</button>
+                <Link className="mobile-reference-action" href="/image/editor/history"><History size={18} />重绘历史</Link>
               </div>}
               moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
               operationOptions={mobileOperationOptions}
