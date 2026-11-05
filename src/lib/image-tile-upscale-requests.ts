@@ -1,17 +1,26 @@
 import type { ImageUpscalePlan, ImageUpscaleTile } from "./image-tile-upscale";
 import { retryAfterSeconds } from "./retry-after";
 
-const MAX_TILE_RETRIES = 2;
+export const MAX_TILE_RETRIES = 5;
 const TILE_REQUEST_TIMEOUT_MS = 180_000;
-const TRANSIENT_HTTP_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+const MAX_RETRY_DELAY_STEP = 5;
+
+export class TileStreamEndedWithoutImageError extends Error {
+  constructor(message = "流式响应未返回最终图像") {
+    super(message);
+    this.name = "TileStreamEndedWithoutImageError";
+  }
+}
 
 export type TiledUpscaleProgress = {
   completed: number;
   total: number;
   waiting: number;
+  failed?: number;
+  waitingForCapacity?: boolean;
 };
 
-type TileRequest = { tile: ImageUpscaleTile; retries: number };
+type TileRequest = { tile: ImageUpscaleTile; retries: number; delayStep: number };
 type TileRunOptions = {
   plan: ImageUpscalePlan;
   results: Map<number, Blob>;
@@ -41,17 +50,18 @@ export async function runImageUpscaleTiles({
 }: TileRunOptions): Promise<void> {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const pending = plan.tiles.filter((tile) => !results.has(tile.index)).map((tile) => ({ tile, retries: 0 }));
+    const pending = plan.tiles.filter((tile) => !results.has(tile.index)).map((tile) => ({ tile, retries: 0, delayStep: 0 }));
     const inFlight = new Map<number, AbortController>();
     const retryTimers = new Set<ReturnType<typeof setTimeout>>();
+    const failedTiles = new Map<number, string>();
     const capacityController = new AbortController();
     let refreshTimer: ReturnType<typeof setInterval> | undefined;
     let refreshing = false;
-    let failure: Error | undefined;
+    let runFailure: Error | undefined;
     let stopped = false;
 
-    const fail = (error: Error) => {
-      failure = error;
+    const stopRun = (error: Error) => {
+      runFailure = error;
       pending.length = 0;
       for (const timer of retryTimers) clearTimeout(timer);
       retryTimers.clear();
@@ -65,17 +75,26 @@ export async function runImageUpscaleTiles({
       signal.removeEventListener("abort", abortRun);
       clearInterval(refreshTimer);
       capacityController.abort();
-      if (failure) reject(failure);
-      else resolve();
+      if (runFailure) {
+        reject(runFailure);
+      } else if (failedTiles.size) {
+        const indexes = [...failedTiles.keys()].sort((left, right) => left - right);
+        const first = indexes[0];
+        const detail = `第 ${first + 1}/${plan.tiles.length} 块失败：${failedTiles.get(first)}`;
+        const summary = indexes.length === 1 ? detail : `${indexes.length} 块未完成（编号 ${indexes.map((index) => index + 1).join("、")}）。${detail}`;
+        reject(new Error(summary));
+      } else {
+        resolve();
+      }
     };
 
     const abortRun = () => {
-      fail(new DOMException("已取消分块重绘", "AbortError"));
+      stopRun(new DOMException("已取消分块重绘", "AbortError"));
       for (const controller of inFlight.values()) controller.abort();
       pump();
     };
 
-    const runTile = async ({ tile, retries }: TileRequest, controller: AbortController) => {
+    const runTile = async ({ tile, retries, delayStep }: TileRequest, controller: AbortController) => {
       const timeoutError = new DOMException("单块请求超过 180 秒未返回", "TimeoutError");
       const timeout = setTimeout(() => controller.abort(timeoutError), TILE_REQUEST_TIMEOUT_MS);
       let response: Response | undefined;
@@ -85,23 +104,25 @@ export async function runImageUpscaleTiles({
         controller.signal.throwIfAborted();
         results.set(tile.index, result);
       } catch (error) {
-        if (failure) return;
+        if (runFailure) return;
         const timedOut = controller.signal.reason === timeoutError;
-        const canRetry = response
-          ? TRANSIENT_HTTP_STATUSES.has(response.status) && response.headers.get("X-LFN-Watermark") !== "failed"
-          : timedOut || error instanceof TypeError;
-        if (canRetry && retries < MAX_TILE_RETRIES) {
-          const backoff = 1_000 * 2 ** retries;
+        const missingFinalImage = !timedOut && error instanceof TileStreamEndedWithoutImageError;
+        if (missingFinalImage || retries < MAX_TILE_RETRIES) {
+          const backoff = 1_000 * 2 ** delayStep;
           const retryAfter = retryAfterSeconds(response?.headers.get("Retry-After") ?? null, Date.now(), 0) * 1_000;
           const timer = setTimeout(() => {
             retryTimers.delete(timer);
-            pending.push({ tile, retries: retries + 1 });
+            pending.push({
+              tile,
+              retries: missingFinalImage ? retries : retries + 1,
+              delayStep: Math.min(delayStep + 1, MAX_RETRY_DELAY_STEP),
+            });
             pump();
           }, Math.max(backoff, retryAfter));
           retryTimers.add(timer);
         } else {
           const detail = timedOut ? timeoutError.message : error instanceof Error ? error.message : "图像请求失败";
-          fail(new Error(`第 ${tile.index + 1}/${plan.tiles.length} 块失败：${detail}`));
+          failedTiles.set(tile.index, detail);
         }
       } finally {
         clearTimeout(timeout);
@@ -112,22 +133,27 @@ export async function runImageUpscaleTiles({
 
     const pump = () => {
       if (stopped) return;
-      if (!failure && concurrency < 1 && (pending.length || retryTimers.size)) {
-        fail(new Error("当前没有可用的重绘账号，恢复后可继续"));
+      if (!runFailure && !refreshConcurrency && concurrency < 1 && (pending.length || retryTimers.size)) {
+        stopRun(new Error("当前没有可用的重绘账号，恢复后可继续"));
       }
-      while (!failure && inFlight.size < concurrency && pending.length) {
+      while (!runFailure && inFlight.size < concurrency && pending.length) {
         const request = pending.shift()!;
         const controller = new AbortController();
         inFlight.set(request.tile.index, controller);
         void runTile(request, controller);
       }
-      onProgress({ completed: results.size, total: plan.tiles.length, waiting: pending.length + retryTimers.size });
+      const waiting = pending.length + retryTimers.size;
+      onProgress({
+        completed: results.size, total: plan.tiles.length, waiting,
+        ...(failedTiles.size ? { failed: failedTiles.size } : {}),
+        ...(waiting && concurrency < 1 ? { waitingForCapacity: true } : {}),
+      });
       finishIfReady();
     };
 
     if (refreshConcurrency) {
       refreshTimer = setInterval(async () => {
-        if (refreshing || stopped || failure) return;
+        if (refreshing || stopped || runFailure) return;
         refreshing = true;
         try {
           const next = await refreshConcurrency(capacityController.signal);

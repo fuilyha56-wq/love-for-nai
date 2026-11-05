@@ -61,7 +61,8 @@ import { WheelNumberInput } from "@/mobile/ui/wheel-number";
 import { syncEditorPromptToStudioForm } from "@/lib/image-studio-form";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
 import { planImageTileUpscale, TILE_UPSCALE_DEFAULT_STRENGTH, tileUpscaleConcurrencyLimit, type ImageUpscalePlan, type ImageUpscaleTile, type TileUpscaleFactor, type TileUpscaleGatewayCapacity } from "@/lib/image-tile-upscale";
-import { decodeCachedUpscaleTile, runImageUpscaleTiles, type TiledUpscaleProgress } from "@/lib/image-tile-upscale-requests";
+import { readEditorGenerationResponse, readEditorUpscaleTile } from "@/lib/image-editor-response";
+import { decodeCachedUpscaleTile, MAX_TILE_RETRIES, runImageUpscaleTiles, type TiledUpscaleProgress } from "@/lib/image-tile-upscale-requests";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyPendingCandidate,
@@ -406,46 +407,6 @@ export function fitViewport(document: EditorDocument, width: number, height: num
     width: viewportWidth,
     height: viewportHeight,
   };
-}
-
-function parseDataUrlResult(value: unknown): string | null {
-  if (typeof value === "string" && value.startsWith("data:image/")) return value;
-  return null;
-}
-
-async function readGenerationResponse(response: Response): Promise<string> {
-  const type = response.headers.get("content-type") || "";
-  if (type.includes("text/event-stream") && response.body) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let text = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      text += decoder.decode(value || new Uint8Array(), { stream: !done });
-      if (done) break;
-    }
-    const events = text.split("\n\n");
-    for (const event of events.reverse()) {
-      const line = event.split("\n").find((entry) => entry.startsWith("data:"));
-      if (!line) continue;
-      try {
-        const payload = JSON.parse(line.slice(5).trim()) as { images?: unknown[]; image?: unknown; message?: string };
-        const image = Array.isArray(payload.images) ? payload.images.find(parseDataUrlResult) : payload.image;
-        const result = parseDataUrlResult(image);
-        if (result) return result;
-        if (payload.message) throw new Error(payload.message);
-      } catch (error) {
-        if (error instanceof Error && error.message !== "Unexpected end of JSON input") throw error;
-      }
-    }
-    throw new Error("流式响应没有返回图像");
-  }
-  const payload = (await response.json()) as { images?: unknown[]; image?: unknown; message?: string };
-  if (!response.ok) throw new Error(payload.message || "图像生成失败");
-  const image = Array.isArray(payload.images) ? payload.images.find(parseDataUrlResult) : payload.image;
-  const result = parseDataUrlResult(image);
-  if (!result) throw new Error(payload.message || "生成结果为空");
-  return result;
 }
 
 export default function EditorClient({ authenticated, userId }: EditorClientProps) {
@@ -1532,10 +1493,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const usesGateway = (sourceDocument.generation?.providerId || "newapi") === "newapi" && /^nai-/i.test(targetModel);
       let concurrency = 2;
       if (usesGateway) {
-        const capacity = await waitWithAbort(refreshGatewayImageCapacity(), runController.signal);
+        const capacity = await waitWithAbort(refreshGatewayImageCapacity(runController.signal), runController.signal);
         if (capacity) {
           concurrency = tileUpscaleConcurrencyLimit(targetModel, steps, capacity);
-          if (concurrency < 1) throw new Error("Gateway 当前没有启用符合该模型和计费条件的账号，请先在 Gateway 启用对应账号能力");
         }
       }
       setNotice("正在重绘分块…");
@@ -1579,10 +1539,12 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
           return capacity ? tileUpscaleConcurrencyLimit(targetModel, steps, capacity) : 2;
         } : undefined,
         requestTile,
-        readTile: async (response) => dataUrlToBlob(await readGenerationResponse(response)),
+        readTile: readEditorUpscaleTile,
         onProgress: (progress) => {
           setTileProgress(progress);
-          setNotice(`分块重绘中：已完成 ${progress.completed}/${progress.total} 块 · 等待 ${progress.waiting} 块`);
+          const activity = progress.waitingForCapacity ? "等待可用重绘资源" : "分块重绘中";
+          const failures = progress.failed ? ` · ${progress.failed} 块已达重试上限` : "";
+          setNotice(`${activity}：已完成 ${progress.completed}/${progress.total} 块 · 等待 ${progress.waiting} 块${failures}`);
         },
       });
 
@@ -1693,7 +1655,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         response_format: "b64_json",
       };
       const response = await fetch("/api/images/operate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: runController.signal });
-      const resultUrl = await readGenerationResponse(response);
+      const resultUrl = await readEditorGenerationResponse(response);
       runController.signal.throwIfAborted();
       const patch = await dataUrlToRgba(resultUrl, { width: prepared.image.width, height: prepared.image.height });
       const promptSummary = prompt.trim().replace(/\s+/g, " ").slice(0, 48);
@@ -2043,7 +2005,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
       {tileGatewayUnavailable && <p className="editor-tip is-warning">当前没有支持所选模型及计费条件的 Gateway 账号。</p>}
       {tileProgress && <p className="editor-tip">本次进度：完成 {tileProgress.completed}/{tileProgress.total} 块 · 等待 {tileProgress.waiting} 块。</p>}
-      <p className="editor-tip is-warning">{tileBillingDescription} 临时失败的分块会自动重试。已完成的分块会保留，修改参数后会重新处理。</p>
+      <p className="editor-tip is-warning">{tileBillingDescription} 每块普通失败最多自动重试 {MAX_TILE_RETRIES} 次。流结束却缺少最终图像时会持续重试，直至成功或取消。已完成的分块会保留，修改参数后会重新处理。</p>
     </>
   );
   const historyNodeDepth = (node: EditorHistoryNode) => {
