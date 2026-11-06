@@ -134,6 +134,10 @@
 .launcher-destination-group a small { display:block; color:var(--muted); font-size:12px; }
 .launcher-destination-group a .launcher-destination-chevron { margin-inline-start:auto; color:var(--muted); }
 .launcher-destination-group a:hover, .launcher-destination-group a[aria-current="page"] { color:var(--accent-text); background:var(--surface-muted); }
+.launcher-destination-groups.is-workspace-grid .launcher-destination-group > div { grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; padding:4px; }
+.launcher-destination-groups.is-workspace-grid .launcher-destination-group a { gap:8px; border-radius:8px; font-size:13px; }
+.launcher-destination-groups.is-workspace-grid .launcher-destination-group a + a { border-top:0; }
+.launcher-destination-groups.is-workspace-grid .launcher-destination-group a span { flex:0 1 auto; }
 @media (min-width:600px) { .launcher-destination-groups { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; } }
 /* The global rail owns navigation; generation has the same three working panes in every theme. */
 @media (min-width:1024px) {

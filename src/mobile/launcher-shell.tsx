@@ -44,22 +44,34 @@ export function launcherPathActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-const destinationGroups = [
-  { title: "图像工具", hrefs: ["/image?operation=upscale", "/image?operation=tiled-upscale", "/image/editor", "/image/editor/history", "/verify"] },
-  { title: "创作与素材", hrefs: ["/settings#prompts", "/comic", "/stories", "/studio", "/gallery/activities"] },
+const sharedDestinationGroups = [
   { title: "账号与记录", hrefs: ["/profile", "/notifications", "/usage"] },
   { title: "模型与用量", hrefs: ["/settings#models", "/models", "/pricing"] },
   { title: "帮助与设置", hrefs: ["/docs", "/announcements", "/settings"] },
 ];
 
+const destinationGroups = [
+  { title: "图像工具", hrefs: ["/image?operation=upscale", "/image?operation=tiled-upscale", "/image/editor", "/image/editor/history", "/verify"] },
+  { title: "创作与素材", hrefs: ["/settings#prompts", "/comic", "/stories", "/studio", "/gallery/activities"] },
+  ...sharedDestinationGroups,
+];
+
+const workspaceDestinationGroups = [
+  { title: "创作与工具", hrefs: ["/settings#prompts", "/image/editor", "/image/editor/history", "/stories", "/studio", "/verify"] },
+  ...sharedDestinationGroups,
+  { title: "快捷入口", hrefs: ["/image?operation=upscale", "/image?operation=tiled-upscale", "/comic", "/gallery/activities"] },
+];
+
 export function LauncherDestinationGroups({ admin = false, workspace = false, onNavigate }: { admin?: boolean; workspace?: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
-  return <nav className="launcher-destination-groups" aria-label="更多页面分类">{destinationGroups.map(group => <section className="launcher-destination-group" key={group.title} aria-label={group.title}>
+  const groups = workspace ? workspaceDestinationGroups : destinationGroups;
+  return <nav className={`launcher-destination-groups${workspace ? " is-workspace-grid" : ""}`} aria-label="更多页面分类">{groups.map(group => <section className="launcher-destination-group" key={group.title} aria-label={group.title}>
     <h2>{group.title}</h2><div>{group.hrefs.map(href => {
       const item = launcherDestinations.find(destination => destination.href === href)!;
       const Icon = item.icon;
       return <Link key={href} href={href} prefetch={false} onClick={onNavigate} aria-current={launcherPathActive(pathname, href) ? "page" : undefined}>
-        <Icon size={20} aria-hidden="true" /><span>{item.label}{"description" in item && <small>{item.description}</small>}</span><ChevronRight size={16} className="launcher-destination-chevron" aria-hidden="true" />
+        <Icon size={20} aria-hidden="true" /><span>{item.label}{!workspace && "description" in item && <small>{item.description}</small>}</span>
+        {!workspace && <ChevronRight size={16} className="launcher-destination-chevron" aria-hidden="true" />}
       </Link>;
     })}{group.title === "帮助与设置" && workspace && <Link href="/image/setting/layout" onClick={onNavigate}><LayoutDashboard size={20} /><span>工作台布局</span></Link>}{group.title === "账号与记录" && admin && <Link href="/admin" onClick={onNavigate}><ShieldCheck size={20} /><span>管理中心</span></Link>}</div>
   </section>)}</nav>;
