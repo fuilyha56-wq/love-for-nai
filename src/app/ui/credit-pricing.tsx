@@ -7,23 +7,24 @@ import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
 import { usePanelHistory } from "./use-panel-history";
 import { V45LimitDailyPriceTable } from "./v45-limit-daily-price-table";
 import { dailyImageDay, roundAffAmount, type DailyImageBillingState } from "@/lib/daily-image-pricing";
-import { CNY_PER_AFF, DEFAULT_IMAGE_BASE_FEES, splitImageCreditCost, type ImagePricingGeneration } from "@/lib/image-pricing";
+import { DEFAULT_IMAGE_BASE_FEES, type ImagePricingGeneration } from "@/lib/image-pricing";
 import { formatAff, formatCny, quoteCredits, type CreditPricing } from "@/lib/credit-pricing";
 import type { useCreditPricing } from "@/lib/client-credit-pricing";
+import { splitStudioCreditQuote } from "@/lib/studio-credit-pricing";
 import "./credit-pricing.css";
 
 export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; state?: DailyImageBillingState }) {
-  const { policy } = pricing;
+  const { policy, cnyPerAff } = pricing;
   const baseFee = (key: keyof typeof DEFAULT_IMAGE_BASE_FEES) => policy[key] ?? DEFAULT_IMAGE_BASE_FEES[key];
   return <div className="credit-price-tables">
-    <p className="credit-price-note">1 AFF = ¥0.005。图包与个人 AFF 使用同一价格；金额保留最多 4 位小数，不按整数取整。每日张数按北京时间零点重置，limit 与普通模型合并计数。</p>
+    <p className="credit-price-note">1 AFF = ¥{formatCny(cnyPerAff)}。图包与个人 AFF 使用同一价格；金额保留最多 4 位小数，不按整数取整。每日张数按北京时间零点重置，limit 与普通模型合并计数。</p>
     <div className="credit-price-table-scroll" tabIndex={0} role="region" aria-label="基础价格表，可横向滚动">
       <table><caption>基础价格</caption><thead><tr><th>模型 / 操作</th><th>小图档基础费</th><th>常规档基础费</th><th>额外 Anlas 单价</th></tr></thead><tbody>
         {[
           { label: "V4.5 · Full / Curated / 重绘", limit: baseFee("v45LimitBaseAff"), regular: baseFee("v45BaseAff"), rate: policy.v45AnlasCny },
           { label: "V5 High · Full / Curated / 重绘", limit: baseFee("v5LimitBaseAff"), regular: baseFee("v5BaseAff"), rate: policy.v5AnlasCny },
           { label: "V5 Medium · Full / 重绘", limit: baseFee("v5MediumLimitBaseAff"), regular: baseFee("v5MediumBaseAff"), rate: policy.v5AnlasCny },
-        ].map(row => <tr key={row.label}><th>{row.label}</th><td>{formatAff(row.limit)} AFF / 张</td><td>{formatAff(row.regular)} AFF / 张</td><td>¥{formatCny(row.rate)} = {formatAff(row.rate / CNY_PER_AFF)} AFF</td></tr>)}
+        ].map(row => <tr key={row.label}><th>{row.label}</th><td>{formatAff(row.limit)} AFF / 张</td><td>{formatAff(row.regular)} AFF / 张</td><td>¥{formatCny(row.rate)} = {formatAff(row.rate / cnyPerAff)} AFF</td></tr>)}
         <tr><th>超分 / 导演 / Vibe 编码</th><td colSpan={2}>无生图基础费</td><td>模型对应的单价 × 本次 Anlas</td></tr>
         <tr><th>图片标注</th><td colSpan={2}>1 AFF / 张</td><td>无</td></tr>
         {Object.entries(pricing.fixedCosts).map(([model, cost]) => <tr key={model}><th>{model} · 固定价优先</th><td colSpan={2}>{formatAff(cost)} AFF / 张</td><td>覆盖该模型的公式与每日阶梯</td></tr>)}
@@ -46,9 +47,9 @@ export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; 
             const active = !!state && policy.enabled && count >= tier.afterImages && (tiers[index + 1] == null || count < tiers[index + 1].afterImages);
             return <tr key={tier.afterImages} data-current-tier={active || undefined}>
               <th>{tier.afterImages + 1}–{tiers[index + 1]?.afterImages ?? "以后"}{active && <small>下一张</small>}</th>
-              <td>¥{formatCny(extra)} / {formatAff(extra / CNY_PER_AFF)} AFF</td><td>×{tier.anlasMultiplier}</td><td>×{tier.totalMultiplier}</td>
-              <td>{formatAff((base + extra / CNY_PER_AFF) * tier.totalMultiplier)} AFF</td>
-              {family === "v5" && <td>{formatAff((baseFee("v5MediumLimitBaseAff") + extra / CNY_PER_AFF) * tier.totalMultiplier)} AFF</td>}
+              <td>¥{formatCny(extra)} / {formatAff(extra / cnyPerAff)} AFF</td><td>×{tier.anlasMultiplier}</td><td>×{tier.totalMultiplier}</td>
+              <td>{formatAff((base + extra / cnyPerAff) * tier.totalMultiplier)} AFF</td>
+              {family === "v5" && <td>{formatAff((baseFee("v5MediumLimitBaseAff") + extra / cnyPerAff) * tier.totalMultiplier)} AFF</td>}
               <td>¥{formatCny(rate * tier.anlasMultiplier * tier.totalMultiplier)}</td>
             </tr>;
           })}</tbody>
@@ -60,10 +61,11 @@ export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; 
 }
 
 type Wallet = { balance: number; packageBalance: number; packageRateLimitRemaining: number };
-export function CreditPricingButton({ children, className = "", pricing, generation, state, wallet, usesAff, paymentNote, onRefresh }: {
+export function CreditPricingButton({ children, className = "", pricing, generation, state, wallet, usesAff, paymentNote, onRefresh, preparation, showQuote = true }: {
   children?: ReactNode; className?: string; pricing: ReturnType<typeof useCreditPricing>;
   generation: ImagePricingGeneration; state?: DailyImageBillingState; wallet?: Wallet;
   usesAff: boolean; paymentNote: string; onRefresh?: () => Promise<unknown>;
+  preparation?: { costAff: number; count: number }; showQuote?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -76,8 +78,9 @@ export function CreditPricingButton({ children, className = "", pricing, generat
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = previous; };
   }, [open]);
-  const quote = pricing.data ? quoteCredits(generation, pricing.data, state) : null;
-  const split = quote && usesAff && wallet ? splitImageCreditCost(quote.costAff, generation.samples, wallet.packageBalance, wallet.packageRateLimitRemaining, quote.daily?.affCosts) : null;
+  const quote = pricing.data && !pricing.error && showQuote ? quoteCredits(generation, pricing.data, state) : null;
+  const split = quote && usesAff && wallet ? splitStudioCreditQuote(quote, generation.samples, preparation, wallet) : null;
+  const totalAff = quote ? roundAffAmount(quote.costAff + (preparation?.costAff ?? 0)) : null;
   return <>
     <button type="button" className={`credit-pricing-trigger ${className}`} data-credit-pricing-trigger aria-label="查看当前定价与阶梯计费" aria-haspopup="dialog" onClick={() => { setOpen(true); void pricing.refresh(); void onRefresh?.(); }}>
       {children || <><Calculator size={14} /><span>定价与阶梯计费</span></>}
@@ -88,14 +91,15 @@ export function CreditPricingButton({ children, className = "", pricing, generat
         <div className="credit-pricing-body">
           <p className="credit-price-payment">{paymentNote}</p>
           {pricing.error && <p className="credit-price-warning">{pricing.error}。{pricing.data ? "下面保留上次读取的规则，可能已变更。" : "暂不展示未经确认的价格。"}</p>}
-          {quote && <section className="credit-price-quote" aria-label="本次生成费用明细">
-            <h3>{usesAff ? "本次预估" : "本次参数的 AFF 参考价"} <b>{formatAff(quote.costAff)} AFF <small>≈ ¥{formatCny(quote.costCny)}</small></b></h3>
+          {quote && totalAff != null && pricing.data && <section className="credit-price-quote" aria-label="本次生成费用明细">
+            <h3>{usesAff ? "本次预估" : "本次参数的 AFF 参考价"} <b>{formatAff(totalAff)} AFF <small>≈ ¥{formatCny(totalAff * pricing.data.cnyPerAff)}</small></b></h3>
+            {preparation && <p>本次需预先编码 {preparation.count} 张 Vibe 参考图，编码 {formatAff(preparation.costAff)} AFF，后续生成的 LFN 费用为 {formatAff(quote.costAff)} AFF。</p>}
             <p>{generation.model} · {generation.width} × {generation.height} · {generation.steps} 步 · {generation.samples} 张{generation.sequential ? " · 逐张提交" : " · 一次提交"}</p>
             <p>{quote.fixed != null ? `固定价 ${formatAff(quote.fixed)} AFF / 张，覆盖每日阶梯。` : quote.daily ? `今日从第 ${quote.daily.startCount + 1} 张起计，本次计费 Anlas 共 ${formatAff(quote.daily.anlas)}。${quote.daily.anlas === 0 ? "本次没有额外 Anlas 费用，价格由基础费与每日阶梯决定。" : "已按当前单价和各张阶梯计算。"}` : "本次不参与每日阶梯，按当前单价计算。"}</p>
             {usesAff && wallet && <p>图包余额 {formatAff(wallet.packageBalance)} AFF · 个人余额 {formatAff(wallet.balance)} AFF。图包优先，个人补足；图包当前窗口可用 {wallet.packageRateLimitRemaining} 张。</p>}
             {split && <p>预计扣图包 <b>{formatAff(split.packageCost)} AFF</b> + 个人 <b>{formatAff(split.personalCost)} AFF</b>{wallet && split.personalCost > wallet.balance ? "，当前个人 AFF 不足。" : "。"}</p>}
             {quote.daily && <div className="credit-price-table-scroll" tabIndex={0} role="region" aria-label="逐张预估费用">
-              <table><thead><tr><th>当天第几张</th><th>预估 AFF</th><th>人民币面值</th></tr></thead><tbody>{quote.daily.affCosts.map((cost, index) => <tr key={index}><th>{quote.daily!.startCount + index + 1}</th><td>{formatAff(cost)}</td><td>¥{formatCny(roundAffAmount(cost) * CNY_PER_AFF)}</td></tr>)}</tbody></table>
+              <table><thead><tr><th>当天第几张</th><th>预估 AFF</th><th>人民币面值</th></tr></thead><tbody>{quote.daily.affCosts.map((cost, index) => <tr key={index}><th>{quote.daily!.startCount + index + 1}</th><td>{formatAff(cost)}</td><td>¥{formatCny(roundAffAmount(cost) * pricing.data!.cnyPerAff)}</td></tr>)}</tbody></table>
             </div>}
           </section>}
           {pricing.data ? <CreditPriceTables pricing={pricing.data} state={state} /> : pricing.loading && <p>正在读取服务器价格…</p>}

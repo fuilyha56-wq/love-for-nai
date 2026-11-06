@@ -39,7 +39,7 @@ import "./studio-mode-indicator.css";
 import "./mobile-parameter-panel.css";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/mobile/gallery-submit";
 import { LfnSelect } from "@/mobile/ui/lfn-select";
-import { dailyImageDay, dailyImageFamily, quoteDailyImage, type DailyImageBillingState } from "@/lib/daily-image-pricing";
+import { dailyImageFamily, roundAffAmount, type DailyImageBillingState } from "@/lib/daily-image-pricing";
 import { lfnConfirm, lfnPrompt } from "@/mobile/ui/lfn-dialog";
 import { AdaptiveDialog } from "@/mobile/ui/adaptive-dialog";
 import { copyTextToClipboard } from "@/lib/client-clipboard";
@@ -134,10 +134,11 @@ import { MAX_ASSISTANT_IMAGES } from "@/lib/assistant-limits";
 import { useAssistantUsage, useGoalRoundLimit } from "@/lib/client-assistant-usage";
 
 import type { AssistantCallUsage } from "@/lib/assistant-usage";
-import { useCreditPricing } from "@/lib/client-credit-pricing";
+import { useCreditPricing, useLiveNewApiPricing } from "@/lib/client-credit-pricing";
 import { CreditPricingButton } from "@/mobile/pricing/credit-pricing";
-import { formatAff } from "@/lib/credit-pricing";
-import { roundAffAmount } from "@/lib/daily-image-pricing";
+import { formatAff, formatNewApiQuote, quoteCredits } from "@/lib/credit-pricing";
+import { estimateSequentialStudioPayment, quoteVibePreparation, splitStudioCreditQuote } from "@/lib/studio-credit-pricing";
+import { useEditorPriceQuote } from "@/lib/client-editor-pricing";
 import { NaiBalanceMeter } from "./nai-balance-meter";
 import { ReplicaControls, ReplicaCharacters, ReplicaNaiReference, ReplicaReverseTagger } from "./replica-controls";
 import { ReplicaGenerationSettings, ReplicaImageSize } from "./replica-generation-settings";
@@ -239,15 +240,12 @@ function createBrowserRequestId(prefix = "request"): string {
 
 import {
   estimateNewApiCost,
-  imageCreditCost,
   imagePricingStrength,
   officialNaiAnlasCost,
-  splitImageCreditCost,
   usesLimitPricing,
   UPSCALE_MAX_PIXELS,
   upscaleBillingModel,
   upscaleSizeError,
-  type ModelPricingSnapshot,
 } from "@/lib/image-pricing";
 
 type Me = { user?: { balance: number | null; group: string } };
@@ -874,7 +872,6 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     turns: [],
     tagPool: [],
   });
-  const [modelPricing, setModelPricing] = useState<ModelPricingSnapshot | null>(null);
   const assistantAbortRef = useRef<AbortController | null>(null);
   const assistantActiveRequestRef = useRef<Promise<unknown> | null>(null);
   const studioMountedRef = useRef(true);
@@ -2180,11 +2177,14 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       .catch(() => setIsAdmin(false));
   }, [authenticated]);
 
+  const walletRequestVersion = useRef(0);
   const refreshWallet = useCallback(async () => {
+    const requestVersion = ++walletRequestVersion.current;
     try {
-      const response = await fetch("/api/wallet", { cache: "no-store" });
+      const response = await fetch("/api/wallet", { cache: "no-store", signal: AbortSignal.timeout(15_000) });
       if (!response.ok) return null;
       const result = (await response.json()) as WalletState;
+      if (requestVersion !== walletRequestVersion.current) return null;
       setWallet(result);
       if (result.aff) setAff(result.aff);
       if (result.newApi) {
@@ -2202,7 +2202,21 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   useEffect(() => {
     if (!signedIn) return;
-    void Promise.resolve().then(() => refreshWallet());
+    let active = true;
+    const refreshVisible = () => {
+      if (active && document.visibilityState === "visible") void refreshWallet();
+    };
+    void Promise.resolve().then(refreshVisible);
+    const timer = window.setInterval(refreshVisible, 30_000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      active = false;
+      walletRequestVersion.current += 1;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
   }, [refreshWallet, signedIn]);
 
   // 模型来源实时读取：每次都直接请求上游（no-store），并在窗口聚焦和每 60 秒刷新，
@@ -2619,33 +2633,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
 
-  // 模型或登录态变化时拉取实时计价（ratio/price/分组倍率），
-  // 供预计消耗按 NewAPI 实际公式计算。
-  useEffect(() => {
-    let cancelled = false;
-    // 登出态清空计价交给微任务，避免 effect 内同步 setState。
-    if (!signedIn || providerId !== "newapi") {
-      void Promise.resolve().then(() => {
-        if (!cancelled) setModelPricing(null);
-      });
-      return () => {
-        cancelled = true;
-      };
-    }
-    const pricingModel = operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model;
-    fetch(`/api/pricing?model=${encodeURIComponent(pricingModel)}`, { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.message);
-        if (!cancelled) setModelPricing(result);
-      })
-      .catch(() => {
-        if (!cancelled) setModelPricing(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [signedIn, providerId, model, operation, naturalImageModel, upscaleModel]);
+  const newApiPricingModel = nativeUpscale ? upscaleBillingModel(upscaleModel) : model;
+  const liveNewApiPricing = useLiveNewApiPricing(signedIn && providerId === "newapi" ? newApiPricingModel : null);
+  const modelPricing = !liveNewApiPricing.error ? liveNewApiPricing.data : null;
 
   async function clearConversationHistory() {
     const selectedId = assistantConversations.getActiveId();
@@ -3739,6 +3729,93 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     </div>
   );
 
+  const activeCharacterCount = operation === "generate" && charactersEnabled
+    ? characters.filter((character) => character.prompt.trim()).length
+    : 0;
+  const canQuoteOperation = operation !== "annotate" && operation !== "suggest-tags";
+  const quoteReady = canQuoteOperation && upscaleQuoteReady && Boolean(model);
+  const upscaleDims = nativeUpscale ? upscaleSource : null;
+  const pendingVibeCount = operation === "vibe-transfer" ? referenceImageCount - encodedVibeCount : 0;
+  const affGeneration = {
+    // Local upscale billing uses the native model ID, while NewAPI uses the catalog alias.
+    model: nativeUpscale ? upscaleModel : model,
+    operation,
+    width: upscaleDims?.width ?? width,
+    height: upscaleDims?.height ?? height,
+    steps: nativeUpscale ? 1 : steps,
+    samples: outputCount,
+    sequential: batchMode === "sequential" && outputCount > 1,
+    strength: imagePricingStrength({ strength }, operation),
+    referenceImageCount,
+    // All missing Vibe encodings are prepared once, before any generation requests.
+    encodedVibeCount: operation === "vibe-transfer" ? referenceImageCount : 0,
+    characterPromptCount: activeCharacterCount,
+  };
+  const liveCreditPricing = !creditPricing.error ? creditPricing.data : null;
+  const accountQuoteReady = !signedIn || !liveCreditPricing?.policy.enabled || !dailyImageFamily(affGeneration) || Boolean(wallet?.dailyBilling);
+  const generationQuote = quoteReady && accountQuoteReady && liveCreditPricing
+    ? quoteCredits(affGeneration, liveCreditPricing, wallet?.dailyBilling)
+    : null;
+  const preparation = quoteReady && liveCreditPricing
+    ? quoteVibePreparation(model, pendingVibeCount, liveCreditPricing)
+    : undefined;
+  const estimatedAffCost = generationQuote
+    ? roundAffAmount(generationQuote.costAff + (preparation?.costAff ?? 0))
+    : null;
+  const creditSplit = generationQuote && wallet?.aff?.enabled
+    ? splitStudioCreditQuote(generationQuote, outputCount, preparation, wallet.aff)
+    : null;
+  const localPricePolicy = liveCreditPricing?.policy ?? wallet?.dailyBilling?.policy;
+  const eligibleForAff = providerId === "newapi" && !naturalImageModel;
+  const requiresLocalBilling = eligibleForAff && localPricePolicy?.strictApiBilling === true;
+  const sequentialPayment = affGeneration.sequential && eligibleForAff && !requiresLocalBilling && generationQuote && wallet?.aff?.enabled
+    ? estimateSequentialStudioPayment(generationQuote, outputCount, preparation, wallet.aff)
+    : null;
+  const localSamples = sequentialPayment?.localSamples ?? 0;
+  const mixedPayment = sequentialPayment && localSamples > 0 && localSamples < outputCount ? sequentialPayment : null;
+  const newApiSamples = mixedPayment ? outputCount - localSamples : outputCount;
+  const estimatedNewApiCost = quoteReady && providerId === "newapi" && (!naturalImageModel || modelPricing?.quotaType === 1)
+    ? estimateNewApiCost(modelPricing, { ...affGeneration, model: newApiPricingModel, samples: newApiSamples, maxSamplesPerRequest: studioBatchSize(batchMode) })
+    : null;
+  const localWalletSplit = sequentialPayment?.localSamples === outputCount ? sequentialPayment : creditSplit;
+  const estimatedPackageCost = localWalletSplit?.packageCost ?? 0;
+  const estimatedPersonalCost = localWalletSplit?.personalCost ?? 0;
+  const preparationUnavailable = Boolean(preparation && preparation.costAff > 0 && wallet?.aff && (
+    !wallet.aff.enabled || (creditSplit?.preparationPersonalCost ?? 0) > wallet.aff.balance
+  ));
+  const hasSufficientAff = sequentialPayment
+    ? localSamples === outputCount
+    : Boolean(creditSplit && wallet?.aff && wallet.aff.balance >= estimatedPersonalCost);
+  const canUseAffEstimate = quoteReady && eligibleForAff && (requiresLocalBilling || hasSufficientAff);
+  const canUseNewApiEstimate = quoteReady && providerId === "newapi" && !canUseAffEstimate && !preparationUnavailable &&
+    (naturalImageModel || Boolean(wallet?.aff && (!wallet.aff.enabled || generationQuote)));
+  const localAffShortfall = Math.max(0, roundAffAmount(estimatedPersonalCost - (wallet?.aff?.balance ?? 0)));
+  const localCreditNotice = requiresLocalBilling && wallet?.aff
+    ? !wallet.aff.enabled ? "当前模型的本站额度服务尚未就绪，请刷新后重试。"
+      : estimatedAffCost != null && localAffShortfall > 0 ? `本次预计消耗 ${formatAff(estimatedAffCost)} AFF，当前可用个人 AFF ${wallet.aff.balance}、图包 ${wallet.aff.packageBalance}，个人 AFF 尚缺 ${localAffShortfall}。` : ""
+    : "";
+
+  const preparationCostLabel = preparation ? `预处理 ${formatAff(preparation.costAff)} AFF` : "";
+  const newApiCostLabel = canUseNewApiEstimate && estimatedNewApiCost != null ? formatNewApiQuote(estimatedNewApiCost) : "";
+  const operationCostLabel = (() => {
+    if (preparationUnavailable) return "风格预处理 AFF 不足";
+    if (canUseAffEstimate) return estimatedAffCost == null ? "" : `${formatAff(estimatedAffCost)} AFF`;
+    if (mixedPayment) return `${formatAff(mixedPayment.costAff)} AFF + ${newApiCostLabel || `${newApiSamples} 张按 NewAPI 账单`}`;
+    return [newApiCostLabel, preparationCostLabel].filter(Boolean).join(" + ");
+  })();
+  const paymentNote = (() => {
+    if (preparationUnavailable) return "当前本站额度不足以完成风格预处理。";
+    if (providerId !== "newapi") return "生成费用以个人 Key 的提供方账单为准。";
+    if (canUseAffEstimate) return "预计使用本站 AFF / 图包，图包优先，个人 AFF 补足。";
+    if (mixedPayment) return `按当前额度预计 ${localSamples} 张用本站 AFF / 图包、${newApiSamples} 张用 NewAPI 余额。以实际账单为准。`;
+    if (canUseNewApiEstimate) return "预计使用 NewAPI 余额，按账号分组计费。";
+    if (!signedIn) return "登录后查看本次计费方式。";
+    return creditPricing.error || liveNewApiPricing.error ? "暂时无法读取本次请求的计费价格。" : "正在读取本次请求的计费价格。";
+  })();
+  const upscaleCostNote = operationCostLabel ? `预计消耗 ${operationCostLabel}。`
+    : !signedIn && generationQuote ? `本站 AFF 参考价 ${formatAff(generationQuote.costAff)} AFF。登录后查看实际计费方式。`
+      : paymentNote;
+
   const operationSettings = <div className="studio-operation-settings space-y-4">
           {!naturalImageModel && ["img2img", "inpainting", "edits"].includes(operation) && (
           <Control label={`变化强度 · ${strength}`}>
@@ -3863,7 +3940,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
               V5 扩散超分固定输出 2 倍尺寸，JPEG 和 WebP 会自动转为 PNG。
               {upscaleSource && upscaleQuoteReady
-                ? ` 当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}。`
+                ? ` 当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}。 ${upscaleCostNote}`
                 : <span role="status">{upscaleInputError}{upscaleSource && " 请缩小图片后再试。"}</span>}
             </p>
           </>
@@ -4299,34 +4376,19 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       !["annotate", "suggest-tags"].includes(operation) && (operation !== "upscale" || naturalImageModel);
     const requestLeavesLimit =
       newApiPricedImage &&
-      !usesLimitPricing({
-        model,
-        operation,
-        width,
-        height,
-        steps,
-        samples: batchMode === "sequential" ? 1 : outputCount,
-        characterPromptCount: operation === "generate" && charactersEnabled
-          ? characters.filter((character) => character.prompt.trim()).length
-          : 0,
-        referenceImageCount,
-      });
+      !usesLimitPricing({ ...affGeneration, samples: batchMode === "sequential" ? 1 : outputCount });
     if (!naturalImageModel && newApiPricedImage && !canUseAffEstimate && (multiImage || requestLeavesLimit) && estimatedNewApiCost == null) {
       setNotice("暂时无法读取 NewAPI 实际价格，请稍后再试，避免意外扣费。");
       return;
     }
-    if (!allowAutonomousCost && (multiImage || (requestLeavesLimit && !canUseAffEstimate) || (operation === "vibe-transfer" && referenceImageCount > encodedVibeCount))) {
-      const payment = providerId !== "newapi"
-        ? "费用以所选 API 的账单为准"
-        : canUseAffEstimate
-          ? `预计消耗 ${estimatedAffCost} AFF`
-          : estimatedNewApiCost == null ? "当前模型按实际使用计费，费用以所选 API 的账单为准" : `预计扣费 $${estimatedNewApiCost.toFixed(2)}，实际以账单为准`;
+    if (!allowAutonomousCost && (multiImage || (requestLeavesLimit && !canUseAffEstimate) || pendingVibeCount > 0)) {
+      const payment = operationCostLabel && !preparationUnavailable ? `预计消耗 ${operationCostLabel}，以实际账单为准。` : paymentNote;
       const requestMode = batchMode === "once" && multiImage
         ? `一次性请求 ${count} 张，可能进入高价档`
         : multiImage
           ? "每张独立请求"
-          : "当前参数可能进入高价档";
-      const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}${operation === "vibe-transfer" && referenceImageCount > encodedVibeCount ? `\n其中 ${referenceImageCount - encodedVibeCount} 张风格参考需先付费预处理；成功的编码将缓存并在以后复用，生成失败也不会退回已完成的编码费用。` : ""}`;
+          : "单次请求";
+      const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}${pendingVibeCount > 0 ? `\n预计有 ${pendingVibeCount} 张参考需单独预处理${preparationCostLabel ? `（${preparationCostLabel}）` : ""}。成功的编码可复用，生成失败也不会退回已完成的编码费用。` : ""}`;
       if (approvedConfirmation !== confirmation) {
         if (queueRequested) {
           const approved = await lfnConfirm(confirmation, { title: "确认生成与费用", confirmLabel: "确认并加入队列", alert: true });
@@ -4725,71 +4787,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
 
-  const activeCharacterCount =
-    operation === "generate" && charactersEnabled
-      ? characters.filter((character) => character.prompt.trim()).length
-      : 0;
-  // 超分按源图尺寸计 Anlas；本站价格统一读取当前服务端配置。
-  // 管理员配置了固定 AFF 单价的模型优先按固定价 × 张数。
-  const upscaleDims = operation === "upscale" ? upscaleSource : null;
-  const localPricePolicy = creditPricing.data?.policy ?? wallet?.dailyBilling?.policy;
-  const pricingModel = operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model;
-  const affFixedCost = creditPricing.data
-    ? creditPricing.data.fixedCosts[pricingModel] ?? null
-    : typeof (modelPricing as unknown as { affFixedCost?: unknown } | null)?.affFixedCost === "number"
-      ? (modelPricing as unknown as { affFixedCost: number }).affFixedCost : null;
-  const affGeneration = {
-          model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model,
-          operation,
-          width: upscaleDims ? upscaleDims.width : width,
-          height: upscaleDims ? upscaleDims.height : height,
-          steps,
-          samples: outputCount,
-          sequential: batchMode === "sequential" && outputCount > 1,
-          strength: imagePricingStrength({ strength }, operation),
-          referenceImageCount,
-          encodedVibeCount,
-          characterPromptCount: activeCharacterCount,
-        };
-  const dailyFamily = dailyImageFamily(affGeneration);
-  const dailyQuote = upscaleQuoteReady && wallet?.dailyBilling && localPricePolicy && dailyFamily && affFixedCost == null
-    ? quoteDailyImage(affGeneration, localPricePolicy, wallet.dailyBilling.cnyPerAff, wallet.dailyBilling.day === dailyImageDay() ? wallet.dailyBilling.counts[dailyFamily] : 0)
-    : null;
-  const estimatedAffCost = !upscaleQuoteReady ? 0 : dailyQuote?.costAff ?? imageCreditCost(affGeneration, affFixedCost, localPricePolicy);
-  const estimatedNewApiCost = !upscaleQuoteReady || providerId !== "newapi" || ["annotate", "suggest-tags"].includes(operation) || (naturalImageModel && modelPricing?.quotaType !== 1) ? null : estimateNewApiCost(modelPricing, {
-    model: operation === "upscale" && !naturalImageModel ? upscaleBillingModel(upscaleModel) : model, operation, maxSamplesPerRequest: studioBatchSize(batchMode), width: upscaleDims?.width ?? width,
-    height: upscaleDims?.height ?? height, steps,
-    samples: outputCount,
-    characterPromptCount: activeCharacterCount,
-    strength: imagePricingStrength({ strength }, operation),
-    referenceImageCount,
-    encodedVibeCount,
-  });
-  const packageRateImages = Math.min(
-    outputCount,
-    wallet?.aff?.packageBalance && wallet.aff.packageRateLimitRemaining > 0
-      ? wallet.aff.packageRateLimitRemaining
-      : 0,
-  );
-  const estimatedPackageCost = wallet?.aff?.enabled
-    ? splitImageCreditCost(estimatedAffCost, outputCount, wallet.aff.packageBalance, packageRateImages, dailyQuote?.affCosts).packageCost
-    : 0;
-  const estimatedPersonalCost = roundAffAmount(estimatedAffCost - estimatedPackageCost);
-  const requiresLocalBilling = providerId === "newapi" && !naturalImageModel && wallet?.dailyBilling?.policy.strictApiBilling === true;
-  const hasSufficientAff = Boolean(wallet?.aff?.enabled && wallet.aff.balance >= estimatedPersonalCost && wallet.aff.packageBalance >= estimatedPackageCost);
-  // The price display follows the required wallet even when its balance is insufficient.
-  const canUseAffEstimate = upscaleQuoteReady && providerId === "newapi" && !naturalImageModel && (requiresLocalBilling || hasSufficientAff);
-  const localAffShortfall = Math.max(0, Math.round((estimatedPersonalCost - (wallet?.aff?.balance ?? 0)) * 10000) / 10000);
-  const localCreditNotice = requiresLocalBilling && wallet?.aff
-    ? !wallet.aff.enabled ? "当前模型的本站额度服务尚未就绪，请刷新后重试。"
-      : localAffShortfall > 0 ? `本次预计消耗 ${estimatedAffCost} AFF，当前可用个人 AFF ${wallet.aff.balance}、图包 ${wallet.aff.packageBalance}，个人 AFF 尚缺 ${localAffShortfall}。此模型使用本站额度，NewAPI 余额不参与本次扣费。` : ""
-    : "";
-
-  const pricingDetails = (children?: React.ReactNode, className?: string) => upscaleInputError
+  const pricingDetails = (children?: React.ReactNode, className?: string) => !canQuoteOperation ? null : upscaleInputError
     ? <p className={className} role="status">{upscaleInputError}</p> : (
     <CreditPricingButton pricing={creditPricing} generation={affGeneration} state={wallet?.dailyBilling}
       wallet={wallet?.aff} usesAff={canUseAffEstimate} onRefresh={refreshWallet} className={className}
-      paymentNote={providerId !== "newapi" ? "当前使用个人 Key，实际费用以提供方账单为准。下面展示本站 AFF / 图包价格，供对比。" : canUseAffEstimate ? "当前使用本站 AFF / 图包，图包优先，个人 AFF 补足。" : "当前按 NewAPI 自身价格与余额计费。下面的 AFF / 图包规则仅作对比，不是本次 NewAPI 账单。"}>
+      preparation={preparation} showQuote={!naturalImageModel && accountQuoteReady} paymentNote={paymentNote}>
       {children}
     </CreditPricingButton>
   );
@@ -4960,19 +4962,19 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const legacyGenerationFooter = (
     <div className="nai-generation-footer mobile-generation-footer" data-layout-module="generate">
       {!sidebarPromptLayout && generationParameters}
-      {operation !== "suggest-tags" && providerId === "newapi" && (
+      {canQuoteOperation && providerId === "newapi" && !mixedPayment && (
         <NaiBalanceMeter
           signedIn={signedIn}
           unit={canUseAffEstimate ? "AFF" : "USD"}
           balance={canUseAffEstimate ? wallet?.aff?.totalBalance : me?.user?.balance}
-          cost={canUseAffEstimate ? estimatedAffCost : estimatedNewApiCost}
+          cost={canUseAffEstimate ? estimatedAffCost : canUseNewApiEstimate ? estimatedNewApiCost : null}
         />
       )}
-      {operation !== "suggest-tags" && providerId !== "newapi" && (
+      {canQuoteOperation && providerId !== "newapi" && (
         <span className="text-xs text-[var(--muted)]">个人 Key · 费用以提供方账单为准</span>
       )}
       {modelCapabilities.seed && <SeedModeNotice seed={seed} onRandom={() => setSeed("")} />}
-      {operation !== "suggest-tags" && pricingDetails()}
+      {canQuoteOperation && pricingDetails()}
       <div className="nai-generation-action">
         <button
           data-studio-generate={generating ? undefined : true}
@@ -4981,12 +4983,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           onClick={generating ? () => cancelImageGeneration() : handleStudioGenerationClick}
           disabled={!generating && (layoutEditorOpen || !model || !upscaleQuoteReady)}
           title={
-            providerId !== "newapi"
+            !canQuoteOperation ? undefined : preparationUnavailable ? paymentNote : providerId !== "newapi"
               ? "使用个人 API Key；费用以提供方账单为准"
               : canUseAffEstimate
               ? localCreditNotice || `图包 -${estimatedPackageCost} / 个人 -${estimatedPersonalCost} · 余量 ${wallet?.aff?.packageBalance ?? 0} / ${wallet?.aff?.balance ?? 0}`
-              : modelPricing
-                ? `$上游 {modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率；实际以账单为准 · 按 NewAPI 余额计费`
+              : canUseNewApiEstimate && modelPricing
+                ? `上游 ${modelPricing.effectiveGroup} × ${modelPricing.groupRatio} 倍率；实际以账单为准 · 按 NewAPI 余额计费`
                 : undefined
           }
           className="nai-generate-button"
@@ -5003,14 +5005,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 ? `生成 ${count} 张图像`
                 : nativeUpscale ? "开始 V5 超分" : `执行${modes.find((item) => item.id === operation)?.label}`}
           </span>
-          {!generating && operation !== "suggest-tags" && providerId === "newapi" && (canUseAffEstimate || estimatedNewApiCost != null) && (
-            <span className="nai-cost-badge" title={canUseAffEstimate ? "预计创作额度" : "按当前 NewAPI 配置预估，实际以账单为准"}>
-              {canUseAffEstimate
-                ? `${estimatedAffCost} AFF`
-                : estimatedNewApiCost != null
-                  ? `预计 $${estimatedNewApiCost.toFixed(2)}`
-                  : null}
-            </span>
+          {!generating && operationCostLabel && (
+            <span className="nai-cost-badge" title="预估费用，以实际账单为准">{operationCostLabel}</span>
           )}
         </button>
       </div>
@@ -5069,10 +5065,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   const replicaVariant = naiLayout ? "nai" as const : "nlw" as const;
   const replicaBalance = providerId === "newapi"
-    ? !signedIn ? "体验模式" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
+    ? !signedIn ? "体验模式" : mixedPayment ? "混合计费" : canUseAffEstimate ? String(wallet?.aff?.totalBalance ?? "读取中") : me?.user?.balance?.toFixed(2) ?? "读取中"
     : "个人 Key";
   function renderReferenceLibrary(kind: ImageReferenceKind) {
-    const props: ReferenceLibraryProps = { kind, references: referenceSelections(kind), library: imageReferences.library, encodings: imageReferences.encodings, encodingId: imageReferences.encodingId, disabled: generating,
+    const props: ReferenceLibraryProps = { kind, encodingCostAff: liveCreditPricing && kind === "vibe-transfer" ? quoteVibePreparation(model, 1, liveCreditPricing)?.costAff : undefined, references: referenceSelections(kind), library: imageReferences.library, encodings: imageReferences.encodings, encodingId: imageReferences.encodingId, disabled: generating,
       onAdd: imageReferences.add, onUpdate: (mode,id,change) => { if (id === "source" && !imageReferences.baskets[mode].length) imageReferences.replace(mode, referenceSelections(mode).map(item => ({ ...item, ...change }))); else imageReferences.update(mode,id,change); },
       onRemove: (mode,id) => { if (imageReferences.baskets[mode].length <= 1) { setSource(null); setMask(null); } imageReferences.remove(mode,id); },
       onReplace: imageReferences.replace, onSave: imageReferences.save, onDeleteSaved: imageReferences.removeSaved, onEncode: imageReferences.encode, onCancelEncoding: imageReferences.cancelEncoding, onClearCache: imageReferences.clearCache, onNotice: setNotice };
@@ -5130,11 +5126,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       steps={steps} scale={scale} seed={seed} sampler={sampler} schedule={schedule} cfgRescale={cfgRescale}
       setSteps={setSteps} setScale={setScale} setSeed={setSeed} setSampler={setSampler} setSchedule={setSchedule} setCfgRescale={setCfgRescale}
       count={count} setCount={setCount} batchMode={batchMode} setBatchMode={setBatchMode} />}
-    pricingControl={operation !== "suggest-tags" ? pricingDetails() : undefined}
+    pricingControl={canQuoteOperation ? pricingDetails() : undefined}
     seedControl={modelCapabilities.seed ? <SeedModeNotice seed={seed} onRandom={() => setSeed("")} /> : undefined}
     generating={generating} disabled={layoutEditorOpen || !model || !upscaleQuoteReady} progress={streamProgress || batchProgress}
     operationLabel={generationModes.has(operation) ? "生成" : `执行${modes.find(item => item.id === operation)?.label ?? "工具"}`}
-    balance={replicaBalance} cost={providerId !== "newapi" ? "" : canUseAffEstimate ? `${estimatedAffCost} AFF` : estimatedNewApiCost != null ? `$${estimatedNewApiCost.toFixed(2)}` : ""}
+    balance={replicaBalance} cost={operationCostLabel}
     count={outputCount} batchMode={batchMode} onBatchModeChange={setBatchMode} onRun={handleStudioGenerationClick}
       onCancel={() => cancelImageGeneration()}
   /> : legacyGenerationFooter;
@@ -5728,16 +5724,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           {!sidebarPromptLayout && (
             <div className="flex shrink-0 flex-wrap items-center gap-3 border-t border-[var(--line)] bg-[#fffefa] p-3">
               {modelCapabilities.seed && <SeedModeNotice seed={seed} onRandom={() => setSeed("")} />}
-              {operation !== "suggest-tags" && signedIn && (
+              {canQuoteOperation && signedIn && (
                 pricingDetails(<>
                   {providerId !== "newapi" ? (
-                    <span>个人 Key · 费用以提供方账单为准</span>
+                    <span>个人 Key · 费用以提供方账单为准{preparationCostLabel && ` · ${preparationCostLabel}`}</span>
                   ) : canUseAffEstimate ? (
                     <>
                       <div>
                         预计消耗{" "}
                         <b className="text-[var(--ink)]">
-                          {formatAff(estimatedAffCost)} AFF
+                          {estimatedAffCost == null ? "暂不可估算" : `${formatAff(estimatedAffCost)} AFF`}
                         </b>
                       </div>
                       {estimatedPackageCost > 0 && (
@@ -5770,17 +5766,17 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                       <div>
                         预计消耗{" "}
                         <b className="text-[var(--ink)]">
-                          {estimatedNewApiCost == null ? "暂不可估算" : `$${estimatedNewApiCost.toFixed(2)}`}
+                          {operationCostLabel || "暂不可估算"}
                         </b>
                       </div>
-                      {modelPricing && (
+                      {canUseNewApiEstimate && modelPricing && (
                         <div>
                           上游 {modelPricing.effectiveGroup} ×{" "}
                           {modelPricing.groupRatio} 倍率；实际以账单为准
                         </div>
                       )}
                       <div>
-                        当前请求按 NewAPI 自身价格与余额计费
+                        {paymentNote}
                       </div>
                       <div>
                         NewAPI 余额{" "}
@@ -6130,6 +6126,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             setMask(null);
           }}
           onPreciseRedraw={preciseRedraw}
+          preciseRedrawPricing={{ authenticated: signedIn, providerId, model: inpaintModelFor(model, imageProtocol), steps, strength, generating }}
         />
       )}
       {dropActive && !maskEditorOpen && (
@@ -6293,6 +6290,7 @@ function MaskEditor({
   onSave,
   onReplaceSource,
   onPreciseRedraw,
+  preciseRedrawPricing,
 }: {
   source: Upload;
   initialMask: Upload | null;
@@ -6300,6 +6298,7 @@ function MaskEditor({
   onSave: (mask: Upload) => void;
   onReplaceSource: (upload: Upload) => void;
   onPreciseRedraw?: (selection: Rect) => Promise<void>;
+  preciseRedrawPricing: { authenticated: boolean; providerId: string; model: string | null; steps: number; strength: number; generating: boolean };
 }) {
   const displayRef = useRef<HTMLCanvasElement>(null);
   const maskCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -6318,6 +6317,27 @@ function MaskEditor({
   const [imageRatio, setImageRatio] = useState(1);
   const [tool, setTool] = useState<"brush" | "eraser" | "rectangle">("brush");
   const [selection, setSelection] = useState<Rect | null>(null);
+  const redrawPatch = useMemo(() => {
+    if (!selection || selection.width < 8 || selection.height < 8 || !canvasSize.width || !canvasSize.height) return null;
+    try { return selectionToPatch({ selectionRect: selection, imageSize: canvasSize, context: 64 }); }
+    catch { return null; }
+  }, [selection, canvasSize]);
+  const redrawQuote = useEditorPriceQuote(
+    preciseRedrawPricing.authenticated,
+    preciseRedrawPricing.providerId,
+    redrawPatch && preciseRedrawPricing.model ? {
+      model: preciseRedrawPricing.model,
+      operation: "inpainting",
+      width: redrawPatch.width,
+      height: redrawPatch.height,
+      steps: preciseRedrawPricing.steps,
+      samples: 1,
+      strength: preciseRedrawPricing.strength,
+      hasInputImage: true,
+    } : null,
+    1,
+    preciseRedrawPricing.generating,
+  );
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const [brushSize, setBrushSize] = useState(32);
   const [maskColor, setMaskColor] = useState("#ff4d4f");
@@ -6690,6 +6710,7 @@ function MaskEditor({
           </button>
         </div>
       </div>
+      {redrawQuote.label && <p role="status" className="px-3 py-2 text-xs">{redrawQuote.label}</p>}
       <div className="mask-editor-stage">
         <div
           className={`mask-editor-canvas-wrap${bgMode === "white" ? " plain" : ""}`}

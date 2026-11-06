@@ -1,5 +1,6 @@
 "use client";
 import Image from "next/image";
+import { formatAff } from "@/lib/credit-pricing";
 
 import { useRef, useState } from "react";
 import { MAX_STUDIO_REFERENCES, parseImageReferenceBundle, type ImageReferenceAsset, type ImageReferenceKind, type ImageReferenceSelection, type EncodedImageReference } from "@/lib/image-references";
@@ -7,6 +8,7 @@ import { LfnSelect } from "@/mobile/ui/lfn-select";
 import "./reference-library.css";
 
 export type ReferenceLibraryProps = {
+  encodingCostAff?: number;
   kind: ImageReferenceKind;
   references: ImageReferenceSelection[];
   library: ImageReferenceAsset[];
@@ -51,7 +53,7 @@ export function ReferenceLibrary(p: ReferenceLibraryProps) {
       </div>
     </article>)}
     {isVibe && active.length > 1 && active.reduce((total, item) => total + item.strength, 0) > 1 && <p className="mobile-reference-library-hint">叠加强度超过 1；若画面受到过强影响，可降低各图强度。</p>}
-    {isVibe && <p className="mobile-reference-library-hint">预处理会产生费用。缓存保存在本机，按账号、模型和信息提取值区分；导出配置仅包含原图和参数。</p>}
+    {isVibe && <p className="mobile-reference-library-hint">{p.encodingCostAff != null ? <>预处理单张预计 {formatAff(p.encodingCostAff)} AFF。</> : "预处理报价以本站实时价格为准。"}缓存保存在本机，按账号、模型和信息提取值区分；导出配置仅包含原图和参数。</p>}
     <details><summary>本机参考图库（{p.library.length}）</summary><input aria-label="搜索参考图库" placeholder="搜索图片名称" value={search} onChange={(event) => setSearch(event.target.value)}/><div className="mobile-reference-library-saved">{p.library.filter((item) => item.name.toLowerCase().includes(search.toLowerCase())).map((item) => <article key={item.id}><Image unoptimized width={512} height={512} src={item.data} alt={item.name}/><span>{item.name}</span><button type="button" disabled={p.disabled || p.references.length >= MAX_STUDIO_REFERENCES} onClick={() => p.onAdd(p.kind, { ...item, id: crypto.randomUUID() })}>加入参考</button><button type="button" onClick={() => void p.onDeleteSaved(item.id)}>删除本机图片</button></article>)}</div>{isVibe && <button type="button" disabled={!!p.encodingId} onClick={() => void p.onClearCache()}>清除本机风格缓存</button>}</details>
   </div>;
 }
