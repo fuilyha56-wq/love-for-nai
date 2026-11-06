@@ -2,7 +2,7 @@ import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { MAX_IMAGE_REQUEST_SAMPLES, splitImageBatches } from "@/lib/image-batches";
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import JSZip from "jszip";
 import {
   refundImageCredits,
@@ -21,8 +21,9 @@ import {
 } from "@/lib/newapi";
 import { ensureManagedFallbackToken } from "@/lib/newapi-db";
 import { resolvedAuthProviderId } from "@/lib/platform";
-import { reserveHistoryImageIds, saveHistory } from "@/lib/history";
-import { watermarkImageResponse } from "@/lib/image-response-watermark";
+import { saveHistory } from "@/lib/history";
+import { imageWatermarkErrorResponse } from "@/lib/image-response-watermark";
+import { watermarkImages, WatermarkSigningError } from "@/lib/image-watermark";
 import { prepareMaskedImageEdit } from "@/lib/image-transport";
 import { naiGatewayGenerationBody, naiNativeGenerationBody } from "@/lib/nai-native-request";
 import { pngDataUrl, readNaiMsgpackStream } from "@/lib/nai-stream";
@@ -217,10 +218,14 @@ async function handleUpscale(
       await refund();
       return finish(NextResponse.json({ message: "上游超分响应中没有有效 PNG 图片" }, { status: 502 }), { risk, paymentSource, generatedSamples: 0, ...(billing ? { billing } : {}) });
     }
+    const imageId = randomUUID();
+    images = (await watermarkImages(images, session.userId, upscaleModel, {
+      required: true, imageId, requestId: audit.requestId, requestFingerprint: audit.requestFingerprint,
+    })).images;
     let history: Awaited<ReturnType<typeof saveHistory>> = [];
     let warning = "";
     if (body._lfnSkipServerHistory !== true) {
-      try { history = await saveHistory(session.userId, body, images, null); }
+      try { history = await saveHistory(session.userId, { ...body, model: upscaleModel }, images, null, { imageIds: [imageId], requestId: audit.requestId, requestFingerprint: audit.requestFingerprint }); }
       catch { warning = "图片已放大，但暂时无法保存历史记录"; }
     }
     return finish(NextResponse.json({
@@ -240,9 +245,10 @@ async function handleUpscale(
         packageBalance: credits.packageBalance,
         totalBalance: credits.totalBalance,
       } : null,
-    }, { headers: { "X-LFN-Payment-Source": paymentSource } }), { status: 200, risk, paymentSource, generatedSamples: 1, historyIds: history.map((item) => item.id), ...(billing ? { billing } : {}) });
+    }, { headers: { "X-LFN-Payment-Source": paymentSource, "X-LFN-Watermark": "embedded" } }), { status: 200, risk, paymentSource, generatedSamples: 1, watermarkStatus: "embedded", historyIds: history.map((item) => item.id), ...(billing ? { billing } : {}) });
   } catch (error) {
     await refund();
+    if (error instanceof WatermarkSigningError) return finish(imageWatermarkErrorResponse(), { risk, paymentSource, generatedSamples: 0, watermarkStatus: "failed", error: "图片来源签名失败" });
     return finish(NextResponse.json(
       { message: safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "上游超分失败" }) },
       { status: 502 },
@@ -327,12 +333,7 @@ export async function POST(request: Request) {
     return invalidJsonResponse(error);
   }
 
-  const response = await operateImage(request, session, body);
-  const watermarkModel = body.operation === "upscale" ? String(body.upscale_model || "nai-diffusion-5-curated") : body.model || "unknown";
-  const marked = await watermarkImageResponse(response, session.userId, watermarkModel, {
-    requestId: response.headers.get("X-LFN-Request-Id") || (typeof body._lfnRequestId === "string" ? body._lfnRequestId : randomUUID()),
-  });
-  return marked.response;
+  return operateImage(request, session, body);
 }
 
 async function operateImage(request: Request, session: NonNullable<Awaited<ReturnType<typeof getSession>>>, body: Record<string, unknown> & { operation?: string; model?: string }) {
@@ -424,6 +425,26 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
 
   const audit = await startRequestAudit({ request, source: "lfn", endpoint: "/api/images/operate", userId: session.userId, username: session.username, model, operation, parameters: body });
   body._lfnRequestId = audit.requestId;
+  body._lfnRequestFingerprint = audit.requestFingerprint;
+  const imageIds = new Map<number, string>();
+  const identicalImageIds = new Map<string, string>();
+  const signImage = async (image: string, index: number) => {
+    const digest = createHash("sha256").update(image).digest("hex");
+    const id = identicalImageIds.get(digest) || randomUUID();
+    identicalImageIds.set(digest, id);
+    try {
+      const marked = await watermarkImages([image], session.userId, model, {
+        required: true, imageId: id, requestId: audit.requestId, requestFingerprint: audit.requestFingerprint,
+      });
+      imageIds.set(index, id);
+      if (audit.record.watermarkStatus !== "failed") audit.record.watermarkStatus = "embedded";
+      return marked.images[0];
+    } catch (error) {
+      audit.record.watermarkStatus = "failed";
+      throw error;
+    }
+  };
+  const signBatch = (images: string[], offset = 0) => Promise.all(images.map((image, index) => signImage(image, offset + index)));
   await audit.finish();
   let recordedAnlas: number | undefined;
   const recordUpstream = async (response: Response): Promise<void> => {
@@ -469,7 +490,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         : affRefunded ? 0 : creditCharge.cost;
     }
     await audit.finish({
-      status, paymentSource, generatedSamples, historyIds,
+      status, paymentSource, generatedSamples, historyIds, watermarkStatus: audit.record.watermarkStatus,
       billing: { ...audit.record.billing, ...(chargedAff != null ? { lfnChargedAff: Math.round(chargedAff * 10000) / 10000 } : {}) },
     });
   };
@@ -646,7 +667,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
               const image = pngDataUrl(event.image);
               latestImages.set(event.sampleIndex, image);
               if (event.eventType === "final") {
-                const protectedImage = (await finishMaskedImages([image]))[0];
+                const protectedImage = await signImage((await finishMaskedImages([image]))[0], event.sampleIndex);
                 finals.set(event.sampleIndex, protectedImage);
                 generatedSamples = finals.size;
                 send("final", {
@@ -670,15 +691,13 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             await nativeResponse.body?.cancel().catch(() => undefined);
             if (!errorMessage && finals.size === 0 && latestImages.size > 0) {
               console.warn("[lfn] 流式响应缺少 final 事件，提升最后一帧图片");
-              for (const [sampleIndex, image] of latestImages) finals.set(sampleIndex, (await finishMaskedImages([image]))[0]);
+              for (const [sampleIndex, image] of latestImages) finals.set(sampleIndex, await signImage((await finishMaskedImages([image]))[0], sampleIndex));
             } else if (!errorMessage && finals.size > 0) {
-              for (const [sampleIndex, image] of latestImages) if (!finals.has(sampleIndex)) finals.set(sampleIndex, (await finishMaskedImages([image]))[0]);
+              for (const [sampleIndex, image] of latestImages) if (!finals.has(sampleIndex)) finals.set(sampleIndex, await signImage((await finishMaskedImages([image]))[0], sampleIndex));
             }
             if (!errorMessage && finals.size) {
-              const images = Array.from(
-                { length: Math.max(samples, ...finals.keys()) + 1 },
-                (_, index) => finals.get(index),
-              ).filter((item): item is string => Boolean(item));
+              const completed = [...finals.entries()].sort(([a], [b]) => a - b);
+              const images = completed.map(([, image]) => image);
               generatedSamples = images.length;
               if (creditCharge && generatedSamples < samples) {
                 affRefunded = true;
@@ -687,7 +706,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                 await updateImageSettlement(settlementId, { generatedSamples, status: "succeeded" });
               }
               const historyIds = deferPatchHistory || body._lfnSkipServerHistory === true
-                ? [] : reserveHistoryImageIds(images);
+                ? [] : completed.map(([index]) => imageIds.get(index)!);
               send("done", {
                 images,
                 image: images[0],
@@ -770,7 +789,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                     data?: Array<{ b64_json?: string; url?: string }>;
                     usage?: unknown;
                   };
-                  const images = await finishMaskedImages(imageFromResult(result));
+                  const images = await signBatch(await finishMaskedImages(imageFromResult(result)));
                   if (!images.length) throw new Error("fallback no images");
                   generatedSamples = images.length;
                   if (creditCharge && generatedSamples < samples) {
@@ -787,7 +806,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                     }),
                   );
                   const historyIds = deferPatchHistory || body._lfnSkipServerHistory === true
-                    ? [] : reserveHistoryImageIds(images);
+                    ? [] : images.map((_, index) => imageIds.get(index)!);
                   send("done", {
                     images,
                     image: images[0],
@@ -815,29 +834,32 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
                     );
                   }
                   errorMessage = "";
-                } catch {
+                } catch (error) {
+                  if (error instanceof WatermarkSigningError) throw error;
                   // 兜底也失败：保留 errorMessage，finally 统一退款。
                 }
               }
             }
           } catch (error) {
-            errorMessage =
-              safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "流式生成中断" });
-            send("error", { message: errorMessage });
+            const signingFailed = error instanceof WatermarkSigningError;
+            errorMessage = signingFailed ? "图片来源签名失败" : safeUpstreamMessage(error, { ...upstreamPrivacy, fallback: "流式生成中断" });
+            send("error", { message: errorMessage, ...(signingFailed ? { code: "lfn_image_watermark_failed" } : {}) });
           } finally {
             const clientCancelled = streamCancelled || request.signal.aborted;
             if (clientCancelled && !errorMessage) errorMessage = "用户已取消生成";
-            if (clientCancelled && !streamCompletionHandled && finals.size && !deferPatchHistory && body._lfnSkipServerHistory !== true) {
-              const completedImages = [...finals.entries()].sort(([a], [b]) => a - b).map(([, image]) => image);
-              const historyIds = reserveHistoryImageIds(completedImages);
-              void saveHistory(session.userId, body, completedImages, null, { imageIds: historyIds, requestId: typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined }).catch((error) => console.error("[lfn] 保存中断任务的已完成图片失败", error));
+            let partialHistoryIds: string[] = [];
+            if ((clientCancelled || audit.record.watermarkStatus === "failed") && !streamCompletionHandled && finals.size && !deferPatchHistory && body._lfnSkipServerHistory !== true) {
+              const completed = [...finals.entries()].sort(([a], [b]) => a - b);
+              const completedImages = completed.map(([, image]) => image);
+              partialHistoryIds = completed.map(([index]) => imageIds.get(index)!);
+              void saveHistory(session.userId, body, completedImages, null, { imageIds: partialHistoryIds, requestId: audit.requestId }).catch((error) => console.error("[lfn] 保存中断任务的已完成图片失败", error));
             }
             clearTimeout(timeout);
             if (errorMessage && creditCharge && !affRefunded) {
               affRefunded = true;
-              await refundImageCredits(session.userId, creditCharge, generatedSamples);
+              await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId, requestId: audit.requestId });
             }
-            await finishGenerationAudit(errorMessage ? generatedSamples ? 207 : 502 : 200);
+            await finishGenerationAudit(errorMessage ? generatedSamples ? 207 : 502 : 200, partialHistoryIds);
             if (!streamCancelled && !request.signal.aborted) { try { controller.close(); } catch { /* Already closed by the client. */ } }
           }
         },
@@ -850,6 +872,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       });
       return sseResponse(stream, {
         "X-LFN-Payment-Source": paymentSource,
+        "X-LFN-Watermark": "streaming",
       });
       }
     }
@@ -976,7 +999,14 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         lastRaw = "上游未返回图片";
         break;
       }
-      images.push(...batchImages);
+      try {
+        images.push(...await signBatch(batchImages, images.length));
+      } catch (error) {
+        if (!(error instanceof WatermarkSigningError)) throw error;
+        lastStatus = 502;
+        lastRaw = "图片来源签名失败";
+        break;
+      }
       generatedSamples += batchImages.length;
       lastResult = result;
       if (result.usage) usage = result.usage;
@@ -989,6 +1019,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         await refundImageCredits(session.userId, creditCharge, generatedSamples, { settlementId });
       }
       await finishGenerationAudit(generatedSamples ? 207 : lastStatus || 502);
+      if (!generatedSamples && audit.record.watermarkStatus === "failed") return imageWatermarkErrorResponse(audit.responseHeaders());
       return NextResponse.json(
         {
           message: generatedSamples
@@ -996,7 +1027,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             : lastRaw,
           ...(generatedSamples ? { images, image: images[0], partial: true } : {}),
         },
-        { status: generatedSamples ? 207 : lastStatus || 502 },
+        { status: generatedSamples ? 207 : lastStatus || 502, headers: audit.responseHeaders(generatedSamples ? { "X-LFN-Watermark": "embedded" } : undefined) },
       );
     }
     if (operation === "suggest-tags") {
@@ -1015,7 +1046,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
 
     const history = deferPatchHistory || body._lfnSkipServerHistory === true
       ? []
-      : await saveHistory(session.userId, body, images, usage);
+      : await saveHistory(session.userId, body, images, usage, { imageIds: images.map((_, index) => imageIds.get(index)!) }).catch(() => []);
     await finishGenerationAudit(200, history.map(item=>item.id));
     return NextResponse.json({
       images,
@@ -1036,7 +1067,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
             totalBalance: creditCharge.totalBalance,
           }
         : null,
-    }, { headers: audit.responseHeaders() });
+    }, { headers: audit.responseHeaders({ "X-LFN-Watermark": "embedded" }) });
   } catch (error) {
     const admission = riskAdmissionResponse(error);
     if (admission) { await audit.finish({ status: admission.status }); return new Response(admission.body, { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }

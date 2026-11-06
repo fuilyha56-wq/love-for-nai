@@ -8,8 +8,9 @@ import JSZip from "jszip";
 import { encode } from "@msgpack/msgpack";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { watermarkImageResponse } from "@/lib/image-response-watermark";
-import { compatibleNaiZipResponse } from "@/lib/nai-zip-response";
+import { imageWatermarkErrorResponse, watermarkImageResponse, type ImageStreamWatermarkResult } from "@/lib/image-response-watermark";
+import { WatermarkSigningError } from "@/lib/image-watermark";
+import { compatibleNaiZipResponse, readNaiJsonImages } from "@/lib/nai-zip-response";
 import {
   affStatus,
   refundImageCredits,
@@ -68,9 +69,18 @@ import { pngDimensions } from "@/lib/png-dims";
 
 // Some gateways encode an upstream rejection in a successful JSON response.
 // Normalize only that error envelope; successful binary streams stay untouched.
+const localImageFailures = new WeakSet<Response>();
+
 async function safeImageUpstreamResponse(response: Response, privacy: { secrets: string[]; urls: string[] }): Promise<Response> {
   if (response.ok && (response.headers.get("content-type") || "").includes("application/json")) {
-    const payload: unknown = await response.clone().json().catch(() => null);
+    let payload: unknown;
+    try { payload = await response.clone().json(); }
+    catch {
+      await response.body?.cancel().catch(() => undefined);
+      const failure = Response.json({ error: { message: "上游图像响应不完整或不是有效 JSON", type: "api_error", code: "lfn_image_invalid_response" } }, { status: 502 });
+      localImageFailures.add(failure);
+      return failure;
+    }
     if (isRecord(payload) && (payload.error || payload.detail))
       return safeUpstreamErrorResponse(Response.json(payload, { status: 502, headers: response.headers }), privacy);
   }
@@ -165,6 +175,7 @@ export type ExternalImageRequest = {
   generation: AffGeneration;
   prompt?: string;
   samplingAudit?: import("@/lib/native-sampling-audit").NativeSamplingAudit;
+  preserveWebp?: boolean;
 };
 
 export function bearerAuthorization(request: Request): string | Response {
@@ -189,7 +200,7 @@ export async function proxyNewApi(
   pathname: string,
   body?: BodyInit | null,
   contentType?: string | null,
-  options: { imageResponse?: boolean } = {},
+  options: { imageResponse?: boolean; expectImage?: boolean } = {},
 ): Promise<Response> {
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
@@ -197,7 +208,8 @@ export async function proxyNewApi(
 
   try {
     let imageUserId: number | null = null;
-    if (pathname.startsWith("/v1/images/") || /^\/ai\/(?:generate-image(?:-stream)?|upscale|augment-image)$/.test(pathname)) {
+    const imagePath = pathname.startsWith("/v1/images/") || /^\/ai\/(?:generate-image(?:-stream)?|upscale|augment-image|annotate-image)$/.test(pathname);
+    if (imagePath) {
       const identity = await requireIkunExternalIdentity(authorization);
       if (identity instanceof Response) return withExternalCors(identity);
       imageUserId = identity.userId;
@@ -232,14 +244,17 @@ export async function proxyNewApi(
     const publicUpstream = pathname.endsWith("-stream") && protectedUpstream.ok && /(?:msgpack|octet-stream)/i.test(protectedUpstream.headers.get("content-type") || "")
       ? sanitizeNativeImageStream(protectedUpstream, upstreamPrivacy)
       : protectedUpstream;
-    if (options.imageResponse !== false && imageUserId != null && protectedUpstream.ok) {
+    if ((options.imageResponse ?? imagePath) && protectedUpstream.ok) {
       let model = "external-image";
       try { model = String(body instanceof FormData ? body.get("model") || model : typeof body === "string" ? JSON.parse(body).model || model : model); } catch { /* Optional attribution only. */ }
-      const marked = await watermarkImageResponse(publicUpstream, imageUserId, model, { requestId: randomUUID() });
+      const marked = await watermarkImageResponse(publicUpstream, imageUserId ?? 0, model, {
+        required: true, expectImage: options.expectImage ?? true, octetStreamIsMsgpack: pathname.endsWith("-stream"), requestId: randomUUID(),
+      });
       return withExternalCors(forwardResponse(marked.response));
     }
     return withExternalCors(forwardResponse(publicUpstream));
   } catch (error) {
+    if (error instanceof WatermarkSigningError) return withExternalCors(imageWatermarkErrorResponse());
     return withExternalCors(Response.json(
       {
         error: {
@@ -284,8 +299,9 @@ async function auditedResponse(
   const cost = anlas?.trim() ? Number(anlas) : NaN;
   if (Number.isFinite(cost) && cost >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: cost };
   const countHeader = response.headers.get("x-lfn-generated-samples");
-  const generatedSamples = countHeader?.trim() ? Number(countHeader) : undefined;
-  const auditFinished = await finishAuditSafely(audit, { ...patch, status: response.status, ...(generatedSamples != null && Number.isInteger(generatedSamples) ? { generatedSamples } : {}) });
+  const generatedSamples = countHeader?.trim() ? Number(countHeader) : audit.record.generatedSamples;
+  const watermarkStatus = response.headers.get("X-LFN-Watermark");
+  const auditFinished = await finishAuditSafely(audit, { ...patch, status: response.status, ...(generatedSamples != null && Number.isInteger(generatedSamples) ? { generatedSamples } : {}), ...(watermarkStatus === "embedded" || watermarkStatus === "failed" ? { watermarkStatus } : {}) });
   const forwarded = forwardResponse(response);
   const responseHeaders = audit.responseHeaders(forwarded.headers);
   if (!auditFinished) responseHeaders.set("X-LFN-Audit-Status", "failed");
@@ -296,40 +312,30 @@ async function auditedResponse(
   }));
 }
 
-async function watermarkJsonResponse(
+async function signExternalImageResponse(
   response: Response,
   userId: number,
   model: string,
   audit: Awaited<ReturnType<typeof startRequestAudit>>,
+  options: { octetStreamIsMsgpack?: boolean; expectImage?: boolean; onSseComplete?: (result: ImageStreamWatermarkResult) => Promise<void> } = {},
 ): Promise<Response> {
-  const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("application/json")) return auditedResponse(response, audit);
-  let recoveredBody: string | undefined;
-  let recoveredHeaders: Headers | undefined;
+  if (!response.ok) return response;
   try {
     const marked = await watermarkImageResponse(response, userId, model, {
+      required: true,
+      expectImage: options.expectImage ?? true,
+      octetStreamIsMsgpack: options.octetStreamIsMsgpack,
+      onSseComplete: options.onSseComplete,
       requestId: audit.requestId,
       requestFingerprint: audit.requestFingerprint,
-      parameters: audit.record.parameters,
     });
-    recoveredHeaders = new Headers(marked.response.headers);
-    recoveredBody = await marked.response.text();
-    const payload = JSON.parse(recoveredBody) as JsonRecord;
-    const watermarkStatus = marked.status();
-    const body = JSON.stringify(payload);
-    const headers = audit.responseHeaders(marked.response.headers);
-    const generatedSamples = imageCountFromJson(payload);
-    headers.set("X-LFN-Generated-Samples", String(generatedSamples));
-    const rawAnlas = response.headers.get("x-anlas-cost");
-    const reportedAnlas = rawAnlas?.trim() ? Number(rawAnlas) : NaN;
-    if (Number.isFinite(reportedAnlas) && reportedAnlas >= 0) audit.record.billing = { ...audit.record.billing, gatewayAnlasCost: reportedAnlas };
-    const auditFinished = await finishAuditSafely(audit, { status: response.status, watermarkStatus, generatedSamples });
-    if (!auditFinished) headers.set("X-LFN-Audit-Status", "failed");
-    return withExternalCors(new Response(body, { status: response.status, statusText: response.statusText, headers }));
-  } catch {
-    if (recoveredBody !== undefined) return auditedResponse(new Response(recoveredBody, { status: response.status, statusText: response.statusText, headers: recoveredHeaders }), audit, { watermarkStatus: "failed" });
-    if (response.bodyUsed || response.body?.locked) return auditedResponse(Response.json({ error: { message: "图像响应读取中断，请检查生成记录", code: "lfn_image_response_interrupted" } }, { status: 502 }), audit, { watermarkStatus: "failed" });
-    return auditedResponse(response, audit, { watermarkStatus: "failed" });
+    return marked.response;
+  } catch (error) {
+    if (!(error instanceof WatermarkSigningError)) throw error;
+    audit.record.watermarkStatus = "failed";
+    const failure = imageWatermarkErrorResponse();
+    localImageFailures.add(failure);
+    return failure;
   }
 }
 
@@ -409,11 +415,14 @@ async function settleExternalCharge(
   const paymentSource = paymentSourceForCharge(charge);
   if (!response.ok) {
     await refundImageCredits(userId, charge, 0, { settlementId, requestId });
-    return paymentResponse(await safeUpstreamErrorResponse(response, privacy), paymentSource);
+    if (audit) audit.record.generatedSamples = 0;
+    recordBilling(0);
+    return paymentResponse(localImageFailures.has(response) ? response : await safeUpstreamErrorResponse(response, privacy), paymentSource);
   }
   const contentType = response.headers.get("content-type") || "";
   if (!contentType.includes("application/json")) {
-    await settleLocal(charge.samples);
+    const count = Number(response.headers.get("x-lfn-generated-samples") ?? charge.samples);
+    await settleLocal(Number.isSafeInteger(count) ? count : 0);
     return paymentResponse(response, paymentSource);
   }
   let payload: unknown;
@@ -437,7 +446,8 @@ async function settleExternalCharge(
     recordBilling(0);
     return paymentResponse(await safeUpstreamErrorResponse(Response.json(payload, { status: 502, headers: response.headers }), privacy), paymentSource);
   }
-  await settleLocal(imageCountFromJson(payload));
+  const signedCount = Number(response.headers.get("x-lfn-generated-samples") ?? imageCountFromJson(payload));
+  await settleLocal(Number.isSafeInteger(signedCount) ? signedCount : 0);
   return paymentResponse(response, paymentSource);
 }
 
@@ -450,8 +460,10 @@ export async function proxyImageWithCredits(
   const authorization = bearerAuthorization(request);
   if (authorization instanceof Response) return authorization;
   const identity = authorization;
+  const expectImage = !["encode-vibe", "suggest-tags"].includes(imageRequest.generation.operation || "generate");
+  const relayOptions = { expectImage };
   if (!isNaiExternalModel(imageRequest.generation.model))
-    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType);
+    return proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, relayOptions);
   const transportModel = naiGatewayModel(imageRequest.generation.model);
   if (transportModel !== imageRequest.generation.model) {
     // Keep the accounting model unchanged; only the outgoing payload uses the
@@ -555,7 +567,7 @@ export async function proxyImageWithCredits(
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
     )(-1);
-    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), audit);
+    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, relayOptions), audit);
   }
   if (userId == null) {
     if (strictBilling) return auditedResponse(localBillingError("暂时无法确认 API Key 对应账号，请稍后重试", 503), audit);
@@ -563,7 +575,7 @@ export async function proxyImageWithCredits(
     gatewayLogStart(
       externalLogMeta(maskKeyForLog(authorization), imageRequest, pathname),
     )(-1);
-    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType), audit);
+    return auditedResponse(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, relayOptions), audit);
   }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
@@ -576,6 +588,29 @@ export async function proxyImageWithCredits(
   let charge: ImageCreditCharge | null = null;
   let settled = false;
   let settlementId: string | undefined;
+  const prepareDelivery = async (response: Response) => {
+    const safe = await safeImageUpstreamResponse(response, upstreamPrivacy);
+    return signExternalImageResponse(safe, userId, imageRequest.generation.model, audit, { expectImage });
+  };
+  const deliverCharged = async (response: Response, reserved: ImageCreditCharge, settlement: string) => {
+    if (response.ok && response.headers.get("content-type")?.includes("text/event-stream")) {
+      const source = paymentSourceForCharge(reserved);
+      const delivered = await signExternalImageResponse(response, userId, imageRequest.generation.model, audit, {
+        expectImage,
+        onSseComplete: async ({ samples, status, error }) => {
+          const headers = new Headers(response.headers);
+          headers.set("X-LFN-Generated-Samples", String(samples));
+          await settleExternalCharge(new Response(null, { headers }), userId, reserved, settlement, audit.requestId, audit, upstreamPrivacy);
+          const incomplete = error || (samples < reserved.samples ? "图片流未完成" : undefined);
+          await finishAuditSafely(audit, { status: incomplete ? samples ? 206 : 502 : 200, paymentSource: source, watermarkStatus: status, ...(incomplete ? { error: incomplete } : {}) });
+        },
+      });
+      const paid = paymentResponse(delivered, source);
+      return withExternalCors(new Response(paid.body, { status: paid.status, headers: audit.responseHeaders(paid.headers) }));
+    }
+    const delivered = await settleExternalCharge(await prepareDelivery(response), userId, reserved, settlement, audit.requestId, audit, upstreamPrivacy);
+    return auditedResponse(delivered, audit);
+  };
   try {
     charge = await trySpendImageCredits(userId, imageRequest.generation, audit.requestId);
     if (!charge) {
@@ -611,11 +646,11 @@ export async function proxyImageWithCredits(
           throw error;
         });
         finishManagedLog(managedUpstream.status);
-        return watermarkJsonResponse(await auditedResponse(paymentResponse(forwardResponse(await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy)), "newapi"), audit, { paymentSource: "newapi" }), userId, imageRequest.generation.model, audit);
+        return auditedResponse(paymentResponse(await prepareDelivery(managedUpstream), "newapi"), audit, { paymentSource: "newapi" });
       }
       return auditedResponse(
         paymentResponse(
-          await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType),
+          await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, relayOptions),
           "newapi",
         ),
         audit,
@@ -669,7 +704,6 @@ export async function proxyImageWithCredits(
         const result = await imageAdapter.generate(adapterRequest);
         adapterGenerated = true;
 
-        settled = true;
         finishAdapterLog(200);
 
         // 转换为兼容格式
@@ -677,7 +711,9 @@ export async function proxyImageWithCredits(
           data: result.images,
           usage: result.usage,
         });
-        return watermarkJsonResponse(await settleExternalCharge(response, userId, charge, settlementId, audit.requestId, audit), userId, imageRequest.generation.model, audit);
+        const delivered = await deliverCharged(response, charge, settlementId);
+        settled = true;
+        return delivered;
       } catch (error) {
         if (adapterGenerated) throw error;
         console.error("Adapter image generation failed, falling back:", error);
@@ -706,8 +742,9 @@ export async function proxyImageWithCredits(
         throw error;
       });
       finishUpstreamLog(upstream.status);
+      const delivered = await deliverCharged(upstream, charge, settlementId);
       settled = true;
-      return watermarkJsonResponse(await settleExternalCharge(upstream, userId, charge, settlementId, audit.requestId, audit, upstreamPrivacy), userId, imageRequest.generation.model, audit);
+      return delivered;
     }
 
     throw new Error("No image service available");
@@ -793,9 +830,9 @@ export function naiGenerationPayload(body: JsonRecord): JsonRecord {
   };
 }
 
-export async function naiZipResponse(upstream: Response): Promise<Response> {
+export async function naiZipResponse(upstream: Response, preserveWebp = upstream.headers.get("x-lfn-watermark") === "embedded"): Promise<Response> {
   if (!upstream.ok) return withExternalCors(forwardResponse(upstream));
-  return withExternalCors(await compatibleNaiZipResponse(upstream));
+  return withExternalCors(await compatibleNaiZipResponse(upstream, preserveWebp));
 }
 
 /** Launcher v4 accepts big-endian length-prefixed MessagePack, including on NewAPI fallback. */
@@ -807,10 +844,7 @@ export async function naiMsgpackResponse(upstream: Response): Promise<Response> 
   const headers = new Headers(upstream.headers);
   if (type.includes("json")) {
     const result = await upstream.json() as JsonRecord;
-    images = (Array.isArray(result.data) ? result.data : []).flatMap((item) => {
-      if (!isRecord(item) || typeof item.b64_json !== "string") return [];
-      return [Uint8Array.from(Buffer.from(item.b64_json.replace(/^data:image\/[^;]+;base64,/, ""), "base64"))];
-    });
+    images = await readNaiJsonImages(result);
     headers.set("X-LFN-Usage", encodeURIComponent(JSON.stringify(result.usage ?? null)));
   } else if (type.includes("zip")) {
     const zip = await JSZip.loadAsync(await upstream.arrayBuffer());
@@ -856,10 +890,10 @@ async function naiVibeResponse(response: Response): Promise<Response> {
   return new Response(bytes, { status: response.status, statusText: response.statusText, headers });
 }
 
-async function nativeResponseForPath(response: Response, pathname: string): Promise<Response> {
+async function nativeResponseForPath(response: Response, pathname: string, preserveWebp = false): Promise<Response> {
   if (pathname === "/ai/encode-vibe") return naiVibeResponse(response);
   if (!pathname.startsWith("/ai/generate-image")) return response;
-  return pathname.endsWith("-stream") ? naiMsgpackResponse(response) : naiZipResponse(response);
+  return pathname.endsWith("-stream") ? naiMsgpackResponse(response) : naiZipResponse(response, preserveWebp);
 }
 
 export function unsupportedNaiOperation(request: Request, operation: string): Response {
@@ -1028,7 +1062,7 @@ export async function proxyNaiNativeWithCredits(
     gatewayLogStart(
       nativeLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
-    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
+    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, userId, audit, newApiFallback), audit, { paymentSource: "newapi" });
   }
 
   const upstreamPrivacy = { secrets: [nativeUpstream.token, authorization.replace(/^Bearer\s+/i, "")], urls: [nativeUpstream.baseUrl] };
@@ -1043,7 +1077,7 @@ export async function proxyNaiNativeWithCredits(
     gatewayLogStart(
       nativeLogMeta(maskKeyForLog(authorization), imageRequest, fallbackEndpoint),
     )(-1);
-    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), audit, { paymentSource: "newapi" });
+    return auditedResponse(await nativeNewApiFallback(request, pathname, imageRequest, userId, audit, newApiFallback), audit, { paymentSource: "newapi" });
   }
 
   const userRate = checkImageRateLimit(request, `user:${userId}`);
@@ -1102,13 +1136,12 @@ export async function proxyNaiNativeWithCredits(
         });
         finishManagedLog(managedUpstream.status);
         const safeManaged = await safeImageUpstreamResponse(managedUpstream, upstreamPrivacy);
-        if (pathname === "/ai/encode-vibe")
-          return auditedResponse(paymentResponse(await nativeResponseForPath(safeManaged, pathname), "newapi"), audit, { paymentSource: "newapi" });
-        const marked = await watermarkImageResponse(safeManaged, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
-        return auditedResponse(paymentResponse(await nativeResponseForPath(marked.response, pathname), "newapi"), audit, { paymentSource: "newapi", watermarkStatus: marked.status() });
+        const normalized = await nativeResponseForPath(safeManaged, pathname, imageRequest.preserveWebp);
+        const delivered = pathname === "/ai/encode-vibe" ? normalized : await signExternalImageResponse(normalized, userId, imageRequest.generation.model, audit, { octetStreamIsMsgpack: pathname.endsWith("-stream") });
+        return auditedResponse(paymentResponse(delivered, "newapi"), audit, { paymentSource: "newapi" });
       }
       return auditedResponse(
-        paymentResponse(await nativeNewApiFallback(request, pathname, imageRequest, newApiFallback), "newapi"),
+        paymentResponse(await nativeNewApiFallback(request, pathname, imageRequest, userId, audit, newApiFallback), "newapi"),
         audit,
         { paymentSource: "newapi" },
       );
@@ -1194,8 +1227,8 @@ export async function proxyNaiNativeWithCredits(
       });
     }
     const nativeResponse = pathname.endsWith("-stream")
-      ? await naiMsgpackResponse(upstream)
-      : await naiZipResponse(upstream);
+      ? await naiMsgpackResponse(protectedUpstream)
+      : await naiZipResponse(protectedUpstream, imageRequest.preserveWebp ?? false);
     if (nativeResponse && !nativeResponse.ok) {
       await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
       return auditedResponse(paymentResponse(nativeResponse, paymentSourceForCharge(charge)), audit, { paymentSource: paymentSourceForCharge(charge), generatedSamples: 0, error: "原生上游未返回有效图片" });
@@ -1217,7 +1250,10 @@ export async function proxyNaiNativeWithCredits(
         error: "原生上游 ZIP 响应无效",
       });
     }
-    const markedNative = await watermarkImageResponse(nativeResponse, userId, imageRequest.generation.model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint, parameters: audit.record.parameters });
+    const markedNative = await watermarkImageResponse(nativeResponse, userId, imageRequest.generation.model, {
+      required: true, expectImage: true, octetStreamIsMsgpack: pathname.endsWith("-stream"),
+      requestId: audit.requestId, requestFingerprint: audit.requestFingerprint,
+    });
     const nativeProduced = pathname.endsWith("-stream") ? charge.samples : Math.min(charge.samples, Number(nativeResponse.headers.get("X-LFN-Generated-Samples")) || charge.samples);
     if (!pathname.endsWith("-stream") && nativeProduced < charge.samples) await refundImageCredits(userId, charge, nativeProduced, { settlementId, requestId: audit.requestId });
     settled = true;
@@ -1260,6 +1296,7 @@ export async function proxyNaiNativeWithCredits(
     const admission = riskAdmissionResponse(error);
     if (admission) return auditedResponse(admission, audit);
     if (charge && !settled) await refundImageCredits(userId, charge, 0, { settlementId, requestId: audit.requestId });
+    if (error instanceof WatermarkSigningError) return auditedResponse(imageWatermarkErrorResponse(), audit, { generatedSamples: 0, error: "图片来源签名失败" });
     return withExternalCors(Response.json(
       {
         error: {
@@ -1277,19 +1314,24 @@ async function nativeNewApiFallback(
   request: Request,
   pathname: string,
   imageRequest: ExternalImageRequest,
+  userId: number | null,
+  audit: Awaited<ReturnType<typeof startRequestAudit>>,
   newApiFallback?: { pathname: string; body: BodyInit; contentType: string } | "unsupported",
 ): Promise<Response> {
   if (newApiFallback === "unsupported")
     return unsupportedNaiOperation(request, pathname.replace(/^\/ai\//, ""));
-  if (newApiFallback)
-    return nativeResponseForPath(await proxyNewApi(
+  const upstream = newApiFallback
+    ? await proxyNewApi(
       request,
       newApiFallback.pathname,
       newApiFallback.body,
       newApiFallback.contentType,
-      { imageResponse: pathname !== "/ai/encode-vibe" },
-    ), pathname);
-  return nativeResponseForPath(await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, { imageResponse: pathname !== "/ai/encode-vibe" }), pathname);
+      { imageResponse: false },
+    )
+    : await proxyNewApi(request, pathname, imageRequest.body, imageRequest.contentType, { imageResponse: false });
+  const normalized = await nativeResponseForPath(upstream, pathname, imageRequest.preserveWebp);
+  if (pathname === "/ai/encode-vibe") return normalized;
+  return signExternalImageResponse(normalized, userId ?? 0, imageRequest.generation.model, audit, { octetStreamIsMsgpack: pathname.endsWith("-stream") });
 }
 
 export function isRecord(value: unknown): value is JsonRecord {

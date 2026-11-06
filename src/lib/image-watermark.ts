@@ -2,7 +2,9 @@ import { createHash, createSign, createVerify, generateKeyPairSync } from "node:
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getRuntimeSettings } from "@/lib/runtime-config";
-import { jpegComments } from "@/lib/nai-metadata";
+import { readWatermarkContainer, type WatermarkImageMime } from "./image-watermark-container";
+
+export { detectWatermarkImageMime } from "./image-watermark-container";
 
 export type WatermarkPayload = {
   schema: "lfn-watermark-v2" | "lfn-watermark-v1";
@@ -18,18 +20,28 @@ export type WatermarkPayload = {
   issuer: string;
   label: string;
   note?: string;
+  source?: "gateway";
   parameters?: Record<string, unknown>;
   metadataStripped?: true;
   sourceSha256?: string;
 };
 
 export class WatermarkPreservationError extends Error {}
+export class WatermarkSigningError extends Error {
+  constructor(message = "LFN 图片签名失败", options?: ErrorOptions) {
+    super(message, options);
+    this.name = "WatermarkSigningError";
+  }
+}
 
 export type WatermarkOptions = {
   imageId?: string;
   requestId?: string;
   requestFingerprint?: string;
   parameters?: Record<string, unknown>;
+  required?: boolean;
+  source?: "gateway";
+  sampleOffset?: number;
 };
 
 type StoredKeyPair = { publicKey: string; privateKey: string; keyId?: string };
@@ -76,22 +88,22 @@ async function loadKeyPair(keyPath: string): Promise<KeyPair> {
   return keys;
 }
 
-function dataUrlParts(imageDataUrl: string): { mime: string; encoded: string; buffer: Buffer } {
+function dataUrlBuffer(imageDataUrl: string): Buffer {
   const match = imageDataUrl.match(/^data:(image\/[\w.+-]+);base64,([\s\S]+)$/i);
   if (!match) throw new Error("Invalid data URL");
-  return { mime: match[1].toLowerCase(), encoded: match[2], buffer: Buffer.from(match[2], "base64") };
-}
-
-function isPng(buffer: Buffer): boolean {
-  return buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  return Buffer.from(match[2], "base64");
 }
 
 function calculateImageHash(buffer: Buffer): string {
-  return createHash("sha256").update(isPng(buffer) ? removePngTextChunk(buffer, "LFN-Watermark") : buffer).digest("hex");
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 export function hasEmbeddedWatermark(buffer: Buffer): boolean {
-  return isPng(buffer) && extractPngTextChunk(buffer, "LFN-Watermark") !== null;
+  try {
+    return readWatermarkContainer(buffer).watermark !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function stableJson(value: unknown): string {
@@ -108,14 +120,17 @@ export async function watermarkImages(
   model: string,
   options: WatermarkOptions = {},
 ): Promise<{ images: string[]; status: "embedded" | "disabled" | "skipped" | "failed" }> {
-  const settings = await getRuntimeSettings();
-  if (!settings.watermarkEnabled) return { images, status: "disabled" };
-  let changed = false;
+  if (!options.required && !(await getRuntimeSettings()).watermarkEnabled) return { images, status: "disabled" };
+  const mark = (image: string, index: number) => {
+    const imageId = images.length === 1 && options.imageId ? options.imageId : `${options.requestId || "lfn"}-${(options.sampleOffset ?? 0) + index + 1}`;
+    return embedWatermarkDataUrl(image, imageId, userId, model, options, options.required === true);
+  };
   try {
-    const next = await Promise.all(images.map((image, index) => embedWatermark(image, images.length === 1 && options.imageId ? options.imageId : `${options.requestId || "lfn"}-${index + 1}`, userId, model, options)));
-    changed = next.some((image, index) => image !== images[index]);
-    return { images: next, status: changed ? "embedded" : "skipped" };
-  } catch {
+    const next = await Promise.all(images.map(mark));
+    const embedded = options.required ? next.length > 0 : next.some((image, index) => image !== images[index]);
+    return { images: next, status: embedded ? "embedded" : "skipped" };
+  } catch (error) {
+    if (options.required) throw error instanceof WatermarkSigningError ? error : new WatermarkSigningError(undefined, { cause: error });
     return { images, status: "failed" };
   }
 }
@@ -127,39 +142,88 @@ export async function embedWatermark(
   model: string,
   options: WatermarkOptions = {},
 ): Promise<string> {
-  const settings = await getRuntimeSettings();
-  if (!settings.watermarkEnabled) return imageDataUrl;
-  const inline = imageDataUrl.startsWith("data:") ? imageDataUrl
-    : await (await import("@/lib/provider/http")).downloadProviderImage(imageDataUrl);
-  const source = dataUrlParts(inline);
-  // Existing PNG chunks and pixels (including NAI stealth metadata) are left
-  // byte-for-byte intact. Other raster outputs keep EXIF/XMP/ICC when converted.
-  let buffer = isPng(source.buffer) ? source.buffer
-    : await (await import("sharp")).default(source.buffer, { limitInputPixels: 67_108_864 }).keepMetadata().png().toBuffer();
-  // Sharp preserves EXIF/XMP but not JPEG COM segments containing NAI JSON.
-  if (source.buffer[0] === 0xff && source.buffer[1] === 0xd8) {
-    for (const [, text] of jpegComments(source.buffer))
-      buffer = injectPngTextChunk(buffer, "Comment", text);
+  return embedWatermarkDataUrl(imageDataUrl, imageId, userId, model, options, false);
+}
+
+async function embedWatermarkDataUrl(
+  imageDataUrl: string,
+  imageId: string,
+  userId: number,
+  model: string,
+  options: WatermarkOptions,
+  retry: boolean,
+): Promise<string> {
+  try {
+    if (!options.required && !(await getRuntimeSettings()).watermarkEnabled) return imageDataUrl;
+    const inline = imageDataUrl.startsWith("data:") ? imageDataUrl
+      : await (await import("@/lib/provider/http")).downloadProviderImage(imageDataUrl);
+    const bytes = dataUrlBuffer(inline);
+    const sign = () => signImageWatermark(bytes, imageId, userId, model, options);
+    const signed = await sign().catch((error: unknown) => {
+      if (!retry) throw error;
+      return sign();
+    });
+    if (signed.status === "disabled") return imageDataUrl;
+    return `data:${signed.mime};base64,${signed.buffer.toString("base64")}`;
+  } catch (error) {
+    if (options.required && !(error instanceof WatermarkSigningError)) throw new WatermarkSigningError(undefined, { cause: error });
+    throw error;
   }
-  const keys = await getKeyPair();
-  const payload: WatermarkPayload = {
-    schema: "lfn-watermark-v2",
-    keyId: keys.keyId,
-    imageId,
-    requestId: options.requestId || imageId,
-    requestFingerprint: options.requestFingerprint,
-    sha256: calculateImageHash(buffer),
-    timestamp: new Date().toISOString(),
-    userId,
-    model,
-    domain: settings.publicUrl || process.env.LFN_PUBLIC_URL || "love-for-nai",
-    issuer: settings.watermarkIssuer,
-    label: settings.watermarkLabel,
-    note: settings.watermarkNote || undefined,
-    parameters: options.parameters,
-  };
-  const watermarked = signWatermark(buffer, payload, keys);
-  return `data:image/png;base64,${watermarked.toString("base64")}`;
+}
+
+function sameAttribution(payload: WatermarkPayload, imageId: string, userId: number, model: string, options: WatermarkOptions): boolean {
+  if (options.source === "gateway" && payload.userId > 0 && payload.source !== "gateway") return true;
+  return payload.source === options.source && payload.userId === userId && payload.model === model &&
+    payload.imageId === imageId && payload.requestId === (options.requestId || imageId) &&
+    (options.requestFingerprint === undefined || payload.requestFingerprint === options.requestFingerprint) &&
+    (options.parameters === undefined || stableJson(payload.parameters) === stableJson(options.parameters));
+}
+
+export async function signImageWatermark(
+  buffer: Buffer,
+  imageId: string,
+  userId: number,
+  model: string,
+  options: WatermarkOptions = {},
+): Promise<{ buffer: Buffer; mime: WatermarkImageMime; status: "embedded" | "reused" | "disabled" }> {
+  try {
+    const settings = await getRuntimeSettings();
+    const container = readWatermarkContainer(buffer);
+    const { mime } = container;
+    if (!settings.watermarkEnabled && !options.required) return { buffer, mime, status: "disabled" };
+    const keys = await getKeyPair();
+    if (container.watermark && !container.duplicate) {
+      const prior = verifyEmbeddedWatermark(container, keys);
+      if (prior.valid && prior.shaMatch && prior.payload && sameAttribution(prior.payload, imageId, userId, model, options))
+        return { buffer, mime, status: "reused" };
+    }
+    const payload: WatermarkPayload = {
+      schema: "lfn-watermark-v2",
+      keyId: keys.keyId,
+      imageId,
+      requestId: options.requestId || imageId,
+      requestFingerprint: options.requestFingerprint,
+      sha256: calculateImageHash(container.unsigned),
+      timestamp: new Date().toISOString(),
+      userId,
+      model,
+      domain: settings.publicUrl || process.env.LFN_PUBLIC_URL || "love-for-nai",
+      issuer: settings.watermarkIssuer,
+      label: settings.watermarkLabel,
+      note: settings.watermarkNote || undefined,
+      source: options.source,
+      parameters: options.parameters,
+    };
+    const signed = signWatermark(container, payload, keys);
+    if (options.required) {
+      const verified = verifyEmbeddedWatermark(readWatermarkContainer(signed), keys);
+      if (!verified.valid || !verified.shaMatch) throw new Error("LFN signing output could not be verified");
+    }
+    return { buffer: signed, mime, status: "embedded" };
+  } catch (error) {
+    if (options.required) throw new WatermarkSigningError(undefined, { cause: error });
+    throw error;
+  }
 }
 
 type WatermarkVerification = {
@@ -172,24 +236,37 @@ type WatermarkVerification = {
 
 export async function verifyWatermark(imageDataUrl: string): Promise<WatermarkVerification> {
   try {
-    const { buffer } = dataUrlParts(imageDataUrl);
-    return await verifyWatermarkBuffer(buffer);
+    return await verifyWatermarkBuffer(dataUrlBuffer(imageDataUrl));
   } catch (error) {
     return { valid: false, error: error instanceof Error ? error.message : "验证失败" };
   }
 }
 
-async function verifyWatermarkBuffer(buffer: Buffer): Promise<WatermarkVerification> {
+export async function verifyWatermarkBuffer(buffer: Buffer): Promise<WatermarkVerification> {
   try {
-    if (!isPng(buffer)) return { valid: false, error: "仅支持含 LFN 元数据的 PNG 图片" };
-    const encoded = extractPngTextChunk(buffer, "LFN-Watermark");
-    if (!encoded) return { valid: false, error: "未找到 Love-for-NAI 图片签名" };
-    const data = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as { payload: WatermarkPayload; signature: string };
-    const keys = await getKeyPair();
+    const container = readWatermarkContainer(buffer);
+    if (container.watermark === undefined) return { valid: false, error: "未找到 Love-for-NAI 图片签名" };
+    return verifyEmbeddedWatermark(container, await getKeyPair());
+  } catch (error) {
+    return { valid: false, error: error instanceof Error ? error.message : "验证失败" };
+  }
+}
+
+type WatermarkContainer = ReturnType<typeof readWatermarkContainer>;
+
+function verifyEmbeddedWatermark(container: WatermarkContainer, keys: KeyPair): WatermarkVerification {
+  try {
+    if (container.duplicate || !container.watermark || !/^[A-Za-z0-9+/]+={0,2}$/.test(container.watermark)) {
+      return { valid: false, error: "图片签名无效" };
+    }
+    const data = JSON.parse(Buffer.from(container.watermark, "base64").toString("utf8")) as { payload: WatermarkPayload; signature: string };
+    if (data.payload.schema !== "lfn-watermark-v2" && data.payload.schema !== "lfn-watermark-v1") {
+      return { valid: false, error: "图片签名版本无效" };
+    }
     const verifier = createVerify("RSA-SHA256");
     verifier.update(data.payload.schema === "lfn-watermark-v2" ? stableJson(data.payload) : JSON.stringify(data.payload));
     if (!verifier.verify(keys.publicKey, data.signature, "base64")) return { valid: false, error: "图片签名无效" };
-    const shaMatch = calculateImageHash(buffer) === data.payload.sha256;
+    const shaMatch = calculateImageHash(container.unsigned) === data.payload.sha256;
     return {
       valid: true,
       legacy: data.payload.schema !== "lfn-watermark-v2",
@@ -203,13 +280,14 @@ async function verifyWatermarkBuffer(buffer: Buffer): Promise<WatermarkVerificat
 
 /** Retain authenticated provenance, without retaining generation parameters or blessing modified inputs. */
 export async function preserveWatermarkAfterMetadataStrip(original: Buffer, cleaned: Buffer): Promise<Buffer> {
-  if (!isPng(original) || !isPng(cleaned) || !extractPngTextChunk(original, "LFN-Watermark")) return cleaned;
+  if (!hasEmbeddedWatermark(original)) return cleaned;
   const verified = await verifyWatermarkBuffer(original);
   if (!verified.valid || !verified.shaMatch || !verified.payload) {
     throw new WatermarkPreservationError("原图的 LFN 水印无效或图片已被修改，无法保留有效溯源水印，请下载原图。");
   }
   const source = verified.payload;
   const keys = await getKeyPair();
+  const container = readWatermarkContainer(cleaned);
   // Use an explicit allowlist: prompt/seed/reference data in the old signed
   // parameters must not survive the user's metadata-removal request.
   const payload: WatermarkPayload = {
@@ -218,7 +296,7 @@ export async function preserveWatermarkAfterMetadataStrip(original: Buffer, clea
     imageId: source.imageId,
     requestId: source.requestId,
     requestFingerprint: source.requestFingerprint,
-    sha256: calculateImageHash(cleaned),
+    sha256: calculateImageHash(container.unsigned),
     timestamp: source.timestamp,
     userId: source.userId,
     model: source.model,
@@ -226,101 +304,23 @@ export async function preserveWatermarkAfterMetadataStrip(original: Buffer, clea
     issuer: source.issuer,
     label: source.label,
     note: source.note,
+    source: source.source,
     metadataStripped: true,
     sourceSha256: source.sourceSha256 || source.sha256,
   };
   // Preserving an existing signature is independent of whether signing new
   // generations has since been disabled in settings.
-  return signWatermark(cleaned, payload, keys);
+  return signWatermark(container, payload, keys);
 }
 
-function signWatermark(buffer: Buffer, payload: WatermarkPayload, keys: KeyPair): Buffer {
+function signWatermark(container: WatermarkContainer, payload: WatermarkPayload, keys: KeyPair): Buffer {
   const signer = createSign("RSA-SHA256");
   signer.update(stableJson(payload));
   const signature = signer.sign(keys.privateKey, "base64");
   const watermark = Buffer.from(JSON.stringify({ payload, signature }), "utf8").toString("base64");
-  return injectPngTextChunk(buffer, "LFN-Watermark", watermark);
+  return container.embed(watermark);
 }
 
 export async function getPublicKey(): Promise<string> {
   return (await getKeyPair()).publicKey;
-}
-
-function injectPngTextChunk(png: Buffer, keyword: string, text: string): Buffer {
-  if (!isPng(png)) throw new Error("Invalid PNG signature");
-  const chunks: Buffer[] = [png.subarray(0, 8)];
-  let offset = 8;
-  let inserted = false;
-  while (offset + 12 <= png.length) {
-    const length = png.readUInt32BE(offset);
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > png.length) throw new Error("Invalid PNG chunk");
-    const type = png.toString("ascii", offset + 4, offset + 8);
-    if (type !== "tEXt" || png.toString("utf8", offset + 8, offset + 8 + length).split("\0", 1)[0] !== keyword) chunks.push(png.subarray(offset, chunkEnd));
-    if (type === "IHDR" && !inserted) {
-      chunks.push(createPngTextChunk(keyword, text));
-      inserted = true;
-    }
-    offset = chunkEnd;
-    if (type === "IEND") break;
-  }
-  if (!inserted) throw new Error("PNG is missing IHDR");
-  return Buffer.concat(chunks);
-}
-
-function removePngTextChunk(png: Buffer, keyword: string): Buffer {
-  if (!isPng(png)) return png;
-  const chunks: Buffer[] = [png.subarray(0, 8)];
-  let offset = 8;
-  while (offset + 12 <= png.length) {
-    const length = png.readUInt32BE(offset);
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > png.length) return png;
-    const type = png.toString("ascii", offset + 4, offset + 8);
-    const data = png.subarray(offset + 8, offset + 8 + length);
-    const keywordEnd = data.indexOf(0);
-    const currentKeyword = type === "tEXt" && keywordEnd >= 0 ? data.toString("utf8", 0, keywordEnd) : "";
-    if (!(type === "tEXt" && currentKeyword === keyword)) chunks.push(png.subarray(offset, chunkEnd));
-    offset = chunkEnd;
-    if (type === "IEND") break;
-  }
-  return Buffer.concat(chunks);
-}
-
-function extractPngTextChunk(png: Buffer, keyword: string): string | null {
-  if (!isPng(png)) return null;
-  let offset = 8;
-  while (offset + 12 <= png.length) {
-    const length = png.readUInt32BE(offset);
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > png.length) return null;
-    const type = png.toString("ascii", offset + 4, offset + 8);
-    if (type === "tEXt") {
-      const data = png.subarray(offset + 8, offset + 8 + length);
-      const separator = data.indexOf(0);
-      if (separator >= 0 && data.toString("utf8", 0, separator) === keyword) return data.toString("utf8", separator + 1);
-    }
-    offset = chunkEnd;
-    if (type === "IEND") break;
-  }
-  return null;
-}
-
-function createPngTextChunk(keyword: string, text: string): Buffer {
-  const data = Buffer.concat([Buffer.from(keyword, "latin1"), Buffer.from([0]), Buffer.from(text, "latin1")]);
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length);
-  const type = Buffer.from("tEXt", "ascii");
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
-  return Buffer.concat([length, type, data, crc]);
-}
-
-function crc32(buffer: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }

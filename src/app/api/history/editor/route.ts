@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     },
     [image],
     null,
-    { skipWatermark: true, watermarkStatus: "skipped" },
+    { source: "editor-upload" },
   );
   const item = items[0];
   if (!item)

@@ -76,6 +76,10 @@ function normalizePolicy(input: DailyImagePolicy): DailyImagePolicy {
     if (typeof amount !== "number" || !isAffAmount(amount) || amount < 0 || amount > 100)
       throw new Error("生图基础费必须为 0–100 AFF，最多保留 4 位小数");
   }
+  const limit = input.v45LimitDaily;
+  if (!limit || !Number.isSafeInteger(limit.afterImages) || limit.afterImages < 0 ||
+      ![limit.baseAff, limit.afterBaseAff].every((amount) => isAffAmount(amount) && amount >= 0 && amount <= 100))
+    throw new Error("V4.5 Limit 每日阶梯需要非负整数张数和 0–100 AFF 的基础费，最多保留 4 位小数");
   if (
     typeof input.enabled !== "boolean" ||
     typeof input.strictApiBilling !== "boolean" ||

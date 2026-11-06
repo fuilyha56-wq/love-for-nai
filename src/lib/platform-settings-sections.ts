@@ -302,23 +302,19 @@ export const SETTINGS_GROUPS: Record<SettingsPage, Group[]> = {
     {
       title: "图片来源签名",
       description:
-        "签名写入 PNG 元数据。请使用原始文件校验，重新编码可能移除元数据。",
+        "LFN 出图必须通过来源签名。签名写入 PNG、WebP 或 JPEG 的元数据，可上传原始文件校验。",
       fields: [
-        { key: "watermarkEnabled", label: "启用图片签名", type: "switch" },
         {
           key: "watermarkIssuer",
           label: "签名发行方",
-          dependsOn: "watermarkEnabled",
         },
         {
           key: "watermarkLabel",
           label: "签名标签",
-          dependsOn: "watermarkEnabled",
         },
         {
           key: "watermarkNote",
           label: "签名附加说明",
-          dependsOn: "watermarkEnabled",
         },
       ],
     },

@@ -5,6 +5,8 @@ import { Upload, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import Image from "next/image";
 import { WorkspaceNav } from "@/app/workspace-nav";
 
+const IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
 type VerifyResult = {
   valid: boolean;
   legacy?: boolean;
@@ -21,6 +23,8 @@ type VerifyResult = {
     model: string;
     domain: string;
     issuer?: string;
+    source?: "gateway";
+    metadataStripped?: true;
     label?: string;
     note?: string;
     parameters?: Record<string, unknown>;
@@ -48,8 +52,8 @@ export default function ImageVerifyPage() {
   }, []);
 
   async function handleFile(file: File) {
-    if (!file.type.startsWith("image/")) {
-      setResult({ valid: false, error: "请选择图片文件" });
+    if (!IMAGE_MIME_TYPES.includes(file.type)) {
+      setResult({ valid: false, error: "请选择 PNG、JPEG 或 WebP 图片" });
       return;
     }
 
@@ -66,7 +70,8 @@ export default function ImageVerifyPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ image: dataUrl }),
         });
-        const data = await response.json() as VerifyResult;
+        const data = await response.json() as VerifyResult & { message?: string };
+        if (!response.ok) throw new Error(data.error || data.message || "验证失败，请重试");
         setResult(data);
       } catch (error) {
         setResult({ valid: false, error: error instanceof Error ? error.message : "验证失败" });
@@ -113,12 +118,12 @@ export default function ImageVerifyPage() {
       >
         <Upload size={48} className="mx-auto text-[var(--muted)]" />
         <p className="mt-4 text-sm font-medium">拖拽图片到此处或 Ctrl+V 粘贴</p>
-        <p className="mt-1 text-xs text-[var(--muted)]">支持 PNG 格式水印验证</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">支持 PNG、JPEG 和 WebP 水印验证</p>
         <label className="mt-4 inline-block cursor-pointer rounded-md bg-[var(--rose)] px-4 py-2 text-sm font-medium text-white hover:bg-[#8b4545]">
           选择文件
           <input
             type="file"
-            accept="image/*"
+            accept={IMAGE_MIME_TYPES.join(",")}
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
@@ -172,7 +177,7 @@ export default function ImageVerifyPage() {
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-[var(--muted)]">签名记录</dt>
-                <dd>{result.recordFound ? "已找到服务端记录" : "仅本地签名，未找到服务端记录"}</dd>
+                <dd>{result.recordFound ? "已找到服务端记录" : "签名已验证，未找到服务端记录"}</dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-[var(--muted)]">发行方</dt>
@@ -180,7 +185,7 @@ export default function ImageVerifyPage() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">用户 ID</dt>
-                <dd>{result.payload.userId}</dd>
+                <dd>{result.payload.source === "gateway" ? "未关联站内用户" : result.payload.userId}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">模型</dt>
@@ -192,8 +197,12 @@ export default function ImageVerifyPage() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">来源</dt>
-                <dd>{result.payload.domain}</dd>
+                <dd>{result.payload.source === "gateway" ? "NovelAI Gateway" : result.payload.domain}</dd>
               </div>
+              {result.payload.metadataStripped && <div className="flex justify-between gap-3">
+                <dt className="text-[var(--muted)]">元数据</dt>
+                <dd>已清理生成元数据并保留溯源签名</dd>
+              </div>}
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">图片哈希</dt>
                 <dd className="font-mono text-xs">{result.payload.sha256.slice(0, 16)}...</dd>

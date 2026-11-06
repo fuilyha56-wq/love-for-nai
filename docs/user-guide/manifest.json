@@ -1,9 +1,9 @@
 {
-  "revision": 2026103101,
+  "revision": 2026110501,
   "guides": [
     { "id": "docs-quickstart", "slug": "quickstart", "title": "快速开始：生成你的第一张图片", "category": "入门与使用", "summary": "从注册登录、钱包和模型选择，到生成、下载与继续编辑。", "sortOrder": 10 },
     { "id": "docs-workspace-guide", "slug": "workspace-guide", "title": "图像工作台与编辑器教程", "category": "入门与使用", "summary": "提示词、角色、参考图、图生图、局部重绘、扩图和手机操作。", "sortOrder": 20 },
-    { "id": "docs-gallery-discovery", "slug": "gallery-discovery", "title": "图片广场：搜索、筛选与分享", "category": "入门与使用", "summary": "LfN 搜索框、标签建议、分级和排行，以及下载、导入与投稿。", "sortOrder": 30 },
+    { "id": "docs-gallery-discovery", "slug": "gallery-discovery", "title": "图片广场：搜索、筛选与分享", "category": "入门与使用", "summary": "LFN 搜索框、标签建议、分级和排行，以及下载、导入与投稿。", "sortOrder": 30 },
     { "id": "docs-documentation-guide", "slug": "documentation-guide", "title": "如何搜索和阅读文档", "category": "入门与使用", "summary": "全文搜索、分类、重置条件、手机目录和文档链接的使用方法。", "sortOrder": 40 },
     { "id": "docs-account-check-in", "slug": "account-and-check-in", "title": "账号、签到与自动化接入", "category": "账号与额度", "summary": "签到奖励、兑换码、图包，以及 API Key 与登录会话的权限边界。", "sortOrder": 50 },
     { "id": "docs-auth-billing", "slug": "authentication-and-billing", "title": "鉴权、AFF 与计费说明", "category": "账号与额度", "summary": "分清图像密钥、系统访问令牌和 Cookie，了解支付顺序与每日分档。", "sortOrder": 60 },

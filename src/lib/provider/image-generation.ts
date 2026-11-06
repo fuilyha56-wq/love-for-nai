@@ -14,6 +14,8 @@ import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { ProviderInputError, validateModelId } from "./validation";
 import { downloadProviderImage } from "./http";
 import { safeUpstreamMessage } from "@/lib/upstream-error";
+import { watermarkImages, WatermarkSigningError } from "@/lib/image-watermark";
+import { imageWatermarkErrorResponse } from "@/lib/image-response-watermark";
 
 type ProviderImageOptions = {
   protocol: ImageProviderProtocol;
@@ -80,18 +82,18 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
   let upstreamText = "";
   let warning = "";
   const save = options.saveToHistory !== false && body.editor_composite !== true;
-  const partial = async (message: string, status: number): Promise<NextResponse> => {
+  const partial = async (message: string, status: number, signingFailed = false): Promise<NextResponse> => {
     const publicMessage = safeUpstreamMessage(message, { secrets: [options.apiKey], urls: options.upstreamUrl ? [options.upstreamUrl] : [], fallback: "图像请求失败，请稍后重试" });
     let historyIds: string[] = [];
     if (images.length && save) {
       try {
         const saved = await saveHistory(session.userId, { ...normalized, _lfnRequestId: audit.requestId, _lfnRequestFingerprint: audit.requestFingerprint }, images, usage);
         historyIds = saved.map((item) => item.id);
-        watermarkStatus = saved.some((item) => item.watermarkStatus === "embedded") ? "embedded" : saved[0]?.watermarkStatus || watermarkStatus;
       } catch { /* generated output remains available if history storage fails */ }
     }
-    await audit.finish({ historyIds, generatedSamples: images.length, status: images.length ? 207 : status, paymentSource: options.paymentSource, watermarkStatus });
-    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${publicMessage}` : publicMessage, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
+    await audit.finish({ historyIds, generatedSamples: images.length, status: images.length ? 207 : status, paymentSource: options.paymentSource, watermarkStatus: signingFailed ? "failed" : watermarkStatus });
+    if (signingFailed && !images.length) return imageWatermarkErrorResponse(audit.responseHeaders());
+    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${publicMessage}` : publicMessage, ...(images.length ? { images, image: images[0], historyIds, partial: true, usage, width: normalized.width, height: normalized.height, paymentSource: options.paymentSource, requestId: audit.requestId, ...(warning ? { warning } : {}) } : {}) }, { status: images.length ? 207 : status, headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource, "X-LFN-Watermark": watermarkStatus }) });
   };
   try {
     const batches = splitImageBatches(samples, resolveImageModelCapabilities(model, options.protocol).maxBatch);
@@ -128,7 +130,9 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
       const finished = await finishImageTransportImages(normalized, inlineImages);
       const outputDimensions = await imageTransportOutputDimensions(finished[0]);
       if (outputDimensions) { normalized.width = outputDimensions.width; normalized.height = outputDimensions.height; }
-      images.push(...finished);
+      const marked = await watermarkImages(finished, session.userId, model, { required: true, sampleOffset: images.length, requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
+      images.push(...marked.images);
+      watermarkStatus = "embedded";
       usage = parsed.usage ?? usage;
       upstreamText = parsed.text || upstreamText;
       if (parsed.images.length < batches[index]) return partial("上游返回的图片数量少于请求数量", 502);
@@ -138,15 +142,15 @@ export async function handleImageModelGeneration(request: Request, session: LfnS
       try {
         const saved = await saveHistory(session.userId, { ...normalized, _lfnRequestId: audit.requestId, _lfnRequestFingerprint: audit.requestFingerprint }, images, usage);
         historyIds = saved.map((item) => item.id);
-        watermarkStatus = saved.some((item) => item.watermarkStatus === "embedded") ? "embedded" : saved[0]?.watermarkStatus || watermarkStatus;
       }
       catch { warning = "图片已生成，但暂时无法保存历史记录"; }
     }
     await audit.finish({ historyIds, generatedSamples: images.length, status: 200, paymentSource: options.paymentSource, watermarkStatus });
-    return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, requestId: audit.requestId, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource }) });
+    return NextResponse.json({ images, image: images[0], historyIds, usage, width: normalized.width, height: normalized.height, requestId: audit.requestId, ...(upstreamText ? { text: upstreamText } : {}), ...(warning ? { warning } : {}), ...(body.operation === "upscale" ? { method: "generative-edit" } : {}), payment: options.paymentSource, paymentSource: options.paymentSource, aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": options.paymentSource, "X-LFN-Watermark": watermarkStatus }) });
   } catch (error) {
     const admission = riskAdmissionResponse(error);
     if (admission) { await audit.finish({ status: admission.status }); return NextResponse.json(await admission.json(), { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
+    if (error instanceof WatermarkSigningError) return partial("图片来源签名失败", 502, true);
     const invalid = error instanceof ImageRequestValidationError || error instanceof ProviderInputError;
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
     await audit.finish({ status: invalid ? 400 : queueAborted ? 503 : 502, error: error instanceof Error ? error.message : "图像请求失败" });

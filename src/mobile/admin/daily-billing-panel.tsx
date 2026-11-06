@@ -187,6 +187,44 @@ export default function DailyBillingPanel() {
               基础费可设为 0。Limit 小图价适用单张、≤28 步、≤1024² 像素且无付费参考等档内条件；普通 Full、Curated 和重绘模型满足条件时同样适用。工作台逐张生成分别判定，一次请求多张按档外规则计费。独立工具和 NewAPI 使用各自计费规则。
             </p>
           </div>
+          <div className="space-y-3 rounded-lg border border-[var(--line)] p-4">
+            <h3 className="text-sm font-semibold">V4.5 Limit 小图每日基础费（AFF / 张）</h3>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              {([
+                { key: "afterImages", label: "每日首档张数", step: 1 },
+                { key: "baseAff", label: "首档基础费", step: 0.0001 },
+                { key: "afterBaseAff", label: "超出后基础费", step: 0.0001 },
+              ] as const).map(({ key, label, step }) => (
+                <label
+                  key={key}
+                  className={`min-w-0 text-xs text-[var(--ink)]${key === "afterImages" ? " col-span-2 sm:col-span-1" : ""}`}
+                >
+                  {label}
+                  <input
+                    type="number"
+                    inputMode={key === "afterImages" ? "numeric" : "decimal"}
+                    min={0}
+                    max={key === "afterImages" ? undefined : 100}
+                    step={step}
+                    value={policy.v45LimitDaily[key]}
+                    className="field billing-base-fee-input mt-1.5 w-full"
+                    onChange={(event) =>
+                      setPolicy({
+                        ...policy,
+                        v45LimitDaily: {
+                          ...policy.v45LimitDaily,
+                          [key]: Number(event.target.value),
+                        },
+                      })
+                    }
+                  />
+                </label>
+              ))}
+            </div>
+            <p className="text-xs leading-6 text-[var(--muted)]">
+              开启每日阶梯时，V4.5 Limit 小图按本节收费，张数使用账号当天的 V4.5 系列累计。
+            </p>
+          </div>
           <div className="grid gap-4 rounded-lg bg-[var(--surface-muted)] p-4 sm:grid-cols-3">
             <label className="text-xs font-semibold">
               每 ¥1 对应 NewAPI 显示余额

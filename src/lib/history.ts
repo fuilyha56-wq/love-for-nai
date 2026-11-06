@@ -3,12 +3,13 @@ import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ImageProviderProtocol } from "./image-model-capabilities";
 import { hasImageCharacterPrompts, readImageCharacterPrompts } from "./image-character-prompts";
+import { parseNaiImageMetadata } from "./nai-metadata";
 import {
   deleteRemoteHistoryImage,
   getRemoteHistoryImage,
   putRemoteHistoryImage,
 } from "@/lib/remote-history";
-import { embedWatermark, verifyWatermark } from "@/lib/image-watermark";
+import { embedWatermark, hasEmbeddedWatermark, verifyWatermarkBuffer } from "@/lib/image-watermark";
 
 export type GenerationParameters = {
   [key: string]: unknown;
@@ -133,20 +134,19 @@ function isIntermediateHistoryItem(item: HistoryItem): boolean {
     parameters.prompt.includes("continue details naturally across the crop edges");
 }
 
+async function readHistoryImage(userId: number, item: HistoryItem): Promise<Buffer | null> {
+  return item.remote
+    ? (await getRemoteHistoryImage(userId, item.imagePath))?.data || null
+    : readFile(historyImagePath(userId, item.imagePath)).catch(() => null);
+}
+
 async function historyImageHash(userId: number, item: HistoryItem): Promise<string | null> {
   if (item.imageSha256 && /^[a-f\d]{64}$/i.test(item.imageSha256)) return item.imageSha256.toLowerCase();
-  let data: Buffer | null = null;
-  if (item.remote) {
-    data = (await getRemoteHistoryImage(userId, item.imagePath))?.data || null;
-  } else {
-    data = await readFile(path.join(userDirectory(userId), item.imagePath)).catch(() => null);
-  }
+  const data = await readHistoryImage(userId, item);
   if (!data) return null;
-  if (data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-    try {
-      const verified = await verifyWatermark(`data:image/png;base64,${data.toString("base64")}`);
-      if (verified.valid && verified.payload?.sha256) return verified.payload.sha256.toLowerCase();
-    } catch { /* fall back to the stored bytes when metadata cannot be verified */ }
+  if (hasEmbeddedWatermark(data)) {
+    const verified = await verifyWatermarkBuffer(data);
+    if (verified.valid && verified.shaMatch && verified.payload?.sha256) return verified.payload.sha256.toLowerCase();
   }
   return createHash("sha256").update(data).digest("hex");
 }
@@ -204,8 +204,7 @@ export type SaveHistoryOptions = {
   imageIds?: string[];
   requestId?: string;
   requestFingerprint?: string;
-  skipWatermark?: boolean;
-  watermarkStatus?: HistoryItem["watermarkStatus"];
+  source?: "editor-upload";
 };
 
 /** Reserve browser-visible IDs before background persistence starts. */
@@ -231,60 +230,75 @@ export async function saveHistory(
     ...options,
     requestId: options.requestId || (typeof body._lfnRequestId === "string" ? body._lfnRequestId : undefined),
     requestFingerprint: options.requestFingerprint || (typeof body._lfnRequestFingerprint === "string" ? body._lfnRequestFingerprint : undefined),
-    skipWatermark: options.skipWatermark ?? body._lfnSkipWatermark === true,
-    watermarkStatus: options.watermarkStatus || (typeof body._lfnWatermarkStatus === "string" ? body._lfnWatermarkStatus as HistoryItem["watermarkStatus"] : undefined),
   };
+  const editorUpload = effectiveOptions.source === "editor-upload";
+  const baseParameters = safeParameters(body);
+  const model = typeof baseParameters.model === "string" ? baseParameters.model.trim() || "unknown" : "unknown";
   return withUserLock(userId, async () => {
-    await mkdir(userDirectory(userId), { recursive: true });
     const created: HistoryItem[] = [];
     const returned: HistoryItem[] = [];
+    const files: { fileName: string; bytes: Buffer }[] = [];
     const seenRequestImages = new Map<string, HistoryItem>();
     if (effectiveOptions.requestId) {
-      const previous = (await readIndex(userId)).filter((item) => item.requestId === effectiveOptions.requestId);
+      const previous = (await readIndex(userId)).filter((item) =>
+        item.requestId === effectiveOptions.requestId && item.watermarkStatus === "embedded");
       for (const item of previous) {
         const hash = await historyImageHash(userId, item);
-        if (hash && !seenRequestImages.has(hash)) seenRequestImages.set(hash, item);
+        if (!hash || seenRequestImages.has(hash)) continue;
+        const bytes = await readHistoryImage(userId, item);
+        if (!bytes) continue;
+        const proof = await verifyWatermarkBuffer(bytes);
+        if (proof.valid && proof.shaMatch && proof.payload?.userId === userId && proof.payload.model === model &&
+            proof.payload.requestId === effectiveOptions.requestId && proof.payload.imageId === item.id) {
+          seenRequestImages.set(hash, item);
+        }
       }
     }
     for (const [imageIndex, image] of images.entries()) {
-      const match = image.match(
-        /^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/,
-      );
-      if (!match) continue;
+      const match = image.match(/^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/);
+      if (!match) {
+        if (editorUpload) continue;
+        throw new Error("无法保存格式无效的生成图片");
+      }
       const sourceBytes = Buffer.from(match[2], "base64");
-      const imageSha256 = createHash("sha256").update(sourceBytes).digest("hex");
+      const sourceProof = !editorUpload && hasEmbeddedWatermark(sourceBytes) ? await verifyWatermarkBuffer(sourceBytes) : null;
+      const prior = sourceProof?.valid && sourceProof.shaMatch ? sourceProof.payload : undefined;
+      const imageSha256 = prior?.sha256 || createHash("sha256").update(sourceBytes).digest("hex");
       const known = effectiveOptions.requestId ? seenRequestImages.get(imageSha256) : undefined;
       if (known) {
         returned.push(known);
         continue;
       }
-      const id = effectiveOptions.imageIds?.[imageIndex] || randomUUID();
+      const verifiedId = prior?.source !== "gateway" && prior?.userId === userId && prior.model === model &&
+        prior.requestId === effectiveOptions.requestId && prior.requestFingerprint === effectiveOptions.requestFingerprint &&
+        prior.imageId && /^[\w-]{1,128}$/.test(prior.imageId) ? prior.imageId : undefined;
+      const id = effectiveOptions.imageIds?.[imageIndex] || verifiedId || randomUUID();
       const timestamp = new Date().toISOString();
-      const parameters = safeParameters(body);
+      const seed = editorUpload ? undefined : parseNaiImageMetadata(sourceBytes)?.parameters.seed;
+      const parameters = typeof seed === "number" && Number.isSafeInteger(seed) && seed >= 0 && seed < 2 ** 32
+        ? { ...baseParameters, seed } : baseParameters;
       const fingerprint = effectiveOptions.requestFingerprint || generateFingerprint(userId, timestamp, parameters);
-      let watermarkStatus: HistoryItem["watermarkStatus"] = effectiveOptions.watermarkStatus || "skipped";
       let processedImage = image;
-      if (!effectiveOptions.skipWatermark) {
-        try {
-          processedImage = await embedWatermark(image, id, userId, parameters.model || "unknown", {
-            imageId: id,
-            requestId: effectiveOptions.requestId || id,
-            requestFingerprint: effectiveOptions.requestFingerprint || fingerprint,
-            parameters,
-          });
-          watermarkStatus = processedImage === image ? "disabled" : "embedded";
-        } catch {
-          watermarkStatus = "failed";
+      const requestId = effectiveOptions.requestId || id;
+      if (!editorUpload) {
+        const sign = () => embedWatermark(image, id, userId, model, {
+          required: true, imageId: id, requestId, requestFingerprint: fingerprint,
+        });
+        processedImage = await sign().catch(() => sign());
+      }
+      const output = processedImage.match(/^data:image\/(png|jpeg|webp);base64,([\s\S]+)$/);
+      if (!output) throw new Error("无法读取已处理的历史图片");
+      const bytes = Buffer.from(output[2], "base64");
+      if (!editorUpload) {
+        const proof = await verifyWatermarkBuffer(bytes);
+        if (!proof.valid || !proof.shaMatch || proof.payload?.userId !== userId || proof.payload.model !== model ||
+            proof.payload.imageId !== id || proof.payload.requestId !== requestId) {
+          throw new Error("生成图片的溯源签名无法验证");
         }
       }
-
-      const outputFormat = processedImage.match(/^data:image\/(png|jpeg|webp);/)?.[1] || match[1];
+      const outputFormat = output[1];
       const fileName = `${id}.${outputFormat === "jpeg" ? "jpg" : outputFormat}`;
-      const imageMatch = processedImage.match(/^data:image\/[^;]+;base64,([\s\S]+)$/);
-      if (imageMatch) {
-        const buffer = Buffer.from(imageMatch[1], "base64");
-        await writeFile(path.join(userDirectory(userId), fileName), buffer);
-      }
+      files.push({ fileName, bytes });
 
       created.push({
         id,
@@ -295,14 +309,16 @@ export async function saveHistory(
         usage,
         fingerprint,
         requestId: effectiveOptions.requestId,
-        requestFingerprint: effectiveOptions.requestFingerprint || fingerprint,
+        requestFingerprint: fingerprint,
         imageSha256,
-        watermarkStatus,
+        watermarkStatus: editorUpload ? "skipped" : "embedded",
       });
       const item = created[created.length - 1];
       returned.push(item);
       if (effectiveOptions.requestId) seenRequestImages.set(imageSha256, item);
     }
+    await mkdir(userDirectory(userId), { recursive: true });
+    for (const { fileName, bytes } of files) await writeFile(historyImagePath(userId, fileName), bytes);
     const merged = [...created, ...(await readIndex(userId))];
     let unsavedSeen = 0;
     const retained: HistoryItem[] = [];
@@ -376,11 +392,9 @@ export async function findWatermarkedHistorySource(userId: number, sourceSha256:
     entry.watermarkStatus === "embedded" && entry.imageSha256 === sourceSha256);
   if (!item) return null;
   try {
-    const data = item.remote
-      ? (await getRemoteHistoryImage(userId, item.imagePath))?.data
-      : await readFile(historyImagePath(userId, item.imagePath));
+    const data = await readHistoryImage(userId, item);
     if (!data) return null;
-    const proof = await verifyWatermark(`data:image/png;base64,${data.toString("base64")}`);
+    const proof = await verifyWatermarkBuffer(data);
     // The index alone is insufficient: authenticate the stored image and its
     // binding to the supplied bytes before using its provenance.
     return proof.valid && proof.shaMatch && proof.payload?.sha256 === sourceSha256 && proof.payload.userId === userId

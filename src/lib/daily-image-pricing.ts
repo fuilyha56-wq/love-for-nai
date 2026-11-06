@@ -16,6 +16,7 @@ export type DailyImagePolicy = ImageBaseFees & {
   displayUsdPerCny: number;
   v45AnlasCny: number;
   v5AnlasCny: number;
+  v45LimitDaily: { afterImages: number; baseAff: number; afterBaseAff: number };
   v45: DailyPriceTier[];
   v5: DailyPriceTier[];
 };
@@ -47,6 +48,7 @@ export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
   displayUsdPerCny: 200,
   v45AnlasCny: 0.01,
   v5AnlasCny: 0.01,
+  v45LimitDaily: { afterImages: 50, baseAff: 0, afterBaseAff: 1 },
   v45: [
     { afterImages: 0, baseCny: 0, anlasMultiplier: 1, totalMultiplier: 1 },
     {
@@ -141,10 +143,15 @@ export function quoteDailyImage(
     throw new Error("每日计费参数无效");
   const baseAff = imageGenerationBaseAff(generation, policy);
   const anlas = billableNaiAnlasCost(generation);
+  const v45Limit = family === "v45" && generation.model.trim().toLowerCase().endsWith("-limit") && anlas === 0
+    ? policy.v45LimitDaily
+    : null;
   const anlasPerSample = anlas / generation.samples;
   const anlasCny = family === "v45" ? policy.v45AnlasCny : policy.v5AnlasCny;
   const affCosts = Array.from({ length: generation.samples }, (_, index) => {
     const ordinal = startCount + index + 1;
+    if (v45Limit)
+      return ordinal > v45Limit.afterImages ? v45Limit.afterBaseAff : v45Limit.baseAff;
     const tier =
       [...policy[family]]
         .reverse()

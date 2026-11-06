@@ -1,8 +1,8 @@
 # API 接入总览与端点速查
 
-示例站点根地址使用 `https://lfn.example`，请换成你实际访问的 LfN 地址。API 路径按本项目实现说明，不表示当前站点已配置所有上游能力。
+示例站点根地址使用 `https://lfn.example`，请换成你实际访问的 LFN 地址。API 路径按本项目实现说明，不表示当前站点已配置所有上游能力。
 
-![外部 API Key 与站内登录会话分别访问 LfN 接口的流程示意](/docs/api-routing.svg)
+![外部 API Key 与站内登录会话分别访问 LFN 接口的流程示意](/docs/api-routing.svg)
 
 ## 应该选哪一种接口
 
@@ -15,7 +15,7 @@
 | 广场和文档公开读取 | /api/gallery、/api/docs | 公开读取按接口实现开放 |
 | 后台管理 | /api/admin 系列 | 管理员登录会话 |
 
-这里的图像密钥是现有 NewAPI API Key，通常以 `sk-` 开头。外部工具可不登录 LfN 网页直接调用出图接口，但仍需有效密钥、模型权限与足够额度。
+这里的图像密钥是现有 NewAPI API Key，通常以 `sk-` 开头。外部工具可不登录 LFN 网页直接调用出图接口，但仍需有效密钥、模型权限与足够额度。
 
 ## 外部接口速查
 
@@ -33,7 +33,7 @@
 | POST /ai/annotate-image | 图像标注 | JSON；以工具返回格式为准 |
 | GET /ai/generate-image/suggest-tags | 提示词标签建议 | prompt、model 查询参数 |
 | POST /ai/generate-image/suggest-tags | 标签建议 | prompt、model JSON |
-| GET /user/subscription | 第三方客户端订阅摘要 | LfN AFF 合成的兼容摘要 |
+| GET /user/subscription | 第三方客户端订阅摘要 | LFN AFF 合成的兼容摘要 |
 | GET /user/data | 第三方客户端数据摘要 | 包含上述 subscription 摘要 |
 
 `/user/subscription` 也接受 POST。摘要来自本站额度，不是真实 NovelAI 账号订阅；不会开放上游账号资料、对象或账户明细，其他 `/user` 路径会被拒绝。

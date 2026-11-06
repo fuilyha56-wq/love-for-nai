@@ -2,7 +2,7 @@
 
 文档中心提供使用教程、账号说明、API 参考和平台管理文档。内容按 2026-10-24 的实现维护；价格、可用模型和注册入口仍以站点实时配置为准。
 
-![LfN 文档全文搜索和分类菜单，示例数量仅用于说明操作](/docs/docs-search.png)
+![LFN 文档全文搜索和分类菜单，示例数量仅用于说明操作](/docs/docs-search.png)
 
 ## 找到需要的内容
 
@@ -21,7 +21,7 @@
 
 使用 `/docs?slug=launcher-integration` 可直接指定文章；`/docs?q=关键词` 可预填搜索。两者同时使用时，搜索条件可能排除指定文章，因此分享具体教程优先只带 `slug`。
 
-示例中的 `https://lfn.example` 是占位地址，请全部替换成实际 LfN 站点根地址。`LFN_API_KEY` 表示你的 NewAPI 图像密钥，示例不包含真实凭据。原生 `/ai` 返回 ZIP 或 MessagePack，不能直接当作 OpenAI JSON 处理。
+示例中的 `https://lfn.example` 是占位地址，请全部替换成实际 LFN 站点根地址。`LFN_API_KEY` 表示你的 NewAPI 图像密钥，示例不包含真实凭据。原生 `/ai` 返回 ZIP 或 MessagePack，不能直接当作 OpenAI JSON 处理。
 
 ## 阅读路线
 
