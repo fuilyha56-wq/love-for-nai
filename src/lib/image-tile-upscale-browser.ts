@@ -19,16 +19,13 @@ function canvasWithSize(width: number, height: number) {
   return { canvas, context };
 }
 
-function localTileInput(image: RgbaImage, tile: ImageUpscaleTile, scale: ImageUpscalePlan["scale"]): string {
-  const { sourceX, sourceY, sourceWidth, sourceHeight, sampleX, sampleY, inputX, inputY, inputWidth, inputHeight } = tile;
+function renderTileInput(tile: ImageUpscaleTile, scale: ImageUpscalePlan["scale"], fill: (data: Uint8ClampedArray) => void): string {
+  const { sourceWidth, sourceHeight, sampleX, sampleY, inputX, inputY, inputWidth, inputHeight } = tile;
   const { canvas: crop, context: cropContext } = canvasWithSize(sourceWidth, sourceHeight);
   const { canvas, context } = canvasWithSize(TILE_UPSCALE_EDGE, TILE_UPSCALE_EDGE);
   try {
     const pixels = cropContext.createImageData(sourceWidth, sourceHeight);
-    for (let row = 0; row < sourceHeight; row += 1) {
-      const start = ((sourceY + row) * image.width + sourceX) * 4;
-      pixels.data.set(image.data.subarray(start, start + sourceWidth * 4), row * sourceWidth * 4);
-    }
+    fill(pixels.data);
     cropContext.putImageData(pixels, 0, 0);
     const scaledWidth = sourceWidth * scale;
     const scaledHeight = sourceHeight * scale;
@@ -56,17 +53,55 @@ function localTileInput(image: RgbaImage, tile: ImageUpscaleTile, scale: ImageUp
   }
 }
 
+function localTileInput(image: RgbaImage, tile: ImageUpscaleTile, scale: ImageUpscalePlan["scale"]): string {
+  const { sourceX, sourceY, sourceWidth, sourceHeight } = tile;
+  const rowBytes = sourceWidth * 4;
+  return renderTileInput(tile, scale, (data) => {
+    for (let row = 0; row < sourceHeight; row += 1) {
+      const start = ((sourceY + row) * image.width + sourceX) * 4;
+      data.set(image.data.subarray(start, start + rowBytes), row * rowBytes);
+    }
+  });
+}
+
+async function readStoredTile(source: { width: number; height: number; rgba: Blob }, tile: ImageUpscaleTile, signal: AbortSignal) {
+  const { sourceX, sourceY, sourceWidth, sourceHeight } = tile;
+  const expectedBytes = source.width * source.height * 4;
+  if (!Number.isSafeInteger(expectedBytes) || source.rgba.size !== expectedBytes ||
+      sourceX < 0 || sourceY < 0 || sourceX + sourceWidth > source.width || sourceY + sourceHeight > source.height) {
+    throw new Error("本机源图数据不完整，请重新导入原图。");
+  }
+  const rowBytes = sourceWidth * 4;
+  const rows: Blob[] = [];
+  for (let row = 0; row < sourceHeight; row += 1) {
+    const start = ((sourceY + row) * source.width + sourceX) * 4;
+    rows.push(source.rgba.slice(start, start + rowBytes));
+  }
+  const bytes = await new Blob(rows).arrayBuffer();
+  signal.throwIfAborted();
+  return new Uint8Array(bytes);
+}
+
 export async function getTiledUpscaleInput(source: EditorDocument, plan: ImageUpscalePlan, tile: ImageUpscaleTile, signal: AbortSignal): Promise<string> {
-  if (!source.tiledSource) return localTileInput(source.image, tile, plan.scale);
-  const query = new URLSearchParams({ id: source.tiledSource.id, scale: String(plan.scale), index: String(tile.index), layoutVersion: String(plan.layoutVersion) });
+  signal.throwIfAborted();
+  const tiledSource = source.tiledSource;
+  if (!tiledSource) return localTileInput(source.image, tile, plan.scale);
+  if ("rgba" in tiledSource) {
+    const bytes = await readStoredTile(tiledSource, tile, signal);
+    return renderTileInput(tile, plan.scale, (data) => data.set(bytes));
+  }
+  const query = new URLSearchParams({ id: tiledSource.id, scale: String(plan.scale), index: String(tile.index), layoutVersion: String(plan.layoutVersion) });
   const response = await checkEditorStorageResponse(await fetch(`${SOURCE_ENDPOINT}?${query}`, { signal, cache: "no-store" }));
   const blob = await response.blob();
-  return new Promise((resolve, reject) => {
+  signal.throwIfAborted();
+  const input = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(new Error("无法读取源图分块"));
     reader.readAsDataURL(blob);
   });
+  signal.throwIfAborted();
+  return input;
 }
 
 export function needsTiledResultArchive(source: EditorDocument, plan: ImageUpscalePlan): boolean {

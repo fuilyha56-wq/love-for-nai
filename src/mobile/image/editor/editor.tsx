@@ -62,7 +62,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/mobile/ui/popup-select";
 import { WheelNumberInput } from "@/mobile/ui/wheel-number";
 import { syncEditorPromptToStudioForm } from "@/lib/image-studio-form";
-import { createEditorUploadDraft, readEditorSource } from "@/lib/image-editor-source";
+import { createEditorUploadDraft, prepareRestoredEditorDocument, readEditorSource } from "@/lib/image-editor-source";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
 import { planImageTileUpscale, TILE_UPSCALE_DEFAULT_STRENGTH, tileUpscaleConcurrencyLimit, type ImageUpscalePlan, type ImageUpscaleTile, type TileUpscaleFactor, type TileUpscaleGatewayCapacity } from "@/lib/image-tile-upscale";
 import { readEditorGenerationResponse, readEditorUpscaleTile } from "@/lib/image-editor-response";
@@ -262,14 +262,6 @@ function createEditorId(): string {
     values[1] = Math.floor(Math.random() * 2 ** 32);
   }
   return `editor-${Date.now().toString(36)}-${values[0].toString(36)}${values[1].toString(36)}`;
-}
-
-function imageFromDraft(draft: EditorDraft): EditorDocument {
-  return {
-    ...draft.document,
-    image: createRgbaImage(draft.document.image.width, draft.document.image.height, draft.document.image.data),
-    worldRect: { ...draft.document.worldRect },
-  };
 }
 
 export function normalizeEditorOutputSize(model: string, width: number, height: number, protocol?: ImageProviderProtocol): { width: number; height: number } {
@@ -636,16 +628,17 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         if (entryNodeId && (!entryNode || entryNode.draftId !== draftId)) throw new Error("所选历史节点不存在或不属于这个作品");
         const loaded = entryNode ? editorHistoryNodeDraft(entryNode, entry.get("branchId") || entryNode.branchId) : await loadEditorDraft(draftId);
         if (cancelled) return;
-        if (!loaded) throw new Error("编辑草稿不存在或已过期");
-        const nextDocument = imageFromDraft(loaded);
+        if (!loaded) throw new Error("编辑草稿不存在");
+        const nextDocument = prepareRestoredEditorDocument(loaded.document);
+        const resetView = Boolean(nextDocument.tiledSource && !(entryNode?.document ?? loaded.document).tiledSource);
         if (nextDocument.tiledSource && entry.get("mode") !== "tiled-upscale") replaceEditorModeInAddress("tiled-upscale", draftId);
         const generation = nextDocument.generation;
         const output = normalizeEditorOutputSize(generation?.model || "nai-v5-full", loaded.mode === "inpaint" ? nextDocument.image.width : generation?.width || DEFAULT_WIDTH, loaded.mode === "inpaint" ? nextDocument.image.height : generation?.height || DEFAULT_HEIGHT, generation?.imageProtocol);
         const outputWidth = output.width;
         const outputHeight = output.height;
-        const nextViewport = fitViewport(nextDocument, outputWidth, outputHeight);
+        const nextViewport = resetView ? nextDocument.worldRect : fitViewport(nextDocument, outputWidth, outputHeight);
         modeOutputSizesRef.current = { [loaded.mode]: output };
-        setDraft(loaded);
+        setDraft({ ...loaded, document: nextDocument });
         setHistoryReady(false);
         setTileScale(loaded.historyTileScale || 2);
         setDocument(nextDocument);
@@ -668,11 +661,13 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setSampler(generation?.sampler || "k_euler_ancestral");
         setSeed(nextDocument.seed == null || Number(nextDocument.seed) === 0 ? "" : String(nextDocument.seed));
         if (loaded.workspace) {
-          setViewport({ ...loaded.workspace.viewport });
-          setCamera({ ...loaded.workspace.camera });
+          if (!resetView) {
+            setViewport({ ...loaded.workspace.viewport });
+            setCamera({ ...loaded.workspace.camera });
+          }
           setStrokes(loaded.workspace.strokes.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
           setUndone(loaded.workspace.undone.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
-          setTool(loaded.workspace.tool);
+          setTool(resetView ? "pan" : loaded.workspace.tool);
           setBrushSize(loaded.workspace.brushSize);
           setMaskColor(loaded.workspace.maskColor);
           setMaskOpacity(loaded.workspace.maskOpacity);
@@ -680,7 +675,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
           setCanvasBackground(loaded.workspace.canvasBackground);
         } else setTool(loaded.mode === "inpaint" ? "brush" : "pan");
         setReady(true);
-        if (!loaded.workspace) setTimeout(() => fitCamera(nextDocument, nextViewport), 0);
+        if (!loaded.workspace || resetView) setTimeout(() => fitCamera(nextDocument, nextViewport), 0);
       } catch (error) {
         setNotice(error instanceof Error ? error.message : "读取编辑草稿失败");
       } finally {
@@ -1152,26 +1147,31 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
 
   const checkoutHistoryNode = async (nodeId: string, branchOverride?: string) => {
     if (!nodeId || historyBusy || generating || pending) return;
-    await draftAutosave.flush();
     setHistoryBusy(true);
     try {
+      await draftAutosave.flush();
       const node = await loadEditorHistoryNode(nodeId);
       if (!node || node.draftId !== draft?.id) throw new Error("历史节点不存在或已损坏");
-      const restoredDocument: EditorDocument = { ...node.document, image: node.image };
+      const storedDocument = { ...node.document, image: node.image };
+      const restoredDocument = prepareRestoredEditorDocument(storedDocument);
+      const resetView = restoredDocument !== storedDocument;
+      const nextMode = restoredDocument.tiledSource ? "tiled-upscale" : node.mode;
       const restoredGeneration = restoredDocument.generation;
       const restoredModel = restoredGeneration?.model || model;
-      const nextModel = node.mode === "inpaint" ? inpaintModelFor(restoredModel, restoredGeneration?.imageProtocol) || restoredModel : restoredModel;
+      const nextModel = nextMode === "inpaint" ? inpaintModelFor(restoredModel, restoredGeneration?.imageProtocol) || restoredModel : restoredModel;
       const normalizedSize = normalizeImageModelSize(nextModel, restoredGeneration?.width || restoredDocument.image.width, restoredGeneration?.height || restoredDocument.image.height, restoredGeneration?.imageProtocol);
       setDocument(restoredDocument);
       setTileScale(node.tileScale);
-      if (mode !== node.mode) replaceEditorModeInAddress(node.mode, draft?.id);
-      setViewport({ ...node.workspace.viewport });
+      if (mode !== nextMode) replaceEditorModeInAddress(nextMode, draft?.id);
+      const nextViewport = resetView ? restoredDocument.worldRect : node.workspace.viewport;
+      setViewport({ ...nextViewport });
       setViewportSize(normalizedSize);
-      modeOutputSizesRef.current = node.mode === "tiled-upscale" ? {} : { [node.mode]: normalizedSize };
-      setCamera({ ...node.workspace.camera });
+      modeOutputSizesRef.current = nextMode === "tiled-upscale" ? {} : { [nextMode]: normalizedSize };
+      if (resetView) setTimeout(() => fitCamera(restoredDocument, nextViewport), 0);
+      else setCamera({ ...node.workspace.camera });
       setStrokes(node.workspace.strokes.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
       setUndone(node.workspace.undone.map((stroke) => ({ ...stroke, points: stroke.points.map((point) => ({ ...point })) })));
-      setTool(node.workspace.tool);
+      setTool(resetView ? "pan" : node.workspace.tool);
       setBrushSize(node.workspace.brushSize);
       setMaskColor(node.workspace.maskColor);
       setMaskOpacity(node.workspace.maskOpacity);

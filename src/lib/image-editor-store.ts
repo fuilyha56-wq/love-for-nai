@@ -127,6 +127,7 @@ function validateDraft(draft: EditorDraft, options: SaveEditorDraftOptions = {})
   if (draft.mode !== "inpaint" && draft.mode !== "canvas") throw new RangeError("编辑模式无效");
   const maxPixels = options.maxPixels ?? IMAGE_EDITOR_MAX_PIXELS;
   const maxBytes = options.maxBytes ?? IMAGE_EDITOR_MAX_BYTES;
+  // Limit inline canvas buffers. A tiled source is read by slice and is not a canvas buffer.
   const pixels = draftPixelCount(draft);
   const bytes = draftByteCount(draft);
   if (pixels > maxPixels) throw new RangeError(`编辑草稿像素不能超过 ${maxPixels}`);
@@ -214,7 +215,8 @@ export async function loadEditorDraft(id: string): Promise<EditorDraft | null> {
     return await new Promise<EditorDraft | null>((resolve, reject) => {
       const transaction = database.transaction(IMAGE_EDITOR_STORE_NAME, "readonly");
       const request = transaction.objectStore(IMAGE_EDITOR_STORE_NAME).get(id);
-      request.onsuccess = () => resolve(request.result ? cloneDraft(request.result as EditorDraft) : null);
+      // IndexedDB already returns a private copy, including legacy full rasters.
+      request.onsuccess = () => resolve((request.result as EditorDraft | undefined) ?? null);
       request.onerror = () => reject(request.error || new Error("读取编辑草稿失败"));
     });
   } finally {

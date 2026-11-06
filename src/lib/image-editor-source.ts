@@ -1,14 +1,47 @@
-import { createEditorDocument, type RgbaImage, type TiledEditorSource } from "./image-editor";
+import { createEditorDocument, type EditorDocument, type RgbaImage, type TiledEditorSource } from "./image-editor";
 import { createEditorDraft, IMAGE_EDITOR_MAX_PIXELS, saveEditorDraft } from "./image-editor-store";
 import { loadImageStudioForm } from "./image-studio-form";
 
 const SOURCE_ENDPOINT = "/api/images/tiled-upscale/source";
 const UPLOAD_CHUNK_BYTES = 4 * 1024 * 1024;
 const LOCAL_EDITOR_MAX_EDGE = 4096;
+const TILED_PREVIEW_MAX_EDGE = 1200;
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export function needsTiledSource(width: number, height: number): boolean {
   return width * height > IMAGE_EDITOR_MAX_PIXELS || Math.max(width, height) > LOCAL_EDITOR_MAX_EDGE;
+}
+
+/** Older drafts and history nodes may contain the entire raster. Keep those pixels
+ * as a sliceable local Blob and use a bounded image for the canvas and draft. */
+export function prepareRestoredEditorDocument(document: EditorDocument): EditorDocument {
+  const { width, height, data } = document.image;
+  if (document.tiledSource || document.characterReference || !needsTiledSource(width, height)) return document;
+
+  const ratio = TILED_PREVIEW_MAX_EDGE / Math.max(width, height);
+  const previewWidth = Math.max(1, Math.round(width * ratio));
+  const previewHeight = Math.max(1, Math.round(height * ratio));
+  const preview = new Uint8ClampedArray(previewWidth * previewHeight * 4);
+  for (let y = 0; y < previewHeight; y += 1) {
+    const row = Math.floor((y + 0.5) * height / previewHeight) * width;
+    for (let x = 0; x < previewWidth; x += 1) {
+      const from = (row + Math.floor((x + 0.5) * width / previewWidth)) * 4;
+      const to = (y * previewWidth + x) * 4;
+      preview[to] = data[from];
+      preview[to + 1] = data[from + 1];
+      preview[to + 2] = data[from + 2];
+      preview[to + 3] = data[from + 3];
+    }
+  }
+  const bytes = data.buffer instanceof ArrayBuffer
+    ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    : new Uint8Array(data);
+  return {
+    ...document,
+    image: { width: previewWidth, height: previewHeight, data: preview },
+    worldRect: { ...document.worldRect, width: previewWidth, height: previewHeight },
+    tiledSource: { width, height, rgba: new Blob([bytes]) },
+  };
 }
 
 /** Read common image headers without making the browser decode the full raster. */
@@ -55,7 +88,9 @@ export async function checkEditorStorageResponse(response: Response): Promise<Re
   throw new Error(body?.message || body?.error || (response.status === 401 ? "请先登录后处理大图。" : `大图处理失败（HTTP ${response.status}）`));
 }
 
-async function uploadTiledSource(blob: Blob, signal?: AbortSignal): Promise<TiledEditorSource & { preview: string }> {
+type UploadedTiledSource = Extract<TiledEditorSource, { id: string }> & { preview: string };
+
+async function uploadTiledSource(blob: Blob, signal?: AbortSignal): Promise<UploadedTiledSource> {
   const initialized = await checkEditorStorageResponse(await fetch(SOURCE_ENDPOINT, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bytes: blob.size }), signal,
   }));
@@ -68,7 +103,7 @@ async function uploadTiledSource(blob: Blob, signal?: AbortSignal): Promise<Tile
       }));
     }
     const finalized = await checkEditorStorageResponse(await fetch(url, { method: "POST", signal }));
-    return await finalized.json() as TiledEditorSource & { preview: string };
+    return await finalized.json() as UploadedTiledSource;
   } catch (error) {
     void fetch(url, { method: "DELETE" }).catch(() => undefined);
     throw error;
