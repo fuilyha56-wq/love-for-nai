@@ -38,7 +38,7 @@ function generationError(payload: ImageResponse | null | undefined, fallback: st
 }
 
 async function readEditorImageStream(response: Response): Promise<string> {
-  const canRetryMissingImage = response.ok && response.headers.get("X-LFN-Watermark") !== "failed";
+  let watermarkFailed = response.headers.get("X-LFN-Watermark") === "failed";
   let image: string | undefined;
   let streamError: Error | undefined;
   if (response.body) {
@@ -61,20 +61,25 @@ async function readEditorImageStream(response: Response): Promise<string> {
           } catch {
             continue;
           }
-          if (event === "error") streamError = generationError(payload, "流式生成失败", canRetryMissingImage);
-          else image = readImage(payload) ?? image;
+          if (event === "error") {
+            watermarkFailed ||= (payload?.code ?? payload?.error?.code) === "lfn_image_watermark_failed";
+            streamError = generationError(payload, "流式生成失败", response.ok && !watermarkFailed);
+          } else image = readImage(payload) ?? image;
         }
         if (done) break;
       }
+    } catch (error) {
+      // Once a complete image has arrived, a later disconnect does not erase it.
+      if (!image || !response.ok || watermarkFailed || (error instanceof Error && error.name === "AbortError")) throw error;
     } finally {
       reader.releaseLock();
     }
   }
-  if (streamError) throw streamError;
+  if (streamError && (!image || !response.ok || watermarkFailed)) throw streamError;
   if (!response.ok) throw new Error(`图像生成失败（HTTP ${response.status}）`);
+  if (watermarkFailed) throw new Error("图片来源签名失败");
   if (!image) {
-    if (canRetryMissingImage) throw new TileStreamEndedWithoutImageError();
-    throw new Error("流式响应未返回最终图像");
+    throw new TileStreamEndedWithoutImageError();
   }
   return image;
 }

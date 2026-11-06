@@ -5,7 +5,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import sharp from "sharp";
-import { describeImageTileUpscale, imageUpscaleTileAt, type TileUpscaleFactor } from "./image-tile-upscale";
+import { describeImageTileUpscale, imageUpscaleTileAt, TILE_UPSCALE_LAYOUT_VERSION, type TileUpscaleFactor, type TileUpscaleLayoutVersion } from "./image-tile-upscale";
 
 export const TILED_SOURCE_CHUNK_BYTES = 4 * 1024 * 1024;
 const MIB = 1024 * 1024;
@@ -321,16 +321,24 @@ async function withCropSlot<T>(signal: AbortSignal, crop: () => Promise<T>) {
 const CROP_SOURCE = `
 const sharp = require("sharp");
 const [input, ...args] = process.argv.slice(1);
-const [x, y, width, height, resizeWidth, resizeHeight, left, top, right, bottom] = args.map(Number);
+const [x, y, width, height, scale, sampleX, sampleY, inputWidth, inputHeight, left, top, right, bottom] = args.map(Number);
 sharp.cache(false);
 sharp.concurrency(1);
-sharp(input, { limitInputPixels: false, sequentialRead: false })
-  .extract({ left: x, top: y, width, height })
-  .resize(resizeWidth, resizeHeight)
-  .extend({ left, top, right, bottom, extendWith: "copy" })
-  .png({ compressionLevel: 3 }).toBuffer()
-  .then(png => process.stdout.write(png))
-  .catch(() => { process.exitCode = 1; });
+async function crop() {
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
+  let image = sharp(input, { limitInputPixels: false, sequentialRead: false })
+    .extract({ left: x, top: y, width, height })
+    .resize(scaledWidth, scaledHeight, { fit: "fill" });
+  if (sampleX || sampleY || scaledWidth !== inputWidth || scaledHeight !== inputHeight) {
+    const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
+    image = sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
+      .extract({ left: sampleX, top: sampleY, width: inputWidth, height: inputHeight });
+  }
+  if (left || top || right || bottom) image = image.extend({ left, top, right, bottom, extendWith: "copy" });
+  process.stdout.write(await image.png({ compressionLevel: 3 }).toBuffer());
+}
+crop().catch(() => { process.exitCode = 1; });
 `;
 
 async function cropSource(input: string, coordinates: number[], signal: AbortSignal) {
@@ -355,7 +363,7 @@ async function cropSource(input: string, coordinates: number[], signal: AbortSig
   });
 }
 
-export async function readTiledSourceTile(userId: number, id: string, scale: TileUpscaleFactor, index: number, signal: AbortSignal) {
+export async function readTiledSourceTile(userId: number, id: string, scale: TileUpscaleFactor, index: number, signal: AbortSignal, layoutVersion: TileUpscaleLayoutVersion = TILE_UPSCALE_LAYOUT_VERSION) {
   const directory = jobDirectory(userId, id);
   if (writes.has(directory)) throw new TiledSourceError(409, "源图正在处理，请稍后重试");
   readers.set(directory, (readers.get(directory) ?? 0) + 1);
@@ -363,10 +371,11 @@ export async function readTiledSourceTile(userId: number, id: string, scale: Til
     const manifest = await readManifest(directory);
     if (!manifest.prepared) throw new TiledSourceError(409, "源图尚未准备好");
     const { width, height } = manifest.prepared;
-    const tile = imageUpscaleTileAt(describeImageTileUpscale(width, height, scale), index);
+    const tile = imageUpscaleTileAt(describeImageTileUpscale(width, height, scale, layoutVersion), index);
     await touch(directory);
     return await withCropSlot(signal, () => cropSource(path.join(directory, "source.tif"), [
-      tile.sourceX, tile.sourceY, tile.sourceWidth, tile.sourceHeight, tile.inputWidth, tile.inputHeight, tile.inputX, tile.inputY,
+      tile.sourceX, tile.sourceY, tile.sourceWidth, tile.sourceHeight, scale, tile.sampleX, tile.sampleY,
+      tile.inputWidth, tile.inputHeight, tile.inputX, tile.inputY,
       tile.requestWidth - tile.inputX - tile.inputWidth, tile.requestHeight - tile.inputY - tile.inputHeight,
     ], signal));
   } finally {

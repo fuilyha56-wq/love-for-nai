@@ -3,7 +3,7 @@ import { readRiskJson } from "@/lib/risk-http";
 import {
   appendTiledSource, createTiledSource, deleteTiledSource, prepareTiledSource, readTiledSourceTile, TiledSourceError,
 } from "@/lib/tiled-upscale-source";
-import type { TileUpscaleFactor } from "@/lib/image-tile-upscale";
+import type { TileUpscaleFactor, TileUpscaleLayoutVersion } from "@/lib/image-tile-upscale";
 
 export const runtime = "nodejs";
 
@@ -66,8 +66,9 @@ export async function PUT(request: Request) {
 
 export async function GET(request: Request) {
   return withSourceSession(request, async (userId, query) => {
+    const layoutVersion = query.has("layoutVersion") ? integerQuery(query, "layoutVersion") as TileUpscaleLayoutVersion : 1;
     const png = await readTiledSourceTile(userId, query.get("id") ?? "", integerQuery(query, "scale") as TileUpscaleFactor,
-      integerQuery(query, "index"), request.signal);
+      integerQuery(query, "index"), request.signal, layoutVersion);
     return new Response(new Uint8Array(png), { headers: { ...noStore, "Content-Type": "image/png" } });
   });
 }

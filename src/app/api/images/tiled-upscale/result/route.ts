@@ -1,5 +1,5 @@
 import { getSession } from "@/lib/session";
-import type { TileUpscaleFactor } from "@/lib/image-tile-upscale";
+import type { TileUpscaleFactor, TileUpscaleLayoutVersion } from "@/lib/image-tile-upscale";
 import {
   assertTiledUpscaleResultComplete,
   createTiledUpscaleResult,
@@ -58,12 +58,12 @@ export async function POST(request: Request) {
   if (mimeType(request) !== "application/json") return failure("分块尺寸必须以 JSON 提交", 415);
   try {
     const bytes = await boundedBody(request, 1024);
-    let dimensions: { width: number; height: number; scale: TileUpscaleFactor };
+    let dimensions: { width: number; height: number; scale: TileUpscaleFactor; layoutVersion?: TileUpscaleLayoutVersion };
     try { dimensions = JSON.parse(bytes.toString("utf8")); }
     catch { return failure("分块尺寸不是有效的 JSON", 400); }
     if (!dimensions || typeof dimensions !== "object" || Array.isArray(dimensions)) return failure("分块尺寸无效", 400);
-    const { width, height, scale } = dimensions;
-    const id = await createTiledUpscaleResult(session.userId, width, height, scale);
+    const { width, height, scale, layoutVersion = 1 } = dimensions;
+    const id = await createTiledUpscaleResult(session.userId, width, height, scale, layoutVersion);
     return Response.json({ id }, { status: 201, headers: NO_STORE });
   } catch (error) {
     return resultFailure(error);

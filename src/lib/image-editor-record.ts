@@ -107,6 +107,7 @@ export async function importLegacyEditorHistory(): Promise<number> {
   const items = await listLocalImageHistory(Number.MAX_SAFE_INTEGER);
   let failures = 0;
   for (const item of items) {
+    if (item.archive || item.parameters?._lfnEditorHistoryManaged === true) continue;
     const operation = editorHistoryOperation(item.operation);
     if (!operation) continue;
     const previous = await getEditorHistoryProjectMetadata(`legacy-edit-${item.id}`);

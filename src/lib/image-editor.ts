@@ -86,6 +86,7 @@ export type PendingCandidate = {
   id: string;
   patch: RgbaImage;
   tiledResultId?: string;
+  localHistorySaved?: boolean;
   viewport: GenerationViewport;
   mask?: MaskData | Uint8Array | Uint8ClampedArray;
   prompt?: string;

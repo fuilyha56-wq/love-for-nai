@@ -1,56 +1,28 @@
 "use client";
 
 import { WorkspaceNav } from "@/app/workspace-nav";
-import { ArrowLeft, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Download, Image as ImageIcon } from "lucide-react";
 import Image from "@/app/cached-image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { findLocalImageHistory } from "@/lib/local-image-history";
+import { useState } from "react";
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import { downloadLocalTiledUpscaleResult } from "@/lib/local-tiled-upscale-result";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
-
-type HistoryItem = {
-  id: string;
-  createdAt: string;
-  imageUrl: string;
-  parameters: Record<string, string | number | boolean>;
-};
+import { useHistoryDetail } from "../use-history-detail";
 
 const promptKeys = new Set(["prompt", "negative_prompt"]);
 
-export default function HistoryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const [item, setItem] = useState<HistoryItem | null>(null);
-  const [message, setMessage] = useState("");
+export default function HistoryDetailPage({ params, ownerId }: { params: Promise<{ id: string }>; ownerId: number }) {
+  const { item, message } = useHistoryDetail(params, ownerId);
+  const [downloadError, setDownloadError] = useState("");
 
-  useEffect(() => {
-    const controller = new AbortController();
-    let objectUrl = "";
-    void (async () => {
-      try {
-        const { id } = await params;
-        const local = await findLocalImageHistory(id).catch(() => null);
-        if (local) {
-          objectUrl = URL.createObjectURL(local.image);
-          setItem({
-            id: local.remoteId || id,
-            createdAt: new Date(local.createdAt).toISOString(),
-            imageUrl: objectUrl,
-            parameters: (local.parameters || { prompt: local.prompt || "", negative_prompt: local.negative || "", model: local.model || "", operation: local.operation || "generate" }) as HistoryItem["parameters"],
-          });
-          return;
-        }
-        const response = await fetch(`/api/history/${encodeURIComponent(id)}`, { cache: "no-store", signal: controller.signal });
-        const result = await response.json() as HistoryItem & { message?: string };
-        if (!response.ok) throw new Error(result.message || "读取历史失败");
-        setItem(result);
-      } catch (error) {
-        if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "读取历史失败");
-      }
-    })();
-    return () => {
-      controller.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [params]);
+  async function downloadArchive() {
+    if (!item?.archive) return;
+    setDownloadError("");
+    try {
+      if (!await downloadLocalTiledUpscaleResult(item.archive.id, `lfn-${item.id}.png`)) throw new Error("浏览器中找不到原尺寸文件");
+    } catch (error) { setDownloadError(error instanceof Error ? error.message : "下载失败"); }
+  }
 
   const parameters = item?.parameters || {};
   const prompt = String(parameters.prompt || "");
@@ -68,14 +40,17 @@ export default function HistoryDetailPage({ params }: { params: Promise<{ id: st
         {message ? <p className="py-20 text-center text-sm text-[var(--muted)]">{message}</p> : !item ? <p className="py-20 text-center text-sm text-[var(--muted)]">正在读取历史图片…</p> : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,420px)]">
             <div className="relative flex min-h-[55vh] items-center justify-center overflow-hidden rounded-md border border-[var(--line)] bg-[#ebe9e2] p-3 lg:sticky lg:top-4 lg:h-[calc(100dvh-32px)]">
-              <Image src={item.imageUrl} alt="历史生成图片" fill unoptimized className="object-contain" />
-              <ImageDownloadMenu src={item.imageUrl} filename={`lfn-${item.id}`} className="absolute right-3 top-3 history-detail-download" title="选择图片下载方式" />
+              <Image src={item.imageUrl} ownerId={ownerId} alt="历史生成图片" fill unoptimized className="object-contain" />
+              {item.archive ? <button type="button" className="absolute right-3 top-3 inline-flex min-h-11 items-center gap-2 rounded border border-[var(--line)] bg-[var(--panel)] px-3 text-sm" onClick={() => void downloadArchive()}><Download size={16} />下载原尺寸图片</button>
+                : <ImageDownloadMenu getImage={() => fetchCachedImageBlob(item.imageUrl, ownerId)} filename={`lfn-${item.id}`} className="absolute right-3 top-3 history-detail-download" title="选择图片下载方式" />}
             </div>
             <aside className="min-w-0 space-y-4">
               <header className="flex items-center justify-between gap-3">
                 <div><p className="text-xs font-semibold text-[var(--rose)]">图片历史 / 生成记录</p><h1 className="mt-1 font-[var(--font-display)] text-xl font-semibold">生成参数</h1></div>
                 <time className="shrink-0 text-xs text-[var(--muted)]">{new Date(item.createdAt).toLocaleString("zh-CN")}</time>
               </header>
+              {item.archive && <p className="text-sm text-[var(--muted)]">原图 {item.archive.width} × {item.archive.height}，已保存在本机</p>}
+              {downloadError && <p role="alert" className="text-sm text-[var(--rose)]">{downloadError}</p>}
               {(prompt || negativePrompt) && <section className="space-y-3">
                 {prompt && <PromptBlock title="正面提示词" value={prompt} />}
                 {negativePrompt && <PromptBlock title="负面提示词" value={negativePrompt} />}

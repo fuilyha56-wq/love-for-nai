@@ -1,4 +1,4 @@
-import { imageHistoryReferences } from "@/lib/image-operation-response";
+import { imageHistoryReferences, imageOperationImages } from "@/lib/image-operation-response";
 
 export function sseEvent(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -22,6 +22,7 @@ export async function consumeImageStream(
     expected: number;
     onPreview: (images: string[]) => void;
     onProgress: (label: string) => void;
+    onFinal?: (image: string, sampleIndex: number) => void | Promise<void>;
     onComplete?: (historyIds: string[], requestId?: string) => void;
     onInterrupted?: (message: string) => void;
   },
@@ -64,8 +65,11 @@ export async function consumeImageStream(
           const image = typeof payload.image === "string" ? payload.image : "";
           const sampleIndex = typeof payload.sampleIndex === "number" ? payload.sampleIndex : 0;
           if (!image || !Number.isSafeInteger(sampleIndex) || sampleIndex < 0 || sampleIndex >= 256) continue;
-          if (event === "final") applySlot(finals, sampleIndex, image);
-          else applySlot(previews, sampleIndex, image);
+          if (event === "final") {
+            const previous = finals[sampleIndex];
+            if (previous !== image) await options.onFinal?.(image, sampleIndex);
+            applySlot(finals, sampleIndex, image);
+          } else applySlot(previews, sampleIndex, image);
           const visible = (event === "final" ? finals : previews).filter(Boolean);
           options.onPreview(visible.length ? visible : [image]);
           const currentStep = typeof payload.currentStep === "number" ? payload.currentStep : 0;
@@ -74,13 +78,11 @@ export async function consumeImageStream(
         }
         if (event === "done") {
           if (errorMessage) throw new Error(errorMessage);
-          const images = Array.isArray(payload.images)
-            ? payload.images.filter((item): item is string => typeof item === "string" && Boolean(item))
-            : [];
-          const completed = images.length ? images : finals.filter(Boolean);
+          const images = imageOperationImages({ images: payload.images });
+          const knownFinals = finals.filter(Boolean);
+          const completed = images.length ? images : knownFinals.length ? knownFinals : imageOperationImages(payload);
           const references = imageHistoryReferences(completed, payload.historyIds);
           options.onComplete?.(references.historyIds, typeof payload.requestId === "string" ? payload.requestId : undefined);
-          if (completed.length) options.onPreview(completed);
           return completed;
         }
       }

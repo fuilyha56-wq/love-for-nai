@@ -12,7 +12,8 @@ import { createEditorAutosave } from "@/lib/editor-autosave";
 import { normalizeImageModelSize, resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { NaturalImageSettings } from "../natural-image-settings";
 import { saveEditorComposite } from "@/lib/editor-composite-history";
-import { dataUrlToBlob, readImageHistoryMode, saveLocalImageHistory } from "@/lib/local-image-history";
+import { linkLocalImageHistoryCopy, readImageHistoryMode } from "@/lib/local-image-history";
+import { downloadEditorTiledResult, saveEditorImageLocally } from "@/lib/editor-local-image-history";
 import { lfnConfirm, lfnPrompt } from "@/app/ui/lfn-dialog";
 import {
   createEditorHistoryBranch,
@@ -64,7 +65,7 @@ import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { planImageTileUpscale, TILE_UPSCALE_DEFAULT_STRENGTH, tileUpscaleConcurrencyLimit, type ImageUpscalePlan, type ImageUpscaleTile, type TileUpscaleFactor, type TileUpscaleGatewayCapacity } from "@/lib/image-tile-upscale";
 import { readEditorGenerationResponse, readEditorUpscaleTile } from "@/lib/image-editor-response";
 import { MAX_TILE_RETRIES, runImageUpscaleTiles, type TiledUpscaleProgress } from "@/lib/image-tile-upscale-requests";
-import { createTiledResultArchive, getTiledUpscaleInput, needsTiledResultArchive, saveTiledResultTile, stitchTiledUpscale, tiledResultDownloadUrl, type TiledResultArchive } from "@/lib/image-tile-upscale-browser";
+import { createTiledResultArchive, getTiledUpscaleInput, needsTiledResultArchive, saveTiledResultTile, stitchTiledUpscale, type TiledResultArchive } from "@/lib/image-tile-upscale-browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyPendingCandidate,
@@ -407,7 +408,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const historyCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
   const historyObjectIdentityRef = useRef(new WeakMap<object, number>());
   const nextHistoryObjectIdentityRef = useRef(1);
-  const [imageHistoryMode, setImageHistoryMode] = useState<import("@/lib/local-image-history").ImageHistoryMode>("account");
+  const [imageHistoryMode, setImageHistoryMode] = useState<import("@/lib/local-image-history").ImageHistoryMode>("local");
   useEffect(() => {
     const syncMode = () => setImageHistoryMode(readImageHistoryMode());
     syncMode();
@@ -1005,11 +1006,28 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     return work;
   };
 
+  const persistCandidateLocally = async (
+    candidate: PendingCandidate,
+    result: EditorDocument,
+    operation: string,
+    signal?: AbortSignal,
+  ) => {
+    await saveEditorImageLocally({
+      candidate, image: await rgbaImageToBlob(candidate.tiledResultId ? candidate.patch : result.image),
+      document: result, ownerId: userId ?? 0, operation, editorDraftId: draftId ?? undefined,
+      prompt: candidate.prompt ?? prompt, negative, signal,
+      onProgress: ({ bytes }) => setNotice(`正在保存原尺寸 PNG 到本机 · ${(bytes / (1024 * 1024)).toFixed(1)} MB`),
+    });
+  };
+
   const recordGeneratedCandidate = async (
     base: EditorDocument,
     candidate: PendingCandidate,
     resultOperation: EditorHistoryOperation,
   ) => {
+    const resultDocument = applyPendingCandidate(base, candidate);
+    const localHistorySaved = await persistCandidateLocally(candidate, resultDocument, resultOperation).then(() => true, () => false);
+    const localCandidate = { ...candidate, localHistorySaved };
     if (mode === "canvas" && canvasSessionParentRef.current) {
       currentHistoryNodeIdRef.current = canvasSessionParentRef.current.nodeId;
       activeHistoryBranchIdRef.current = canvasSessionParentRef.current.branchId;
@@ -1017,9 +1035,8 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     const parentNodeId = currentHistoryNodeIdRef.current;
     const parentBranchId = activeHistoryBranchIdRef.current;
     if (!historyReady || !draft?.id || !parentNodeId || !parentBranchId) {
-      return { candidate, saved: false, attempted: false };
+      return { candidate: localCandidate, saved: false };
     }
-    const resultDocument = applyPendingCandidate(base, candidate);
     const snapshot = createHistorySnapshot(resultDocument);
     snapshot.workspace = { ...snapshot.workspace, viewport: { ...candidate.viewport } };
     const saved = await persistHistorySnapshot(
@@ -1029,17 +1046,16 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       true,
       resultOperation,
     );
-    if (!saved) return { candidate, saved: false, attempted: true };
+    if (!saved) return { candidate: localCandidate, saved: false };
     return {
       candidate: {
-        ...candidate,
+        ...localCandidate,
         editorHistoryNodeId: currentHistoryNodeIdRef.current,
         editorHistoryParentNodeId: parentNodeId,
         editorHistoryBranchId: activeHistoryBranchIdRef.current,
         editorHistoryParentBranchId: parentBranchId,
       },
       saved: true,
-      attempted: true,
     };
   };
 
@@ -1443,7 +1459,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const previewViewport = { ...previewDocument.worldRect };
       const promptSummary = prompt.trim().replace(/\s+/g, " ").slice(0, 42);
       const candidate: PendingCandidate = {
-        id: createEditorId(),
+        id: archive ? `tiled-result-${archive.id}` : createEditorId(),
         patch: upscaled,
         tiledResultId: archive?.id,
         viewport: previewViewport,
@@ -1452,15 +1468,24 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         createdAt: Date.now(),
       };
       runController.signal.throwIfAborted();
-      const recorded = archive ? { candidate, saved: false, attempted: false } : await recordGeneratedCandidate(previewDocument, candidate, "tiled-upscale");
-      runController.signal.throwIfAborted();
+      let recorded;
+      if (archive) {
+        setNotice("正在保存原尺寸 PNG 到本机…");
+        const localHistorySaved = await persistCandidateLocally(candidate, previewDocument, "tiled-upscale", runController.signal)
+          .then(() => true, () => false);
+        recorded = { candidate: { ...candidate, localHistorySaved }, saved: false };
+      } else {
+        recorded = await recordGeneratedCandidate(previewDocument, candidate, "tiled-upscale");
+        runController.signal.throwIfAborted();
+      }
       setDocument(previewDocument);
       setViewport(previewViewport);
       setCamera({ ...sourceCamera });
       window.setTimeout(() => fitCamera(previewDocument, previewViewport), 0);
       setPending(recorded.candidate);
       setCompare(0.5);
-      const details = archive ? "可对比缩略预览或下载原尺寸 PNG。大图结果暂存 24 小时。" : `${recorded.saved ? "已记入重绘历史。" : recorded.attempted ? "历史暂未保存，应用时会重试。" : "应用后会记入重绘历史。"}可拖动中间分隔线对比，或下载 PNG。`;
+      const localStatus = recorded.candidate.localHistorySaved ? "已保存到本机历史。" : "本机保存未完成，可重试保存。";
+      const details = archive ? `${localStatus}可对比缩略预览或下载原尺寸 PNG。` : `${localStatus}${recorded.saved ? "已记入重绘历史。" : ""}可拖动中间分隔线对比，或下载 PNG。`;
       setNotice(`分块重绘完成（${plan.tiles.length} 块，${plan.outputWidth}×${plan.outputHeight}）。${details}`);
     } catch (error) {
       setNotice(`${error instanceof Error ? error.message : "分块重绘失败"}；已完成的分块保留，重新点击可从失败处继续。`);
@@ -1556,7 +1581,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       setMobileSheet(null);
       if (mode === "canvas") setCanvasCandidates(current => [...current, recorded.candidate]);
       setCompare(0.5);
-      setNotice(`生成完成。${recorded.saved ? "已记入重绘历史；" : recorded.attempted ? "历史暂未保存，应用时会重试；" : "应用后会记入重绘历史；"}${mode === "canvas" ? "比较候选后合并到画布，即可继续下一次补全。" : "拖动中间分割线比较，确认后点击应用。"}`);
+      setNotice(`生成完成。${recorded.candidate.localHistorySaved ? "已保存到本机历史。" : "本机保存未完成，可重试保存。"}${mode === "canvas" ? "比较候选后合并到画布，即可继续下一次补全。" : "拖动中间分割线比较，确认后点击应用。"}`);
     } catch (error) {
       setNotice(runController.signal.aborted ? "已取消生成，原图保持不变。" : error instanceof Error ? error.message : "生成失败，请稍后重试");
     } finally { if (editorGenerationAbortRef.current === runController) editorGenerationAbortRef.current = null; setGenerating(false); }
@@ -1608,6 +1633,12 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         mode,
       );
       if (!historySaved) throw new Error("无法保存重绘历史节点，请检查浏览器本地存储空间后重试。结果仍保留在当前预览中。");
+      const localCandidate = candidate ?? (returnToWorkbench ? {
+        id: createEditorId(), patch: applied.image, viewport: applied.worldRect, localHistorySaved: false,
+      } : null);
+      if (localCandidate && !localCandidate.localHistorySaved) {
+        await persistCandidateLocally(localCandidate, applied, mode);
+      }
       await draftAutosave.flush();
       const nextDraft = await saveEditorDraft(createDraftPayload(applied));
       if (!returnToWorkbench) {
@@ -1623,30 +1654,24 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setNotice("已合并到当前画布。可以移动或调整生成框，继续下一次补全；蒙版已保留。");
         return;
       }
-      const finalImage = rgbaToDataUrl(applied.image);
       let historyId = "";
-      if (imageHistoryMode === "local") {
-        try {
-          const localId = crypto.randomUUID?.() || `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          await saveLocalImageHistory({ id: localId, ownerId: userId ?? 0, createdAt: Date.now(), image: await dataUrlToBlob(finalImage), prompt, negative, model: resultModel, operation: "editor-composite" });
-        } catch (error) {
-          setNotice(`${error instanceof Error ? error.message : "本地历史保存失败"}，结果仍会返回工作台。`);
-        }
-      } else if (imageHistoryMode === "account") {
+      if (imageHistoryMode === "account") {
         try {
           historyId = await saveEditorComposite({
-            image: finalImage, model: resultModel, prompt, negative_prompt: negative,
+            image: rgbaToDataUrl(applied.image), model: resultModel, prompt, negative_prompt: negative,
             providerId: document.generation?.providerId || "newapi", imageProtocol,
             quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
             width: applied.image.width, height: applied.image.height,
             steps, scale, sampler, strength,
             ...(modelCapabilities.seed && seed.trim() ? { seed: Number(seed) } : {}),
           });
+          if (historyId && localCandidate) await linkLocalImageHistoryCopy(localCandidate.id, historyId, userId ?? 0);
         } catch (error) {
           setNotice(`${error instanceof Error ? error.message : "完整合成图未写入历史"}，结果仍会返回工作台。`);
         }
       }
-      const historyQuery = historyId ? `&editorHistory=${encodeURIComponent(historyId)}` : "";
+      const historyQuery = (historyId ? `&editorHistory=${encodeURIComponent(historyId)}` : "")
+        + (localCandidate ? `&editorLocal=${encodeURIComponent(localCandidate.id)}` : "");
       if (!nextDraft.document.characterReference) syncEditorPromptToStudioForm(nextDraft.id, prompt, negative);
       tiledRestoreRef.current = null;
       setTileSourceState(null);
@@ -1711,14 +1736,12 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     try {
       for (const candidate of canvasCandidates.filter(item => keptCanvasCandidateIds.includes(item.id))) {
         const result = applyPendingCandidate(document, candidate);
-        const image = rgbaToDataUrl(result.image);
+        if (!candidate.localHistorySaved) await persistCandidateLocally(candidate, result, "canvas");
         if (imageHistoryMode === "account") {
-          await saveEditorComposite({ image, model, prompt, negative_prompt: negative,
+          const historyId = await saveEditorComposite({ image: rgbaToDataUrl(result.image), model, prompt, negative_prompt: negative,
             providerId: imageProviderId, imageProtocol, width: result.image.width, height: result.image.height,
             steps, scale, sampler, strength });
-        } else if (imageHistoryMode === "local") {
-          await saveLocalImageHistory({ id: createEditorId(), ownerId: userId ?? 0, createdAt: Date.now(),
-            image: await dataUrlToBlob(image), prompt, negative, model, operation: "editor-composite" });
+          if (historyId) await linkLocalImageHistoryCopy(candidate.id, historyId, userId ?? 0);
         }
       }
       const primary = canvasCandidates.find(candidate => candidate.id === primaryCanvasCandidateId);
@@ -1868,14 +1891,14 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         <div className="editor-upscale-summary-copy">
           {tilePlanState.plan ? <>
             <strong>{tilePlanState.plan.outputWidth} × {tilePlanState.plan.outputHeight}</strong>
-            <span>原图 {tilePlanState.plan.sourceWidth} × {tilePlanState.plan.sourceHeight}</span>
+            <span>原图 {tilePlanState.plan.sourceWidth} × {tilePlanState.plan.sourceHeight} · {tilePlanState.plan.scale} 倍</span>
             <span>自动分成 {tilePlanState.plan.columns} 列 × {tilePlanState.plan.rows} 行，共 {tilePlanState.plan.tiles.length} 块</span>
           </> : <span>选择原图与放大倍率</span>}
         </div>
         <label className="editor-tile-scale-control"><span>原图倍率</span><PopupSelect value={String(tileScale)} options={[2, 3, 4, 5, 6].map((value) => ({ value: String(value), label: `${value} 倍` }))} ariaLabel="分块超分倍率" onChange={(value) => setTileScale(Number(value) as TileUpscaleFactor)} /></label>
       </div>
       {tilePlanState.error && <p className="editor-tip is-warning">{tilePlanState.error}</p>}
-      <p className="editor-tip">宽和高都按原图倍率放大。每块固定使用 1024×1024 图生图，保留重叠边缘，按原位置拼成完整图像。大图显示缩略预览，可下载原尺寸 PNG。</p>
+      <p className="editor-tip">成品宽高等于原图宽高乘以倍率。每块以 1024×1024 重绘，接缝留边只使用块内余量。大图显示缩略预览，可下载原尺寸 PNG。</p>
       <label className="editor-field"><span>重绘模型</span><PopupSelect
         value={generationModel}
         options={tiledModelOptions}
@@ -1955,6 +1978,31 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     if (next === "inpaint" && document) setViewportSize(normalizeEditorOutputSize(model, document.image.width, document.image.height, imageProtocol));
     setNotice("");
     replaceEditorModeInAddress(next, draftId);
+  };
+
+  const retryLocalCandidate = async () => {
+    if (!pending || !document || editorGenerationAbortRef.current) return;
+    const controller = new AbortController();
+    editorGenerationAbortRef.current = controller;
+    setGenerating(true);
+    setNotice(pending.tiledResultId ? "正在保存原尺寸 PNG 到本机…" : "正在保存图片到本机…");
+    try {
+      await persistCandidateLocally(pending, pending.tiledResultId ? document : applyPendingCandidate(document, pending), mode, controller.signal);
+      const saved = { ...pending, localHistorySaved: true };
+      setPending(saved);
+      setCanvasCandidates(current => current.map(candidate => candidate.id === saved.id ? saved : candidate));
+      setNotice("已保存到本机历史。");
+    } catch (error) {
+      setNotice(controller.signal.aborted ? "已取消本机保存，可重新保存。" : `本机保存失败。 ${error instanceof Error ? error.message : "可重新保存。"}`);
+    } finally {
+      editorGenerationAbortRef.current = null;
+      setGenerating(false);
+    }
+  };
+
+  const downloadTiledCandidate = (id: string) => {
+    const filename = `lfn-tiled-upscale-${document?.generation?.width}x${document?.generation?.height}.png`;
+    void downloadEditorTiledResult(id, filename).catch(error => setNotice(error instanceof Error ? error.message : "下载原尺寸图片失败。"));
   };
 
   const regeneratePending = () => {
@@ -2037,8 +2085,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
               <button type="button" aria-label="下一个候选" disabled={generating} onClick={() => selectCanvasCandidate(1)}>›</button>
             </div>}
             {pending.tiledResultId
-              ? <a className="editor-direct-download" href={tiledResultDownloadUrl(pending.tiledResultId)} download><Download size={16} />下载原尺寸合成图</a>
+              ? <button type="button" className="editor-direct-download" disabled={generating} onClick={() => downloadTiledCandidate(pending.tiledResultId!)}><Download size={16} />下载原尺寸合成图</button>
               : <ImageDownloadMenu className="download-result-button" label="下载合成图" title="选择合成图下载方式" filename={`lfn-${mode}-${document.image.width}x${document.image.height}`} disabled={generating} getImage={() => rgbaImageToBlob(applyPendingCandidate(document, pending).image)} />}
+            {pending.localHistorySaved === false && <button type="button" disabled={generating} onClick={() => void retryLocalCandidate()}>重试本机保存</button>}
             <button type="button" className="regenerate-button" disabled={generating} onClick={regeneratePending}><Sparkles size={16} />{mode === "canvas" ? "再生成一张" : "重新生成"}</button>
             <button type="button" className="discard-button" disabled={generating} onClick={discard}><X size={16} />丢弃</button>
             {mode === "canvas" && canvasCandidates.length > 1 && <>

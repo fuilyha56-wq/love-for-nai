@@ -19,8 +19,8 @@ function canvasWithSize(width: number, height: number) {
   return { canvas, context };
 }
 
-function localTileInput(image: RgbaImage, tile: ImageUpscaleTile): string {
-  const { sourceX, sourceY, sourceWidth, sourceHeight, inputX, inputY, inputWidth, inputHeight } = tile;
+function localTileInput(image: RgbaImage, tile: ImageUpscaleTile, scale: ImageUpscalePlan["scale"]): string {
+  const { sourceX, sourceY, sourceWidth, sourceHeight, sampleX, sampleY, inputX, inputY, inputWidth, inputHeight } = tile;
   const { canvas: crop, context: cropContext } = canvasWithSize(sourceWidth, sourceHeight);
   const { canvas, context } = canvasWithSize(TILE_UPSCALE_EDGE, TILE_UPSCALE_EDGE);
   try {
@@ -30,7 +30,18 @@ function localTileInput(image: RgbaImage, tile: ImageUpscaleTile): string {
       pixels.data.set(image.data.subarray(start, start + sourceWidth * 4), row * sourceWidth * 4);
     }
     cropContext.putImageData(pixels, 0, 0);
-    context.drawImage(crop, inputX, inputY, inputWidth, inputHeight);
+    const scaledWidth = sourceWidth * scale;
+    const scaledHeight = sourceHeight * scale;
+    if (sampleX || sampleY || scaledWidth !== inputWidth || scaledHeight !== inputHeight) {
+      context.save();
+      context.beginPath();
+      context.rect(inputX, inputY, inputWidth, inputHeight);
+      context.clip();
+      context.drawImage(crop, inputX - sampleX, inputY - sampleY, scaledWidth, scaledHeight);
+      context.restore();
+    } else {
+      context.drawImage(crop, inputX, inputY, inputWidth, inputHeight);
+    }
     const right = inputX + inputWidth;
     const bottom = inputY + inputHeight;
     // Repeat the edge pixels in the unused space, keeping the source scale exact.
@@ -46,8 +57,8 @@ function localTileInput(image: RgbaImage, tile: ImageUpscaleTile): string {
 }
 
 export async function getTiledUpscaleInput(source: EditorDocument, plan: ImageUpscalePlan, tile: ImageUpscaleTile, signal: AbortSignal): Promise<string> {
-  if (!source.tiledSource) return localTileInput(source.image, tile);
-  const query = new URLSearchParams({ id: source.tiledSource.id, scale: String(plan.scale), index: String(tile.index) });
+  if (!source.tiledSource) return localTileInput(source.image, tile, plan.scale);
+  const query = new URLSearchParams({ id: source.tiledSource.id, scale: String(plan.scale), index: String(tile.index), layoutVersion: String(plan.layoutVersion) });
   const response = await checkEditorStorageResponse(await fetch(`${SOURCE_ENDPOINT}?${query}`, { signal, cache: "no-store" }));
   const blob = await response.blob();
   return new Promise((resolve, reject) => {
@@ -65,7 +76,7 @@ export function needsTiledResultArchive(source: EditorDocument, plan: ImageUpsca
 export async function createTiledResultArchive(plan: ImageUpscalePlan, signal: AbortSignal): Promise<TiledResultArchive> {
   const response = await checkEditorStorageResponse(await fetch(RESULT_ENDPOINT, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ width: plan.sourceWidth, height: plan.sourceHeight, scale: plan.scale }),
+    body: JSON.stringify({ width: plan.sourceWidth, height: plan.sourceHeight, scale: plan.scale, layoutVersion: plan.layoutVersion }),
     signal,
   }));
   const { id } = await response.json() as { id: string };

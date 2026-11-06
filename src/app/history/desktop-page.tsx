@@ -26,9 +26,10 @@ import {
   SessionExpiredNotice,
 } from "@/app/session-notice";
 import { GallerySubmitDialog, type GallerySubmitForm } from "@/app/gallery-submit";
-import { deleteLocalImageHistory, listLocalImageHistorySummaries } from "@/lib/local-image-history";
+import { deleteLocalImageHistory, listLocalImageHistorySummaries, readImageHistoryMode } from "@/lib/local-image-history";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { deleteCachedImage, fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import { downloadLocalTiledUpscaleResult } from "@/lib/local-tiled-upscale-result";
 
 import { mergeHistoryListItems, type HistoryListItem as HistoryItem } from "@/lib/history-list-items";
 
@@ -37,7 +38,7 @@ function importHref(item: HistoryItem, mode: "img2img" | "generate") {
   return `/image?${params.toString()}`;
 }
 
-export default function HistoryPage() {
+export default function HistoryPage({ ownerId }: { ownerId: number }) {
   const [items, setItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -46,50 +47,65 @@ export default function HistoryPage() {
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [zipping, setZipping] = useState(false);
-  const [localUrls, setLocalUrls] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<HistoryItem | null>(null);
   const [previewSrc, setPreviewSrc] = useState("");
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [expandedPrompts, setExpandedPrompts] = useState<Set<string>>(new Set());
   const [importMenu, setImportMenu] = useState<{ item: HistoryItem; top: number; left: number } | null>(null);
   const importMenuTimer = useRef<number | null>(null);
+  const removedIds = useRef(new Set<string>());
 
   useEffect(() => {
-    let active = true;
     const controller = new AbortController();
     void (async () => {
+      const local = await listLocalImageHistorySummaries().catch(() => []);
+      if (controller.signal.aborted) return;
+      const localItems = mergeHistoryListItems([], local, ownerId).items;
+      setItems(localItems);
+      const checkAccount = ownerId > 0 && readImageHistoryMode() === "account";
+      if (localItems.length || !checkAccount) setLoading(false);
+      if (!checkAccount) return;
       const result = await readJson<{ userId?: number; items?: HistoryItem[] }>(
         await fetch("/api/history", { cache: "no-store", signal: controller.signal }), "读取历史失败",
       );
-      const local = await listLocalImageHistorySummaries().catch(() => []);
-      if (!active) return;
-      const merged = mergeHistoryListItems(result.items || [], local, Number(result.userId));
-      setLocalUrls(merged.localSources);
-      setItems(merged.items);
+      if (controller.signal.aborted || (result.userId !== undefined && Number(result.userId) !== ownerId)) return;
+      // Reread summaries to account for explicit deletes while the account request was pending.
+      const currentLocal = await listLocalImageHistorySummaries().catch(() => local);
+      if (!controller.signal.aborted) {
+        setItems(mergeHistoryListItems(result.items || [], currentLocal, ownerId).items.filter((item) => !removedIds.current.has(item.id)));
+      }
     })().catch((error) => {
-      if (!active || (error instanceof Error && error.name === "AbortError")) return;
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return;
       if (error instanceof SessionExpiredError) setExpired(error.message);
       else setMessage(error instanceof Error ? error.message : "读取历史失败");
-    }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; controller.abort(); };
-  }, []);
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [ownerId]);
 
   function imageSrc(item: HistoryItem) {
-    return localUrls[item.id] || item.imageUrl;
+    return item.imageUrl;
   }
 
   function openPreview(item: HistoryItem) {
     setPreviewLoaded(false);
-    setPreviewSrc(imageSrc(item));
+    setPreviewSrc(item.archive ? item.thumbnailUrl || "" : imageSrc(item));
     setPreview(item);
   }
 
   async function openGallerySubmission(item: HistoryItem) {
+    if (item.archive) return;
     try {
-      const blob = item.account ? null : await fetchCachedImageBlob(imageSrc(item));
+      const blob = item.account ? null : await fetchCachedImageBlob(imageSrc(item), ownerId);
       const file = blob ? new File([blob], `history-${item.id}.${blob.type === "image/jpeg" ? "jpg" : "png"}`, { type: blob.type }) : undefined;
       setGalleryForm({ historyId: item.account ? item.id : undefined, file, title: item.parameters.prompt?.toString().slice(0, 40) || "未命名作品", authorName: "", rating: "general", source: item.account ? "lfn" : "local", tags: "", exposeParameters: true });
     } catch (error) { setMessage(error instanceof Error ? error.message : "读取历史图片失败"); }
+  }
+
+  async function downloadArchive(item: HistoryItem) {
+    if (!item.archive) return;
+    try {
+      if (!await downloadLocalTiledUpscaleResult(item.archive.id, `lfn-${item.id}.png`)) throw new Error("浏览器中找不到原尺寸文件");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "下载失败"); }
   }
 
   function closePreview() {
@@ -119,20 +135,23 @@ export default function HistoryPage() {
 
   async function remove(id: string) {
     if (!(await lfnConfirm("确认删除这张历史图片？删除后无法恢复。"))) return;
-    const deletedItem = items.find((item) => item.id === id);
-    if (deletedItem?.account) {
-      const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (!response.ok) {
-        const result = await response.json();
-        setMessage(result.message || "删除失败");
-        return;
+    try {
+      const deletedItem = items.find((item) => item.id === id);
+      if (deletedItem?.account) {
+        const response = await fetch(`/api/history?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (!response.ok && response.status !== 404) {
+          const result = await response.json().catch(() => ({})) as { message?: string };
+          throw new Error(result.message || "删除失败");
+        }
       }
+      const localCopies = await listLocalImageHistorySummaries();
+      await Promise.all(localCopies.filter((entry) => entry.ownerId === ownerId && (entry.remoteId || entry.id) === id).map((entry) => deleteLocalImageHistory(entry.id)));
+      await deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`, ownerId).catch(() => undefined);
+      removedIds.current.add(id);
+      setItems((current) => current.filter((item) => item.id !== id));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "删除失败");
     }
-    const localCopies = await listLocalImageHistorySummaries().catch(() => []);
-    await Promise.all(localCopies.filter((entry) => (entry.remoteId || entry.id) === id).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
-    await deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`).catch(() => undefined);
-    setItems((current) => current.filter((item) => item.id !== id));
-    setLocalUrls((current) => { const next = { ...current }; delete next[id]; return next; });
   }
 
   function toggleSelect(id: string) {
@@ -153,6 +172,10 @@ export default function HistoryPage() {
   // 也不经 canvas 重编码），RGBA 通道信息完全保留，像素级无损。
   async function downloadSelectedZip(stripMetadata = false) {
     if (!selected.size || zipping) return;
+    if (items.some((item) => selected.has(item.id) && item.archive)) {
+      setMessage("所选图片包含已分段保存的大图，请使用对应图片的「下载原尺寸图片」。");
+      return;
+    }
     setZipping(true);
     setMessage("");
     try {
@@ -164,7 +187,7 @@ export default function HistoryPage() {
         const item = items.find((entry) => entry.id === id);
         if (!item) continue;
         try {
-          let blob = await fetchCachedImageBlob(imageSrc(item));
+          let blob = await fetchCachedImageBlob(imageSrc(item), ownerId);
           if (stripMetadata) {
             const cleaned = await fetch("/api/images/metadata-strip", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
             if (!cleaned.ok) throw new Error("清理图片数据失败");
@@ -216,13 +239,13 @@ export default function HistoryPage() {
       for (let offset = 0; offset < remoteIds.length; offset += 100) {
         const response = await fetch("/api/history", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids: remoteIds.slice(offset, offset + 100) }) });
         const result = await response.json().catch(() => ({})) as { message?: string };
-        if (!response.ok) throw new Error(result.message || "批量删除失败");
+        if (!response.ok && response.status !== 404) throw new Error(result.message || "批量删除失败");
       }
-      const localCopies = await listLocalImageHistorySummaries().catch(() => []);
-      await Promise.all(localCopies.filter((entry) => selected.has(entry.remoteId || entry.id)).map((entry) => deleteLocalImageHistory(entry.id).catch(() => undefined)));
-      await Promise.all(ids.map((id) => deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`).catch(() => undefined)));
+      const localCopies = await listLocalImageHistorySummaries();
+      await Promise.all(localCopies.filter((entry) => entry.ownerId === ownerId && selected.has(entry.remoteId || entry.id)).map((entry) => deleteLocalImageHistory(entry.id)));
+      await Promise.all(ids.map((id) => deleteCachedImage(`/api/history/${encodeURIComponent(id)}/image`, ownerId).catch(() => undefined)));
+      ids.forEach((id) => removedIds.current.add(id));
       setItems((current) => current.filter((item) => !selected.has(item.id)));
-      setLocalUrls((current) => { const next = { ...current }; ids.forEach((id) => delete next[id]); return next; });
       setMessage(`已删除 ${ids.length} 张图片。`);
       exitSelectMode();
     } catch (error) {
@@ -298,7 +321,7 @@ export default function HistoryPage() {
             {message}
           </div>
         )}
-        {expired ? null : loading ? (
+        {expired && !items.length ? null : loading ? (
           <p className="py-20 text-center text-sm text-[var(--muted)]">
             正在读取历史…
           </p>
@@ -322,6 +345,7 @@ export default function HistoryPage() {
                   >
                     <Image
                       src={item.thumbnailUrl || (item.imageUrl?.startsWith("/api/history/") ? `${item.imageUrl}${item.imageUrl.includes("?") ? "&" : "?"}variant=thumbnail` : imageSrc(item))}
+                      ownerId={ownerId}
                       alt="历史生成图片"
                       width={512}
                       height={512}
@@ -355,27 +379,28 @@ export default function HistoryPage() {
                   </button>
                   </div>
                   <div className="history-card-metadata flex justify-between text-[10px] text-[var(--muted)]">
-                    <span>{item.parameters.model || "未知模型"}</span>
+                    <span>{item.archive ? `${item.archive.width} × ${item.archive.height} · 本机原图` : item.parameters.model || "未知模型"}</span>
                     <time>
                       {new Date(item.createdAt).toLocaleString("zh-CN")}
                     </time>
                   </div>
-                  <div className="grid grid-cols-5 gap-2">
-                    <div className="history-import-group" title="导入图片到工作台" onMouseEnter={(event) => showImportMenu(item, event.currentTarget)} onMouseLeave={hideImportMenuSoon} onFocus={(event) => showImportMenu(item, event.currentTarget)}>
+                  <div className={`grid ${item.archive ? "grid-cols-3" : "grid-cols-5"} gap-2`}>
+                    {!item.archive && <div className="history-import-group" title="导入图片到工作台" onMouseEnter={(event) => showImportMenu(item, event.currentTarget)} onMouseLeave={hideImportMenuSoon} onFocus={(event) => showImportMenu(item, event.currentTarget)}>
                       <Link href={importHref(item, "img2img")} className="history-action" aria-label="导入为图生图">
                         <RotateCcw size={15} />
                       </Link>
-                    </div>
+                    </div>}
                     <Link href={`/history/${encodeURIComponent(item.id)}`} className="history-action" title="查看完整请求参数" aria-label="查看完整请求参数"><Info size={15} /></Link>
-                    <ImageDownloadMenu src={imageSrc(item)} filename={`lfn-${item.id}`} className="history-action" title="下载图片" />
-                    <button
+                    {item.archive ? <button type="button" className="history-action" title="下载原尺寸图片" aria-label="下载原尺寸图片" onClick={() => void downloadArchive(item)}><Download size={15} /></button>
+                      : <ImageDownloadMenu getImage={() => fetchCachedImageBlob(imageSrc(item), ownerId)} filename={`lfn-${item.id}`} className="history-action" title="下载图片" />}
+                    {!item.archive && <button
                       type="button"
                       onClick={() => void openGallerySubmission(item)}
                       className="history-action"
                       title="提交到图片广场"
                     >
                       <Send size={15} />
-                    </button>
+                    </button>}
                     <button
                       type="button"
                       onClick={() => remove(item.id)}
@@ -413,14 +438,15 @@ export default function HistoryPage() {
           <div className={`history-lightbox-surface ${previewLoaded ? "" : "is-loading"}`} onClick={(event) => event.stopPropagation()}>
             <Image
               src={previewSrc || preview.imageUrl}
+              ownerId={ownerId}
               alt="放大后的历史生成图片"
               loading="eager"
               onLoad={() => setPreviewLoaded(true)}
               onError={() => {
-                if (previewSrc !== preview.imageUrl) setPreviewSrc(preview.imageUrl);
+                if (!preview.archive && previewSrc !== preview.imageUrl) setPreviewSrc(preview.imageUrl);
               }}
             />
-            {!previewLoaded && <span className="history-lightbox-loading">正在加载原图…</span>}
+            {!previewLoaded && <span className="history-lightbox-loading">{preview.archive ? "正在读取本机预览…" : "正在加载原图…"}</span>}
             <button type="button" className="history-lightbox-close" aria-label="关闭图片预览" onClick={closePreview}><X size={18} /></button>
           </div>
         </div>

@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { crc32, createDeflate } from "node:zlib";
 import sharp from "sharp";
-import { describeImageTileUpscale, imageUpscaleTileAt, TILE_UPSCALE_EDGE, TILE_UPSCALE_MAX_FREE_PIXELS, type ImageUpscaleLayout, type TileUpscaleFactor } from "./image-tile-upscale";
+import { describeImageTileUpscale, imageUpscaleTileAt, TILE_UPSCALE_EDGE, TILE_UPSCALE_MAX_FREE_PIXELS, type ImageUpscaleLayout, type TileUpscaleFactor, type TileUpscaleLayoutVersion } from "./image-tile-upscale";
 
 const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
@@ -68,8 +68,8 @@ async function cleanupExpiredResults(root: string) {
   }
 }
 
-export async function createTiledUpscaleResult(userId: number, width: number, height: number, scale: TileUpscaleFactor): Promise<string> {
-  const layout = describeImageTileUpscale(width, height, scale);
+export async function createTiledUpscaleResult(userId: number, width: number, height: number, scale: TileUpscaleFactor, layoutVersion?: TileUpscaleLayoutVersion): Promise<string> {
+  const layout = describeImageTileUpscale(width, height, scale, layoutVersion);
   if (layout.outputWidth > PNG_MAX_EDGE || layout.outputHeight > PNG_MAX_EDGE) {
     throw new RangeError("目标尺寸超出 PNG 格式可表示的范围");
   }
@@ -79,7 +79,7 @@ export async function createTiledUpscaleResult(userId: number, width: number, he
   const id = randomUUID();
   const directory = resultDirectory(userId, id);
   await mkdir(directory, { mode: 0o700 });
-  await writeFile(path.join(directory, METADATA_FILENAME), JSON.stringify({ width, height, scale }), { mode: 0o600 });
+  await writeFile(path.join(directory, METADATA_FILENAME), JSON.stringify({ width, height, scale, layoutVersion: layout.layoutVersion }), { mode: 0o600 });
   return id;
 }
 
@@ -89,10 +89,12 @@ export async function openTiledUpscaleResult(userId: number, id: string): Promis
   try {
     const info = await stat(file);
     if (Date.now() - info.mtimeMs >= RESULT_TTL_MS) throw new TiledUpscaleResultError("分块超分结果已过期", 404);
-    const { width, height, scale } = JSON.parse(await readFile(file, "utf8")) as { width: number; height: number; scale: TileUpscaleFactor };
+    const { width, height, scale, layoutVersion = 1 } = JSON.parse(await readFile(file, "utf8")) as {
+      width: number; height: number; scale: TileUpscaleFactor; layoutVersion?: TileUpscaleLayoutVersion;
+    };
     const now = new Date();
     await utimes(file, now, now);
-    return { directory, layout: describeImageTileUpscale(width, height, scale) };
+    return { directory, layout: describeImageTileUpscale(width, height, scale, layoutVersion) };
   } catch (error) {
     if (isMissing(error)) throw new TiledUpscaleResultError("未找到分块超分结果", 404);
     throw error;

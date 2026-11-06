@@ -29,7 +29,7 @@ import { TagAssistantPanel } from "./tag-assistant-panel";
 import { SeedModeNotice } from "@/mobile/image/seed-mode-notice";
 
 import { useStudioSessionHistory } from "@/app/image/use-studio-session-history";
-import { localStudioHistory, remoteStudioHistory } from "@/lib/studio-history";
+import { localStudioHistory, remoteStudioHistory, trackStudioStreamResults } from "@/lib/studio-history";
 import { usePanelHistory } from "@/app/ui/use-panel-history";
 import { hasImageCharacterPrompts, imageCharacterUseCoords, readImageCharacterPrompts } from "@/lib/image-character-prompts";
 import { UserAvatar } from "@/app/ui/user-avatar";
@@ -45,12 +45,14 @@ import { copyTextToClipboard } from "@/lib/client-clipboard";
 
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
-import { imageHistoryReferences, readImageOperationResponse } from "@/lib/image-operation-response";
+import { imageHistoryReferences, imageOperationImages, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
 import { ASSISTANT_INPUT_MAX_LENGTH } from "@/lib/assistant-input";
 import { ImageDownloadMenu } from "@/mobile/image-download-menu";
 import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import CachedImage from "@/mobile/cached-image";
+import { parseLocalHistoryImageSource } from "@/lib/local-history-image-source";
 import { generationModelFor, inpaintModelFor } from "@/lib/inpaint-model";
 import { parseImageHistoryMetadata, saveEditorComposite } from "@/lib/editor-composite-history";
 import type { GenerationParameters } from "@/lib/history";
@@ -200,9 +202,10 @@ import {
   dataUrlToBlob,
   deleteLocalImageHistory,
   findLocalImageHistory,
-  listLocalImageHistory,
+  listLocalImageHistorySummaries,
   readImageHistoryMode,
   saveLocalImageHistory,
+  writeImageHistoryMode,
   type ImageHistoryMode,
 } from "@/lib/local-image-history";
 
@@ -803,7 +806,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [mobileHistoryRefresh, setMobileHistoryRefresh] = useState(0);
   const [mobileHistoryError, setMobileHistoryError] = useState("");
   const deletingMobileHistory = useRef(false);
-  const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("account");
+  const [imageHistoryMode, setImageHistoryMode] = useState<ImageHistoryMode>("local");
   // 最左侧功能导航栏（new-api/Aaalice 式）：折叠 = 纯图标 56px，展开 = 图标+文字。
   const modePickerRef = useRef<HTMLDivElement>(null);
   // VSCode 内联聊天（LFN 版）：选中文本→右键菜单→锚定对话框，Keep 替换所选内容。
@@ -915,31 +918,23 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     return () => window.removeEventListener("lfn-image-history-mode", syncMode);
   }, []);
   useEffect(() => {
-    if (imageHistoryMode === "none") return;
     const startedAt = Date.now();
     let active = true;
     const controller = new AbortController();
     void (async () => {
-      const local = await listLocalImageHistory(Number.POSITIVE_INFINITY).catch(() => []);
-      let restored: SessionResult[];
+      const local = await listLocalImageHistorySummaries().catch(() => []);
+      if (!active) return;
+      const owned = local.filter(item => item.ownerId === (userId ?? 0))
+        .map(item => localStudioHistory(item)) as SessionResult[];
+      setSessionHistory(current => mergeStudioHistory(
+        current.filter(item => item.createdAt >= startedAt || (!item.historyId && !item.localId)), owned));
       if (imageHistoryMode === "account" && authenticated) {
         const response = await fetch("/api/history", { cache: "no-store", signal: controller.signal });
-        if (!response.ok) throw new Error("历史加载失败，请重新进入或刷新重试。");
+        if (!response.ok) throw new Error("暂时无法同步账号历史。本机图片仍可使用。");
         const result = await response.json() as { items?: Array<{ id: string; imageUrl: string; createdAt: string; parameters: GenerationParameters }> };
-        const remote = (result.items || []).map(remoteStudioHistory) as SessionResult[];
-        // Account history is authoritative: do not resurrect deleted cloud copies.
-        // Keep unsynced local results only when they belong to this account.
-        const pending = local.filter(item => !item.remoteId && item.ownerId === userId)
-          .map(item => localStudioHistory(item, URL.createObjectURL(item.image))) as SessionResult[];
-        restored = mergeStudioHistory(remote, pending) as SessionResult[];
-      } else {
-        restored = local.filter(item => imageHistoryMode === "local" || item.ownerId === (userId ?? 0))
-          .map(item => localStudioHistory(item, URL.createObjectURL(item.image))) as SessionResult[];
+        const remote = (result.items || []).map(item => ({ ...remoteStudioHistory(item), imageOwnerId: userId })) as SessionResult[];
+        if (active) setSessionHistory(current => mergeStudioHistory(current, remote));
       }
-      if (active) setSessionHistory(current => mergeStudioHistory(
-        imageHistoryMode === "account" && authenticated
-          ? current.filter(item => item.createdAt >= startedAt || !item.historyId || restored.some(saved => saved.historyId === item.historyId))
-          : current.filter(item => item.createdAt >= startedAt || restored.some(saved => saved.id === item.id)), restored));
     })().catch(error => { if (active && error.name !== "AbortError") setNotice(error.message || "历史恢复失败，请重试。"); });
     return () => { active = false; controller.abort(); };
   }, [imageHistoryMode, authenticated, userId, setSessionHistory, mobileHistoryRefresh]);
@@ -1206,11 +1201,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     if (caps.seed) setSeed(parameters.seed == null || parameters.seed === 0 ? "" : String(parameters.seed));
   }
 
-  async function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<ReplicaHistoryItem, "operation">> & EditorHistoryReference = {}, requestIds: string[] = [], originGoalId?: string) {
-    if (!nextImages.length || sourceOperation === "suggest-tags") return;
+  function createSessionResults(nextImages: string[], historyIds: string[], sourceOperation: Operation, settings: Partial<Omit<SessionResult, "operation">>, requestIds: string[], previous?: Array<SessionResult | undefined>): SessionResult[] {
     const now = Date.now();
-    const results: SessionResult[] = nextImages.map((image, index) => ({
-        id: `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+    return nextImages.map((image, index) => ({
+        id: previous?.[index]?.id ?? `${now}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        localId: previous?.[index]?.localId,
         image,
         historyId: historyIds[index] || undefined,
         requestId: requestIds[index] || undefined,
@@ -1222,37 +1217,54 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           ? readImageCharacterPrompts({ characterPrompts: characters.filter(character => character.prompt.trim()).map(character => ({ prompt: character.prompt, negativePrompt: mediumEffort ? "" : character.negative || "", center: { x: character.centerX, y: character.centerY } })) }) : [],
         use_coords: !aiAutoPosition,
         operation: sourceOperation,
-        createdAt: now + index,
+        createdAt: previous?.[index]?.createdAt ?? now + index,
         ...settings,
       }));
-    setSessionHistory((current) => [
-      ...results,
-      ...current,
-    ]);
-    for (const item of results) void loadImageElement(item.image).then(decoded => {
-      setSessionHistory(current => current.map(saved => saved.id === item.id ? { ...saved, width: decoded.naturalWidth, height: decoded.naturalHeight } : saved));
-    }).catch(() => undefined);
-    if (imageHistoryMode !== "none") {
-      void Promise.all(results.map(async (item) => {
-        try {
-          await saveLocalImageHistory({
-            id: item.id,
-            ownerId: userId ?? 0,
-            remoteId: item.historyId,
-            requestId: item.requestId,
-            createdAt: item.createdAt,
-            image: await dataUrlToBlob(item.image),
-            prompt: item.prompt,
-            negative: item.negative,
-            model: item.model,
-            operation: item.operation,
-            parameters: { prompt: item.prompt, negative_prompt: item.negative, characterPrompts: item.characterPrompts, use_coords: item.use_coords, providerId: item.providerId, imageProtocol: item.imageProtocol, width: item.width, height: item.height, steps: item.steps, scale: item.scale, sampler: item.sampler, noise_schedule: item.noise_schedule },
-          });
-        } catch {
-          setNotice("图片已生成，但浏览器无法保存本地历史；请检查存储空间或权限。");
-        }
-      }));
+  }
+
+  async function persistSessionResult(item: SessionResult): Promise<SessionResult> {
+    try {
+      const existing = item.localId ? await findLocalImageHistory(item.localId, userId ?? 0) : null;
+      const image = existing?.image ?? await dataUrlToBlob(item.image);
+      if (!image.size || !image.type.startsWith("image/")) throw new Error("图片内容无效");
+      const dimensions = existing?.archive ?? await readEditorSourceSize(image).catch(() => null);
+      const width = dimensions?.width ?? item.width;
+      const height = dimensions?.height ?? item.height;
+      await saveLocalImageHistory({
+        ...existing,
+        id: item.id,
+        ownerId: userId ?? 0,
+        remoteId: item.historyId ?? existing?.remoteId,
+        requestId: item.requestId ?? existing?.requestId,
+        createdAt: item.createdAt,
+        image,
+        prompt: item.prompt,
+        negative: item.negative,
+        model: item.model,
+        operation: item.operation,
+        parameters: {
+          ...existing?.parameters,
+          prompt: item.prompt, negative_prompt: item.negative, characterPrompts: item.characterPrompts, use_coords: item.use_coords,
+          providerId: item.providerId, imageProtocol: item.imageProtocol, quality: item.quality, imageSize: item.imageSize, background: item.background,
+          width, height, steps: item.steps, scale: item.scale, sampler: item.sampler, noise_schedule: item.noise_schedule, seed: item.seed, strength: item.strength,
+          editorDraftId: item.editorDraftId, editorNodeId: item.editorNodeId, editorBranchId: item.editorBranchId,
+        },
+      });
+      return { ...item, width, height, localId: item.id, archive: existing?.archive };
+    } catch {
+      return { ...item, localId: undefined };
     }
+  }
+
+  function trackStreamResults(sourceOperation: Operation, requestId: string) {
+    return trackStudioStreamResults(async image => persistSessionResult(createSessionResults([image], [], sourceOperation, {}, [requestId])[0]));
+  }
+
+  async function addSessionResults(nextImages: string[], historyIds: string[] = [], sourceOperation = operation, settings: Partial<Omit<SessionResult, "operation">> = {}, requestIds: string[] = [], originGoalId?: string, previous?: Array<SessionResult | undefined>) {
+    if (!nextImages.length || sourceOperation === "suggest-tags") return [];
+    const results = await Promise.all(createSessionResults(nextImages, historyIds, sourceOperation, settings, requestIds, previous).map(persistSessionResult));
+    setSessionHistory(current => mergeStudioHistory(results, current.filter(saved => !results.some(item => item.id === saved.id))));
+    if (results.some(item => !item.localId)) setNotice("图片已生成，但浏览器无法保存本机原图。请及时下载。");
     const editOperation = editorHistoryOperation(sourceOperation);
     if (editOperation && !settings.editorDraftId) {
       const failures = await Promise.all(results.map(async (item) => {
@@ -1274,6 +1286,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
     if (originGoalId && goalRunRef.current?.id === originGoalId && goalRunRef.current?.status === "running")
       goalReviewImageRef.current = results.at(-1)?.image ? { goalId: originGoalId, image: results.at(-1)!.image } : null;
+    return results;
   }
 
   async function openImageEditor(mode: "inpaint" | "canvas" | "tiled-upscale", image: string | File | undefined = source?.data, character?: CharacterPromptUi) {
@@ -1338,13 +1351,24 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
 
-  function applyImageAsSource(image: string, nextOperation: Operation = "img2img", { openMobilePanel = true } = {}) {
+  function applyImageAsSource(image: string, nextOperation: Operation = "img2img", { openMobilePanel = true, history }: { openMobilePanel?: boolean; history?: EditorHistoryReference } = {}) {
+    const stored = sessionHistory.find(item => item.image === image);
+    if (stored?.archive) {
+      setNotice("这是大图缩略预览，请先下载原尺寸合成图再导入。");
+      return;
+    }
+    if (parseLocalHistoryImageSource(image)) {
+      void fetchCachedImageBlob(image, userId ?? 0).then(blobToDataUrl)
+        .then(original => applyImageAsSource(original, nextOperation, { openMobilePanel, history: history ?? stored }))
+        .catch(error => setNotice(error instanceof Error ? error.message : "本机图片读取失败。"));
+      return;
+    }
     if (nextOperation !== "suggest-tags" && !modelCapabilities.operations.includes(nextOperation)) {
       setNotice("当前模型不支持这个操作，请先选择支持图像编辑的模型。");
       return;
     }
     if (nextOperation === "vibe-transfer" || nextOperation === "precise-reference") imageReferences.add(nextOperation, { id: crypto.randomUUID(), data: image, name: "工作区图片.png", createdAt: Date.now() });
-    const saved = sessionHistory.find((item) => item.image === image);
+    const saved = history ?? stored;
     setSource({ data: image, name: "工作区图片.png", editorDraftId: saved?.editorDraftId, editorNodeId: saved?.editorNodeId, editorBranchId: saved?.editorBranchId });
     setMask(null);
     setUpscaleSource(null);
@@ -1468,8 +1492,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         patchImage = streamed[0] || "";
       } else {
         const result = await readImageOperationResponse(response);
-        if (!response.ok) throw new Error(result.message || "精确重绘失败");
-        patchImage = result.images?.[0] || result.image || "";
+        patchImage = imageOperationImages(result)[0] || "";
+        if (!response.ok && !patchImage) throw new Error(result.message || "精确重绘失败");
       }
       if (!patchImage) throw new Error("上游未返回重绘结果");
       const generated = await loadImageElement(patchImage);
@@ -1501,6 +1525,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       );
       compositeContext.restore();
       const finalImage = composite.toDataURL("image/png");
+      let [localResult] = await addSessionResults([finalImage], [], "inpainting", {
+        model: inpaintModel, width: imageSize.width, height: imageSize.height, strength,
+      });
       setImages([finalImage]);
       setPreviewDrafts([]);
       setSelectedImageIndex(0);
@@ -1521,15 +1548,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       } catch (error) {
         historyError = error instanceof Error ? error.message : "历史保存失败";
       }
-      // Session persistence saves the owned local copy once for either mode.
-      await addSessionResults([finalImage], historyId ? [historyId] : [], "inpainting", { model: inpaintModel, width: imageSize.width, height: imageSize.height });
-      setNotice(historyError
-        ? `精确重绘已完成，但${historyError}。完整图片已保留在工作台，请及时下载。`
-        : imageHistoryMode === "none"
-          ? "精确重绘完成，未保存图片历史。"
-          : imageHistoryMode === "local"
-            ? "精确重绘完成，完整合成图已保存到本机历史。"
-            : "精确重绘完成，完整合成图已保存到图片历史。" );
+      if (historyId && localResult) {
+        const linked = await persistSessionResult({ ...localResult, historyId });
+        setSessionHistory(current => current.map(item => item.id === linked.id ? { ...item, historyId, localId: linked.localId } : item));
+        localResult = linked;
+      }
+      setNotice(!localResult?.localId
+        ? "精确重绘已完成，但浏览器无法保存本机原图。请及时下载。"
+        : historyError
+          ? `精确重绘已保存到本机，但未同步账号历史：${historyError}`
+          : historyId ? "精确重绘已保存到本机和账号历史。" : "精确重绘已保存到本机。");
       await refreshWallet();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "精确重绘失败");
@@ -2283,11 +2311,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     const params = new URLSearchParams(window.location.search);
     const resultId = params.get("editorResult");
     const editorHistory = params.get("editorHistory") || "";
+    const editorLocal = params.get("editorLocal");
     if (!resultId || !/^[a-z0-9][a-z0-9._-]{0,250}$/i.test(resultId)) return;
     let active = true;
     void loadEditorDraft(resultId)
       .then(async (resultDraft) => {
         if (!active || !resultDraft) throw new Error("编辑器结果已过期，请重新打开编辑器。");
+        const local = editorLocal ? await findLocalImageHistory(editorLocal, userId ?? 0).catch(() => null) : null;
+        if (!active) return;
+        const matchingLocal = local?.parameters?.editorDraftId === resultId ? local : null;
         const result = editorImageDataUrl(resultDraft.document.image);
         applyImageAsSource(result, "inpainting", { openMobilePanel: false });
         if (!resultDraft.document.characterReference) {
@@ -2300,6 +2332,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         setImages([result]);
         setNotice("已将编辑结果载入工作台。");
         await addSessionResults([result], /^[a-f0-9-]{36}$/i.test(editorHistory) ? [editorHistory] : [], "inpainting", {
+          ...(matchingLocal ? { id: matchingLocal.id, localId: matchingLocal.id, createdAt: matchingLocal.createdAt } : {}),
           ...reference,
           ...resultDraft.document.generation, prompt: resultDraft.document.prompt || "", negative: resultDraft.document.negativePrompt || "", width: resultDraft.document.image.width, height: resultDraft.document.image.height,
         });
@@ -2326,12 +2359,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     let active = true;
     void (async () => {
       let blob: Blob | null = null;
-      const local = historyId ? await findLocalImageHistory(historyId).catch(() => null) : null;
+      const local = historyId ? await findLocalImageHistory(historyId, userId ?? 0).catch(() => null) : null;
       if (historyId) {
+        if (local?.archive && importMode !== "generate") throw new Error("请先下载原尺寸合成图再导入。");
         if (local) blob = local.image;
       }
       if (!blob) {
-        blob = await fetchCachedImageBlob(endpoint);
+        blob = await fetchCachedImageBlob(endpoint, userId ?? 0);
       }
       if (active) {
         const importedDataUrl = await blobToDataUrl(blob);
@@ -2373,7 +2407,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       });
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [userId]);
   function appendTag(tag: string) {
     setPrompt((value) => `${value}${value.trim() ? ", " : ""}${tag}`);
   }
@@ -4259,7 +4293,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       response_format: "b64_json",
       ...(imageHistoryMode !== "account" ? { _lfnSkipServerHistory: true } : {}),
     };
-    base._lfnRequestId = createBrowserRequestId();
+    const requestId = createBrowserRequestId();
+    base._lfnRequestId = requestId;
     if (naturalImageModel && (["img2img", "inpainting", "edits", "upscale"].includes(operation) || operation.startsWith("director-"))) base.image = source?.data;
     if (!mediumEffort && modelCapabilities.sampling && cfgRescale > 0) base.cfg_rescale = cfgRescale;
     if (modelCapabilities.seed && seed.trim() && Number(seed) !== 0) base.seed = Number(seed);
@@ -4371,11 +4406,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && outputCount > 1;
       const collected: string[] = [];
-      const collectedHistoryIds: string[] = [];
       const chunkImagesByIndex: string[][] = [];
-      const chunkHistoryByIndex: string[][] = [];
-      const chunkRequestIdsByIndex: string[][] = [];
       let usedNewApi = false;
+      let localSaveFailed = false;
       let failures = 0;
       let lastError = "";
       let partialMessage = "";
@@ -4413,11 +4446,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           let chunkImages: string[] = [];
           let chunkHistoryIds: string[] = [];
           let chunkRequestId: string | undefined;
+          const streamResults = trackStreamResults(operation, requestId);
           if (contentType.includes("text/event-stream") && response.body) {
             if (response.headers.get("x-lfn-payment-source") === "newapi")
               usedNewApi = true;
             chunkImages = await consumeImageStream(response, {
               expected: size,
+              onFinal: streamResults.onFinal,
               onPreview(next) {
                 next.forEach((image, index) =>
                   previewMap.set(`${chunkIndex}:${index}`, image),
@@ -4434,21 +4469,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             });
           } else {
             const result = await readImageOperationResponse(response);
-            if (!response.ok && !result.images)
+            chunkImages = imageOperationImages(result);
+            if (!response.ok && !chunkImages.length)
               throw new Error(result.message || "操作失败");
-            chunkImages = result.images || (result.image ? [result.image] : []);
             if (result.payment === "newapi") usedNewApi = true;
             chunkHistoryIds = imageHistoryReferences(chunkImages, result.historyIds).historyIds;
             chunkRequestId = result.requestId;
-            if (result.partial)
+            if (result.partial || !response.ok)
               partialMessage = result.message || "部分批次生成失败。";
           }
+          const references = imageHistoryReferences(chunkImages, chunkHistoryIds, chunkRequestId || requestId);
+          const saved = await addSessionResults(chunkImages, references.historyIds, operation, {}, references.requestIds, undefined, streamResults.match(chunkImages));
+          localSaveFailed ||= saved.some(item => !item.localId);
           chunkImagesByIndex[chunkIndex] = chunkImages;
-          const references = imageHistoryReferences(chunkImages, chunkHistoryIds, chunkRequestId);
-          chunkHistoryByIndex[chunkIndex] = references.historyIds;
-          chunkRequestIdsByIndex[chunkIndex] = references.requestIds;
           collected.splice(0, collected.length, ...chunkImagesByIndex.flat());
-          collectedHistoryIds.splice(0, collectedHistoryIds.length, ...chunkHistoryByIndex.flat());
           for (let index = 0; index < size; index += 1)
             previewMap.delete(`${chunkIndex}:${index}`);
           doneImages += chunkImages.length;
@@ -4489,7 +4523,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             `分批生成完成 ${collected.length}/${count} 张${lastError ? `：${lastError}` : ""}。`,
           );
         }
-        await addSessionResults(collected, collectedHistoryIds, operation, {}, chunkRequestIdsByIndex.flat(), usageGoalId);
+        if (usageGoalId && goalRunRef.current?.id === usageGoalId && goalRunRef.current.status === "running") {
+          const image = collected.at(-1);
+          goalReviewImageRef.current = image ? { goalId: usageGoalId, image } : null;
+        }
       } else {
         const response = await fetchGoalImage("/api/images/operate", {
           method: "POST",
@@ -4500,8 +4537,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         if (contentType.includes("text/event-stream") && response.body) {
           let batchHistoryIds: string[] = [];
           let batchRequestId: string | undefined;
+          const streamResults = trackStreamResults(operation, requestId);
           const batchImages = await consumeImageStream(response, {
             expected: outputCount,
+            onFinal: streamResults.onFinal,
             onPreview(next) {
               setPreviewDrafts(next);
             },
@@ -4517,13 +4556,16 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             usedNewApi = true;
           if (!batchImages.length) throw new Error("上游未返回最终图片");
           collected.push(...batchImages);
+          const references = imageHistoryReferences(batchImages, batchHistoryIds, batchRequestId || requestId);
+          const saved = await addSessionResults(batchImages, references.historyIds, operation, {}, references.requestIds, usageGoalId, streamResults.match(batchImages));
+          localSaveFailed ||= saved.some(item => !item.localId);
           setImages(batchImages);
           setSelectedImageIndex(0);
           setPreviewDrafts([]);
-          await addSessionResults(batchImages, batchHistoryIds, operation, {}, batchRequestId ? batchImages.map(() => batchRequestId as string) : [], usageGoalId);
         } else {
           const result = await readImageOperationResponse(response);
-          if (!response.ok && !result.images)
+          const newImages = imageOperationImages(result);
+          if (!response.ok && !newImages.length)
             throw new Error(result.message || "操作失败");
           if (operation === "suggest-tags") {
             if (typeof result.prompt === "string" && result.prompt.trim()) setPrompt(result.prompt);
@@ -4539,19 +4581,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             );
             return;
           }
-          const newImages: string[] =
-            result.images || (result.image ? [result.image] : []);
-          const references = imageHistoryReferences(newImages, result.historyIds, result.requestId);
+          const references = imageHistoryReferences(newImages, result.historyIds, result.requestId || requestId);
+          const saved = await addSessionResults(newImages, references.historyIds, operation, {}, references.requestIds, usageGoalId);
+          localSaveFailed ||= saved.some(item => !item.localId);
           setImages(newImages);
           setSelectedImageIndex(0);
-          await addSessionResults(newImages, references.historyIds, operation, {}, references.requestIds, usageGoalId);
           if (result.payment === "newapi") usedNewApi = true;
-          if (result.partial)
+          if (result.partial || !response.ok)
             partialMessage = result.message || "部分批次生成失败。";
         }
       }
       await refreshWallet();
-      if (!(sequential && failures)) {
+      if (localSaveFailed) {
+        setNotice("图片已生成，但浏览器无法保存部分本机原图。请及时下载。");
+      } else if (!(sequential && failures)) {
         if (partialMessage) {
           setNotice(partialMessage);
         } else if (usedNewApi) {
@@ -4669,9 +4712,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         <LfnSelect className="bg-transparent text-[10px] font-semibold text-[var(--ink)] outline-none" value={imageHistoryMode} onChange={(event) => {
           const next = event.target.value as ImageHistoryMode;
           setImageHistoryMode(next);
-          try { window.localStorage.setItem("lfn-image-history-mode-v1", next); window.dispatchEvent(new CustomEvent("lfn-image-history-mode", { detail: next })); } catch { setNotice("无法保存图片历史设置，请检查浏览器存储权限。"); }
+          try { writeImageHistoryMode(next); } catch { setNotice("无法保存图片历史设置，请检查浏览器存储权限。"); }
         }} aria-label="图片历史保存方式">
-          <option value="account">保存到 LFN</option><option value="local">仅保存本机</option><option value="none">不保存</option>
+          <option value="local">仅保存本机</option><option value="account">本机与 LFN 账号</option>
         </LfnSelect>
       </label>
       <div className="session-history-list">
@@ -4683,7 +4726,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 aria-label="使用本次历史图片"
                 onClick={() => applyImageAsSource(item.image, "img2img")}
               >
-                <Image src={item.image} alt="本次生成图片" width={96} height={96} unoptimized />
+                <CachedImage src={item.previewImage || item.image} ownerId={item.imageOwnerId} alt="本次生成图片" width={96} height={96} />
               </button>
               <div className="session-history-actions">
                 <button type="button" onClick={() => applyImageAsSource(item.image, "img2img")} aria-label="历史图片用于图生图" title="图生图"><ImagePlus size={13} /></button>
@@ -4724,7 +4767,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       onClearQueueHistory={() => assistantMessageQueue.queue.clearFinished()}
       onCancel={() => { const current = assistantMessageQueue.items.find((item) => item.status === "running"); if (current) assistantMessageQueue.queue.cancel(current.id); cancelAssistantTask(); }}
       loading={assistantLoading} searching={tagSearching} error={assistantTaskError} canContinue={assistantCanContinue} onContinue={() => void continueAssistantTask()}
-      resourceScope={assistantResourceScope} imageResources={[...sessionHistory.map((item, index) => ({ id: `history:${item.id}`, source: item.image, name: `生成图片 ${index + 1}`, kind: "history" as const, description: `${item.width}×${item.height} · ${item.prompt.slice(0, 160)}` })), ...imageReferences.library.map(item => ({ id: `library:${item.id}`, source: item.data, name: item.name, kind: "library" as const }))]}
+      resourceScope={assistantResourceScope} imageResources={[...sessionHistory.filter(item => !item.archive).map((item, index) => ({ id: `history:${item.id}`, source: item.image, previewSource: item.previewImage, name: `生成图片 ${index + 1}`, kind: "history" as const, description: `${item.width}×${item.height} · ${item.prompt.slice(0, 160)}` })), ...imageReferences.library.map(item => ({ id: `library:${item.id}`, source: item.data, name: item.name, kind: "library" as const }))]}
       onAddImageSources={sources => { if (agentImagesRef.current.length >= MAX_ASSISTANT_IMAGES) { setNotice("参考图已满，请先移除不需要的图片。"); return; } void assistantImageSources.addSources(sources.slice(0, MAX_ASSISTANT_IMAGES - agentImagesRef.current.length)); }} onCancelImageImport={cancelAgentImageImport}
       images={agentImagesScope === assistantResourceScope ? agentImages : []} imagesLoading={(agentImagesScope === assistantResourceScope && agentImagesLoading) || assistantImageSources.loading} onAddImages={files => { void handleAgentImageFiles(files); }}
       onRemoveImage={index => updateAgentImages(agentImagesRef.current.filter((_, i) => i !== index))}
@@ -5000,6 +5043,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       onCancel={() => cancelImageGeneration()}
   /> : legacyGenerationFooter;
   function reuseHistory(item: ReplicaHistoryItem, nextOperation: string) {
+    if (item.archive && nextOperation !== "reuse-parameters") {
+      setNotice("请下载原尺寸合成图后再用于编辑。");
+      return;
+    }
     if (nextOperation === "reuse-parameters") {
       if (metadataRestore.preferences.characters) restoreCharacterParameters(item, true);
       if (metadataRestore.preferences.model && item.providerId && item.providerId !== "newapi" && item.providerId !== "novelai" && !customProviders.some(provider => provider.id === item.providerId)) {
@@ -5024,7 +5071,18 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     } else applyImageAsSource(item.image, nextOperation as Operation);
   }
   const mobileHistoryItems = sessionHistory;
-  const replicaHistoryPanel = <ReplicaHistory items={mobileHistoryItems} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }}
+  function openStudioHistoryItem(item: ReplicaHistoryItem) {
+    if (item.archive) {
+      setNotice("这里显示大图缩略预览，点击历史卡片上的下载按钮可保存原尺寸合成图。");
+      return;
+    }
+    const open = (image: string) => { setImages([image]); setLightboxIndex(0); };
+    if (parseLocalHistoryImageSource(item.image)) {
+      void fetchCachedImageBlob(item.image, userId ?? 0).then(blobToDataUrl).then(open)
+        .catch(error => setNotice(error instanceof Error ? error.message : "本机图片读取失败。"));
+    } else open(item.image);
+  }
+  const replicaHistoryPanel = <ReplicaHistory items={mobileHistoryItems} onOpen={openStudioHistoryItem}
     onUse={reuseHistory} onPublish={(item) => void publishHistory(item)} onDelete={(index) => void deleteMobileHistory(mobileHistoryItems[index])} onDeleteMany={deleteMobileHistories} />;
   async function deleteMobileHistory(item: ReplicaHistoryItem | undefined) {
     return deleteMobileHistories(item ? [item] : []);
@@ -5037,7 +5095,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (!(await lfnConfirm(items.length === 1 ? "确认删除这张历史图片？只想移除预览时，请使用生成页的「清空工作区」。" : `确认删除选中的 ${items.length} 张历史图片？删除后无法恢复。`))) return false;
       let cacheWarning = false;
       const cleanLocal = async (item: ReplicaHistoryItem) => {
-        const localId = item.localId || (item.historyId ? (await findLocalImageHistory(item.historyId).catch(() => null))?.id : item.id);
+        const localId = item.localId || (item.historyId ? (await findLocalImageHistory(item.historyId, userId ?? 0).catch(() => null))?.id : item.id);
         if (localId) await deleteLocalImageHistory(localId).catch((error) => { if (imageHistoryMode === "local") throw error; cacheWarning = true; });
         if (item.historyId && imageHistoryMode === "account") await deleteCachedImage(`/api/history/${encodeURIComponent(item.historyId)}/image`).catch(() => undefined);
         removedKeys.add(studioHistoryKey(item));
@@ -5062,19 +5120,19 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
   async function publishHistory(item: ReplicaHistoryItem) {
+    if (item.archive) { setNotice("请先下载原尺寸合成图后再投稿。"); return; }
     if (!signedIn) { setNotice("请先登录后投稿图片广场。"); return; }
-    const form: GallerySubmitForm = { historyId: item.historyId, title: item.prompt.slice(0, 80), authorName: userName, source: item.historyId ? "lfn" : "local", rating: "general", tags: "", exposeParameters: true };
-    if (!item.historyId) {
+    const historyId = item.localId ? undefined : item.historyId;
+    const form: GallerySubmitForm = { historyId, title: item.prompt.slice(0, 80), authorName: userName, source: historyId ? "lfn" : "local", rating: "general", tags: "", exposeParameters: true };
+    if (!historyId) {
       try {
-        const response = await fetch(item.image);
-        if (!response.ok) throw new Error("图片读取失败，请重试。");
-        const blob = await response.blob();
+        const blob = await fetchCachedImageBlob(item.image, userId ?? 0);
         form.file = new File([blob], `history-${item.createdAt}.${blob.type === "image/jpeg" ? "jpg" : "png"}`, { type: blob.type || "image/png" });
       } catch (error) { setNotice(error instanceof Error ? error.message : "图片读取失败，请重试。"); return; }
     }
     setGallerySubmitForm(form);
   }
-  const mobileHistoryPanel = (onReturnToGenerate: () => void) => <ReplicaHistory items={mobileHistoryItems} onOpen={(item) => { setImages([item.image]); setLightboxIndex(0); }} onPublish={(item) => void publishHistory(item)}
+  const mobileHistoryPanel = (onReturnToGenerate: () => void) => <ReplicaHistory items={mobileHistoryItems} onOpen={openStudioHistoryItem} onPublish={(item) => void publishHistory(item)}
     onUse={(item, nextOperation) => { reuseHistory(item, nextOperation); onReturnToGenerate(); }} onDelete={(index) => void deleteMobileHistory(mobileHistoryItems[index])} onDeleteMany={deleteMobileHistories} />;
   const mobileControlsFor = (section: "prompt" | "reference" | "size" | "tools") =>
     cloneElement(mobileReplicaControls, { mobileSection: section });
@@ -5308,8 +5366,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               historyToolbar={<><label className="mobile-studio-history-mode"><span>历史保存方式</span><LfnSelect aria-label="图片历史保存方式" value={imageHistoryMode} onChange={(event) => {
                 const next = event.target.value as ImageHistoryMode;
                 setImageHistoryMode(next); setMobileHistoryError("");
-                try { window.localStorage.setItem("lfn-image-history-mode-v1", next); window.dispatchEvent(new CustomEvent("lfn-image-history-mode", { detail: next })); } catch { setMobileHistoryError("无法保存历史设置，请检查浏览器存储权限。"); }
-              }}><option value="account">保存到 LFN</option><option value="local">仅保存本机</option><option value="none">不保存</option></LfnSelect></label>{mobileHistoryError && <p className="mobile-studio-history-error" role="status">{mobileHistoryError}</p>}</>}
+                try { writeImageHistoryMode(next); } catch { setMobileHistoryError("无法保存历史设置，请检查浏览器存储权限。"); }
+              }}><option value="local">仅保存本机</option><option value="account">本机与 LFN 账号</option></LfnSelect></label>{mobileHistoryError && <p className="mobile-studio-history-error" role="status">{mobileHistoryError}</p>}</>}
               promptContent={mobilePromptContent}
               parameterContent={mobileParameterContent}
               assistantContent={<div className="mobile-studio-assistant-content">{assistantPanel}</div>}

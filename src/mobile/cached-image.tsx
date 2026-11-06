@@ -9,15 +9,16 @@ type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, "src"> & {
   fill?: boolean;
   unoptimized?: boolean;
   priority?: boolean;
+  ownerId?: number;
 };
 
 /** No remote src is assigned until IndexedDB has been checked. */
-export default function CachedImage({ src, alt = "", fill, unoptimized: _unoptimized, priority, loading, style, onLoad, ...props }: Props) {
+export default function CachedImage({ src, alt = "", fill, unoptimized: _unoptimized, priority, loading, style, onLoad, ownerId, ...props }: Props) {
   void _unoptimized;
   const element = useRef<HTMLImageElement>(null);
-  const [cached, setCached] = useState({ source: "", url: "" });
+  const [cached, setCached] = useState<{ source: string; url: string; ownerId?: number }>({ source: "", url: "" });
   const persistent = isCacheableImage(src);
-  const resolved = persistent ? cached.source === src ? cached.url : "" : src;
+  const resolved = persistent ? cached.source === src && cached.ownerId === ownerId ? cached.url : "" : src;
 
   useEffect(() => {
     if (!persistent) return;
@@ -27,14 +28,14 @@ export default function CachedImage({ src, alt = "", fill, unoptimized: _unoptim
     const load = () => {
       if (started) return;
       started = true;
-      void fetchCachedImageBlob(src).then((blob) => {
+      void fetchCachedImageBlob(src, ownerId).then((blob) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(blob);
-        setCached({ source: src, url: objectUrl });
+        setCached({ source: src, url: objectUrl, ownerId });
       }).catch(() => {
         // Leave network retries to an explicit reload instead of requesting the
         // same missing original a second time via the img element.
-        if (active) setCached({ source: src, url: "data:image/png;base64,!" });
+        if (active) setCached({ source: src, url: "data:image/png;base64,!", ownerId });
       });
     };
     let observer: IntersectionObserver | undefined;
@@ -50,7 +51,7 @@ export default function CachedImage({ src, alt = "", fill, unoptimized: _unoptim
       observer?.disconnect();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [src, persistent, priority, loading]);
+  }, [src, persistent, priority, loading, ownerId]);
 
   // eslint-disable-next-line @next/next/no-img-element -- persistent Blob URLs preserve the source's natural aspect ratio
   return <img {...props} alt={alt} ref={element} src={resolved || PLACEHOLDER} loading={priority ? "eager" : loading || "lazy"} aria-busy={persistent && !resolved || undefined} style={fill ? { position: "absolute", inset: 0, width: "100%", height: "100%", ...style } : style} onLoad={(event) => { if (resolved) onLoad?.(event); }} />;

@@ -21,8 +21,8 @@ function cacheUrl(source: string): string | null {
 
 export function isCacheableImage(source: string): boolean { return parseLocalHistoryImageSource(source) !== null || cacheUrl(source) !== null; }
 
-// Share concurrent checks only. A later lookup checks the current account again,
-// including after login/logout or an account change in another browser tab.
+// Callers that already have the authenticated page's owner don't need another
+// request. Other callers share only concurrent scope checks.
 async function imageScope(): Promise<string> {
   if (!pendingScope) {
     pendingScope = fetch("/api/images/cache-scope", { cache: "no-store" }).then(async (response) => {
@@ -33,6 +33,17 @@ async function imageScope(): Promise<string> {
     }).finally(() => { pendingScope = undefined; });
   }
   return pendingScope;
+}
+
+function ownerScope(ownerId?: number): string | undefined {
+  if (ownerId === undefined || !Number.isSafeInteger(ownerId) || ownerId < 0) return undefined;
+  return ownerId === 0 ? "guest" : `user:${ownerId}`;
+}
+
+function scopeOwner(scope: string): number | undefined {
+  if (scope === "guest") return 0;
+  const id = Number(scope.startsWith("user:") ? scope.slice(5) : NaN);
+  return Number.isSafeInteger(id) && id > 0 ? id : undefined;
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -100,21 +111,31 @@ export async function createImageThumbnail(original: Blob): Promise<Blob> {
 export async function cacheImageBlob(source: string, blob: Blob, expectedScope?: string): Promise<void> {
   const url = cacheUrl(source);
   if (!url || galleryImage(url)) return;
-  const scope = await imageScope();
-  if (expectedScope !== undefined && scope !== expectedScope) return;
+  const scope = expectedScope ?? await imageScope();
   const family = familyKey(scope, url);
   const revision = revisions.get(family);
   if (!await read(scope, url).catch(() => null) && revisions.get(family) === revision) await write(scope, url, blob);
 }
 
+async function readGeneratedImage(id: string, thumbnail: boolean, ownerId?: number) {
+  const { findLocalImageHistory, getLocalImageHistoryThumbnail } = await import("@/lib/local-image-history");
+  const original = await findLocalImageHistory(id, ownerId);
+  if (!original) return null;
+  if (original.archive) {
+    if (thumbnail) return original.image;
+    throw new Error("这张大图已分段保存，请使用下载原图");
+  }
+  return thumbnail ? getLocalImageHistoryThumbnail(original.id, ownerId) : original.image;
+}
+
 /** Original and thumbnail URLs have independent entries; list views never request a missing original. */
-export async function fetchCachedImageBlob(source: string): Promise<Blob> {
+export async function fetchCachedImageBlob(source: string, ownerId?: number): Promise<Blob> {
   const local = parseLocalHistoryImageSource(source);
   if (local) {
-    const { findLocalImageHistory, getLocalImageHistoryThumbnail } = await import("@/lib/local-image-history");
-    const blob = local.thumbnail
-      ? await getLocalImageHistoryThumbnail(local.id)
-      : (await findLocalImageHistory(local.id))?.image;
+    if (ownerId !== undefined && local.ownerId !== undefined && ownerId !== local.ownerId) throw new Error("本机图片不属于当前账号");
+    const expectedOwner = ownerId ?? local.ownerId ?? scopeOwner(await imageScope());
+    if (expectedOwner === undefined) throw new Error("无法确认本机图片所属账号");
+    const blob = await readGeneratedImage(local.id, local.thumbnail, expectedOwner);
     if (!blob) throw new Error("本机历史图片不存在，请刷新重试");
     return blob;
   }
@@ -124,7 +145,7 @@ export async function fetchCachedImageBlob(source: string): Promise<Blob> {
   // Ignore legacy persistent copies and recheck the server's current visibility.
   if (galleryImage(url)) return fetchImage(source, true);
   // Storage/scope failures must still allow displaying an image from the authenticated API.
-  const scope = await imageScope().catch(() => null);
+  const scope = ownerScope(ownerId) ?? await imageScope().catch(() => null);
   if (!scope) return fetchImage(source);
   const key = `${scope}\n${url}`;
   const family = familyKey(scope, url);
@@ -132,9 +153,16 @@ export async function fetchCachedImageBlob(source: string): Promise<Blob> {
   const existing = pending.get(key);
   if (existing) return existing;
   const operation = (async () => {
+    const parsed = new URL(url, "http://localhost");
+    const historyId = parsed.pathname.match(/^\/api\/history\/([^/]+)\/image$/)?.[1];
+    const knownOwner = scopeOwner(scope);
+    if (historyId && knownOwner !== undefined) {
+      const localId = decodeURIComponent(historyId);
+      const original = await readGeneratedImage(localId, parsed.searchParams.get("variant") === "thumbnail", knownOwner).catch(() => null);
+      if (original) return original;
+    }
     const cached = await read(scope, url).catch(() => null);
     if (cached) return cached;
-    const parsed = new URL(url, "http://localhost");
     let blob: Blob | null = null;
     if (parsed.searchParams.get("variant") === "thumbnail") {
       parsed.searchParams.delete("variant");
@@ -151,10 +179,10 @@ export async function fetchCachedImageBlob(source: string): Promise<Blob> {
 }
 
 /** Remove both variants when the user explicitly deletes a history image. */
-export async function deleteCachedImage(source: string): Promise<void> {
+export async function deleteCachedImage(source: string, ownerId?: number): Promise<void> {
   const url = cacheUrl(source);
   if (!url) return;
-  const scope = await imageScope();
+  const scope = ownerScope(ownerId) ?? await imageScope();
   const pathname = new URL(url, "http://localhost").pathname;
   const family = familyKey(scope, url);
   revisions.set(family, (revisions.get(family) || 0) + 1);
