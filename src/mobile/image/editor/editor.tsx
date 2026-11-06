@@ -2,6 +2,7 @@
 import { CharacterEditReferenceCard, characterReferencePayload } from "@/app/ui/character-edit-reference";
 import { supportsCharacterReferenceEdit } from "@/lib/character-reference";
 import { waitWithAbort } from "@/lib/abortable";
+import { editorViewportHasImage, useEditorPriceQuote } from "@/lib/client-editor-pricing";
 
 import { prepareInpaintMasks } from "@/lib/inpaint-mask";
 
@@ -400,7 +401,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const canvasSessionParentRef = useRef<{ nodeId: string; branchId: string } | null>(null);
   const [compare, setCompare] = useState(0.5);
   const [tileScale, setTileScale] = useState<TileUpscaleFactor>(2);
-  const [tileProgress, setTileProgress] = useState<TiledUpscaleProgress | null>(null);
+  const [tileProgress, setTileProgress] = useState<(TiledUpscaleProgress & { sourceImage: RgbaImage; signature: string }) | null>(null);
   const [gatewayImageCapacity, setGatewayImageCapacity] = useState<TileUpscaleGatewayCapacity | null>(null);
   const [tileSourceState, setTileSourceState] = useState<EditorDocument | null>(null);
   const [prompt, setPrompt] = useState("");
@@ -559,13 +560,48 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
   const tileGatewayUnavailable = usesGatewayImageCapacity && gatewayImageCapacity
     ? tileUpscaleConcurrencyLimit(generationModel, steps, gatewayImageCapacity) < 1
     : false;
-  const tileBillingDescription = usesGatewayImageCapacity && /^nai-v(?:5|4\.5)/i.test(generationModel)
-    ? steps <= 28
-      ? "每块都是 1 张、至多 28 步且不超过 1MP 的图生图请求，符合 Gateway Opus 免费档条件。"
-      : "当前步数超过 28，每块可能消耗 Anlas。"
-    : "每块会按所选来源的图生图规则计费。";
+  const tileRequestSignature = (sourceDocument: EditorDocument, targetModel: string) => JSON.stringify({
+    model: targetModel,
+    scale: tileScale,
+    steps,
+    cfg: scale,
+    strength: tiledUpscaleStrength,
+    sampler,
+    seed,
+    prompt,
+    negative,
+    imageProtocol: sourceDocument.generation?.imageProtocol,
+    providerId: sourceDocument.generation?.providerId,
+    quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
+  });
   const pendingPreviewUrl = useMemo(() => pending ? maskedPatchDataUrl(pending) : "", [pending]);
   const advertisedModels = imageProviderId === "novelai" ? OFFICIAL_EDITOR_MODELS : sourceModelCatalog?.options;
+  const { width: outputWidth, height: outputHeight } = outputSize;
+  const emptyCanvasRegion = useMemo(() => mode === "canvas" && !!document && !!viewport &&
+    !editorViewportHasImage(document, viewport, { width: outputWidth, height: outputHeight }),
+  [mode, document, viewport, outputWidth, outputHeight]);
+  const requestOperation = emptyCanvasRegion ? "generate" : mode === "canvas" ? "outpainting" : "inpainting";
+  const requestModel = emptyCanvasRegion ? mobileEditorGenerationModel(model, imageProviderId, advertisedModels || []) : model;
+  const tileModel = imageProviderId === "newapi" || imageProviderId === "novelai" ? generationModelFor(model) : model;
+  const firstTile = tilePlanState.plan?.tiles[0];
+  const completedTiles = !pending && tileSourceDocument && tileProgress && tileProgress.sourceImage === tileSourceDocument.image &&
+    tileProgress.signature === tileRequestSignature(tileSourceDocument, tileModel) ? tileProgress.completed : 0;
+  const tileQuoteRequest = firstTile ? {
+    model: tileModel, operation: "img2img", width: firstTile.requestWidth, height: firstTile.requestHeight,
+    steps, strength: tiledUpscaleStrength, samples: 1,
+  } : null;
+  const editorQuoteRequest = document && viewport && requestModel ? {
+    model: requestModel, operation: requestOperation, width: outputWidth, height: outputHeight, steps, strength, samples: 1,
+    ...(document.characterReference ? { preciseReferenceImageCount: 1 } : {}),
+  } : null;
+  const quoteCount = mode === "tiled-upscale" ? Math.max(0, (tilePlanState.plan?.tiles.length ?? 0) - completedTiles) : 1;
+  const priceQuote = useEditorPriceQuote(
+    authenticated,
+    mode === "tiled-upscale" ? tileSourceDocument?.generation?.providerId || "newapi" : imageProviderId,
+    mode === "tiled-upscale" ? tileQuoteRequest : editorQuoteRequest,
+    quoteCount,
+    generating,
+  );
   const savedModel = sourceModelCatalog?.unavailable ? undefined : document?.generation?.model;
   const characterReference = Boolean(document?.characterReference);
   const editorModelOptions = useMemo(
@@ -1421,7 +1457,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     if (sourceDocument.characterReference) { setNotice("角色参考草稿仅用于蒙版重绘。请返回工作台另行打开分块超分。"); return; }
     if (modelBlockReason) { setNotice(modelBlockReason); return; }
 
-    const targetModel = imageProviderId === "newapi" || imageProviderId === "novelai" ? generationModelFor(model) : model;
+    const targetModel = tileModel;
     const targetCapabilities = resolveImageModelCapabilities(targetModel, sourceDocument.generation?.imageProtocol);
     if (!targetCapabilities.operations.includes("img2img")) {
       setNotice("当前模型不支持图生图，无法执行分块重绘。");
@@ -1445,20 +1481,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       tiledRestoreRef.current = { document: sourceDocument, viewport: sourceViewport, camera: sourceCamera };
       setTileSourceState(sourceDocument);
     }
-    const signature = JSON.stringify({
-      model: targetModel,
-      scale: tileScale,
-      steps,
-      cfg: scale,
-      strength: tiledUpscaleStrength,
-      sampler,
-      seed,
-      prompt,
-      negative,
-      imageProtocol: sourceDocument.generation?.imageProtocol,
-      providerId: sourceDocument.generation?.providerId,
-      quality: effectiveImageQuality, imageSize: effectiveImageResolution, background: imageBackground,
-    });
+    const signature = tileRequestSignature(sourceDocument, targetModel);
     if (!tileCacheRef.current || tileCacheRef.current.sourceImage !== sourceDocument.image || tileCacheRef.current.signature !== signature) {
       tileCacheRef.current = { sourceImage: sourceDocument.image, signature, tiles: new Map() };
     }
@@ -1468,7 +1491,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     editorGenerationAbortRef.current = runController;
     setGenerating(true);
     setNotice("");
-    setTileProgress({ completed: cache.tiles.size, total: plan.tiles.length, waiting: plan.tiles.length - cache.tiles.size });
+    setTileProgress({ completed: cache.tiles.size, total: plan.tiles.length, waiting: plan.tiles.length - cache.tiles.size, sourceImage: sourceDocument.image, signature });
     try {
       if (needsTiledResultArchive(sourceDocument, plan) && !cache.archive) {
         cache.archive = await createTiledResultArchive(plan, runController.signal);
@@ -1530,7 +1553,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
           return new Blob();
         },
         onProgress: (progress) => {
-          setTileProgress(progress);
+          setTileProgress({ ...progress, sourceImage: sourceDocument.image, signature });
           const activity = progress.waitingForCapacity ? "等待可用重绘资源" : "分块重绘中";
           const failures = progress.failed ? ` · ${progress.failed} 块已达重试上限` : "";
           setNotice(`${activity}：已完成 ${progress.completed}/${progress.total} 块 · 等待 ${progress.waiting} 块${failures}`);
@@ -1583,6 +1606,9 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
     } finally {
       if (editorGenerationAbortRef.current === runController) editorGenerationAbortRef.current = null;
       tiledRunLockRef.current = false;
+      setTileProgress((progress) => progress?.signature === signature && progress.sourceImage === sourceDocument.image
+        ? { ...progress, completed: cache.tiles.size } : progress);
+      void priceQuote.refresh();
       setGenerating(false);
     }
   };
@@ -1616,8 +1642,6 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       if (reference && (mode !== "inpaint" || !supportsCharacterReferenceEdit(model, imageProtocol))) throw new Error("角色参考仅支持 NAI V4.5 / V5 非 Medium 模型的蒙版重绘，请恢复兼容的模型与模式。");
       if (reference && !strokes.some(stroke => stroke.mode !== "erase" && stroke.points.length)) throw new Error("请先涂选要重绘的角色区域。");
       const prepared = viewportImage(document, viewport, outputSize);
-      const emptyCanvasRegion = mode === "canvas" && !prepared.image.data.some((value, index) => index % 4 === 3 && value > 0);
-      const requestModel = emptyCanvasRegion ? mobileEditorGenerationModel(model, imageProviderId, advertisedModels || []) : model;
       if (!requestModel) throw new Error("当前来源没有开放对应的文生图模型。请为全空白取景框选择支持文生图的模型。");
       // Local inpainting edits only painted pixels; canvas mode owns outpainting.
       if (mode === "inpaint" || reference) prepared.mask.fill(0);
@@ -1628,7 +1652,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const references = reference ? await characterReferencePayload(reference, userId, runController.signal) : undefined;
       const body = {
         ...(references ? { references } : {}),
-        operation: emptyCanvasRegion ? "generate" : mode === "canvas" ? "outpainting" : "inpainting",
+        operation: requestOperation,
         editor_composite: true,
         providerId: document.generation?.providerId || "newapi",
         imageProtocol,
@@ -1679,7 +1703,11 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         setNotice("");
         setGenerationFailure(error instanceof Error ? error.message : "生成失败，请稍后重试");
       }
-    } finally { if (editorGenerationAbortRef.current === runController) editorGenerationAbortRef.current = null; setGenerating(false); }
+    } finally {
+      if (editorGenerationAbortRef.current === runController) editorGenerationAbortRef.current = null;
+      void priceQuote.refresh();
+      setGenerating(false);
+    }
   };
 
   const returnToStudio = async () => {
@@ -2025,7 +2053,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       <label className="editor-field"><span>排除内容</span><textarea className="is-short" value={negative} onChange={(event) => updateNegative(event.target.value)} placeholder="不希望出现的内容…" /></label>
       {tileGatewayUnavailable && <p className="editor-tip is-warning">当前没有支持所选模型及计费条件的 Gateway 账号。</p>}
       {tileProgress && <p className="editor-tip">本次进度：完成 {tileProgress.completed}/{tileProgress.total} 块 · 等待 {tileProgress.waiting} 块。</p>}
-      <p className="editor-tip is-warning">{tileBillingDescription} 每块普通失败最多自动重试 {MAX_TILE_RETRIES} 次。流结束却缺少最终图像时会持续重试，直至成功或取消。已完成的分块会保留，修改参数后会重新处理。</p>
+      <p className="editor-tip is-warning">每块普通失败最多自动重试 {MAX_TILE_RETRIES} 次。流结束却缺少最终图像时会持续重试，直至成功或取消。已完成的分块会保留，修改参数后会重新处理。</p>
     </>
   );
   const historyNodeDepth = (node: EditorHistoryNode) => {
@@ -2143,6 +2171,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
       const source = restore?.document;
       setPending(null);
       tileCacheRef.current = null;
+      setTileProgress(null);
       if (source && restore) {
         setDocument(source);
         setViewport(restore.viewport);
@@ -2234,6 +2263,7 @@ export default function EditorClient({ authenticated, userId }: EditorClientProp
         ) : (
           <div className="editor-status" role="status"><span aria-hidden="true" className={generating ? "is-busy" : pending ? "is-review" : ""} />{statusMessage}</div>
         )}
+        {priceQuote.label && <p className="editor-tip" role="status" data-editor-price-quote>{mode === "tiled-upscale" && completedTiles > 0 && quoteCount > 0 && `已完成 ${completedTiles} 块。`}{priceQuote.label}</p>}
         <div className="editor-actions editor-mobile-actions">
           {generating && <button type="button" className="discard-button" onClick={() => editorGenerationAbortRef.current?.abort()}>取消生成</button>}
           {pending ? <>

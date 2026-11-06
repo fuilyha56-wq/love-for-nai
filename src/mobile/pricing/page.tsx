@@ -3,8 +3,6 @@
 import "./pricing.css";
 
 import {
-  Calculator,
-  Check,
   ImageIcon,
   LoaderCircle,
   RefreshCw,
@@ -12,51 +10,13 @@ import {
   WandSparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { PopupSelect, type SelectOption } from "@/mobile/ui/popup-select";
+import { PopupSelect } from "@/mobile/ui/popup-select";
 import { PublicHeader, PublicPageIntro } from "@/mobile/public-header";
-import {
-  officialNaiAnlasCost,
-  envelopeUsageTokens,
-  estimatePoints,
-  estimateTokens,
-  usesLimitPricing,
-  TOKENS_PER_POINT,
-  type ImagePricingGeneration,
-} from "@/lib/image-pricing";
-import { useCreditPricing } from "@/lib/client-credit-pricing";
+import { PublicPriceCalculator } from "@/app/ui/public-price-calculator";
+import { TOKENS_PER_POINT } from "@/lib/image-pricing";
+import { useCreditPricing, useLivePublicPricingCatalog } from "@/lib/client-credit-pricing";
 import { CreditPriceTables } from "@/mobile/pricing/credit-pricing";
-import { formatAff, formatCny, quoteCredits } from "@/lib/credit-pricing";
-import { naiDimensionLimit } from "@/lib/nai-image-limits";
-import type { PublicCatalog, PublicModel } from "@/lib/public-catalog";
-
-type FormState = {
-  model: string;
-  operation: "generate" | "img2img" | "inpainting";
-  width: number;
-  height: number;
-  steps: number;
-  samples: number;
-  references: number;
-  characters: number;
-};
-
-const initialForm: FormState = {
-  model: "",
-  operation: "generate",
-  width: 832,
-  height: 1216,
-  steps: 28,
-  samples: 1,
-  references: 0,
-  characters: 0,
-};
-
-const operationOptions: SelectOption[] = [
-  { value: "generate", label: "文生图" },
-  { value: "img2img", label: "图生图" },
-  { value: "inpainting", label: "局部重绘" },
-];
+import type { PublicModel } from "@/lib/public-catalog";
 
 function formatUsd(value: number | null | undefined, digits?: number): string {
   if (value == null || !Number.isFinite(value)) return "暂无实时价格";
@@ -78,75 +38,7 @@ function livePriceLabel(model: PublicModel): string {
 
 export default function PricingPage() {
   const creditPricing = useCreditPricing();
-  const [catalog, setCatalog] = useState<PublicCatalog | null>(null);
-  const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
-  const [error, setError] = useState("");
-  const [form, setForm] = useState<FormState>(initialForm);
-
-  const load = useCallback(async () => {
-    setLoadState("loading");
-    setError("");
-    try {
-      const response = await fetch("/api/public/catalog", { cache: "no-store" });
-      const result = (await response.json()) as PublicCatalog & { message?: string };
-      if (!response.ok || !Array.isArray(result.models))
-        throw new Error(result.message || "价格目录读取失败");
-      setCatalog(result);
-      setLoadState("loaded");
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "价格目录读取失败，请稍后重试");
-      setLoadState("error");
-    }
-  }, []);
-
-  useEffect(() => {
-    void Promise.resolve().then(load);
-  }, [load]);
-
-  const imageModels = useMemo(
-    () => catalog?.models.filter((model) => model.kind === "image") || [],
-    [catalog],
-  );
-  const selectedModel = imageModels.find((model) => model.id === form.model) || imageModels[0] || null;
-  const activeModelId = selectedModel?.id || "";
-  const generation: ImagePricingGeneration = {
-    model: activeModelId || "nai-v5-full",
-    operation: form.operation,
-    width: form.width,
-    height: form.height,
-    steps: form.steps,
-    samples: form.samples,
-    referenceImageCount: form.references,
-    characterPromptCount: form.characters,
-  };
-  const localQuote = creditPricing.data ? quoteCredits(generation, creditPricing.data) : null;
-  const inEnvelope = usesLimitPricing(generation);
-  const invalidLimit = activeModelId.endsWith("-limit") && !inEnvelope;
-  const estimatedTokens = inEnvelope
-    ? envelopeUsageTokens(generation.model)
-    : estimateTokens(generation);
-  const estimatedPoints = estimatePoints(generation);
-  const publicPricing = selectedModel?.pricing;
-  const liveUsd = publicPricing?.liveType === "per_request" && publicPricing.liveUsdPerRequest != null
-    ? Number((publicPricing.liveUsdPerRequest * form.samples).toFixed(4))
-    : publicPricing?.liveType === "tiered"
-      ? inEnvelope && publicPricing.liveUsdPerRequest != null
-        ? Number((publicPricing.liveUsdPerRequest * form.samples).toFixed(4))
-        : !inEnvelope && publicPricing.liveUsdPerUsageToken != null
-          ? Number((publicPricing.liveUsdPerUsageToken * estimatedTokens).toFixed(4))
-          : null
-      : publicPricing?.liveType === "per_token" && publicPricing.liveUsdPerUsageToken != null
-        ? Number((publicPricing.liveUsdPerUsageToken * estimatedTokens).toFixed(4))
-        : null;
-
-  function updateNumber(
-    key: keyof Pick<FormState, "width" | "height" | "steps" | "samples" | "references" | "characters">,
-    value: string,
-  ) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return;
-    setForm((current) => ({ ...current, [key]: Math.min(key === "samples" ? 6 : key === "steps" ? 50 : key === "references" ? 12 : key === "characters" ? 6 : (key === "width" ? naiDimensionLimit(current.height, activeModelId) : naiDimensionLimit(current.width, activeModelId)), Math.max(key === "references" || key === "characters" ? 0 : key === "width" || key === "height" ? 64 : 1, Math.round(parsed))) }));
-  }
+  const { data: catalog, error, loading, refresh } = useLivePublicPricingCatalog();
 
   return (
     <main className="pricing-page min-h-screen bg-[var(--paper)] text-[var(--ink)]">
@@ -170,12 +62,12 @@ export default function PricingPage() {
           {catalog && <span>{catalog.conversion}</span>}
           {catalog?.asOf && <span>数据时间：{new Date(catalog.asOf).toLocaleString("zh-CN")}</span>}
         </div>
-        {loadState === "error" && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="inline-flex h-9 items-center gap-2 rounded border border-red-200 bg-white px-3 font-semibold"><RefreshCw size={14} />重试</button></div>}
-        {loadState === "loading" && <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle size={17} className="animate-spin" />正在读取 NewAPI 价格…</div>}
+        {error && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700"><span>{error}</span><button type="button" onClick={() => void refresh()} className="inline-flex h-9 items-center gap-2 rounded border border-red-200 bg-white px-3 font-semibold"><RefreshCw size={14} />重试</button></div>}
+        {loading && <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-[var(--muted)]"><LoaderCircle size={17} className="animate-spin" />正在读取 NewAPI 价格…</div>}
+
+        <PublicPriceCalculator models={catalog?.models ?? []} pricing={creditPricing.data} Select={PopupSelect} mobile />
 
         {catalog && <>
-          <section id="calculator" className="pricing-calculator"><div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--rose)] text-white"><Calculator size={20} /></div><div><h2 className="mt-1 font-[var(--font-display)] text-3xl">价格计算器</h2><p className="mt-2 text-xs leading-5 text-[var(--muted)]">本计算器按一次性单请求估价；工作台逐张模式会分别计算每张价格。</p></div></div><div className="pricing-calculator-content"><div className="pricing-calculator-fields"><label className="flex flex-col gap-2 text-xs font-semibold col-span-2">模型<PopupSelect ariaLabel="模型" value={activeModelId} options={imageModels.map((model) => ({ value: model.id, label: `${model.name} · ${model.id}` }))} onChange={(value) => setForm((current) => ({ ...current, model: value }))} searchable searchPlaceholder="搜索模型" /></label><label className="flex flex-col gap-2 text-xs font-semibold">操作<PopupSelect ariaLabel="操作" value={form.operation} options={operationOptions} onChange={(value) => setForm((current) => ({ ...current, operation: value as FormState["operation"] }))} /></label><label className="flex flex-col gap-2 text-xs font-semibold">生成张数<input className="field" type="number" min={1} max={6} value={form.samples} onChange={(event) => updateNumber("samples", event.target.value)} /></label><label className="flex flex-col gap-2 text-xs font-semibold">宽度<input className="field" type="number" min={64} max={naiDimensionLimit(form.height, activeModelId)} step={64} value={form.width} onChange={(event) => updateNumber("width", event.target.value)} /></label><label className="flex flex-col gap-2 text-xs font-semibold">高度<input className="field" type="number" min={64} max={naiDimensionLimit(form.width, activeModelId)} step={64} value={form.height} onChange={(event) => updateNumber("height", event.target.value)} /></label><label className="flex flex-col gap-2 text-xs font-semibold">步数<input className="field" type="number" min={1} max={50} value={form.steps} onChange={(event) => updateNumber("steps", event.target.value)} /></label><label className="flex flex-col gap-2 text-xs font-semibold">参考图数量<input className="field" type="number" min={0} max={12} value={form.references} onChange={(event) => updateNumber("references", event.target.value)} /></label><label className="flex flex-col gap-2 text-xs font-semibold">多角色数量<input className="field" type="number" min={0} max={6} value={form.characters} onChange={(event) => updateNumber("characters", event.target.value)} /></label></div><div className="rounded-xl bg-[var(--surface-muted)] p-5"><div className="flex items-center justify-between gap-3"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${inEnvelope ? "bg-[#e6f3ed] text-[#28664f]" : "bg-[#fff3d6] text-[#8a6116]"}`}>{inEnvelope ? "满足档内限制" : "超出档内限制"}</span><span className="text-[10px] text-[var(--muted)]">{(form.width * form.height).toLocaleString("zh-CN")} px</span></div><dl className="mt-5 space-y-4 text-sm"><div className="flex justify-between gap-3"><dt>官方 Anlas（未抵扣）</dt><dd>{officialNaiAnlasCost(generation)}</dd></div><div className="flex justify-between gap-3"><dt>LFN 每日首档，含基础费</dt><dd>{localQuote ? `${formatAff(localQuote.costAff)} AFF / ¥${formatCny(localQuote.costCny)}` : "正在读取本站价格"}</dd></div><div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 公开分组预估</span><b>{liveUsd == null ? "暂无实时金额" : `${formatUsd(liveUsd)} / 本次`}</b></div><small className="block text-right text-xs font-normal text-[var(--muted)]">{selectedModel?.pricing?.liveType === "per_request" ? "按张实时计价" : selectedModel?.pricing?.liveType === "tiered" ? inEnvelope ? "档内按张，档外按 usage token" : "档外按 usage token" : selectedModel?.pricing?.liveType === "per_token" ? "按 usage token" : "等待实时计价数据"}</small><div className="flex justify-between gap-4 border-b border-[var(--line)] pb-3"><dt className="text-[var(--muted)]">计费积分换算</dt><dd className="text-right font-semibold">{inEnvelope ? "固定档内" : `${estimatedPoints} 计费积分`}</dd></div><div className="flex justify-between gap-4"><dt className="text-[var(--muted)]">usage token</dt><dd className="font-semibold">{estimatedTokens.toLocaleString("zh-CN")}</dd></div></dl><div className="mt-5 space-y-2 text-xs leading-5 text-[var(--muted)]"><p className="flex gap-2"><Check size={14} className="mt-0.5 shrink-0 text-[var(--mint)]" />档外先按官方消耗计算 Anlas 积分（销售加价由价格配置应用），再乘 {TOKENS_PER_POINT} 得到 usage token；档内使用固定 usage token。</p><p>{invalidLimit ? "限制模型仅支持单张、最多 28 步、最多 1024² 像素且无未编码参考图。请调整参数或选择完整版。" : liveUsd == null ? "暂无实时价格，无法估算 quota。" : `预计消耗 ${Math.round(liveUsd * 500_000).toLocaleString("zh-CN")} quota。此处使用公开 ${publicPricing?.liveGroupName ?? "所选"} 分组价格；登录工作台以账号实际分组为准。`}</p></div></div></div></section>
-
           <section className="pricing-models"><div className="flex items-end justify-between gap-3"><div><h2 className="mt-2 font-[var(--font-display)] text-3xl">模型价格表</h2></div><Link href="/models" className="text-xs font-semibold text-[var(--rose)] hover:underline">查看模型目录 →</Link></div><div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{catalog.models.map((model) => <article key={model.id} className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-5 shadow-[0_10px_30px_rgba(54,47,39,.04)]"><div className="flex items-start gap-3"><div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${model.kind === "image" ? "bg-[#f8e8e9] text-[var(--rose)]" : "bg-[#e6f3ed] text-[#28664f]"}`}>{model.kind === "image" ? <ImageIcon size={18} /> : <Sparkles size={18} />}</div><div className="min-w-0"><h3 className="truncate font-semibold">{model.name}</h3><p className="mt-0.5 truncate text-[11px] text-[var(--muted)]">{model.id}</p></div></div><p className="mt-4 text-xs leading-5 text-[var(--muted)]">{model.summary}</p><div className="mt-4 flex flex-wrap gap-1.5">{model.capabilities.map((capability) => <span key={capability} className="rounded bg-[var(--surface-muted)] px-2 py-1 text-[10px]">{capability}</span>)}</div><div className="mt-5 space-y-2 border-t border-[var(--line)] pt-4 text-xs"><div className="flex justify-between gap-3"><span className="text-[var(--muted)]">NewAPI 公开价</span><b>{livePriceLabel(model)}</b></div>{model.pricing && <p className="pt-1 text-[10px] leading-5 text-[var(--muted)]">{model.pricing.note}</p>}</div></article>)}</div></section>
 
           <details className="pricing-rules"><summary>计价规则与价格来源</summary><section className="mt-10 grid gap-4 lg:grid-cols-3">
