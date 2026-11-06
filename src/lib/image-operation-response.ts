@@ -10,6 +10,13 @@ export type ImageOperationResult = {
   tags?: unknown;
 };
 
+export function imageOperationImages(payload: { images?: unknown; image?: unknown }): string[] {
+  const images = Array.isArray(payload.images)
+    ? payload.images.filter((value): value is string => typeof value === "string" && Boolean(value))
+    : [];
+  return images.length ? images : typeof payload.image === "string" && payload.image ? [payload.image] : [];
+}
+
 /** Keep empty ID slots so flattening mixed streaming/JSON batches cannot shift them. */
 export function imageHistoryReferences(images: string[], historyIds: unknown, requestId?: string) {
   return {

@@ -9,10 +9,12 @@ import {
   fingerprintEditorHistoryImage,
 } from "@/lib/image-editor-history";
 import { listLocalImageHistory } from "@/lib/local-image-history";
+import { prepareRestoredEditorDocument } from "@/lib/image-editor-source";
 
 export function editorHistoryNodeDraft(node: LoadedEditorHistoryNode, branchId = node.branchId): EditorDraft {
+  const document = prepareRestoredEditorDocument({ ...node.document, image: node.image });
   return {
-    ...createEditorDraft(node.draftId, node.mode === "canvas" ? "canvas" : "inpaint", { ...node.document, image: node.image }),
+    ...createEditorDraft(node.draftId, node.mode === "canvas" ? "canvas" : "inpaint", document),
     workspace: node.workspace, historyNodeId: node.id, historyBranchId: branchId, historyTileScale: node.tileScale,
   };
 }
@@ -107,6 +109,7 @@ export async function importLegacyEditorHistory(): Promise<number> {
   const items = await listLocalImageHistory(Number.MAX_SAFE_INTEGER);
   let failures = 0;
   for (const item of items) {
+    if (item.archive || item.parameters?._lfnEditorHistoryManaged === true) continue;
     const operation = editorHistoryOperation(item.operation);
     if (!operation) continue;
     const previous = await getEditorHistoryProjectMetadata(`legacy-edit-${item.id}`);

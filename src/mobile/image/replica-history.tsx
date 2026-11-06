@@ -1,10 +1,12 @@
 "use client";
 
-import Image from "next/image";
+import CachedImage from "@/mobile/cached-image";
 import { CheckSquare, Copy, Download, Ellipsis, History, Trash2, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactElement } from "react";
 import type { ImageProviderProtocol } from "@/lib/image-model-capabilities";
+import type { LocalImageHistoryItem } from "@/lib/local-image-history";
+import { downloadLocalTiledUpscaleResult } from "@/lib/local-tiled-upscale-result";
 import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
 import "./replica-history.css";
 
@@ -13,6 +15,9 @@ export type ReplicaHistoryItem = {
   historyId?: string;
   localId?: string;
   image: string;
+  previewImage?: string;
+  imageOwnerId?: number;
+  archive?: LocalImageHistoryItem["archive"];
   prompt: string;
   negative: string;
   seed?: number;
@@ -89,7 +94,7 @@ function historyParameterEntries(item: ReplicaHistoryItem): Array<[string, strin
     .map(([key, label]) => [key, label, item[key]] as [string, string, unknown])
     .filter(([, , value]) => value !== undefined);
   for (const [key, value] of Object.entries(item)) {
-    if (knownKeys.has(key) || value === undefined || ["image", "createdAt", "id", "historyId", "localId"].includes(key)) continue;
+    if (knownKeys.has(key) || value === undefined || ["image", "createdAt", "id", "historyId", "localId", "archive", "previewImage", "imageOwnerId"].includes(key)) continue;
     entries.push([key, `${key} / ${key}`, value]);
   }
   return entries;
@@ -190,8 +195,9 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
     >
       {selecting && <label className="replica-history-select"><input type="checkbox" aria-label={`选择第 ${index + 1} 张历史图像`} checked={selected} disabled={busy} onChange={onToggle} /></label>}
       <button className="replica-history-preview" style={{ aspectRatio: `${width} / ${height}` }} type="button" disabled={selecting && busy} aria-label={`${selecting ? "切换选择" : "查看"}第 ${index + 1} 张历史图像`} title={item.prompt || "查看原图"} onClick={() => { setMenuOpen(false); if (selecting) onToggle(); else onOpen(item); }}>
-        <Image
-          src={item.image}
+        <CachedImage
+          src={item.previewImage || item.image}
+          ownerId={item.imageOwnerId}
           alt={item.prompt || `历史图像 ${index + 1}`}
           width={width}
           height={height}
@@ -211,7 +217,7 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
         <dl className="mt-2 space-y-1">{historyParameterEntries(item).map(([key, label, value]) => <div className="flex items-start gap-2" key={key}><dt className="shrink-0 text-[var(--muted)]">{label}</dt><dd className="min-w-0 break-all whitespace-pre-wrap">{displayHistoryParameter(value)}</dd></div>)}</dl>
       </details>}
       <div className="replica-history-actions" hidden={selecting} role="group" aria-label={`第 ${index + 1} 张历史图像操作`}>
-        <button type="button" aria-label={`复制第 ${index + 1} 张历史原图`} title={copying ? "正在复制…" : "复制原图"} disabled={copying} onClick={() => void onCopy(item)}><Copy size={16} /></button>
+        <button type="button" aria-label={item.archive ? `下载第 ${index + 1} 张原尺寸合成图` : `复制第 ${index + 1} 张历史原图`} title={item.archive ? "下载原尺寸合成图" : copying ? "正在复制…" : "复制原图"} disabled={copying} onClick={() => void onCopy(item)}>{item.archive ? <Download size={16} /> : <Copy size={16} />}</button>
         <button type="button" aria-label={`删除第 ${index + 1} 张历史图像`} title="删除" onClick={() => { setMenuOpen(false); onDelete(index); }}><Trash2 size={16} /></button>
         <button ref={menuButtonRef} type="button" aria-label={`第 ${index + 1} 张历史图像更多操作`} title="更多操作" aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuId} onClick={() => setMenuOpen((open) => !open)}><Ellipsis size={16} /></button>
       </div>
@@ -234,7 +240,7 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
             }}
             style={menuPosition ? { top: menuPosition.top, left: menuPosition.left } : { visibility: "hidden" }}
           >
-            {onPublish && <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onPublish(item); }}>投稿图片广场</button>}
+            {onPublish && !item.archive && <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); onPublish(item); }}>投稿图片广场</button>}
             {[
               ["reuse-parameters", "复用参数"],
               ["img2img", "用于图生图"],
@@ -242,7 +248,7 @@ function HistoryCard({ item, index, copying, onCopy, onOpen, onUse, onDelete, on
               ["director-lineart", "用于导演工具"],
               ["vibe-transfer", "用于风格迁移"],
               ["upscale", "用于超分"],
-            ].map(([operation, label]) => <button type="button" role="menuitem" key={operation} onClick={() => { setMenuOpen(false); onUse(item, operation); }}>{label}</button>)}
+            ].filter(([operation]) => !item.archive || operation === "reuse-parameters").map(([operation, label]) => <button type="button" role="menuitem" key={operation} onClick={() => { setMenuOpen(false); onUse(item, operation); }}>{label}</button>)}
           </div>
         );
         return typeof document === "undefined" ? menu : createPortal(menu, document.body);
@@ -271,6 +277,10 @@ export function ReplicaHistory({ items, onOpen, onUse, onDelete, onDeleteMany, o
   }
   async function downloadSelected(stripMetadata: boolean) {
     if (busy || !selectedItems.length) return;
+    if (selectedItems.some(item => item.archive)) {
+      setNotice({ text: "所选图片含大图，请退出多选后单独下载原尺寸合成图。", error: true });
+      return;
+    }
     setBusy(true); setNotice(null);
     try {
       const { default: JSZip } = await import("jszip");
@@ -278,7 +288,7 @@ export function ReplicaHistory({ items, onOpen, onUse, onDelete, onDeleteMany, o
       let count = 0;
       for (const [index, item] of selectedItems.entries()) {
         try {
-          let blob = await fetchCachedImageBlob(item.image);
+          let blob = await fetchCachedImageBlob(item.image, item.imageOwnerId);
           if (stripMetadata) {
             const response = await fetch("/api/images/metadata-strip", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
             if (!response.ok) throw new Error("清理图片数据失败");
@@ -308,15 +318,25 @@ export function ReplicaHistory({ items, onOpen, onUse, onDelete, onDeleteMany, o
 
   async function copyOriginal(item: ReplicaHistoryItem): Promise<void> {
     setNotice(null);
+    if (item.archive) {
+      setCopyingImage(item.image);
+      try {
+        const filename = `lfn-tiled-upscale-${item.archive.width}x${item.archive.height}.png`;
+        if (!await downloadLocalTiledUpscaleResult(item.archive.id, filename)) throw new Error("本机大图原件不存在。");
+      } catch (error) {
+        setNotice({ text: error instanceof Error ? error.message : "原尺寸合成图下载失败，请重试。", error: true });
+      } finally {
+        setCopyingImage(null);
+      }
+      return;
+    }
     if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
       setNotice({ text: "浏览器不支持复制图像，请下载原图。", error: true });
       return;
     }
     setCopyingImage(item.image);
     try {
-      const response = await fetch(item.image);
-      if (!response.ok) throw new Error("image-fetch");
-      const blob = await response.blob();
+      const blob = await fetchCachedImageBlob(item.image, item.imageOwnerId);
       if (!blob.type.startsWith("image/")) throw new Error("image-format");
       if (typeof ClipboardItem.supports === "function" && !ClipboardItem.supports(blob.type)) {
         setNotice({ text: "浏览器不支持复制此图像格式，请下载原图。", error: true });

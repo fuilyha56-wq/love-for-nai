@@ -6,26 +6,29 @@ import { Calculator, RefreshCw, X } from "lucide-react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
 import { usePanelHistory } from "./use-panel-history";
 import { dailyImageDay, roundAffAmount, type DailyImageBillingState } from "@/lib/daily-image-pricing";
-import { CNY_PER_AFF, splitImageCreditCost, type ImagePricingGeneration } from "@/lib/image-pricing";
+import { CNY_PER_AFF, DEFAULT_IMAGE_BASE_FEES, splitImageCreditCost, type ImagePricingGeneration } from "@/lib/image-pricing";
 import { formatAff, formatCny, quoteCredits, type CreditPricing } from "@/lib/credit-pricing";
 import type { useCreditPricing } from "@/lib/client-credit-pricing";
 import "./credit-pricing.css";
 
 export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; state?: DailyImageBillingState }) {
   const { policy } = pricing;
+  const baseFee = (key: keyof typeof DEFAULT_IMAGE_BASE_FEES) => policy[key] ?? DEFAULT_IMAGE_BASE_FEES[key];
   return <div className="credit-price-tables">
     <p className="credit-price-note">1 AFF = ¥0.005。图包与个人 AFF 使用同一价格；金额保留最多 4 位小数，不按整数取整。每日张数按北京时间零点重置，limit 与普通模型合并计数。</p>
     <div className="credit-price-table-scroll" tabIndex={0} role="region" aria-label="基础价格表，可横向滚动">
-      <table><caption>基础价格</caption><thead><tr><th>模型 / 操作</th><th>基础费</th><th>额外 Anlas 单价</th></tr></thead><tbody>
-        <tr><th>V4.5 生图</th><td>1 AFF / 张</td><td>¥{formatCny(policy.v45AnlasCny)} = {formatAff(policy.v45AnlasCny / CNY_PER_AFF)} AFF</td></tr>
-        <tr><th>V5 常规 · High 生图</th><td>5 AFF / 张</td><td>¥{formatCny(policy.v5AnlasCny)} = {formatAff(policy.v5AnlasCny / CNY_PER_AFF)} AFF</td></tr>
-        <tr><th>V5 低成本 · Medium 生图</th><td>1 AFF / 张</td><td>同 V5 单价，Anlas 量按 Medium 计算</td></tr>
-        <tr><th>超分 / 导演 / Vibe 编码</th><td>无生图基础费</td><td>模型对应的单价 × 本次 Anlas</td></tr>
-        <tr><th>图片标注</th><td>1 AFF / 张</td><td>无</td></tr>
-        {Object.entries(pricing.fixedCosts).map(([model, cost]) => <tr key={model}><th>{model} · 固定价优先</th><td>{formatAff(cost)} AFF / 张</td><td>覆盖该模型的公式与每日阶梯</td></tr>)}
+      <table><caption>基础价格</caption><thead><tr><th>模型 / 操作</th><th>小图档基础费</th><th>常规档基础费</th><th>额外 Anlas 单价</th></tr></thead><tbody>
+        {[
+          { label: "V4.5 · Full / Curated / 重绘", limit: baseFee("v45LimitBaseAff"), regular: baseFee("v45BaseAff"), rate: policy.v45AnlasCny },
+          { label: "V5 High · Full / Curated / 重绘", limit: baseFee("v5LimitBaseAff"), regular: baseFee("v5BaseAff"), rate: policy.v5AnlasCny },
+          { label: "V5 Medium · Full / 重绘", limit: baseFee("v5MediumLimitBaseAff"), regular: baseFee("v5MediumBaseAff"), rate: policy.v5AnlasCny },
+        ].map(row => <tr key={row.label}><th>{row.label}</th><td>{formatAff(row.limit)} AFF / 张</td><td>{formatAff(row.regular)} AFF / 张</td><td>¥{formatCny(row.rate)} = {formatAff(row.rate / CNY_PER_AFF)} AFF</td></tr>)}
+        <tr><th>超分 / 导演 / Vibe 编码</th><td colSpan={2}>无生图基础费</td><td>模型对应的单价 × 本次 Anlas</td></tr>
+        <tr><th>图片标注</th><td colSpan={2}>1 AFF / 张</td><td>无</td></tr>
+        {Object.entries(pricing.fixedCosts).map(([model, cost]) => <tr key={model}><th>{model} · 固定价优先</th><td colSpan={2}>{formatAff(cost)} AFF / 张</td><td>覆盖该模型的公式与每日阶梯</td></tr>)}
       </tbody></table>
     </div>
-    <p className="credit-price-note">单张、≤28 步、≤1024² 像素且无付费参考等条件全部满足时，仅收基础费。多张一次提交、超出范围或付费参考会额外计 Anlas；逐张提交按各张参数分别计算。</p>
+    <p className="credit-price-note">单张、≤28 步、≤1024² 像素且无付费参考等条件全部满足时，使用小图档基础费；普通模型和 Limit 模型按相同参数判定。多张一次提交、超出范围或付费参考使用常规档基础费并额外计 Anlas；逐张提交按各张参数分别计算。Medium 的 Anlas 量按其模型规则计算。</p>
     {!policy.enabled && <p className="credit-price-warning">每日阶梯当前关闭：生图按基础费加 Anlas 费用计算。</p>}
     {(["v45", "v5"] as const).map(family => {
       const count = state?.day === dailyImageDay() ? state.counts[family] : 0;
@@ -33,15 +36,16 @@ export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; 
       const rate = family === "v5" ? policy.v5AnlasCny : policy.v45AnlasCny;
       return <div key={family} className="credit-price-table-scroll" tabIndex={0} role="region" aria-label={`${family === "v5" ? "V5" : "V4.5"} 每日阶梯表，可横向滚动`}>
         <table><caption>{family === "v5" ? "V5" : "V4.5"} 每日阶梯{state ? ` · 今日 ${count} 张` : " · 从第 1 张计数"}</caption>
-          <thead><tr><th>当天第几张</th><th>每日附加费</th><th>Anlas 倍率</th><th>整体倍率</th><th>常规档内 / 张</th><th>有效 Anlas 价</th></tr></thead>
+          <thead><tr><th>当天第几张</th><th>每日附加费</th><th>Anlas 倍率</th><th>整体倍率</th><th>{family === "v5" ? "High 小图 / 张" : "小图 / 张"}</th>{family === "v5" && <th>Medium 小图 / 张</th>}<th>有效 Anlas 价</th></tr></thead>
           <tbody>{tiers.map((tier, index) => {
-            const base = family === "v5" ? 5 : 1;
+            const base = baseFee(family === "v5" ? "v5LimitBaseAff" : "v45LimitBaseAff");
             const extra = Math.max(0, tier.baseCny - tiers[0].baseCny);
             const active = !!state && policy.enabled && count >= tier.afterImages && (tiers[index + 1] == null || count < tiers[index + 1].afterImages);
             return <tr key={tier.afterImages} data-current-tier={active || undefined}>
               <th>{tier.afterImages + 1}–{tiers[index + 1]?.afterImages ?? "以后"}{active && <small>下一张</small>}</th>
               <td>¥{formatCny(extra)} / {formatAff(extra / CNY_PER_AFF)} AFF</td><td>×{tier.anlasMultiplier}</td><td>×{tier.totalMultiplier}</td>
               <td>{formatAff((base + extra / CNY_PER_AFF) * tier.totalMultiplier)} AFF</td>
+              {family === "v5" && <td>{formatAff((baseFee("v5MediumLimitBaseAff") + extra / CNY_PER_AFF) * tier.totalMultiplier)} AFF</td>}
               <td>¥{formatCny(rate * tier.anlasMultiplier * tier.totalMultiplier)}</td>
             </tr>;
           })}</tbody>

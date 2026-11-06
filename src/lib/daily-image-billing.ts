@@ -8,13 +8,14 @@ import {
   DEFAULT_DAILY_IMAGE_POLICY,
   dailyImageDay,
   dailyImageFamily,
+  isAffAmount,
   quoteDailyImage,
   type DailyImagePolicy,
   type DailyImageQuote,
   type DailyImageBillingState,
   type DailyImageFamily,
 } from "@/lib/daily-image-pricing";
-import type { ImagePricingGeneration } from "@/lib/image-pricing";
+import { DEFAULT_IMAGE_BASE_FEES, type ImageBaseFees, type ImagePricingGeneration } from "@/lib/image-pricing";
 
 type Entry = {
   id: string;
@@ -70,6 +71,11 @@ async function write(file: string, value: unknown) {
 }
 function normalizePolicy(input: DailyImagePolicy): DailyImagePolicy {
   input = { ...DEFAULT_DAILY_IMAGE_POLICY, ...input };
+  for (const key of Object.keys(DEFAULT_IMAGE_BASE_FEES) as (keyof ImageBaseFees)[]) {
+    const amount = input[key];
+    if (typeof amount !== "number" || !isAffAmount(amount) || amount < 0 || amount > 100)
+      throw new Error("生图基础费必须为 0–100 AFF，最多保留 4 位小数");
+  }
   if (
     typeof input.enabled !== "boolean" ||
     typeof input.strictApiBilling !== "boolean" ||

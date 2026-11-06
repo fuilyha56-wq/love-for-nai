@@ -4,13 +4,14 @@ import path from "node:path";
 import {
   affCost as calculateAffCost,
   imageCreditCost,
+  imageGenerationBaseAff,
   isInFreeEnvelope as calculateIsInFreeEnvelope,
   splitImageCreditCost,
 } from "@/lib/image-pricing";
 import type { ImagePricingGeneration } from "@/lib/image-pricing";
 import { runtimeModelFixedCost, runtimeRewards } from "@/lib/runtime-config";
 import { MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
-import { isAffAmount, roundAffAmount, type DailyImageQuote } from "@/lib/daily-image-pricing";
+import { dailyImageFamily, isAffAmount, roundAffAmount, type DailyImageQuote } from "@/lib/daily-image-pricing";
 import { dailyImagePolicy, reserveDailyImageQuote, settleDailyImageUsage } from "@/lib/daily-image-billing";
 import { assertFreeGrant } from "@/lib/light-risk";
 import { withDataFileLock } from "@/lib/data-file-lock";
@@ -406,10 +407,12 @@ export async function trySpendImageCredits(
     let committed = false;
     try {
     const dailyQuote = await reserveDailyImageQuote(userId, generation, reservationId);
-    const cost = fixedCostPerSample != null ? imageCreditCost(generation, fixedCostPerSample) : dailyQuote?.costAff ?? imageCreditCost(generation, null, await dailyImagePolicy());
+    const formulaPolicy = fixedCostPerSample == null && !dailyQuote ? await dailyImagePolicy() : undefined;
+    const cost = fixedCostPerSample != null ? imageCreditCost(generation, fixedCostPerSample) : dailyQuote?.costAff ?? imageCreditCost(generation, null, formulaPolicy);
     if (!isAffAmount(cost) || cost < 0)
       throw new Error("图像费用计算结果无效");
-    if (fixedCostPerSample == null && !dailyQuote && cost === 0)
+    const configuredFreeGeneration = formulaPolicy != null && dailyImageFamily(generation) != null && imageGenerationBaseAff(generation, formulaPolicy) === 0;
+    if (fixedCostPerSample == null && !dailyQuote && cost === 0 && !configuredFreeGeneration)
       throw new Error("图像费用计算结果无效");
     const { rateLimit } = await import("@/lib/runtime-config").then(({ runtimeImagePackageSettings }) => runtimeImagePackageSettings());
     const packageRemaining = packageRateLimitRemaining(account, Date.now(), rateLimit);

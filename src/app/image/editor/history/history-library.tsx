@@ -16,6 +16,9 @@ import {
 import { deleteEditorDraft } from "@/lib/image-editor-store";
 import { ImageDownloadMenu } from "@/app/image-download-menu";
 import { editorHistoryImageBlob, importLegacyEditorHistory } from "@/lib/image-editor-record";
+import CachedImage from "@/app/cached-image";
+import { localHistoryImageSource } from "@/lib/local-history-image-source";
+import { useRedrawArchives, type RedrawArchiveRow } from "@/lib/use-redraw-archives";
 import "./history.css";
 
 const ROOT = "/image/editor/history";
@@ -36,7 +39,23 @@ function nodeDepth(node: EditorHistoryNode, byId: Map<string, EditorHistoryNode>
   return Math.min(depth, 7);
 }
 
-export default function HistoryLibrary() {
+function RedrawArchiveCard({ item, ownerId }: { item: RedrawArchiveRow; ownerId: number }) {
+  const title = item.prompt?.trim().slice(0, 70) || "分块超分";
+  return <Link className="redraw-project-card" href={`/history/${encodeURIComponent(item.id)}`} prefetch={false}>
+    <div className="redraw-project-image">
+      <CachedImage src={localHistoryImageSource(item.id, true, ownerId)} ownerId={ownerId} alt={title} fill />
+      <span>本机原图</span>
+    </div>
+    <div className="redraw-project-copy">
+      <strong>{title}<ArrowUpRight size={16} /></strong>
+      <div className="redraw-operation-tags"><span>分块超分</span></div>
+      <p>{item.archive.width} × {item.archive.height}</p>
+      <small>{date(item.createdAt)}</small>
+    </div>
+  </Link>;
+}
+
+export default function HistoryLibrary({ ownerId }: { ownerId: number }) {
   const router = useRouter();
   const params = useSearchParams();
   const [projects, setProjects] = useState<EditorHistoryProject[]>([]);
@@ -45,6 +64,7 @@ export default function HistoryLibrary() {
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [operation, setOperation] = useState("all");
+  const archives = useRedrawArchives(ownerId, query, operation);
   const [nodeQuery, setNodeQuery] = useState("");
   const [nodeLimit, setNodeLimit] = useState({ key: "", count: 100 });
   const [preview, setPreview] = useState<{ id: string; url: string; width: number; height: number } | null>(null);
@@ -141,9 +161,9 @@ export default function HistoryLibrary() {
       {message && <p className="redraw-message" role="status">{message}</p>}
       {loading ? <div className="redraw-empty"><Loader2 className="redraw-spin" size={26} /><p>正在整理本地重绘作品和分支…</p></div> : !project ? <>
         {projectId && <p className="redraw-message">此作品尚未产生重绘结果，或记录已被删除。下方显示其他已完成操作的作品。</p>}
-        <div className="redraw-history-summary"><span><ImageIcon size={17} /><b>{projects.length}</b> 件作品</span><span><GitBranch size={17} /><b>{projects.reduce((total, item) => total + item.branches.length, 0)}</b> 个分支</span><span><History size={17} /><b>{projects.reduce((total, item) => total + item.results.length, 0)}</b> 张操作结果</span></div>
+        <div className="redraw-history-summary"><span><ImageIcon size={17} /><b>{projects.length + archives.count}</b> 件作品</span><span><GitBranch size={17} /><b>{projects.reduce((total, item) => total + item.branches.length, 0)}</b> 个分支</span><span><History size={17} /><b>{projects.reduce((total, item) => total + item.results.length, archives.count)}</b> 张操作结果</span></div>
         <div className="redraw-history-filters"><label className="redraw-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索作品、分支、节点、模型或提示词" aria-label="搜索重绘历史" /></label><PopupSelect ariaLabel="按重绘操作筛选" value={operation} onChange={setOperation} options={[{ value: "all", label: "全部操作" }, ...Object.entries(EDITOR_HISTORY_OPERATION_LABELS).map(([value, label]) => ({ value, label }))]} /></div>
-        {visibleProjects.length ? <div className="redraw-project-grid">{visibleProjects.map((item) => <Link className="redraw-project-card" href={href(item.id)} key={item.id}><div className="redraw-project-image"><Image unoptimized src={item.latestResult.thumbnail} alt={item.name} fill sizes="320px" /><span>{item.results.length} 张结果</span></div><div className="redraw-project-copy"><strong>{item.name}<ArrowUpRight size={16} /></strong><div className="redraw-operation-tags">{item.operations.map((key) => <span key={key}>{EDITOR_HISTORY_OPERATION_LABELS[key]}</span>)}</div><p><GitBranch size={13} />{item.branches.map((entry) => entry.name).join(" / ")}</p><small>{date(item.updatedAt)} · {item.nodes.length} 个节点</small></div></Link>)}</div> : <div className="redraw-empty"><History size={34} /><h2>{query || operation !== "all" ? "没有匹配的重绘作品" : "还没有重绘作品"}</h2><p>成功完成局部重绘、无限画布或超分后，图片与分支会自动保存在这里。</p><Link href="/image">前往图像工作台<ArrowUpRight size={15} /></Link></div>}
+        {visibleProjects.length || archives.visible.length ? <div className="redraw-project-grid">{archives.visible.map((item) => <RedrawArchiveCard key={item.id} item={item} ownerId={ownerId} />)}{visibleProjects.map((item) => <Link className="redraw-project-card" href={href(item.id)} key={item.id}><div className="redraw-project-image"><Image unoptimized src={item.latestResult.thumbnail} alt={item.name} fill sizes="320px" /><span>{item.results.length} 张结果</span></div><div className="redraw-project-copy"><strong>{item.name}<ArrowUpRight size={16} /></strong><div className="redraw-operation-tags">{item.operations.map((key) => <span key={key}>{EDITOR_HISTORY_OPERATION_LABELS[key]}</span>)}</div><p><GitBranch size={13} />{item.branches.map((entry) => entry.name).join(" / ")}</p><small>{date(item.updatedAt)} · {item.nodes.length} 个节点</small></div></Link>)}</div> : <div className="redraw-empty"><History size={34} /><h2>{query || operation !== "all" ? "没有匹配的重绘作品" : "还没有重绘作品"}</h2><p>成功完成局部重绘、无限画布或超分后，图片与分支会自动保存在这里。</p><Link href="/image">前往图像工作台<ArrowUpRight size={15} /></Link></div>}
       </> : <div className="redraw-project-detail">
         <aside className="redraw-branch-panel"><h2><GitBranch size={16} />版本分支</h2><button className={`redraw-branch${!branchId ? " is-active" : ""}`} onClick={() => router.replace(href(project.id), { scroll: false })}><History size={16} /><span><strong>全部分支</strong><small>{project.nodes.length} 个节点</small></span></button>{project.branches.map((entry) => { const head = project.nodes.find((node) => node.id === entry.headId); return <button key={entry.id} className={`redraw-branch${entry.id === branchId ? " is-active" : ""}`} onClick={() => router.replace(href(project.id, entry.id, entry.headId), { scroll: false })}>{head && <Image unoptimized src={head.thumbnail} alt="" width={36} height={42} />}<span><strong>{entry.name}</strong><small>{editorHistoryBranchNodes(project, entry.id).filter((node) => editorHistoryResultOperation(node)).length} 张操作结果</small></span></button>; })}<button className="redraw-new-branch" disabled={busy || !selectedNode} onClick={() => void fork(false)}><Plus size={15} />从选中节点新建分支</button>{branch && <button className="redraw-new-branch" disabled={busy} onClick={() => void renameBranch()}><Pencil size={14} />重命名当前分支</button>}<p className="redraw-local-note">图片、蒙版、参数和分支都保存在此浏览器本地。返回旧节点继续修改时，会保留已有版本。</p></aside>
         <section className="redraw-node-panel"><div className="redraw-node-heading"><h2>历史节点 <small>{branch ? branch.name : "全部分支"}</small></h2><label className="redraw-search"><Search size={15} /><input aria-label="搜索当前作品节点" placeholder="查找节点、图像和提示词" value={nodeQuery} onChange={(event) => setNodeQuery(event.target.value)} /></label></div><div className="redraw-node-tree" role="tree" aria-label="作品分支历史树">{[...visibleNodes].reverse().slice(0, shownNodeCount).map((node) => { const resultOperation = editorHistoryResultOperation(node); const nodeBranch = project.branches.find((entry) => entry.id === node.branchId); return <button type="button" role="treeitem" aria-selected={selectedNodeId === node.id} className={`redraw-history-node${selectedNodeId === node.id ? " is-selected" : ""}`} style={{ "--node-depth": nodeDepth(node, nodeMap) } as CSSProperties} key={node.id} onClick={() => router.replace(href(project.id, branchId, node.id), { scroll: false })}><span className="redraw-tree-dot" /><Image unoptimized src={node.thumbnail} alt="" width={46} height={52} /><span><strong>{node.label}</strong><small>{nodeBranch?.name} · {date(node.createdAt)}</small><em>{resultOperation ? EDITOR_HISTORY_OPERATION_LABELS[resultOperation] : node.parentId ? "编辑保存点" : "初始源图"}{project.branches.some((entry) => entry.headId === node.id) ? " · HEAD" : ""}</em></span></button>; })}{!visibleNodes.length && <p className="redraw-local-note">没有匹配的节点。</p>}{visibleNodes.length > shownNodeCount && <button className="redraw-more" onClick={() => setNodeLimit({ key: nodeListKey, count: shownNodeCount + 100 })}>显示更多节点（{shownNodeCount}/{visibleNodes.length}）</button>}</div></section>

@@ -1,5 +1,5 @@
-import { billableNaiAnlasCost, MEDIUM_AFF_PER_IMAGE, V5_BASE_AFF_PER_IMAGE, type ImagePricingGeneration } from "./image-pricing";
-import { isNaiMediumModel, naiUsageModel } from "./nai-native-request";
+import { billableNaiAnlasCost, DEFAULT_IMAGE_BASE_FEES, imageGenerationBaseAff, type ImageBaseFees, type ImagePricingGeneration } from "./image-pricing";
+import { naiUsageModel } from "./nai-native-request";
 
 export type DailyImageFamily = "v45" | "v5";
 export { CNY_PER_AFF } from "./image-pricing";
@@ -9,7 +9,7 @@ export type DailyPriceTier = {
   anlasMultiplier: number;
   totalMultiplier: number;
 };
-export type DailyImagePolicy = {
+export type DailyImagePolicy = ImageBaseFees & {
   enabled: boolean;
   /** Optional restriction: disallow switching to NewAPI's independently billed generation. */
   strictApiBilling?: boolean;
@@ -41,6 +41,7 @@ export type DailyImageBillingState = {
 };
 
 export const DEFAULT_DAILY_IMAGE_POLICY: DailyImagePolicy = {
+  ...DEFAULT_IMAGE_BASE_FEES,
   enabled: true,
   strictApiBilling: false,
   displayUsdPerCny: 200,
@@ -138,7 +139,7 @@ export function quoteDailyImage(
     generation.samples > 30
   )
     throw new Error("每日计费参数无效");
-  const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE : family === "v5" ? V5_BASE_AFF_PER_IMAGE : 1;
+  const baseAff = imageGenerationBaseAff(generation, policy);
   const anlas = billableNaiAnlasCost(generation);
   const anlasPerSample = anlas / generation.samples;
   const anlasCny = family === "v45" ? policy.v45AnlasCny : policy.v5AnlasCny;

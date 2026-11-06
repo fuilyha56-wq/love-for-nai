@@ -36,6 +36,7 @@ type Props = {
   operationId?: string;
   generating?: boolean;
   isInpainting?: boolean;
+  isV5Upscale?: boolean;
   width: number;
   height: number;
   hasResults: boolean;
@@ -72,7 +73,7 @@ const sheetTitles: Record<MobileStudioSheet, string> = {
   tools: "更多工具", history: "历史记录", assistant: "标签助手", session: "账户与会话",
 };
 
-export function MobileStudioLauncher({ promptSummary, model, operation, operationId = "generate", operationOptions, generating = false, isInpainting = false, width, height, hasResults, hasSource = false, resultContent, sourcePreviewContent, sourceStatusContent, historyContent, historyToolbar, moreContent, promptContent, parameterContent, assistantContent, onRefreshHistory, onSelectOperation, onClearWorkspace, onOpenSheet, sheet, sheetRequestId = 0, onCloseSheet, sheetRef, sheetContent, footerContent, referenceContent, notice, onDismissNotice }: Props) {
+export function MobileStudioLauncher({ promptSummary, model, operation, operationId = "generate", operationOptions, generating = false, isInpainting = false, isV5Upscale = false, width, height, hasResults, hasSource = false, resultContent, sourcePreviewContent, sourceStatusContent, historyContent, historyToolbar, moreContent, promptContent, parameterContent, assistantContent, onRefreshHistory, onSelectOperation, onClearWorkspace, onOpenSheet, sheet, sheetRequestId = 0, onCloseSheet, sheetRef, sheetContent, footerContent, referenceContent, notice, onDismissNotice }: Props) {
   const searchParams = useSearchParams();
   const view = searchParams.get("view");
   const page: MobileStudioPage = view === "history" || view === "more" ? view : "generate";
@@ -162,7 +163,7 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
 
   const generatePage = <>
     <header className="mobile-studio-workbar">
-      <div className="mobile-studio-workbar-title"><Brush size={20} aria-hidden="true" /><div><b>画布</b><small>{model || "选择模型"}</small></div></div>
+      <div className="mobile-studio-workbar-title"><Brush size={20} aria-hidden="true" /><div><b>{isV5Upscale ? "V5 超分" : "画布"}</b><small>{isV5Upscale ? "放大至 2 倍" : model || "选择模型"}</small></div></div>
       <div className="mobile-studio-workbar-actions">
         <button type="button" aria-label="打开生成参数" title="生成参数" onClick={() => openSheet("parameters")}><SlidersHorizontal size={20} /><span>参数</span></button>
         <button type="button" aria-label="打开标签助手" title="标签助手" onClick={() => openSheet("assistant")}><WandSparkles size={20} /><span>助手</span></button>
@@ -176,15 +177,16 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
     </div>
     <div ref={generateScrollRef} className={`mobile-studio-generate-scroll${isInpainting ? " is-inpainting" : ""}`}>
       <section className={`mobile-studio-preview-section${!hasResults && sourcePreviewContent ? " has-source-preview" : ""}`} aria-label={hasResults ? "生成结果预览" : sourcePreviewContent ? "当前参考图片" : "生成结果预览"}>
-        {(hasResults || hasSource) && onClearWorkspace && <div className="mobile-studio-preview-toolbar"><span>{hasResults ? "生成结果" : "参考图片"}</span><button type="button" disabled={generating} onClick={onClearWorkspace} title="清空当前预览与参考图片，保留历史记录"><X size={16} aria-hidden="true" />清空工作区</button></div>}
-        {hasResults ? resultContent : sourcePreviewContent || <div className="mobile-studio-empty-preview"><Sparkles size={30} /><b>画布等待你的想象</b><span>{status}</span></div>}
+        {(hasResults || hasSource) && onClearWorkspace && <div className="mobile-studio-preview-toolbar"><span>{hasResults ? isV5Upscale ? "超分结果" : "生成结果" : "参考图片"}</span><button type="button" disabled={generating} onClick={onClearWorkspace} title="清空当前预览与参考图片，保留历史记录"><X size={16} aria-hidden="true" />清空工作区</button></div>}
+        {hasResults ? resultContent : sourcePreviewContent || <div className="mobile-studio-empty-preview"><Sparkles size={30} /><b>{isV5Upscale ? "选择要放大的图片" : "画布等待你的想象"}</b><span>{isV5Upscale ? "上传图片或从图库选择" : status}</span></div>}
+        {isV5Upscale && generating && !hasResults && <p className="mobile-studio-upscale-progress" role="status">正在进行 V5 超分…</p>}
       </section>
       <section className="mobile-studio-reference-panel" aria-label="参考图与编辑工具">
         {hasResults && sourceStatusContent && <div className="mobile-studio-source-status">{sourceStatusContent}</div>}
         {referenceContent}
       </section>
     </div>
-    <section className={`mobile-studio-prompt-section is-compact${promptOpen ? " is-placeholder" : ""}`} aria-label="提示词区域" aria-hidden={promptOpen}>{renderPromptEntry(inlinePromptToggleRef)}</section>
+    {!isV5Upscale && <section className={`mobile-studio-prompt-section is-compact${promptOpen ? " is-placeholder" : ""}`} aria-label="提示词区域" aria-hidden={promptOpen}>{renderPromptEntry(inlinePromptToggleRef)}</section>}
   </>;
   const historyPage = <>
     <header className="mobile-studio-page-heading is-history"><span className="mobile-studio-heading-icon" aria-hidden="true"><History size={21} /></span><b>历史画廊</b><button type="button" aria-label="刷新历史" onClick={() => { setPage("history"); onRefreshHistory?.(); }}><RefreshCw size={18} /></button></header>
@@ -197,18 +199,20 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
   </>;
   const clientReady = useSyncExternalStore(subscribeToDocument, documentReady, serverDocumentReady);
   const portalTarget = clientReady ? document.body : null;
+  const noticeContent = notice && <div className="mobile-studio-notice" role="status"><span>{notice}</span><button type="button" aria-label="关闭工作台提示" onClick={onDismissNotice}><X size={18} /></button></div>;
   return <div className="mobile-studio-launcher" data-mobile-studio-launcher="true" data-dialog-open={dialogOpen ? "true" : undefined} aria-hidden={dialogOpen || undefined} inert={dialogOpen}>
     <main className={`mobile-studio-page is-${page}`} inert={dialogOpen}>
       <div className="mobile-studio-page-panel" hidden={page !== "generate"}>{generatePage}</div>
       <div className="mobile-studio-page-panel" hidden={page !== "history"}>{historyPage}</div>
       <div className="mobile-studio-page-panel" hidden={page !== "more"}>{morePage}</div>
     </main>
-    {notice && <div className="mobile-studio-notice" role="status" inert={dialogOpen}><span>{notice}</span><button type="button" aria-label="关闭工作台提示" onClick={onDismissNotice}><X size={18} /></button></div>}
+    {!dialogOpen && noticeContent}
     <div className="mobile-studio-footer" hidden={page !== "generate"} inert={dialogOpen}>{footerContent}</div>
     <MobileBottomNav className="mobile-studio-bottom-nav" active={page} inert={dialogOpen} onWorkspacePage={setPage} />
     {portalTarget && (workspace.visited.length > 0 || legacySheet) && createPortal(<div className="mobile-studio-prompt-backdrop" role="presentation" hidden={!dialogOpen} inert={!dialogOpen} onClick={goBack}>
       <section ref={activeSheetRef} tabIndex={-1} className="mobile-studio-prompt-dialog mobile-studio-workspace-dialog" data-active-pane={activePane || undefined} role="dialog" aria-modal={dialogOpen ? "true" : undefined} aria-label={activeSheet === "prompt" ? "提示词区域" : activeSheet ? sheetTitles[activeSheet] : undefined} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); goBack(); } }}>
-        <header className="mobile-studio-sheet-header"><button type="button" aria-label={activePane === "prompt" ? "收起提示词" : `关闭${activeSheet ? sheetTitles[activeSheet] : "工作面板"}`} onClick={goBack}><ArrowLeft size={20} /></button><b>{activeSheet ? sheetTitles[activeSheet] : "工作面板"}{activePane === "parameters" && <small className="mobile-studio-workspace-dimensions">{width}×{height}</small>}</b>{activePane && <button type="button" className="mobile-studio-workspace-done" onClick={closeWorkspace}>完成</button>}</header>
+        <header className="mobile-studio-sheet-header"><button type="button" aria-label={activePane === "prompt" ? "收起提示词" : `关闭${activeSheet ? sheetTitles[activeSheet] : "工作面板"}`} onClick={goBack}><ArrowLeft size={20} /></button><b>{activeSheet ? sheetTitles[activeSheet] : "工作面板"}{activePane === "parameters" && !isV5Upscale && <small className="mobile-studio-workspace-dimensions">{width}×{height}</small>}</b>{activePane && <button type="button" className="mobile-studio-workspace-done" onClick={closeWorkspace}>完成</button>}</header>
+        {dialogOpen && noticeContent}
         {activePane && workspaceSwitch(activePane)}
         {workspacePanes.map((pane) => workspace.visited.includes(pane) && <WorkspaceContent key={pane} pane={pane} active={activePane === pane}>{pane === "prompt" ? promptContent : pane === "parameters" ? parameterContent : assistantContent}</WorkspaceContent>)}
         {legacySheet && <div className="mobile-studio-sheet-content">{legacySheet === "reference" ? <>{referenceContent}{sheetContent}</> : sheetContent}</div>}

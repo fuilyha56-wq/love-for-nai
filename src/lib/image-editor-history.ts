@@ -17,6 +17,8 @@ export type EditorHistoryWorkspace = {
   maskOpacity: number;
   showMaskPreview: boolean;
   canvasBackground: "checker" | "white" | "dark";
+  redrawStrength?: number;
+  tiledUpscaleStrength?: number;
 };
 export type EditorHistoryBranch = {
   id: string;
@@ -652,7 +654,8 @@ export async function loadEditorHistoryNode(nodeId: string): Promise<LoadedEdito
       let image: StoredHistoryImage | null = null;
       const finish = () => {
         if (!node || !image) return;
-        resolve({ ...node, document: { ...node.document, worldRect: { ...node.document.worldRect }, source: node.document.source && { ...node.document.source }, generation: node.document.generation && { ...node.document.generation } }, workspace: cloneWorkspace(node.workspace), image: { width: image.width, height: image.height, data: new Uint8ClampedArray(image.data) } });
+        // The IndexedDB records are already private copies.
+        resolve({ ...node, image: { width: image.width, height: image.height, data: image.data } });
       };
       nodeRequest.onsuccess = () => {
         node = (nodeRequest.result as EditorHistoryNode | undefined) || null;

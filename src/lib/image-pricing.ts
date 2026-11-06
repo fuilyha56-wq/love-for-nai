@@ -1,5 +1,5 @@
 import { NAI_UPSCALE_MODEL_IDS } from "./nai-model-catalog";
-import { isNaiMediumModel } from "./nai-native-request";
+import { isNaiMediumModel, naiUsageModel } from "./nai-native-request";
 
 export type ImagePricingGeneration = {
   model: string;
@@ -119,6 +119,22 @@ export const NAI_MAX_ANLAS_PER_IMAGE = 140;
 export const MEDIUM_ANLAS_RATIO = 18 / 26;
 export const MEDIUM_AFF_PER_IMAGE = Math.max(1, Math.round(2 * MEDIUM_ANLAS_RATIO));
 export const V5_BASE_AFF_PER_IMAGE = 5;
+export type ImageBaseFees = {
+  v45LimitBaseAff?: number;
+  v45BaseAff?: number;
+  v5LimitBaseAff?: number;
+  v5BaseAff?: number;
+  v5MediumLimitBaseAff?: number;
+  v5MediumBaseAff?: number;
+};
+export const DEFAULT_IMAGE_BASE_FEES: Required<ImageBaseFees> = {
+  v45LimitBaseAff: 1,
+  v45BaseAff: 1,
+  v5LimitBaseAff: V5_BASE_AFF_PER_IMAGE,
+  v5BaseAff: V5_BASE_AFF_PER_IMAGE,
+  v5MediumLimitBaseAff: MEDIUM_AFF_PER_IMAGE,
+  v5MediumBaseAff: MEDIUM_AFF_PER_IMAGE,
+};
 const DIRECTOR_COSTS: Record<string, number> = {
   declutter: 5,
   "bg-removal": 65,
@@ -129,7 +145,7 @@ const DIRECTOR_COSTS: Record<string, number> = {
   emotion: 5,
 };
 
-export type LocalAnlasPrices = { v45AnlasCny: number; v5AnlasCny: number };
+export type LocalAnlasPrices = ImageBaseFees & { v45AnlasCny: number; v5AnlasCny: number };
 
 export function imageCreditCost(generation: ImagePricingGeneration, fixedCostPerSample: number | null = null, prices?: LocalAnlasPrices): number {
   return fixedCostPerSample != null
@@ -369,6 +385,24 @@ export function billableNaiAnlasCost(generation: ImagePricingGeneration): number
   return isInFreeEnvelope(generation) ? 0 : officialNaiAnlasCost(generation);
 }
 
+/** Base fee per image; sequential submissions qualify using each single request. */
+export function imageGenerationBaseAff(generation: ImagePricingGeneration, prices?: ImageBaseFees): number {
+  const model = naiUsageModel(generation.model);
+  const keys: [keyof ImageBaseFees, keyof ImageBaseFees] | null = isNaiMediumModel(model)
+    ? ["v5MediumLimitBaseAff", "v5MediumBaseAff"]
+    : modelPointVersion(model) === "V5"
+      ? ["v5LimitBaseAff", "v5BaseAff"]
+      : /^(?:nai-v4\.5-|nai-diffusion-4-5(?:-|$))/.test(model)
+        ? ["v45LimitBaseAff", "v45BaseAff"]
+        : null;
+  if (!keys) return 1;
+  const request = generation.sequential && generation.samples > 1
+    ? { ...generation, samples: 1, sequential: false }
+    : generation;
+  const key = keys[isInFreeEnvelope(request) ? 0 : 1];
+  return prices?.[key] ?? DEFAULT_IMAGE_BASE_FEES[key];
+}
+
 export function affCost(generation: ImagePricingGeneration, prices?: LocalAnlasPrices): number {
   const samples = generation.samples;
   if (!Number.isSafeInteger(samples) || samples < 1 ||
@@ -386,8 +420,7 @@ export function affCost(generation: ImagePricingGeneration, prices?: LocalAnlasP
     ? (modelPointVersion(generation.model) === "V5" ? prices.v5AnlasCny : prices.v45AnlasCny) / CNY_PER_AFF
     : AFF_PER_ANLAS * (modelPointVersion(generation.model) === "V5" ? V5_ANLAS_SALES_MULTIPLIER : 1);
   if (standalone) return Math.round(officialNaiAnlasCost(generation) * affPerAnlas * 10_000) / 10_000;
-  const baseAff = isNaiMediumModel(generation.model) ? MEDIUM_AFF_PER_IMAGE :
-    modelPointVersion(generation.model) === "V5" ? V5_BASE_AFF_PER_IMAGE : 1;
+  const baseAff = imageGenerationBaseAff(generation, prices);
   const anlas = isInFreeEnvelope(generation) ? 0 : officialNaiAnlasCost(generation);
   return Math.round((baseAff * samples + anlas * affPerAnlas) * 10_000) / 10_000;
 }

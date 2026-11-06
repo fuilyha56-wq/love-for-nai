@@ -22,11 +22,11 @@ export const tutorialOverride: TutorialOverride = {
     },
     1: {
       title: "打开无限画布",
-      body: "图片已就绪后，桌面端点击源图操作中的「无限画布」按钮，直接进入无限画布。手机端点击「绘制重绘蒙版」打开编辑器，再点顶部的「无限画布」切换模式。",
-      tip: "若源图尚未上传，先点击高亮的源图片区域上传；源图就绪后目标会改为「无限画布」按钮。手机端入口是「绘制重绘蒙版」，进入编辑器后需切换到「无限画布」。",
+      body: "图片已就绪后，桌面端点击源图操作中的「无限画布」按钮，直接进入无限画布。手机端点击「进入图像编辑器」，再点顶部的「无限画布」切换模式。",
+      tip: "若源图尚未上传，先点击高亮的源图片区域上传。上传后教程会高亮当前设备的编辑器入口。",
       area: "source",
       target: '[data-tutorial="source"], .mobile-studio-reference-panel, button[data-tutorial-editor="canvas"]',
-      keywords: ["无限画布", "图像编辑器"],
+      keywords: ["无限画布", "进入图像编辑器"],
       screenshot: shot(2, "工作台高亮源图操作中的无限画布入口"),
     },
     2: {

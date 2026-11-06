@@ -1,5 +1,6 @@
 import { imageHistoryContent, sameImageHistoryContent } from "@/lib/image-history-content";
-import { cacheImageBlob, createImageThumbnail } from "@/lib/browser-image-cache";
+import { createImageThumbnail } from "@/lib/browser-image-cache";
+import { removeLocalTiledUpscaleResult } from "@/lib/local-tiled-upscale-result";
 
 export type LocalImageHistoryItem = {
   id: string;
@@ -8,6 +9,7 @@ export type LocalImageHistoryItem = {
   requestId?: string;
   createdAt: number;
   image: Blob;
+  archive?: { id: string; width: number; height: number; bytes: number };
   prompt?: string;
   negative?: string;
   model?: string;
@@ -22,7 +24,7 @@ export type LocalImageHistorySummary = Omit<LocalImageHistoryItem, "image"> & {
 };
 
 function historySummary({ image, ...item }: LocalImageHistoryItem): LocalImageHistorySummary {
-  return { ...item, imageType: image.type, imageSize: image.size };
+  return { ...item, imageType: item.archive ? "image/png" : image.type, imageSize: item.archive?.bytes ?? image.size };
 }
 
 const DB_NAME = "lfn-local-image-history-v1";
@@ -30,19 +32,30 @@ const STORE = "images";
 const SUMMARIES = "summaries";
 const THUMBNAILS = "thumbnails";
 const MODE_KEY = "lfn-image-history-mode-v1";
-export type ImageHistoryMode = "account" | "local" | "none";
+export type ImageHistoryMode = "account" | "local";
 
 export function readImageHistoryMode(): ImageHistoryMode {
-  if (typeof window === "undefined") return "account";
+  if (typeof window === "undefined") return "local";
   try {
-    const value = window.localStorage.getItem(MODE_KEY);
-    return value === "local" || value === "none" ? value : "account";
-  } catch { return "account"; }
+    return window.localStorage.getItem(MODE_KEY) === "account" ? "account" : "local";
+  } catch { return "local"; }
 }
 
 export function writeImageHistoryMode(mode: ImageHistoryMode) {
   window.localStorage.setItem(MODE_KEY, mode);
   window.dispatchEvent(new CustomEvent("lfn-image-history-mode", { detail: mode }));
+}
+
+function localHistoryChanged() {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("lfn-local-image-history-changed"));
+}
+
+let persistenceRequested = false;
+
+export function requestLocalImagePersistence() {
+  if (persistenceRequested || typeof navigator === "undefined" || !navigator.storage?.persist) return;
+  persistenceRequested = true;
+  void navigator.storage.persist().catch(() => undefined);
 }
 
 function openDb(): Promise<IDBDatabase> {
@@ -74,6 +87,7 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 export async function saveLocalImageHistory(item: LocalImageHistoryItem) {
+  requestLocalImagePersistence();
   const db = await openDb();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -87,11 +101,8 @@ export async function saveLocalImageHistory(item: LocalImageHistoryItem) {
       transaction.onabort = () => reject(transaction.error || new Error("无法保存本地图片历史"));
     });
   } finally { db.close(); }
-  const thumbnail = await createImageThumbnail(item.image).catch(() => null);
-  if (thumbnail) await persistHistoryThumbnail(item, thumbnail);
-  // The original belongs to the owner captured at generation time, not whoever
-  // may have signed in while the asynchronous preview was being decoded.
-  if (item.remoteId && Number.isSafeInteger(item.ownerId) && item.ownerId! > 0) await cacheImageBlob(`/api/history/${encodeURIComponent(item.remoteId)}/image`, item.image, `user:${item.ownerId}`).catch(() => undefined);
+  localHistoryChanged();
+  void getLocalImageHistoryThumbnail(item.id, item.ownerId).catch(() => undefined);
 }
 
 async function persistHistoryThumbnail(original: LocalImageHistoryItem, thumbnail: Blob) {
@@ -118,13 +129,18 @@ async function persistHistoryThumbnail(original: LocalImageHistoryItem, thumbnai
 
 export async function deleteLocalImageHistory(id: string) {
   const db = await openDb();
+  let archiveId: string | undefined;
   try { await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction([STORE, SUMMARIES, THUMBNAILS], "readwrite");
+    const read = transaction.objectStore(SUMMARIES).get(id);
+    read.onsuccess = () => { archiveId = (read.result as LocalImageHistorySummary | undefined)?.archive?.id; };
     for (const store of [STORE, SUMMARIES, THUMBNAILS]) transaction.objectStore(store).delete(id);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error || new Error("无法删除本地图片历史"));
     transaction.onabort = () => reject(transaction.error || new Error("无法删除本地图片历史"));
   }); } finally { db.close(); }
+  localHistoryChanged();
+  if (archiveId) await removeLocalTiledUpscaleResult(archiveId);
 }
 
 export async function listLocalImageHistorySummaries(limit = Number.POSITIVE_INFINITY): Promise<LocalImageHistorySummary[]> {
@@ -154,15 +170,16 @@ export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return response.blob();
 }
 
-export async function findLocalImageHistory(remoteId: string): Promise<LocalImageHistoryItem | null> {
+export async function findLocalImageHistory(remoteId: string, ownerId?: number): Promise<LocalImageHistoryItem | null> {
+  const belongsToOwner = (item: LocalImageHistoryItem) => ownerId === undefined || item.ownerId === ownerId;
   const db = await openDb();
   try { return await new Promise<LocalImageHistoryItem | null>((resolve, reject) => {
     const store = db.transaction(STORE, "readonly").objectStore(STORE);
     const request = store.get(remoteId);
     request.onsuccess = () => {
-      if (request.result) { resolve(request.result); return; }
-      const remote = store.index("remoteId").get(remoteId);
-      remote.onsuccess = () => resolve(remote.result || null);
+      if (request.result && belongsToOwner(request.result)) { resolve(request.result); return; }
+      const remote = store.index("remoteId").getAll(remoteId);
+      remote.onsuccess = () => resolve((remote.result as LocalImageHistoryItem[]).find(belongsToOwner) ?? null);
       remote.onerror = () => reject(remote.error || new Error("无法查找本地图片历史"));
     };
     request.onerror = () => reject(request.error || new Error("无法查找本地图片历史"));
@@ -172,35 +189,44 @@ export async function findLocalImageHistory(remoteId: string): Promise<LocalImag
 const thumbnailReads = new Map<string, Promise<Blob | null>>();
 
 /** Decode at most one selected legacy original per image, then persist its preview. */
-export function getLocalImageHistoryThumbnail(id: string): Promise<Blob | null> {
-  const pending = thumbnailReads.get(id);
+export function getLocalImageHistoryThumbnail(id: string, ownerId?: number): Promise<Blob | null> {
+  const key = `${ownerId ?? "*"}:${id}`;
+  const pending = thumbnailReads.get(key);
   if (pending) return pending;
   const request = (async () => {
     const db = await openDb();
     let cached: Blob | null;
     try { cached = await new Promise((resolve, reject) => {
-      const read = db.transaction(THUMBNAILS, "readonly").objectStore(THUMBNAILS).get(id);
-      read.onsuccess = () => resolve(read.result?.image || null);
-      read.onerror = () => reject(read.error);
+      const transaction = db.transaction([SUMMARIES, THUMBNAILS], "readonly");
+      const summary = transaction.objectStore(SUMMARIES).get(id);
+      summary.onsuccess = () => {
+        if (ownerId !== undefined && summary.result?.ownerId !== ownerId) { resolve(null); return; }
+        const read = transaction.objectStore(THUMBNAILS).get(id);
+        read.onsuccess = () => resolve(read.result?.image || null);
+        read.onerror = () => reject(read.error);
+      };
+      summary.onerror = () => reject(summary.error);
     }); } finally { db.close(); }
     if (cached) return cached;
-    const original = await findLocalImageHistory(id);
+    const original = await findLocalImageHistory(id, ownerId);
     if (!original) return null;
     const thumbnail = await createImageThumbnail(original.image).catch(() => null);
     if (!thumbnail) return null;
     await persistHistoryThumbnail(original, thumbnail);
     return thumbnail;
-  })().finally(() => thumbnailReads.delete(id));
-  thumbnailReads.set(id, request);
+  })().finally(() => thumbnailReads.delete(key));
+  thumbnailReads.set(key, request);
   return request;
 }
 
 /** Repair legacy copies by comparing bytes, including on the HTTP deployment. */
 export async function linkLocalImageHistoryToRemote(
   remoteItems: Array<{ id: string; requestId?: string; createdAt: string; imageUrl?: string; parameters?: Record<string, unknown> }>,
+  ownerId?: number,
 ) {
   if (!remoteItems.length) return;
-  const localItems = (await listLocalImageHistory(Number.POSITIVE_INFINITY)).filter((item) => !item.remoteId);
+  const localItems = (await listLocalImageHistory(Number.POSITIVE_INFINITY)).filter((item) =>
+    !item.remoteId && !item.archive && (ownerId === undefined || item.ownerId === ownerId));
   const remoteContents = new Map<string, Promise<Uint8Array | null>>();
   const localContents = new Map<string, Promise<Uint8Array>>();
   const links = new Map<string, string>();
@@ -208,7 +234,7 @@ export async function linkLocalImageHistoryToRemote(
     let pending = remoteContents.get(remote.id);
     if (!pending) {
       // Already-cached server copies avoid downloading the same image again.
-      pending = findLocalImageHistory(remote.id).then(async (cached) => {
+      pending = findLocalImageHistory(remote.id, ownerId).then(async (cached) => {
         if (cached) return imageHistoryContent(new Uint8Array(await cached.image.arrayBuffer()));
         const response = await fetch(remote.imageUrl || `/api/history/${encodeURIComponent(remote.id)}/image`, { cache: "no-store" });
         if (!response.ok) return null;
@@ -252,6 +278,14 @@ export async function linkLocalImageHistoryToRemote(
     }
   }));
   if (!links.size) return;
+  await linkHistoryCopies(links, ownerId);
+}
+
+export function linkLocalImageHistoryCopy(id: string, remoteId: string, ownerId: number) {
+  return linkHistoryCopies(new Map([[id, remoteId]]), ownerId);
+}
+
+async function linkHistoryCopies(links: Map<string, string>, ownerId?: number) {
   const db = await openDb();
   try { await new Promise<void>((resolve, reject) => {
     const transaction = db.transaction([STORE, SUMMARIES], "readwrite");
@@ -260,7 +294,7 @@ export async function linkLocalImageHistoryToRemote(
       const request = store.get(id);
       request.onsuccess = () => {
         const current = request.result as LocalImageHistoryItem | undefined;
-        if (current && !current.remoteId) {
+        if (current && !current.remoteId && (ownerId === undefined || current.ownerId === ownerId)) {
           const linked = { ...current, remoteId };
           store.put(linked);
           transaction.objectStore(SUMMARIES).put(historySummary(linked));
@@ -271,4 +305,5 @@ export async function linkLocalImageHistoryToRemote(
     transaction.onerror = () => reject(transaction.error || new Error("无法关联图片历史记录"));
     transaction.onabort = () => reject(transaction.error || new Error("无法关联图片历史记录"));
   }); } finally { db.close(); }
+  localHistoryChanged();
 }

@@ -219,8 +219,10 @@ async function handleUpscale(
     }
     let history: Awaited<ReturnType<typeof saveHistory>> = [];
     let warning = "";
-    try { history = await saveHistory(session.userId, body, images, null); }
-    catch { warning = "图片已放大，但暂时无法保存历史记录"; }
+    if (body._lfnSkipServerHistory !== true) {
+      try { history = await saveHistory(session.userId, body, images, null); }
+      catch { warning = "图片已放大，但暂时无法保存历史记录"; }
+    }
     return finish(NextResponse.json({
       images,
       image: images[0],
@@ -1011,7 +1013,7 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
       }
     }
 
-    const history = deferPatchHistory
+    const history = deferPatchHistory || body._lfnSkipServerHistory === true
       ? []
       : await saveHistory(session.userId, body, images, usage);
     await finishGenerationAudit(200, history.map(item=>item.id));

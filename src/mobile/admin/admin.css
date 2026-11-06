@@ -36,6 +36,7 @@
 .admin-card { overflow:hidden; border:0; border-radius:8px; background:var(--panel); }
 .admin-card-header, .admin-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 18px 20px; border-bottom: 1px solid var(--line); }
 .admin-card-body { padding: 20px; }
+.admin-card input.billing-base-fee-input { min-width: 0; min-height: 44px; padding: 0 8px; font-variant-numeric: tabular-nums; }
 .admin-card-title { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
 .admin-card-description { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .admin-card-actions, .admin-dialog-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }

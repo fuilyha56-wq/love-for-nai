@@ -26,6 +26,8 @@ export type ImageSourceMetadata = {
   height?: number;
 };
 
+export type TiledEditorSource = { width: number; height: number } & ({ id: string } | { rgba: Blob });
+
 export type EditorGenerationSettings = {
   providerId?: string;
   imageProtocol?: import("./image-model-capabilities").ImageProviderProtocol;
@@ -44,6 +46,8 @@ export type EditorGenerationSettings = {
 
 export type EditorDocument = {
   characterReference?: CharacterEditReference;
+  /** Reference to the original pixels; image holds only the preview. */
+  tiledSource?: TiledEditorSource;
   version: 1;
   image: RgbaImage;
   worldRect: WorldRect;
@@ -81,6 +85,8 @@ export type MaskState = {
 export type PendingCandidate = {
   id: string;
   patch: RgbaImage;
+  tiledResultId?: string;
+  localHistorySaved?: boolean;
   viewport: GenerationViewport;
   mask?: MaskData | Uint8Array | Uint8ClampedArray;
   prompt?: string;

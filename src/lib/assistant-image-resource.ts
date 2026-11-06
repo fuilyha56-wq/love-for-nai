@@ -1,4 +1,7 @@
-export type AssistantImageResource = { id: string; source: string; name: string; kind: "history" | "library"; description?: string };
+import { fetchCachedImageBlob } from "@/lib/browser-image-cache";
+import { parseLocalHistoryImageSource } from "@/lib/local-history-image-source";
+
+export type AssistantImageResource = { id: string; source: string; previewSource?: string; name: string; kind: "history" | "library"; description?: string };
 export type AssistantImageSource = { source: string; name: string };
 export const MAX_ASSISTANT_RESOURCE_BYTES = 20 * 1024 * 1024;
 const imageTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -33,6 +36,16 @@ export async function assistantImageFileWithType(file: File): Promise<File> {
   return new File([file], file.name, { type, lastModified: file.lastModified });
 }
 export async function assistantImageSourceFile(item: AssistantImageSource, signal: AbortSignal, origin = window.location.origin): Promise<File> {
+  const name = (item.name || "参考图").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 120).replace(/\.(?:png|jpe?g|webp|gif)$/i, "");
+  const local = parseLocalHistoryImageSource(item.source);
+  if (local) {
+    const blob = await fetchCachedImageBlob(item.source, local.ownerId);
+    signal.throwIfAborted();
+    if (blob.size > MAX_ASSISTANT_RESOURCE_BYTES) throw new Error("参考图不能超过 20 MB。");
+    const type = imageMime(new Uint8Array(await blob.slice(0, 12).arrayBuffer()));
+    if (!type) throw new Error("此资源不是受支持的图片文件。");
+    return new File([blob], `${name || "参考图"}.${type === "image/jpeg" ? "jpg" : type.slice(6)}`, { type });
+  }
   const url = validateAssistantImageSource(item.source, origin);
   const response = await fetch(url.href, { signal, credentials: url.origin === new URL(origin).origin ? "same-origin" : "omit", referrerPolicy: "no-referrer" });
   if (!response.ok) throw new Error("参考图无法读取，请刷新图库后重试。");
@@ -46,6 +59,5 @@ export async function assistantImageSourceFile(item: AssistantImageSource, signa
   signal.throwIfAborted();
   const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
   const type = imageMime(bytes); if (!type) throw new Error("此资源不是受支持的图片文件。");
-  const name = (item.name || "参考图").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 120).replace(/\.(?:png|jpe?g|webp|gif)$/i, "");
   return new File([bytes], `${name || "参考图"}.${type === "image/jpeg" ? "jpg" : type.slice(6)}`, { type });
 }

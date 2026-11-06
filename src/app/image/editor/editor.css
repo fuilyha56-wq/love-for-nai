@@ -34,6 +34,7 @@
 .editor-top-actions button,
 .editor-actions button,
 .editor-actions .image-download-menu,
+.editor-actions .editor-direct-download,
 .editor-zoom button,
 .editor-tool-grid button,
 .editor-mode-tabs button,
@@ -265,6 +266,7 @@
 .editor-actions .apply-button { min-width: 170px; border-color: var(--rose); background: var(--rose); color: #fff; }
 .editor-actions .download-result-button { min-width: 140px; }
 .editor-actions .download-result-button { height: 40px; align-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--editor-raised); color: var(--ink); font-size: 12px; font-weight: 650; }
+.editor-actions .editor-direct-download { min-height: 40px; padding-inline: 12px; }
 .editor-actions.is-tiled-upscale .generate-button { min-width: 205px; }
 .editor-tile-scale-control { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; font-weight: 650; }
 .editor-tile-scale-control .popup-select { width: 82px; }
@@ -275,6 +277,10 @@
 .editor-loading,
 .editor-error { display: grid; width: min(420px, calc(100vw - 30px)); place-items: center; align-self: center; justify-self: center; gap: 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); padding: 24px; color: var(--muted); text-align: center; box-shadow: var(--editor-shadow); }
 .image-editor-page > :is(.editor-loading, .editor-error) { grid-row: 1 / -1; }
+.editor-source-start h1 { color: var(--ink); font-size: 18px; font-weight: 650; }
+.editor-source-start p { font-size: 13px; line-height: 1.5; }
+.editor-source-start button { width: 100%; min-height: 44px; }
+.editor-source-start .editor-source-primary { border-color: var(--rose); color: var(--accent-text); background: var(--editor-hover); }
 
 @media (max-width: 900px) {
   .image-editor-page { min-height: 100dvh; grid-template-rows: 54px minmax(0, 1fr) auto; }
@@ -348,8 +354,6 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
   .image-editor-page * { transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
 
-}
-
 .editor-quality-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-block: 8px; }
 .editor-quality-actions button { display: inline-flex; min-width: 0; min-height: 38px; align-items: center; justify-content: center; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--editor-raised); color: var(--ink); font: inherit; font-size: 12px; font-weight: 650; line-height: 18px; text-align: center; cursor: pointer; }
 .editor-quality-actions button:disabled { opacity: .4; cursor: not-allowed; }
@@ -360,12 +364,6 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
 .image-editor-page .editor-actions .image-download-menu > summary { display: flex; min-width: 0; height: 100%; align-items: center; justify-content: center; gap: 7px; padding: 0; font: inherit; white-space: nowrap; }
 .image-editor-page .editor-actions:has(.apply-button) { display: grid; width: min(100%, 470px); grid-template-columns: minmax(112px, 1.1fr) minmax(96px, 1fr) minmax(64px, .65fr) minmax(140px, 1.4fr); }
 .image-editor-page .editor-actions:has(.apply-button) > * { width: 100%; padding-inline: 8px; }
-@media (max-width: 1023px) {
-  .image-editor-page .editor-actions:has(.apply-button) { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
-  .image-editor-page .editor-actions > :is(button, .image-download-menu) { min-height: 44px; height: auto; }
-  .image-editor-page .editor-actions .image-download-menu > summary { min-height: 42px; }
-}
-@media (max-width: 1023px) { .editor-quality-actions button { min-height: 44px; } }
 
 /* Generation frame editing and repeatable canvas preview sessions. */
 .generation-viewport .viewport-size-controls { pointer-events: auto; }
@@ -381,7 +379,4 @@ html[data-theme="nai"] .review-label.merged { background: var(--rose); color: #f
 .image-editor-page .editor-actions.is-canvas:has(.apply-button) > * { width: auto; }
 .editor-candidate-picker { display: flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; }
 .editor-candidate-picker button { min-width: 30px; padding: 4px 8px; }
-@media (max-width: 1023px) {
-  .image-editor-page .editor-actions.is-canvas:has(.apply-button) { width: 100%; }
-  .image-editor-page .editor-actions.is-canvas:has(.apply-button) > * { flex: 1 0 auto; }
 }
