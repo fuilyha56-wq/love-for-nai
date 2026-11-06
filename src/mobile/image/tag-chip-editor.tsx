@@ -3,9 +3,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { renderPromptWeight as renderWeighted, stepPromptWeight } from "@/lib/prompt-weight";
-import { loadPromptCompletionWordlist, localCooccurringTags, matchLocalPromptTags, promptCompletionText, type PromptCompletion } from "@/lib/prompt-completion";
+import { localCooccurringTags, promptCompletionText } from "@/lib/prompt-completion";
 import { placeTextMenu, readTextMenuViewport } from "@/mobile/ui/text-menu-placement";
 import { observePromptOverlay } from "./prompt-overlay";
+import { PromptSuggestionList } from "./prompt-suggestion-list";
+import { usePromptSuggestions } from "./use-prompt-suggestions";
 
 // Tag 模式胶囊编辑器（移植 Aaalice TagEditorView/tag_editor_commands，MIT）：
 // 提示词解析为 tag 胶囊（识别 {}/[] 权重层数、数字 ::权重::、/*disabled:*/
@@ -43,10 +45,7 @@ type Capsule = {
   disabled: boolean;
 };
 
-type Suggestion = PromptCompletion;
-
 const NUMERIC_OPEN = /^-?(?:\d+(?:\.\d*)?|\.\d+)::/;
-const RESULT_CACHE = new Map<string, Suggestion[]>();
 
 // 括号深度为 0 处按逗号/换行切分；/*disabled:...*/ 整体一段。
 function splitSegments(source: string): Array<{ start: number; text: string; disabled: boolean }> {
@@ -133,141 +132,65 @@ function weightLabel(capsule: Capsule): string {
 // 末尾「添加标签」输入框的联想（Aaalice：tag 模式补全只在添加输入框上）。
 function AddTagInput({
   onAdd,
-  zhOf,
   autocomplete = true,
   library = [],
 }: {
   onAdd: (tag: string) => void;
-  zhOf?: (tag: string) => string | undefined;
   autocomplete?: boolean;
   library?: Array<{ name: string; content: string }>;
 }) {
   const [text, setText] = useState("");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  const debounceRef = useRef<number | null>(null);
-  const queryVersion = useRef(0);
-
-  useEffect(
-    () => () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    },
-    [],
-  );
-
-  function query(token: string) {
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
-    const version = ++queryVersion.current;
-    if (!autocomplete) { setOpen(false); return; }
-    const key = token.trim().toLowerCase().replaceAll(" ", "_");
-    if (token.startsWith("<")) {
-      const matches = library.filter((entry) => entry.name.toLowerCase().includes(token.slice(1).toLowerCase())).slice(0, 8).map((entry) => ({ name: "<" + entry.name + ">", displayName: entry.name, zh: entry.content }));
-      setSuggestions(matches); setActive(0); setOpen(matches.length > 0); return;
-    }
-    if (key.length < 2) {
-      setOpen(false);
-      setSuggestions([]);
-      return;
-    }
-    const cached = RESULT_CACHE.get(key);
-    if (cached) {
-      setSuggestions(cached);
-      setActive(0);
-      setOpen(cached.length > 0);
-      return;
-    }
-    let local: Suggestion[] = [];
-    void loadPromptCompletionWordlist().then((names) => {
-      local = matchLocalPromptTags(key, [...names, ...library.flatMap((entry) => entry.content.split(/[,，\n]/))], 8);
-      if (version !== queryVersion.current) return;
-      setSuggestions(local); setActive(0); setOpen(local.length > 0);
-    });
-    debounceRef.current = window.setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/tags?q=${encodeURIComponent(key)}`, { cache: "no-store" });
-        if (!response.ok) return;
-        const result = (await response.json()) as { tags?: Suggestion[] };
-        const seen = new Set<string>();
-        const hits = [...(Array.isArray(result.tags) ? result.tags : []), ...local].filter((hit) => typeof hit.name === "string" && !seen.has(hit.name) && Boolean(seen.add(hit.name))).slice(0, 8);
-        RESULT_CACHE.set(key, hits);
-        if (RESULT_CACHE.size > 200) RESULT_CACHE.clear();
-        if (version !== queryVersion.current) return;
-        setSuggestions(hits);
-        setActive(0);
-        setOpen(hits.length > 0);
-      } catch {
-        // 静默
-      }
-    }, 260);
-  }
+  const input = useRef<HTMLInputElement>(null);
+  const completion = usePromptSuggestions(autocomplete, library, (field) => field.value, 8);
+  const { suggestions, active, setActive, listId } = completion;
+  const open = autocomplete && suggestions.length > 0;
 
   function add(name: string) {
-    queryVersion.current++;
     const clean = name.trim().replace(/,+$/, "");
     if (!clean) return;
+    completion.dismiss();
     onAdd(clean);
     setText("");
-    setOpen(false);
-    setSuggestions([]);
   }
 
   return (
     <div className="tag-chip-add">
       <input
+        ref={input}
         value={text}
         onChange={(event) => {
-          setText(event.target.value);
-          query(event.target.value);
+          setText(event.currentTarget.value);
+          if (!(event.nativeEvent as InputEvent).isComposing) completion.search(event.currentTarget);
         }}
+        onCompositionStart={completion.onCompositionStart}
+        onCompositionEnd={(event) => completion.onCompositionEnd(event.currentTarget)}
         onKeyDown={(event) => {
+          if (completion.isComposing(event)) return;
           if (event.key === "Enter" || event.key === ",") {
             event.preventDefault();
-            add(suggestions[active] && open ? promptCompletionText(suggestions[active]) : text);
+            add(open ? promptCompletionText(suggestions[active]) : event.currentTarget.value);
           } else if (event.key === "ArrowDown" && open) {
             event.preventDefault();
-            setActive((index) => (index + 1) % Math.max(1, suggestions.length));
+            setActive((index) => (index + 1) % suggestions.length);
           } else if (event.key === "ArrowUp" && open) {
             event.preventDefault();
-            setActive((index) => (index - 1 + suggestions.length) % Math.max(1, suggestions.length));
-          } else if (event.key === "Escape") {
-            setOpen(false);
+            setActive((index) => (index - 1 + suggestions.length) % suggestions.length);
+          } else if (event.key === "Escape" && open) {
+            event.preventDefault();
+            event.stopPropagation();
+            completion.dismiss();
           }
         }}
-        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        onBlur={completion.onBlur}
         placeholder="添加标签，回车确认…"
         aria-label="添加标签"
+        aria-autocomplete={autocomplete ? "list" : "none"}
+        aria-controls={open ? listId : undefined}
+        aria-activedescendant={open ? `${listId}-${active}` : undefined}
         className="tag-chip-add-input"
       />
-      {autocomplete && open && suggestions.length > 0 && (
-        <div className="tag-suggest-panel" role="listbox" aria-label="标签联想">
-          <p className="tag-suggest-head">猜你想用</p>
-          <div className="tag-suggest-list">
-            {suggestions.map((hit, index) => (
-              <button
-                type="button"
-                key={hit.name}
-                role="option"
-                aria-selected={index === active}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  add(promptCompletionText(hit));
-                }}
-                onMouseEnter={() => setActive(index)}
-                className={`tag-suggest-item${index === active ? " is-active" : ""}`}
-              >
-                <span className="tag-suggest-name">
-                  {hit.displayName || hit.name}
-                  {hit.zh && hit.zh !== (hit.displayName || hit.name) && (
-                    <span className="tag-suggest-zh">{hit.zh}</span>
-                  )}
-                </span>
-                {zhOf?.(hit.name) && <span className="tag-suggest-meta">{zhOf(hit.name)}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      {open && <PromptSuggestionList anchor={input} listId={listId} suggestions={suggestions} active={active} setActive={setActive}
+        accept={(hit) => add(promptCompletionText(hit))} />}
     </div>
   );
 }
@@ -477,8 +400,7 @@ export function TagChipEditor({
     <div className="tag-chip-editor" onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => {
       if (cooccurrence && event.ctrlKey && event.shiftKey && event.code === "Space") { event.preventDefault(); if (!relatedTags.length) setNotice("本次历史和词库中没有当前选中标签的共现记录。"); }
     }}>
-      {capsules.length ? (
-        <div className="tag-chip-list">
+      <div className="tag-chip-list">
           {capsules.map((capsule, index) =>
             editing === capsule.start ? (
               <input
@@ -524,13 +446,8 @@ export function TagChipEditor({
               </button>
             ),
           )}
-          <AddTagInput onAdd={addTag} zhOf={zhOf} autocomplete={autocomplete} library={library} />
-        </div>
-      ) : (
-        <div className="tag-chip-list">
-          <AddTagInput onAdd={addTag} zhOf={zhOf} autocomplete={autocomplete} library={library} />
-        </div>
-      )}
+        <AddTagInput onAdd={addTag} autocomplete={autocomplete} library={library} />
+      </div>
       {relatedTags.length > 0 && <div className="tag-chip-related" aria-label="本地共现标签"><b>本次历史 / 我的词库共现</b><div>{relatedTags.map((tag) => <button type="button" key={tag.name} onClick={() => addTag(promptCompletionText(tag))} title={tag.occurrences + " 条共同出现的记录"}>{tag.displayName || tag.name}<small>{tag.occurrences}</small></button>)}</div></div>}
       <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">
         单击选中，Ctrl 加减选，Shift 范围选，双击改词，拖拽排序，右键调权重/禁用/词库菜单。

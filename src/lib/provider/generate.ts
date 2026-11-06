@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { imagePricingStrength } from "@/lib/image-pricing";
 import { splitImageBatches, MAX_IMAGE_REQUEST_SAMPLES } from "@/lib/image-batches";
 import { saveHistory } from "@/lib/history";
-import { watermarkImages } from "@/lib/image-watermark";
+import { watermarkImages, WatermarkSigningError } from "@/lib/image-watermark";
+import { imageWatermarkErrorResponse } from "@/lib/image-response-watermark";
 import { startRequestAudit } from "@/lib/request-audit";
 import { isNaiModelEnabled } from "@/lib/runtime-config";
 import { checkImageRateLimit, normalizeDimension, normalizeSamples, normalizeSteps, validateImageShape, validateNaiGenerationCost, assertImageModel } from "@/lib/image-request";
@@ -86,17 +87,18 @@ export async function handlePersonalProviderGeneration(request: Request, session
     for (const batch of splitImageBatches(samples, MAX_IMAGE_REQUEST_SAMPLES)) {
       const next = await runBatch(batch, images.length);
       if (!next.length) throw new Error("上游没有返回图片");
-      images.push(...next);
+      const marked = await watermarkImages(next, session.userId, model, { required: true, sampleOffset: images.length, requestId: audit.requestId, requestFingerprint: audit.requestFingerprint });
+      images.push(...marked.images);
     }
-    const marked = await watermarkImages(images, session.userId, model, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint, parameters: body });
-    images.splice(0, images.length, ...marked.images);
-    const history = deferHistory ? [] : await saveHistory(session.userId, body, images, usage, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint, skipWatermark: true, watermarkStatus: marked.status });
+    const history = deferHistory ? [] : await saveHistory(session.userId, body, images, usage, { requestId: audit.requestId, requestFingerprint: audit.requestFingerprint }).catch(() => []);
     const historyIds = history.map((item) => item.id);
-    await audit.finish({ historyIds, generatedSamples: images.length, status: 200, paymentSource: "personal-key", watermarkStatus: marked.status });
-    return NextResponse.json({ images, image: images[0], historyIds, requestId: audit.requestId, usage, payment: "personal-key", paymentSource: "personal-key", aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": "personal-key" }) });
+    await audit.finish({ historyIds, generatedSamples: images.length, status: 200, paymentSource: "personal-key", watermarkStatus: "embedded" });
+    return NextResponse.json({ images, image: images[0], historyIds, requestId: audit.requestId, usage, payment: "personal-key", paymentSource: "personal-key", aff: null }, { headers: audit.responseHeaders({ "X-LFN-Payment-Source": "personal-key", "X-LFN-Watermark": "embedded" }) });
   } catch (error) {
-    const message = safeUpstreamMessage(error, { secrets: [key], urls: ["https://image.novelai.net"], fallback: "个人 API 生图失败" });
-    await audit.finish({ generatedSamples: images.length, status: images.length ? 207 : 502, error: message });
-    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, requestId: audit.requestId, ...(images.length ? { images, image: images[0], partial: true } : {}) }, { status: images.length ? 207 : 502, headers: audit.responseHeaders() });
+    const signingFailed = error instanceof WatermarkSigningError;
+    const message = signingFailed ? "图片来源签名失败" : safeUpstreamMessage(error, { secrets: [key], urls: ["https://image.novelai.net"], fallback: "个人 API 生图失败" });
+    await audit.finish({ generatedSamples: images.length, status: images.length ? 207 : 502, error: message, watermarkStatus: signingFailed ? "failed" : images.length ? "embedded" : "skipped" });
+    if (signingFailed && !images.length) return imageWatermarkErrorResponse(audit.responseHeaders());
+    return NextResponse.json({ message: images.length ? `已生成 ${images.length}/${samples} 张后中断：${message}` : message, requestId: audit.requestId, ...(images.length ? { images, image: images[0], partial: true } : {}) }, { status: images.length ? 207 : 502, headers: audit.responseHeaders(images.length ? { "X-LFN-Watermark": "embedded" } : undefined) });
   }
 }

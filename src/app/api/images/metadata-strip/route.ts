@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { stripImageMetadata } from "@/lib/image-processing";
 import { MAX_IMAGE_BODY_BYTES } from "@/lib/image-request";
 import { getSession } from "@/lib/session";
-import { hasEmbeddedWatermark, WatermarkPreservationError } from "@/lib/image-watermark";
+import { detectWatermarkImageMime, hasEmbeddedWatermark, WatermarkPreservationError } from "@/lib/image-watermark";
 import { findWatermarkedHistorySource } from "@/lib/history";
 
 const formats: Record<string, string> = {
@@ -25,10 +25,11 @@ export async function POST(request: Request) {
     const bytes = Buffer.from(await request.arrayBuffer());
     if (!bytes.length || bytes.length > MAX_IMAGE_BODY_BYTES)
       return NextResponse.json({ message: "图片为空或超过 25 MiB" }, { status: bytes.length ? 413 : 400 });
+    const actualMime = detectWatermarkImageMime(bytes);
     const signedOriginal = hasEmbeddedWatermark(bytes) ? null : await findWatermarkedHistorySource(
       session.userId, createHash("sha256").update(bytes).digest("hex"),
     );
-    const cleaned = await stripImageMetadata(signedOriginal || bytes, `image.${extension}`);
+    const cleaned = await stripImageMetadata(signedOriginal || bytes, `image.${actualMime ? formats[actualMime] : extension}`);
     return new NextResponse(new Uint8Array(cleaned.data), {
       headers: {
         "Content-Type": cleaned.extension === "jpg" ? "image/jpeg" : `image/${cleaned.extension}`,

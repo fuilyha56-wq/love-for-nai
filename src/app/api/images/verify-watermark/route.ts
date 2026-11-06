@@ -1,63 +1,57 @@
-import { NextResponse } from "next/server";
-import { parseJsonBody, invalidJsonResponse } from "@/lib/request";
-import { verifyWatermark } from "@/lib/image-watermark";
+import { MAX_IMAGE_BODY_BYTES } from "@/lib/image-request";
+import { detectWatermarkImageMime, verifyWatermarkBuffer } from "@/lib/image-watermark";
+import { readWatermarkUpload } from "@/lib/image-watermark-upload";
 import { findHistory, findHistoryByRequestId } from "@/lib/history";
 import { findRequestAudit } from "@/lib/request-audit";
 
-export async function POST(request: Request) {
-  let body: { image?: unknown };
-  try {
-    body = await parseJsonBody<{ image?: unknown }>(request);
-  } catch (error) {
-    return invalidJsonResponse(error);
-  }
+export const runtime = "nodejs";
 
-  const image = body.image;
-  if (typeof image !== "string" || !image.startsWith("data:image/")) {
-    return NextResponse.json({ message: "无效的图片数据" }, { status: 400 });
-  }
+const JSON_UPLOAD_LIMIT = 4 * Math.ceil(MAX_IMAGE_BODY_BYTES / 3) + 4096;
+const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
+function json(body: object, status = 200): Response {
+  return Response.json(body, { status, headers: { "Cache-Control": "no-store" } });
+}
+
+export async function POST(request: Request): Promise<Response> {
+  const contentType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase();
+  const legacyJson = contentType === "application/json";
+  if (!legacyJson && (!contentType || !IMAGE_TYPES.has(contentType)))
+    return json({ valid: false, error: "请选择 PNG、JPEG 或 WebP 图片" }, 415);
+
+  let bytes: Buffer | null;
+  let imageType = contentType;
   try {
-    const result = await verifyWatermark(image);
-    if (!result.valid || !result.payload) return NextResponse.json(result);
-    const audit = await findRequestAudit(result.payload.requestId);
-    const history = result.payload.userId
-      ? (result.payload.imageId
-        ? await findHistory(result.payload.userId, result.payload.imageId)
-        : await findHistoryByRequestId(result.payload.userId, result.payload.requestId))
-      : null;
-    const publicPayload = { ...result.payload };
-    delete publicPayload.parameters;
-    return NextResponse.json({
-      ...result,
-      payload: publicPayload,
-      recordFound: Boolean(audit || history),
-      audit: audit ? {
-        requestId: audit.requestId,
-        requestFingerprint: audit.requestFingerprint,
-        createdAt: audit.createdAt,
-        endpoint: audit.endpoint,
-        operation: audit.operation,
-        model: audit.model,
-        status: audit.status,
-        durationMs: audit.durationMs,
-        historyIds: audit.historyIds,
-        paymentSource: audit.paymentSource,
-      } : null,
-      history: history ? {
-        id: history.id,
-        createdAt: history.createdAt,
-        usage: history.usage,
-        fingerprint: history.fingerprint,
-        requestId: history.requestId,
-        requestFingerprint: history.requestFingerprint,
-        watermarkStatus: history.watermarkStatus,
-      } : null,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { valid: false, error: error instanceof Error ? error.message : "验证失败" },
-      { status: 500 }
-    );
+    bytes = await readWatermarkUpload(request, legacyJson ? JSON_UPLOAD_LIMIT : MAX_IMAGE_BODY_BYTES);
+    if (bytes && legacyJson) {
+      const { image } = JSON.parse(bytes.toString("utf8"));
+      const data = typeof image === "string" && /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/i.exec(image);
+      if (!data) return json({ valid: false, error: "无效的图片数据" }, 400);
+      imageType = data[1].toLowerCase();
+      bytes = Buffer.from(data[2], "base64");
+    }
+  } catch {
+    return json({ valid: false, error: "无法读取图片" }, 400);
   }
+  if (!bytes || bytes.length > MAX_IMAGE_BODY_BYTES)
+    return json({ valid: false, error: "图片超过 25 MiB" }, 413);
+  if (!bytes.length || detectWatermarkImageMime(bytes) !== imageType)
+    return json({ valid: false, error: "无效的图片数据" }, 400);
+
+  const result = await verifyWatermarkBuffer(bytes);
+  if (!result.valid || !result.shaMatch || !result.payload) return json({ valid: false, shaMatch: result.shaMatch, error: result.error });
+
+  const { schema, requestId, sha256, timestamp, model, domain, issuer, label, source, metadataStripped, userId, imageId } = result.payload;
+  const recordFound = await Promise.all([
+    findRequestAudit(requestId),
+    userId ? (imageId ? findHistory(userId, imageId) : findHistoryByRequestId(userId, requestId)) : null,
+  ]).then(([audit, history]) => Boolean(audit || history), () => undefined);
+
+  return json({
+    valid: true,
+    shaMatch: true,
+    legacy: result.legacy,
+    recordFound,
+    payload: { schema, requestId, sha256, timestamp, model, domain, issuer, label, source, metadataStripped },
+  });
 }

@@ -41,6 +41,7 @@ import { copyTextToClipboard } from "@/lib/client-clipboard";
 
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
+import { gatewayImageConcurrency, type GatewayImageCapacity } from "@/lib/image-gateway-capacity";
 import { imageHistoryReferences, imageOperationImages, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
@@ -288,7 +289,6 @@ type Operation =
   | "director-emotion"
   | "suggest-tags";
 type Upload = { data: string; name: string } & EditorHistoryReference;
-type GatewayImageCapacity = { total: number; v5: number; v45: number; anlas: number; v5_and_anlas: number; concurrency: number };
 type SessionResult = ReplicaHistoryItem & EditorHistoryReference & {
   id: string;
   image: string;
@@ -667,6 +667,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [batchMode, setBatchMode] = useState<"once" | "sequential">("sequential");
   const [batchProgress, setBatchProgress] = useState("");
   const [gatewayImageCapacity, setGatewayImageCapacity] = useState<GatewayImageCapacity | null>(null);
+  const gatewayImageCapacityRef = useRef<GatewayImageCapacity | null>(null);
   const [gatewayImageCapacityChecked, setGatewayImageCapacityChecked] = useState(false);
   const [generationConfirmation, setGenerationConfirmation] = useState<string | null>(null);
   const generationInFlight = useRef(false);
@@ -1991,8 +1992,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const activeReferenceSelections = operation === "vibe-transfer" || operation === "precise-reference" ? referenceSelections(operation).filter(item => item.enabled) : [];
   const referenceImageCount = operation === "vibe-transfer" || operation === "precise-reference" ? activeReferenceSelections.length : operation === "character-reference" && source ? 1 : 0;
   const encodedVibeCount = operation === "vibe-transfer" ? activeReferenceSelections.filter(item => imageReferences.encodings[item.id]?.model === model && imageReferences.encodings[item.id]?.information === item.information).length : 0;
-  const activeGatewayCapacity = providerId === "newapi" ? gatewayImageCapacity : null;
-  const batchConcurrency = Math.max(1, activeGatewayCapacity?.concurrency || 2);
+  const usesGatewayBatch = providerId === "newapi" && modelCapabilities.family === "nai" && generationModes.has(operation);
+  const activeGatewayCapacity = usesGatewayBatch ? gatewayImageCapacity : null;
+  const batchCapabilityRequest = {
+    model, operation, width, height, steps: mediumEffort ? 14 : steps,
+    samples: studioBatchSize("sequential"), referenceImageCount,
+    // Each generation chunk receives the encoded Vibe references prepared before dispatch.
+    encodedVibeCount: operation === "vibe-transfer" ? referenceImageCount : 0,
+  };
+  const batchConcurrency = gatewayImageConcurrency(batchCapabilityRequest, activeGatewayCapacity) ?? 2;
   useEffect(() => {
     if (!signedIn || providerId !== "newapi") return;
     const controller = new AbortController();
@@ -2001,9 +2009,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         const response = await fetch("/api/image-capacity", { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error("Gateway 并发状态不可用");
         const result = await response.json() as { available?: boolean; capacity?: GatewayImageCapacity };
-        if (!controller.signal.aborted) setGatewayImageCapacity(result.available && result.capacity ? result.capacity : null);
+        if (!controller.signal.aborted) {
+          gatewayImageCapacityRef.current = result.available && result.capacity ? result.capacity : null;
+          setGatewayImageCapacity(gatewayImageCapacityRef.current);
+        }
       } catch {
-        if (!controller.signal.aborted) setGatewayImageCapacity(null);
+        if (!controller.signal.aborted) {
+          gatewayImageCapacityRef.current = null;
+          setGatewayImageCapacity(null);
+        }
       } finally {
         if (!controller.signal.aborted) setGatewayImageCapacityChecked(true);
       }
@@ -3880,7 +3894,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  每次独立提交 1 张、最多 {batchConcurrency} 路并发{activeGatewayCapacity ? ` · Gateway 启用 ${activeGatewayCapacity.total} 个账号（V5 ${activeGatewayCapacity.v5}、V4.5 ${activeGatewayCapacity.v45}、允许 Anlas ${activeGatewayCapacity.anlas}）` : providerId === "newapi" && !gatewayImageCapacityChecked ? " · 正在读取 Gateway 实时账号能力" : providerId === "newapi" ? " · Gateway 状态暂不可用，暂按 2 路执行" : ""}，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
+                  每次独立提交 1 张、{batchConcurrency === 0 ? "当前无匹配的 Gateway 账号，将逐条提交" : `最多 ${batchConcurrency} 路并发`}
+                  {activeGatewayCapacity
+                    ? ` · Gateway 启用 ${activeGatewayCapacity.total} 个账号（V5 ${activeGatewayCapacity.v5}、V4.5 ${activeGatewayCapacity.v45}、允许 Anlas ${activeGatewayCapacity.anlas}）`
+                    : usesGatewayBatch && (gatewayImageCapacityChecked ? " · Gateway 状态暂不可用，暂按 2 路执行" : " · 正在读取 Gateway 实时账号能力")}
+                  ，先出先显示，最多 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
@@ -4372,7 +4390,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         base.upscale_model = upscaleModel;
         base.n = 1;
       }
-      // 分批次：每片 1 张、最多 2 路在途、错峰 0.5s 启动，
+      // 分批次：每片 1 张，按可用账号能力确定并发，错峰启动。
       // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && outputCount > 1;
@@ -4385,7 +4403,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       let partialMessage = "";
       if (sequential) {
         const BATCH_CHUNK = studioBatchSize(batchMode);
-        const BATCH_PARALLEL = Math.max(1, batchConcurrency);
+        // A queued batch uses current capacity when it starts. Zero sends one at a time
+        // so the server can still choose a fallback route or return its capacity error.
+        const BATCH_PARALLEL = Math.max(1, gatewayImageConcurrency(batchCapabilityRequest,
+          usesGatewayBatch ? gatewayImageCapacityRef.current : null) ?? 2);
         const chunkSizes = splitImageBatches(count, BATCH_CHUNK);
         let chunkOffset = 0;
         const chunkStarts = chunkSizes.map((size) => {

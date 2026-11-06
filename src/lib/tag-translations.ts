@@ -4,3 +4,60 @@ const zhTable: Record<string, string> = {"3d_render": "3D渲染", "4k": "4K", "8
 export function tagZh(name: string): string | undefined {
   return zhTable[name];
 }
+
+const chineseAliases: Readonly<Record<string, string>> = {
+  女孩: "girl",
+  男孩: "boy",
+  白发: "white_hair",
+  黑发: "black_hair",
+  长发: "long_hair",
+  短发: "short_hair",
+  红眼: "red_eyes",
+  蓝眼: "blue_eyes",
+  绿眼: "green_eyes",
+  微笑: "smile",
+  和服: "kimono",
+  校服: "school_uniform",
+  猫耳: "cat_ears",
+  风景: "scenery",
+  夜晚: "night",
+  雨: "rain",
+  花: "flower",
+};
+
+export function canonicalTagForChineseAlias(translation: string): string | undefined {
+  return Object.hasOwn(chineseAliases, translation) ? chineseAliases[translation] : undefined;
+}
+
+const autocompleteTranslations = new Map([
+  ...Object.entries(zhTable),
+  ...Object.entries(chineseAliases).map(([zh, name]): [string, string] => [name, zh]),
+  ["1girl", "一个女孩"], ["1boy", "一个男孩"],
+  ["blue_sky", "蓝天"], ["night_sky", "夜空"], ["starry_sky", "星空"],
+  ["cloud", "云"], ["sunset", "日落"], ["sunrise", "日出"], ["moon", "月亮"],
+  ["cherry_blossoms", "樱花"], ["snow", "雪"], ["forest", "森林"],
+  ["blonde_hair", "金发"], ["red_hair", "红发"], ["purple_eyes", "紫眼"],
+  ["glasses", "眼镜"], ["twintails", "双马尾"], ["ponytail", "马尾"], ["dress", "连衣裙"],
+  ["full_body", "全身"], ["upper_body", "上半身"], ["looking_at_viewer", "看向观众"],
+  ["white_background", "白色背景"], ["simple_background", "简单背景"], ["black_background", "黑色背景"],
+  ["standing", "站立"], ["sitting", "坐着"], ["outdoors", "户外"], ["indoors", "室内"],
+]);
+
+export function autocompleteTagTranslation(name: string): string | undefined {
+  return autocompleteTranslations.get(name.trim().toLowerCase().replace(/[\s_]+/g, "_"));
+}
+
+export function matchBundledTagTranslations(query: string, limit = 10) {
+  const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[\s_]+/g, "");
+  const keyword = normalize(query);
+  if (!/\p{Script=Han}/u.test(keyword)) return [];
+  const matches = [];
+  for (const [name, zh] of autocompleteTranslations) {
+    const translation = normalize(zh);
+    const index = translation.indexOf(keyword);
+    if (index < 0) continue;
+    matches.push({ name, zh, rank: translation === keyword ? 0 : index === 0 ? 1 : 2 });
+  }
+  return matches.sort((a, b) => a.rank - b.rank || a.zh.length - b.zh.length || a.name.localeCompare(b.name))
+    .slice(0, limit).map(({ name, zh }) => ({ name, zh }));
+}

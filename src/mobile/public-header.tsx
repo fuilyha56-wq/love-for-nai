@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
-import { Aperture, Bell, BookOpen, BookText, Brush, ChartNoAxesColumn, Coins, Images, LogIn, Megaphone, Settings, ShieldCheck, Sparkles, Tags, UserRound, Users } from "lucide-react";
+import { Aperture, Bell, BookOpen, BookText, Brush, ChartNoAxesColumn, Coins, Images, LogIn, Megaphone, Settings, ShieldCheck, Sparkles, Tags, Trophy, UserRound, Users } from "lucide-react";
 import Link from "next/link";
 
 type PublicHeaderProps = {
-  current?: "prompts" | "settings" | "pricing" | "docs" | "models" | "gallery" | "announcements" | "stories" | "notifications" | "studio" | "verify" | "tags" | "usage" | "profile";
+  current?: "prompts" | "settings" | "pricing" | "docs" | "models" | "gallery" | "announcements" | "stories" | "notifications" | "studio" | "verify" | "tags" | "usage" | "profile" | "activities";
   actionLabel?: string;
   actionHref?: string;
   extraActions?: ReactNode;
@@ -14,7 +14,7 @@ const identities = {
   announcements: ["站点公告", Megaphone], stories: ["故事工作台", BookText], notifications: ["消息", Bell],
   studio: ["创作者工作台", Users], verify: ["图片溯源检测", ShieldCheck], tags: ["标签词库", Tags],
   usage: ["使用记录", ChartNoAxesColumn],
-  profile: ["我的账号", UserRound],
+  profile: ["我的账号", UserRound], activities: ["活动榜单", Trophy],
 } as const;
 
 export function PublicHeader({ current, actionLabel, actionHref = "/image", extraActions }: PublicHeaderProps) {

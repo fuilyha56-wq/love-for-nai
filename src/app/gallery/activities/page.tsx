@@ -2,13 +2,17 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { PublicHeader } from "@/app/public-header";
+import { useMobileViewportMatch } from "@/app/viewport-page";
+import { PublicHeader as MobilePublicHeader } from "@/mobile/public-header";
 import type { CreatorRewardCampaign } from "@/lib/creator-rewards";
 import type { ActivityRow } from "@/lib/activity-leaderboards";
 import { galleryDetailHref } from "@/lib/gallery-navigation";
 import { useGalleryScrollRestoration } from "../use-gallery-navigation";
 import "./rankings.css";
+import "@/mobile/gallery/activity-rankings.css";
 
 type Campaign = CreatorRewardCampaign & { phase: string };
 type Board = {
@@ -50,6 +54,7 @@ const time = (value?: string) =>
     : "未设置";
 
 export default function ActivityRankingsPage() {
+  const mobile = useMobileViewportMatch();
   const [items, setItems] = useState<Campaign[]>([]);
   const [selected, setSelected] = useState("");
   const [listPage, setListPage] = useState(1);
@@ -128,22 +133,29 @@ export default function ActivityRankingsPage() {
     return () => clearInterval(timer);
   }, []);
 
+  const refreshButton = (
+    <button
+      className={mobile ? "activity-mobile-refresh" : "lfn-button"}
+      onClick={() => setRefresh((n) => n + 1)}
+    >
+      {mobile && <RefreshCw size={16} aria-hidden="true" />}
+      刷新榜单
+    </button>
+  );
+
   return (
-    <main className="activity-page" onClickCapture={(event) => { if (event.target instanceof Element && event.target.closest('a[href^="/gallery"]')) rememberPosition(); }}>
-      <PublicHeader current="gallery" />
+    <main className={`activity-page${mobile ? " is-mobile" : ""}`} onClickCapture={(event) => { if (event.target instanceof Element && event.target.closest('a[href^="/gallery"]')) rememberPosition(); }}>
+      {mobile ? <MobilePublicHeader current="activities" extraActions={refreshButton} /> : <PublicHeader current="gallery" />}
       <div className="activity-shell">
         <header className="activity-heading">
           <div>
-            <Link href="/gallery?restore=1" scroll={false}>← 图片广场</Link>
-            <h1>活动榜单</h1>
+            <Link href="/gallery?restore=1" scroll={false}>
+              {mobile ? <><ArrowLeft size={16} aria-hidden="true" />图片广场</> : "← 图片广场"}
+            </Link>
+            {!mobile && <h1>活动榜单</h1>}
             <p>查看创作活动、实时排名与奖励。所有时间均为北京时间。</p>
           </div>
-          <button
-            className="lfn-button"
-            onClick={() => setRefresh((n) => n + 1)}
-          >
-            刷新榜单
-          </button>
+          {!mobile && refreshButton}
         </header>
         {error && <p role="alert">{error}</p>}
         {loading ? (
@@ -158,6 +170,7 @@ export default function ActivityRankingsPage() {
                   key={item.id}
                   aria-pressed={selected === item.id}
                   onClick={() => {
+                    if (selected === item.id && page === 1 && detail?.campaign.id === item.id) return;
                     setSelected(item.id);
                     setDetail(null);
                     setPage(1);

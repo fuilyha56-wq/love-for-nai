@@ -16,6 +16,7 @@ export type ReplicaMediaProps = {
   progress?: string;
   onOpen: (index: number) => void;
   onUse: (image: string, operation: string) => void;
+  onTiledUpscale?: (image: string) => void;
   onClear?: () => void;
 };
 
@@ -33,7 +34,7 @@ export function resolveMediaColumns(imageCount: number, availableWidth: number):
   return Math.min(ideal, Math.max(1, Math.floor((usable + 12) / (240 + 12))));
 }
 
-export function ReplicaMedia({ variant, images, width, height, seed, progress, onOpen, onUse, onClear }: ReplicaMediaProps): ReactElement {
+export function ReplicaMedia({ variant, images, width, height, seed, progress, onOpen, onUse, onTiledUpscale, onClear }: ReplicaMediaProps): ReactElement {
   const stageRef = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState({ width: 0, height: 0 });
   const [natural, setNatural] = useState(() => new Map<string, { width: number; height: number }>());
@@ -129,6 +130,7 @@ export function ReplicaMedia({ variant, images, width, height, seed, progress, o
         <button type="button" onClick={() => onUse(image, "inpainting")}><Brush size={16} />用于局部重绘</button>
         <button type="button" onClick={() => onUse(image, "director-lineart")}><WandSparkles size={16} />用于导演工具</button>
         <button type="button" onClick={() => onUse(image, "vibe-transfer")}><Sparkles size={16} />用作 Vibe 参考</button>
+        {onTiledUpscale && <button type="button" onClick={() => onTiledUpscale(image)}><Maximize2 size={16} />分块超分</button>}
       </ImageCardMenu>
       <button type="button" className="replica-media-upscale" title="V5 扩散超分" aria-label={`第 ${index + 1} 张用于 V5 超分`} onClick={() => onUse(image, "upscale")}><Maximize2 size={16} /><span>V5 超分</span></button>
     </div>;

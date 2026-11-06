@@ -8,7 +8,7 @@ import { lfnConfirm } from "@/mobile/ui/lfn-dialog";
 import { WorkspaceNav } from "@/mobile/workspace-nav";
 import { PublicHeader } from "@/mobile/public-header";
 
-import { CalendarCheck, ChevronLeft, ChevronRight, Copy, Coins, LockKeyhole, LogOut, Package, Save, Ticket, UserRound, WalletCards } from "lucide-react";
+import { BookOpen, CalendarCheck, ChevronLeft, ChevronRight, Copy, Coins, LockKeyhole, LogOut, Package, Save, ShieldCheck, Ticket, UserRound, WalletCards } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./profile.css";
@@ -57,6 +57,15 @@ type Ledger = { transactions: LedgerTransaction[] };
 type Redemption = { id: string; code: string; amount: number; rewardType: string; redeemedAt: string };
 const formatDollars = (value: number): string =>
   `$${Number.isFinite(value) ? value.toFixed(2) : "0.00"}`;
+const profileSections = [
+  { id: "profile-wallet", label: "钱包与创作额度", icon: WalletCards },
+  { id: "profile-rewards", label: "奖励与流水", icon: Coins },
+  { id: "profile-redeem", label: "兑换码", icon: Ticket },
+  { id: "profile-info", label: "资料信息", icon: UserRound },
+  { id: "account-security", label: "免费额度网络授权", icon: ShieldCheck },
+  { id: "profile-security", label: "密码与安全", icon: LockKeyhole },
+  { id: "profile-tutorials", label: "功能教程", icon: BookOpen },
+];
 
 function browserUuid(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -107,10 +116,12 @@ export default function ProfilePage() {
   const [redemptions, setRedemptions] = useState<Redemption[]>([]);
   const [redeemCode, setRedeemCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
+  const [networkGrantEnabled, setNetworkGrantEnabled] = useState(false);
   const [ledgerMonth, setLedgerMonth] = useState(() => new Date());
   const referralInput = useRef<HTMLInputElement>(null);
 
   const updateNetworkGrantEnabled = useCallback((enabled: boolean) => {
+    setNetworkGrantEnabled(enabled);
     if (!enabled && window.location.hash === "#account-security") {
       window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}#profile-security`);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -431,6 +442,11 @@ export default function ProfilePage() {
               <button type="button" onClick={() => void loadWallet()} className="settings-secondary-button">重试</button>
             </div>
           )}
+          <nav className="profile-section-shortcuts" aria-label="个人资料分区">
+            {profileSections.filter(({ id }) => id !== "account-security" || networkGrantEnabled).map(({ id, label, icon: Icon }) => (
+              <a key={id} href={`#${id}`}><Icon size={16} aria-hidden="true" /><span>{label}</span></a>
+            ))}
+          </nav>
           <button type="button" className="profile-logout-button" onClick={() => void logout()} disabled={loggingOut}>
             <LogOut size={15} />{loggingOut ? "正在退出…" : "退出登录"}
           </button>

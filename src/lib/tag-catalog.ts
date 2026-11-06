@@ -1,12 +1,13 @@
 import { statSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { tagZh } from "@/lib/tag-translations";
+import { autocompleteTagTranslation, tagZh } from "@/lib/tag-translations";
 
 const categories: Record<number, string> = { 0: "通用", 1: "画师", 3: "作品", 4: "角色", 5: "元数据", 6: "QuickTagCloud" };
 const runtime = globalThis as typeof globalThis & { __lfnTagCatalog?: { file: string; identity: string; db: DatabaseSync } };
 type Row = Record<string, unknown>;
 const likeText = (value: string) => value.replace(/[\\%_]/g, "\\$&");
+const suggestionColumns = "t.key,t.name,t.display_name,t.category,t.post_count,t.source,t.insertion,substr(t.description,1,280) AS description,t.deprecated";
 
 export function catalogDatabasePath(): string {
   return process.env.LFN_TAG_CATALOG_PATH || path.resolve(process.env.LFN_DATA_DIR || path.join(process.cwd(), "data"), "tag-catalog/catalog.sqlite3");
@@ -84,10 +85,66 @@ export function searchTagCatalog(query: string, limit = 16, source?: string) {
   return [...matches.values()].slice(0, count);
 }
 
+export function searchTagCatalogAutocomplete(keyword: string, count = 10) {
+  const db = database();
+  if (!db) return [];
+  const select = suggestionColumns;
+  const prefix = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.rowid IN (
+    SELECT rowid FROM catalog_tags WHERE name LIKE ? ESCAPE '\\'
+    ORDER BY name<>? COLLATE NOCASE,post_count DESC,key LIMIT ?
+  )`).all(likeText(keyword) + "%", keyword, count);
+  const found = new Map(prefix.map((row) => [String(row.key), row]));
+
+  if (/\p{Script=Han}/u.test(keyword)) {
+    const query = keyword.replaceAll("_", "");
+    const starts = likeText(query) + "%";
+    const contains = "%" + starts;
+    const compact = query.length > 1;
+    const translatedValue = compact ? "replace(value,' ','')" : "value";
+    const title = compact ? "replace(display_name,' ','')" : "display_name";
+    try {
+      // The same tag can have several translations. Rank by its best matching
+      // translation and keep that text for the suggestion label.
+      const translated = db.prepare(`WITH translations AS (
+        SELECT term,MIN((CASE WHEN ${translatedValue}=? COLLATE NOCASE THEN '0'
+                             WHEN ${translatedValue} LIKE ? ESCAPE '\\' THEN '1' ELSE '2' END) || value) AS translation_match
+        FROM catalog_translations WHERE ${translatedValue} LIKE ? ESCAPE '\\' GROUP BY term
+      ), best AS (
+        SELECT t.rowid,tr.translation_match FROM translations tr JOIN catalog_tags t ON t.name=tr.term COLLATE NOCASE
+        ORDER BY substr(tr.translation_match,1,1),t.deprecated,t.post_count DESC,t.key LIMIT ?
+      ) SELECT ${select},best.translation_match FROM best JOIN catalog_tags t ON t.rowid=best.rowid`
+      ).all(query, starts, contains, count);
+      translated.forEach((row) => found.set(String(row.key), row));
+    } catch { /* the source import can still be running */ }
+    const titles = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.rowid IN (
+      SELECT rowid FROM catalog_tags WHERE source='quicktagcloud' AND ${title} LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN ${title}=? COLLATE NOCASE THEN 0
+                    WHEN ${title} LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END,key LIMIT ?
+    )`).all(contains, query, starts, count);
+    titles.forEach((row) => { if (!found.has(String(row.key))) found.set(String(row.key), row); });
+  } else if (found.size < count && keyword.length >= 3 && state(db, "catalog:status")?.searchIndex === "complete") {
+    // Full wiki descriptions are valuable for discovery, but a tag picker
+    // should match its name, title or alias instead of incidental wiki text.
+    const phrase = (value: string) => `"${value.replaceAll('"', '""')}"`;
+    const match = `{name display_name aliases} : (${phrase(keyword)} OR ${phrase(keyword.replaceAll("_", " "))})`;
+    const indexed = db.prepare(`SELECT ${select} FROM catalog_tags t WHERE t.rowid IN (
+      SELECT rowid FROM catalog_search WHERE catalog_search MATCH ? LIMIT ?
+    ) ORDER BY t.deprecated,t.post_count DESC,t.key LIMIT ?`).all(match, count * 20, count);
+    indexed.forEach((row) => { if (!found.has(String(row.key))) found.set(String(row.key), row); });
+  }
+
+  return [...found.values()].map((row) => {
+    const item = hit(row);
+    return { ...item, zh: typeof row.translation_match === "string"
+      ? row.translation_match.slice(1)
+      : item.zh || autocompleteTagTranslation(item.name) };
+  });
+}
+
 function searchCatalogQuery(db: DatabaseSync, query: string, count: number, source?: string) {
   const normalized = query.trim().toLowerCase().replaceAll(" ", "_");
   if (!normalized) return [];
-  const select = "t.key,t.name,t.display_name,t.category,t.post_count,t.source,t.insertion,substr(t.description,1,280) AS description,t.deprecated";
+  const select = suggestionColumns;
   const sourceClause = source ? " AND t.source=?" : "";
   const sourceArgs = source ? [source] : [];
   // Prefix lookup remains usable during a resumable import, before FTS is built.

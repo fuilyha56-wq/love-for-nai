@@ -252,14 +252,18 @@ html[data-motion="reduced"] :is(.mobile-studio-sheet-backdrop, .mobile-studio-sh
 /* Size the primary editor from its actual available pane, after headers,
    safe-area padding and the optional footer have taken their space. Keep the
    tools/characters in the pane's scroller and long text in its own scroller. */
-.mobile-studio-workspace-content.is-prompt { container-type: size; container-name: mobile-prompt-pane; padding-block: 4px; }
+.mobile-studio-workspace-dialog[data-active-pane="prompt"] { overflow-y: auto; overscroll-behavior-y: contain; }
+.mobile-studio-workspace-content.is-prompt { container-type: size; container-name: mobile-prompt-pane; min-height: 52px; padding-block: 4px; }
 .mobile-studio-workspace-content.is-prompt .replica-prompt:not([data-editor-resized]) .replica-prompt-main {
-  display: flex; flex-direction: column; min-height: 0;
+  display: flex; flex-direction: column; min-height: min-content;
   height: min(580px, 100cqh);
 }
 .mobile-studio-workspace-content.is-prompt .replica-prompt-main > .replica-prompt-toolbar { flex: 0 0 auto; }
 .mobile-studio-workspace-content.is-prompt .replica-prompt:not([data-editor-resized]) .replica-prompt-main > :is(.replica-text-editor, .replica-shared-tag-editor) {
-  flex: 1 1 0; min-height: 0; height: auto !important;
+  flex: 1 1 0; min-height: 44px; height: auto !important;
+}
+.mobile-studio-workspace-content.is-prompt .replica-prompt:not([data-editor-resized]) .replica-prompt-main > .replica-shared-tag-editor {
+  min-height: 64px;
 }
 .mobile-studio-workspace-content.is-prompt .replica-text-editor .prompt-autocomplete-wrap { min-height: 0; }
 .mobile-studio-workspace-content.is-prompt .replica-raw-textarea,

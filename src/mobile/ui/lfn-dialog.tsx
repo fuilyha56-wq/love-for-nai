@@ -7,6 +7,8 @@ import { X } from "lucide-react";
 type DialogRequest = {
   message: string;
   title?: string;
+  confirmLabel?: string;
+  alert?: boolean;
   multiline?: boolean;
   initial?: string;
   prompt: boolean;
@@ -14,12 +16,13 @@ type DialogRequest = {
 };
 const eventName = "lfn-dialog-request";
 
-export function lfnConfirm(message: string): Promise<boolean> {
+export function lfnConfirm(message: string, options: { title?: string; confirmLabel?: string; alert?: boolean } = {}): Promise<boolean> {
   return new Promise((resolve) =>
     window.dispatchEvent(
       new CustomEvent<DialogRequest>(eventName, {
         detail: {
           message,
+          ...options,
           prompt: false,
           resolve: (value) => resolve(value === true),
         },
@@ -93,6 +96,7 @@ export function LfnDialogHost() {
     <dialog
       ref={modalRef}
       className="lfn-dialog-backdrop"
+      role={current.alert ? "alertdialog" : undefined}
       aria-modal="true"
       aria-labelledby={titleId}
       onCancel={(event) => {
@@ -187,7 +191,7 @@ export function LfnDialogHost() {
               取消
             </button>
             <button className="lfn-button is-primary" type="submit">
-              确认
+              {current.confirmLabel || "确认"}
             </button>
           </footer>
         </form>

@@ -1,7 +1,9 @@
 import { adminHeaders, adminToken } from "@/lib/admin-auth";
 import { newApiBaseUrl } from "@/lib/newapi";
 import {
+  hourlyImagePriceAt,
   snapshotFromRawPricing,
+  type HourlyImagePricing,
   type RawModelPricing,
 } from "@/lib/image-pricing";
 import { getRuntimeModelPolicy } from "@/lib/runtime-config";
@@ -16,6 +18,7 @@ export type PublicModelPricing = {
   liveUsdPerRequest?: number;
   liveUsdPerUsageToken?: number;
   liveBaseUsdPerImage?: number;
+  hourlyImagePricing?: HourlyImagePricing;
   liveGroupName?: string;
   liveGroupRatio?: number;
   privatePointReference: {
@@ -131,6 +134,18 @@ function livePricing(
   const baseNote = `按公开 ${groupName} 分组倍率换算。`;
   const snapshot = snapshotFromRawPricing(modelId, entry, ratio, groupName);
 
+  if (snapshot.hourlyImagePricing) {
+    return {
+      billingMode: "live",
+      liveType: "per_request",
+      hourlyImagePricing: snapshot.hourlyImagePricing,
+      liveGroupName: groupName,
+      liveGroupRatio: ratio,
+      privatePointReference: null,
+      note: `NewAPI 按北京时间分时定价。${baseNote}跨时段后请刷新当前报价。`,
+    };
+  }
+
   if (
     snapshot.tiered &&
     snapshot.inEnvelopeUsd != null &&
@@ -235,11 +250,19 @@ function makeModel(id: string, pricing: PublicModelPricing | null): PublicModel 
 }
 
 function filterCatalog(catalog: PublicCatalog, policy: ModelPolicy): PublicCatalog {
+  const at = new Date();
   return {
     ...catalog,
-    models: catalog.models.filter((model) =>
-      isNaiModelEnabledForPolicy(model.id, policy),
-    ),
+    models: catalog.models
+      .filter((model) => isNaiModelEnabledForPolicy(model.id, policy))
+      .map((model) => {
+        const pricing = model.pricing;
+        if (!pricing?.hourlyImagePricing) return model;
+        return {
+          ...model,
+          pricing: { ...pricing, liveUsdPerRequest: hourlyImagePriceAt(pricing.hourlyImagePricing, at) },
+        };
+      }),
   };
 }
 

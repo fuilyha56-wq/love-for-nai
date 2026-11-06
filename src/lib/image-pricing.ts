@@ -38,6 +38,14 @@ export type ModelPricingSnapshot = {
   inEnvelopeBalancePerImage?: number;
   outOfEnvelopeBalancePerUsageToken?: number;
   outOfEnvelopeBaseBalancePerImage?: number;
+  hourlyImagePricing?: HourlyImagePricing;
+};
+
+export type HourlyImagePricing = {
+  startHour: number;
+  endHour: number;
+  inWindowUsd: number;
+  outsideWindowUsd: number;
 };
 
 export type RawModelPricing = {
@@ -50,7 +58,8 @@ export type RawModelPricing = {
 
 export type ParsedTieredExpr =
   | { kind: "two_tier"; limitCoeff: number; fullCoeff: number; limitFixedRaw?: number; fullCompletionCoeff?: number }
-  | { kind: "base"; coeff: number; completionCoeff?: number };
+  | { kind: "base"; coeff: number; completionCoeff?: number }
+  | { kind: "hourly_image"; pricing: HourlyImagePricing };
 
 export type PublicPointVersion = "V5" | "V4.5/旧版";
 
@@ -254,9 +263,43 @@ function coeffFromMatch(match: RegExpMatchArray | null): number | null {
     : null;
 }
 
+// Only the midnight-wrapping Beijing time range and fixed per-image leaves are supported here.
+function parseHourlyImagePricing(source: string): HourlyImagePricing | null {
+  const expression = /^(?:v1:\s*)?\(\s*\(\s*([^?]+)\)\s*\?\s*([^:]+)\s*:\s*([\s\S]+)\)\s*\*\s*image_count$/.exec(source);
+  if (!expression) return null;
+  const timeRange = /^hour\(\s*"Asia\/Shanghai"\s*\)\s*>=\s*(\d{1,2})\s*\|\|\s*hour\(\s*"Asia\/Shanghai"\s*\)\s*<\s*(\d{1,2})$/.exec(expression[1].trim());
+  if (!timeRange) return null;
+  const startHour = Number(timeRange[1]);
+  const endHour = Number(timeRange[2]);
+  if (startHour > 23 || endHour >= startHour) return null;
+
+  const fixedLeaf = /^tier\(\s*"[^"\\]+"\s*,\s*fixed\(\s*(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\s*\)\s*\)$/;
+  const inWindowUsd = Number(fixedLeaf.exec(expression[2].trim())?.[1]);
+  const outsideWindowUsd = Number(fixedLeaf.exec(expression[3].trim())?.[1]);
+  if (!Number.isFinite(inWindowUsd * 1_000_000) || !Number.isFinite(outsideWindowUsd * 1_000_000)) return null;
+  return { startHour, endHour, inWindowUsd, outsideWindowUsd };
+}
+
+const beijingHour = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Shanghai",
+  hour: "2-digit",
+  hourCycle: "h23",
+});
+
+export function hourlyImagePriceAt(pricing: HourlyImagePricing, at = new Date()): number {
+  const hour = Number(beijingHour.format(at));
+  return hour >= pricing.startHour || hour < pricing.endHour
+    ? pricing.inWindowUsd
+    : pricing.outsideWindowUsd;
+}
+
 export function parseTieredExpr(expr: unknown): ParsedTieredExpr | null {
   if (typeof expr !== "string" || !expr.trim()) return null;
   const source = expr.trim();
+  if (/\bhour\s*\(/.test(source)) {
+    const pricing = parseHourlyImagePricing(source);
+    return pricing ? { kind: "hourly_image", pricing } : null;
+  }
   const limitCoeff = coeffFromMatch(
     source.match(/tier\(\s*["']limit["']\s*,\s*p\s*\*\s*(\d+)/i),
   );
@@ -308,6 +351,15 @@ export function snapshotFromRawPricing(
   const parsed =
     mode === "tiered_expr" ? parseTieredExpr(entry.billing_expr) : null;
   if (!parsed) return snapshot;
+  if (parsed.kind === "hourly_image") {
+    const inWindowUsd = parsed.pricing.inWindowUsd * ratio;
+    const outsideWindowUsd = parsed.pricing.outsideWindowUsd * ratio;
+    if (!Number.isFinite(inWindowUsd) || !Number.isFinite(outsideWindowUsd)) return snapshot;
+    return {
+      ...snapshot,
+      hourlyImagePricing: { ...parsed.pricing, inWindowUsd, outsideWindowUsd },
+    };
+  }
 
   const inCoeff = parsed.kind === "two_tier" ? parsed.limitCoeff : parsed.coeff;
   const outCoeff = parsed.kind === "two_tier" ? parsed.fullCoeff : parsed.coeff;
@@ -430,7 +482,12 @@ export function affCost(generation: ImagePricingGeneration, prices?: LocalAnlasP
 export function estimateNewApiCost(
   pricing: ModelPricingSnapshot | null,
   generation: ImagePricingGeneration,
+  at = new Date(),
 ): number | null {
+  // image_count applies the rate once per image regardless of batching.
+  if (pricing?.model === generation.model && pricing.hourlyImagePricing) {
+    return Number((hourlyImagePriceAt(pricing.hourlyImagePricing, at) * generation.samples).toFixed(8));
+  }
   const batchSize = generation.sequential ? 1 : generation.maxSamplesPerRequest;
   if (
     batchSize != null &&
@@ -449,7 +506,7 @@ export function estimateNewApiCost(
         samples: Math.min(remaining, batchSize),
         sequential: false,
         maxSamplesPerRequest: undefined,
-      });
+      }, at);
       if (cost === null) return null;
       total += cost;
     }

@@ -76,6 +76,8 @@ scripts/seed-*-fixtures.cjs
 scripts/ui-*-fixture*.cjs
 scripts/verify-nai-*.py
 public/tutorials/gallery-submit/source-fixture.png
+**/watermark-keys.json
+**/watermark-v2-keys.json
 docs/nai-pricing-live-code-2026-10-22.json
 scripts/activate-nai-parity-release.py
 scripts/activate-nai-release.py

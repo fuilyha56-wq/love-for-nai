@@ -142,11 +142,12 @@ export async function runImageUpscaleTiles({
         inFlight.set(request.tile.index, controller);
         void runTile(request, controller);
       }
-      const waiting = pending.length + retryTimers.size;
+      const completed = results.size;
+      const total = plan.tiles.length;
       onProgress({
-        completed: results.size, total: plan.tiles.length, waiting,
+        completed, total, waiting: total - completed,
         ...(failedTiles.size ? { failed: failedTiles.size } : {}),
-        ...(waiting && concurrency < 1 ? { waitingForCapacity: true } : {}),
+        ...((pending.length || retryTimers.size) && concurrency < 1 ? { waitingForCapacity: true } : {}),
       });
       finishIfReady();
     };

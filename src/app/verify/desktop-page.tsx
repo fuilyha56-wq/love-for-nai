@@ -1,86 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Upload, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
 import Image from "next/image";
 import { WorkspaceNav } from "@/app/workspace-nav";
-
-type VerifyResult = {
-  valid: boolean;
-  legacy?: boolean;
-  recordFound?: boolean;
-  payload?: {
-    schema?: string;
-    keyId?: string;
-    imageId?: string;
-    requestId: string;
-    requestFingerprint?: string;
-    sha256: string;
-    timestamp: string;
-    userId: number;
-    model: string;
-    domain: string;
-    issuer?: string;
-    label?: string;
-    note?: string;
-    parameters?: Record<string, unknown>;
-  };
-  shaMatch?: boolean;
-  audit?: { requestFingerprint?: string; endpoint?: string; operation?: string; parameters?: Record<string, unknown>; paymentSource?: string; status?: number; durationMs?: number } | null;
-  history?: { parameters?: Record<string, unknown>; usage?: unknown; watermarkStatus?: string } | null;
-  error?: string;
-};
+import { IMAGE_MIME_TYPES, useImageProvenance } from "./use-image-provenance";
 
 export default function ImageVerifyPage() {
-  const [image, setImage] = useState<string | null>(null);
-  const [verifying, setVerifying] = useState(false);
-  const [result, setResult] = useState<VerifyResult | null>(null);
+  const { image, verifying, result, verifyImage } = useImageProvenance();
 
   useEffect(() => {
     const listener = (event: ClipboardEvent) => {
       if (event.defaultPrevented) return;
       const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith("image/"));
       const file = item?.getAsFile();
-      if (file) void handleFile(file);
+      if (file) void verifyImage(file);
     };
     window.addEventListener("paste", listener);
     return () => window.removeEventListener("paste", listener);
-  }, []);
-
-  async function handleFile(file: File) {
-    if (!file.type.startsWith("image/")) {
-      setResult({ valid: false, error: "请选择图片文件" });
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const dataUrl = e.target?.result as string;
-      setImage(dataUrl);
-      setResult(null);
-
-      setVerifying(true);
-      try {
-        const response = await fetch("/api/images/verify-watermark", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: dataUrl }),
-        });
-        const data = await response.json() as VerifyResult;
-        setResult(data);
-      } catch (error) {
-        setResult({ valid: false, error: error instanceof Error ? error.message : "验证失败" });
-      } finally {
-        setVerifying(false);
-      }
-    };
-    reader.readAsDataURL(file);
-  }
+  }, [verifyImage]);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file) void handleFile(file);
+    if (file) void verifyImage(file);
   }
 
   function handlePaste(e: React.ClipboardEvent) {
@@ -89,7 +32,7 @@ export default function ImageVerifyPage() {
     for (const item of items) {
       if (item.type.startsWith("image/")) {
         const file = item.getAsFile();
-        if (file) void handleFile(file);
+        if (file) void verifyImage(file);
         break;
       }
     }
@@ -113,16 +56,16 @@ export default function ImageVerifyPage() {
       >
         <Upload size={48} className="mx-auto text-[var(--muted)]" />
         <p className="mt-4 text-sm font-medium">拖拽图片到此处或 Ctrl+V 粘贴</p>
-        <p className="mt-1 text-xs text-[var(--muted)]">支持 PNG 格式水印验证</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">支持 PNG、JPEG 和 WebP 水印验证</p>
         <label className="mt-4 inline-block cursor-pointer rounded-md bg-[var(--rose)] px-4 py-2 text-sm font-medium text-white hover:bg-[#8b4545]">
           选择文件
           <input
             type="file"
-            accept="image/*"
+            accept={IMAGE_MIME_TYPES.join(",")}
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) void handleFile(file);
+              if (file) void verifyImage(file);
             }}
           />
         </label>
@@ -146,7 +89,7 @@ export default function ImageVerifyPage() {
           <div className="flex items-center gap-3">
             {result.valid && result.shaMatch ? (
               <CheckCircle2 size={24} className="text-[var(--mint)]" />
-            ) : result.valid && !result.shaMatch ? (
+            ) : result.shaMatch === false ? (
               <AlertCircle size={24} className="text-yellow-600" />
             ) : (
               <XCircle size={24} className="text-[var(--rose)]" />
@@ -155,16 +98,15 @@ export default function ImageVerifyPage() {
               <p className="font-medium">
                 {result.valid && result.shaMatch
                   ? "✓ 验证通过：图片来自 Love-for-NAI"
-                  : result.valid && !result.shaMatch
-                    ? "⚠ 签名有效但图片已被修改"
+                  : result.shaMatch === false
+                    ? "⚠ 图片内容或元数据已被修改"
                     : "✗ 验证失败"}
               </p>
               {result.error && <p className="mt-1 text-xs text-[var(--muted)]">{result.error}</p>}
             </div>
           </div>
 
-          {result.payload && (
-            <>
+          {result.valid && result.payload && (
             <dl className="mt-4 space-y-2 border-t border-[var(--line)] pt-4 text-sm">
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">请求 ID</dt>
@@ -172,15 +114,15 @@ export default function ImageVerifyPage() {
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-[var(--muted)]">签名记录</dt>
-                <dd>{result.recordFound ? "已找到服务端记录" : "仅本地签名，未找到服务端记录"}</dd>
+                <dd>{result.recordFound === undefined ? "服务端记录暂不可查" : result.recordFound ? "已找到服务端记录" : "未找到服务端记录"}</dd>
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-[var(--muted)]">发行方</dt>
                 <dd>{result.payload.issuer || result.payload.domain}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-[var(--muted)]">用户 ID</dt>
-                <dd>{result.payload.userId}</dd>
+                <dt className="text-[var(--muted)]">签名版本</dt>
+                <dd>{result.legacy ? "旧版 RSA" : "V2"}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">模型</dt>
@@ -192,8 +134,12 @@ export default function ImageVerifyPage() {
               </div>
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">来源</dt>
-                <dd>{result.payload.domain}</dd>
+                <dd>{result.payload.source === "gateway" ? "NovelAI Gateway" : result.payload.domain}</dd>
               </div>
+              {result.payload.metadataStripped && <div className="flex justify-between gap-3">
+                <dt className="text-[var(--muted)]">元数据</dt>
+                <dd>已清理生成元数据并保留溯源签名</dd>
+              </div>}
               <div className="flex justify-between">
                 <dt className="text-[var(--muted)]">图片哈希</dt>
                 <dd className="font-mono text-xs">{result.payload.sha256.slice(0, 16)}...</dd>
@@ -205,14 +151,6 @@ export default function ImageVerifyPage() {
                 </dd>
               </div>
             </dl>
-            {result.audit?.parameters && <div className="mt-4 border-t border-[var(--line)] pt-4">
-              <p className="mb-2 text-xs font-semibold text-[var(--rose)]">完整生成参数</p>
-              <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
-                {Object.entries(result.audit.parameters).map(([key, value]) => <div key={key} className="min-w-0"><dt className="inline text-[var(--muted)]">{key}：</dt><dd className="inline break-words">{typeof value === "string" ? value : JSON.stringify(value)}</dd></div>)}
-              </dl>
-            </div>}
-            {result.history?.usage && <p className="mt-3 text-xs text-[var(--muted)]">用量：{JSON.stringify(result.history.usage)}</p>}
-            </>
           )}
         </div>
       )}

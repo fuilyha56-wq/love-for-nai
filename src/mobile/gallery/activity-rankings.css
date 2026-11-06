@@ -1,0 +1,86 @@
+@media (max-width: 1023px) {
+  .activity-page.is-mobile {
+    min-height: calc(100dvh - 64px - env(safe-area-inset-bottom));
+  }
+  .activity-page.is-mobile .activity-shell {
+    padding: 8px 12px 24px;
+  }
+  .activity-page.is-mobile .activity-heading {
+    margin-bottom: 12px;
+  }
+  .activity-page.is-mobile .activity-heading a,
+  .activity-mobile-refresh {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .activity-mobile-refresh {
+    flex-shrink: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    background: var(--surface-muted);
+  }
+  .activity-page.is-mobile .activity-tabs {
+    display: grid;
+    gap: 4px;
+    padding: 4px;
+    margin-bottom: 12px;
+    border-radius: 12px;
+    background: var(--surface);
+  }
+  .activity-page.is-mobile .activity-tabs button {
+    display: grid;
+    min-height: 56px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+  }
+  .activity-page.is-mobile .activity-tabs button[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--rose) 12%, var(--panel));
+    color: var(--accent-text);
+    box-shadow: none;
+  }
+  .activity-page.is-mobile .activity-tabs span {
+    margin-top: 0;
+  }
+  .activity-page.is-mobile :is(.activity-overview, .activity-board) {
+    padding: 14px;
+    border: 0;
+    border-radius: 12px;
+    overflow-wrap: anywhere;
+  }
+  .activity-page.is-mobile .activity-overview {
+    margin-bottom: 12px;
+  }
+  .activity-page.is-mobile .activity-overview a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+  .activity-page.is-mobile .activity-boards {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+    gap: 12px;
+  }
+  .activity-page.is-mobile .activity-rows li {
+    grid-template-columns: 26px 52px minmax(0, 1fr);
+    gap: 8px;
+    padding-block: 12px;
+  }
+  .activity-page.is-mobile .activity-thumbnail {
+    height: 68px;
+  }
+  .activity-page.is-mobile .activity-pager {
+    gap: 10px;
+  }
+  .activity-page.is-mobile .activity-pager button {
+    min-height: 44px;
+    padding-inline: 10px;
+  }
+}

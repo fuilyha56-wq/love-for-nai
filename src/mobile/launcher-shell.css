@@ -126,10 +126,13 @@
 .launcher-destination-groups { display:grid; min-width:0; gap:16px; align-content:start; }
 .launcher-destination-group { min-width:0; }
 .launcher-destination-group h2 { margin:0 0 6px; padding:0 8px; font-size:12px; font-weight:650; color:var(--muted); }
-.launcher-destination-group > div { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; border-radius:8px; padding:4px; background:var(--surface); }
-.launcher-destination-group a { display:flex; min-width:0; min-height:52px; align-items:center; gap:8px; padding:8px; border-radius:8px; font-size:13px; line-height:1.5; color:var(--ink); }
+.launcher-destination-group > div { display:grid; grid-template-columns:minmax(0,1fr); border-radius:8px; padding:2px 8px; background:var(--surface); }
+.launcher-destination-group a { display:flex; min-width:0; min-height:52px; align-items:center; gap:12px; padding:8px; font-size:14px; line-height:1.5; color:var(--ink); }
+.launcher-destination-group a + a { border-top:1px solid var(--line); }
 .launcher-destination-group a svg { flex-shrink:0; color:var(--accent-text); }
-.launcher-destination-group a span { min-width:0; overflow-wrap:anywhere; }
+.launcher-destination-group a span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.launcher-destination-group a small { display:block; color:var(--muted); font-size:12px; }
+.launcher-destination-group a .launcher-destination-chevron { margin-inline-start:auto; color:var(--muted); }
 .launcher-destination-group a:hover, .launcher-destination-group a[aria-current="page"] { color:var(--accent-text); background:var(--surface-muted); }
 @media (min-width:600px) { .launcher-destination-groups { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; } }
 /* The global rail owns navigation; generation has the same three working panes in every theme. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { ImageDetailWorkspace, ImageMetadataParameters, ImagePromptSection } from "@/mobile/ui/image-detail-workspace";
-import { Download, RotateCcw } from "lucide-react";
+import { Download, Maximize2, RotateCcw } from "lucide-react";
 import Image from "@/mobile/cached-image";
 import Link from "next/link";
 import { useState } from "react";
@@ -35,6 +35,7 @@ export default function HistoryDetailPage({ params, ownerId }: { params: Promise
       {item.archive ? <p className="text-sm text-[var(--muted)]">原图 {item.archive.width} × {item.archive.height}，已保存在本机</p> : <div className="flex flex-wrap gap-2">
         <Link className="launcher-detail-primary" href={`/image?historyId=${encodeURIComponent(item.id)}&importMode=generate`}><RotateCcw size={16} />复用参数</Link>
         <Link className="launcher-detail-secondary" href={`/image?historyId=${encodeURIComponent(item.id)}&importMode=img2img`}>图生图</Link>
+        <Link className="launcher-detail-secondary" href={`/image?historyId=${encodeURIComponent(item.id)}&importMode=upscale`} prefetch={false}><Maximize2 size={16} />V5 超分</Link>
       </div>}
       {downloadError && <p role="alert" className="text-sm text-[var(--rose)]">{downloadError}</p>}
       {prompt && <ImagePromptSection title="正面提示词" value={prompt} />}{negativePrompt && <ImagePromptSection title="负面提示词" value={negativePrompt} />}

@@ -41,10 +41,12 @@ import { GallerySubmitDialog, type GallerySubmitForm } from "@/mobile/gallery-su
 import { LfnSelect } from "@/mobile/ui/lfn-select";
 import { dailyImageDay, dailyImageFamily, quoteDailyImage, type DailyImageBillingState } from "@/lib/daily-image-pricing";
 import { lfnConfirm, lfnPrompt } from "@/mobile/ui/lfn-dialog";
+import { AdaptiveDialog } from "@/mobile/ui/adaptive-dialog";
 import { copyTextToClipboard } from "@/lib/client-clipboard";
 
 
 import { splitImageBatches, studioBatchSize } from "@/lib/image-batches";
+import { gatewayImageConcurrency, type GatewayImageCapacity } from "@/lib/image-gateway-capacity";
 import { imageHistoryReferences, imageOperationImages, readImageOperationResponse } from "@/lib/image-operation-response";
 import { consumeImageStream } from "@/lib/sse";
 import { ASSISTANT_CLIENT_TIMEOUT_MS, ASSISTANT_MAX_POLLS, ASSISTANT_POLL_INTERVAL_MS } from "@/lib/assistant-timing";
@@ -106,7 +108,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PopupSelect, type SelectOption } from "@/mobile/ui/popup-select";
 import { Tooltip } from "@/mobile/ui/tooltip";
 import { WheelNumberInput } from "@/mobile/ui/wheel-number";
@@ -174,6 +176,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useEffectEvent,
   useId,
   useLayoutEffect,
   useMemo,
@@ -319,7 +322,6 @@ function MobileReferencePreview({ source, onRemove, placement = "panel" }: { sou
   );
 }
 
-type GatewayImageCapacity = { total: number; v5: number; v45: number; anlas: number; v5_and_anlas: number; concurrency: number };
 type SessionResult = ReplicaHistoryItem & EditorHistoryReference & {
   id: string;
   image: string;
@@ -445,7 +447,7 @@ const modes: Array<{ id: Operation; label: string }> = [
   { id: "character-reference", label: "角色参考" },
   { id: "precise-reference", label: "精准参考" },
   { id: "annotate", label: "控制图" },
-  { id: "upscale", label: "放大" },
+  { id: "upscale", label: "超分辨率" },
   { id: "director-declutter", label: "去杂物" },
   { id: "director-bg-remover", label: "移除背景" },
   { id: "director-lineart", label: "提取线稿" },
@@ -700,6 +702,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [batchMode, setBatchMode] = useState<"once" | "sequential">("sequential");
   const [batchProgress, setBatchProgress] = useState("");
   const [gatewayImageCapacity, setGatewayImageCapacity] = useState<GatewayImageCapacity | null>(null);
+  const gatewayImageCapacityRef = useRef<GatewayImageCapacity | null>(null);
   const [gatewayImageCapacityChecked, setGatewayImageCapacityChecked] = useState(false);
   const [generationConfirmation, setGenerationConfirmation] = useState<string | null>(null);
   const generationInFlight = useRef(false);
@@ -788,6 +791,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const [galleryPickerOpen, setGalleryPickerOpen] = useState(false);
   const [replicaGalleryOperation, setReplicaGalleryOperation] = useState<Operation>("img2img");
   const [mobileSheetRequest, setMobileSheetRequest] = useState<{ sheet: MobileStudioSheet | null; id: number }>({ sheet: null, id: 0 });
+  const [upscaleImportReady, setUpscaleImportReady] = useState(false);
   const mobileSheet = mobileSheetRequest.sheet;
   const setMobileSheet = useCallback((sheet: MobileStudioSheet | null) => {
     setMobileSheetRequest((previous) => ({ sheet, id: previous.id + 1 }));
@@ -887,6 +891,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const mobileSheetRef = useRef<HTMLElement>(null);
   const mobileReferenceFileRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   usePanelHistory("lfnStudioImage", lightboxIndex === null ? null : String(lightboxIndex), next => setLightboxIndex(next === null ? null : Number(next)));
   const closeLightbox = useCallback(() => setLightboxIndex(null), []);
@@ -1351,6 +1356,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
   }
 
+  function setResultAsSource(image: string, history?: EditorHistoryReference) {
+    const saved = history ?? sessionHistory.find((item) => item.image === image);
+    setSource({ data: image, name: "工作区图片.png", editorDraftId: saved?.editorDraftId, editorNodeId: saved?.editorNodeId, editorBranchId: saved?.editorBranchId });
+    setMask(null);
+    setUpscaleSource(null);
+  }
+
   function applyImageAsSource(image: string, nextOperation: Operation = "img2img", { openMobilePanel = true, history }: { openMobilePanel?: boolean; history?: EditorHistoryReference } = {}) {
     const stored = sessionHistory.find(item => item.image === image);
     if (stored?.archive) {
@@ -1368,10 +1380,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       return;
     }
     if (nextOperation === "vibe-transfer" || nextOperation === "precise-reference") imageReferences.add(nextOperation, { id: crypto.randomUUID(), data: image, name: "工作区图片.png", createdAt: Date.now() });
-    const saved = history ?? stored;
-    setSource({ data: image, name: "工作区图片.png", editorDraftId: saved?.editorDraftId, editorNodeId: saved?.editorNodeId, editorBranchId: saved?.editorBranchId });
-    setMask(null);
-    setUpscaleSource(null);
+    setResultAsSource(image, history);
     if (nextOperation === "inpainting" || nextOperation === "edits") {
       const inpaintModel = inpaintModelFor(model, imageProtocol);
       if (inpaintModel && inpaintModel !== model && modelOptions.some((item) => item.value === inpaintModel)) { generationModelBeforeInpaint.current = model; setModel(inpaintModel); }
@@ -1403,6 +1412,34 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     }
     setOperation(nextOperation);
     setNotice("");
+  }
+
+  function openMobileUpscale(image = source ? undefined : displayedImages[0]) {
+    if (image) setResultAsSource(image);
+    setMobileSheet("parameters");
+    if (providerId === "novelai") {
+      setNotice("V5 超分暂不支持当前官方 Key 来源，请在参数中选择其他模型来源。");
+      return;
+    }
+    if (naturalImageModel || !modelCapabilities.operations.includes("upscale")) {
+      const eligible = normalizeImageModelOptions(allModelOptions).filter(({ value }) => {
+        const capabilities = resolveImageModelCapabilities(value, imageProtocol);
+        return capabilities.family === "nai" && capabilities.operations.includes("upscale");
+      });
+      const preferred = eligible.find(({ value }) => value === modelSelectionValue)
+        ?? eligible.find(({ value }) => value === "nai-v5-full") ?? eligible[0];
+      if (!preferred) { setNotice("当前来源没有支持 V5 超分的模型，请在参数中切换来源。"); return; }
+      setModel(preferred.value);
+      setProductMode("nai");
+      if (providerId === "newapi") setNewApiImageProtocol("auto");
+    }
+    setOperation("upscale");
+    setNotice("");
+  }
+
+  function openMobileTiledUpscale(image = source?.data || displayedImages[0]) {
+    if (image) void openImageEditor("tiled-upscale", image);
+    else router.push("/image/editor?mode=tiled-upscale");
   }
 
   async function preciseRedraw(selection: Rect) {
@@ -2026,9 +2063,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const imageQueueScope = signedIn && userId ? `image:${userId}` : "image:guest";
   const imageOperationQueue = useOperationQueue(imageQueueScope, 10);
   const imageActiveRequestRef = useRef<Promise<void> | null>(null);
-  const queuedGenerationApprovalRef = useRef<(() => void) | null>(null);
   const imageOwnerRef = useRef(imageQueueScope);
-  useEffect(() => { imageOwnerRef.current = imageQueueScope; queuedGenerationApprovalRef.current = null; }, [imageQueueScope]);
+  useEffect(() => { imageOwnerRef.current = imageQueueScope; }, [imageQueueScope]);
   const [previewFrozen, setPreviewFrozen] = useState(false);
   const [frozenPreviewImages, setFrozenPreviewImages] = useState<string[]>([]);
   const incomingPreviewImages = images.length ? images : previewDrafts;
@@ -2051,8 +2087,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
   const activeReferenceSelections = operation === "vibe-transfer" || operation === "precise-reference" ? referenceSelections(operation).filter(item => item.enabled) : [];
   const referenceImageCount = operation === "vibe-transfer" || operation === "precise-reference" ? activeReferenceSelections.length : operation === "character-reference" && source ? 1 : 0;
   const encodedVibeCount = operation === "vibe-transfer" ? activeReferenceSelections.filter(item => imageReferences.encodings[item.id]?.model === model && imageReferences.encodings[item.id]?.information === item.information).length : 0;
-  const activeGatewayCapacity = providerId === "newapi" ? gatewayImageCapacity : null;
-  const batchConcurrency = Math.max(1, activeGatewayCapacity?.concurrency || 2);
+  const usesGatewayBatch = providerId === "newapi" && modelCapabilities.family === "nai" && generationModes.has(operation);
+  const activeGatewayCapacity = usesGatewayBatch ? gatewayImageCapacity : null;
+  const batchCapabilityRequest = {
+    model, operation, width, height, steps: mediumEffort ? 14 : steps,
+    samples: studioBatchSize("sequential"), referenceImageCount,
+    // Each generation chunk receives the encoded Vibe references prepared before dispatch.
+    encodedVibeCount: operation === "vibe-transfer" ? referenceImageCount : 0,
+  };
+  const batchConcurrency = gatewayImageConcurrency(batchCapabilityRequest, activeGatewayCapacity) ?? 2;
   useEffect(() => {
     if (!signedIn || providerId !== "newapi") return;
     const controller = new AbortController();
@@ -2061,9 +2104,15 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         const response = await fetch("/api/image-capacity", { cache: "no-store", signal: controller.signal });
         if (!response.ok) throw new Error("Gateway 并发状态不可用");
         const result = await response.json() as { available?: boolean; capacity?: GatewayImageCapacity };
-        if (!controller.signal.aborted) setGatewayImageCapacity(result.available && result.capacity ? result.capacity : null);
+        if (!controller.signal.aborted) {
+          gatewayImageCapacityRef.current = result.available && result.capacity ? result.capacity : null;
+          setGatewayImageCapacity(gatewayImageCapacityRef.current);
+        }
       } catch {
-        if (!controller.signal.aborted) setGatewayImageCapacity(null);
+        if (!controller.signal.aborted) {
+          gatewayImageCapacityRef.current = null;
+          setGatewayImageCapacity(null);
+        }
       } finally {
         if (!controller.signal.aborted) setGatewayImageCapacityChecked(true);
       }
@@ -2350,12 +2399,18 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     const params = new URLSearchParams(window.location.search);
     const galleryId = params.get("galleryId");
     const historyId = params.get("historyId");
-    const importMode = params.get("importMode") === "generate" ? "generate" : "img2img";
+    const requestedMode = params.get("importMode");
+    const importMode = requestedMode === "generate" || requestedMode === "upscale" ? requestedMode : "img2img";
     const id = galleryId || historyId;
     if (!id || !/^[a-zA-Z0-9-]{1,100}$/.test(id)) return;
     const endpoint = galleryId
       ? `/api/gallery/${encodeURIComponent(id)}/image`
       : `/api/history/${encodeURIComponent(id)}/image`;
+    function recordGalleryUse() {
+      if (!galleryId || galleryUseRecorded.current.has(galleryId)) return;
+      galleryUseRecorded.current.add(galleryId);
+      void fetch(`/api/gallery/${encodeURIComponent(galleryId)}/use`, { method: "POST" }).catch(() => undefined);
+    }
     let active = true;
     void (async () => {
       let blob: Blob | null = null;
@@ -2372,13 +2427,20 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         if (!active) return;
         const type = blob.type === "image/jpeg" || blob.type === "image/webp" ? blob.type : "image/png";
         const file = new File([blob], `工作台导入.${type === "image/jpeg" ? "jpg" : type === "image/webp" ? "webp" : "png"}`, { type });
-        // Both modes restore metadata; only img2img retains the image as a source.
+        if (importMode === "upscale") {
+          const error = validateUploadFile(file);
+          if (error) { setNotice(error); return; }
+          // Upscale uses the original pixels. Keep the workspace's chosen engine and draft settings.
+          setSource({ data: importedDataUrl, name: file.name });
+          setMask(null);
+          setUpscaleSource(null);
+          setUpscaleImportReady(true);
+          recordGalleryUse();
+          return;
+        }
         if (!await importImageAndParameters(file, importMode, () => active) || !active) return;
         setImages([importedDataUrl]);
-        if (galleryId && !galleryUseRecorded.current.has(galleryId)) {
-          galleryUseRecorded.current.add(galleryId);
-          void fetch(`/api/gallery/${encodeURIComponent(galleryId)}/use`, { method: "POST" }).catch(() => undefined);
-        }
+        recordGalleryUse();
         if (galleryId) {
           const response = await fetch(`/api/gallery/${encodeURIComponent(galleryId)}`, { cache: "no-store" });
           const result = await response.json().catch(() => null) as { item?: { parameters?: GenerationParameters; prompt?: string; negativePrompt?: string } } | null;
@@ -2408,6 +2470,30 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  const operationFromLink = searchParams.has("reuse") ? null : searchParams.get("operation");
+  const openLinkedImageTool = useEffectEvent((tool: "upscale" | "tiled-upscale") => {
+    if (tool === "upscale") openMobileUpscale();
+    else openMobileTiledUpscale();
+  });
+  useEffect(() => {
+    if (!formCacheReady || !modelPolicyReady) return;
+    if (!upscaleImportReady && operationFromLink !== "upscale" && operationFromLink !== "tiled-upscale") return;
+    const timer = window.setTimeout(() => {
+      if (upscaleImportReady) {
+        setUpscaleImportReady(false);
+        openLinkedImageTool("upscale");
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.delete("operation");
+      url.searchParams.delete("view");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      openLinkedImageTool(operationFromLink === "tiled-upscale" ? "tiled-upscale" : "upscale");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [formCacheReady, modelPolicyReady, operationFromLink, upscaleImportReady]);
+
   function appendTag(tag: string) {
     setPrompt((value) => `${value}${value.trim() ? ", " : ""}${tag}`);
   }
@@ -3775,9 +3861,9 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               />
             </Control>
             <p className="rounded border border-[var(--line)] bg-[var(--bg2)] p-3 text-xs leading-5 text-[var(--muted)]">
-              V5 扩散超分：输出固定为源图的 2 倍，仅接受 PNG。
+              V5 扩散超分固定输出 2 倍尺寸，JPEG 和 WebP 会自动转为 PNG。
               {upscaleSource && upscaleQuoteReady
-                ? `当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}，优先消耗 ${imageCreditCost({ model: upscaleBillingModel(upscaleModel), operation: "upscale", width: upscaleSource.width, height: upscaleSource.height, steps: 1, samples: 1 })} AFF；图包和个人 AFF 不足时使用站内余额。`
+                ? ` 当前源图 ${upscaleSource.width}×${upscaleSource.height}，输出 ${upscaleSource.width * 2}×${upscaleSource.height * 2}。`
                 : <span role="status">{upscaleInputError}{upscaleSource && " 请缩小图片后再试。"}</span>}
             </p>
           </>
@@ -4044,7 +4130,11 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               </div>
               {batchMode === "sequential" && (
                 <p className="mt-1.5 text-[10px] leading-4 text-[var(--muted)]">
-                  每次独立提交 1 张、最多 {batchConcurrency} 路并发{activeGatewayCapacity ? ` · Gateway 启用 ${activeGatewayCapacity.total} 个账号（V5 ${activeGatewayCapacity.v5}、V4.5 ${activeGatewayCapacity.v45}、允许 Anlas ${activeGatewayCapacity.anlas}）` : providerId === "newapi" && !gatewayImageCapacityChecked ? " · 正在读取 Gateway 实时账号能力" : providerId === "newapi" ? " · Gateway 状态暂不可用，暂按 2 路执行" : ""}，先出先显示；上限 {MAX_NAI_IMAGE_COUNT} 张。
+                  每次独立提交 1 张、{batchConcurrency === 0 ? "当前无匹配的 Gateway 账号，将逐条提交" : `最多 ${batchConcurrency} 路并发`}
+                  {activeGatewayCapacity
+                    ? ` · Gateway 启用 ${activeGatewayCapacity.total} 个账号（V5 ${activeGatewayCapacity.v5}、V4.5 ${activeGatewayCapacity.v45}、允许 Anlas ${activeGatewayCapacity.anlas}）`
+                    : usesGatewayBatch && (gatewayImageCapacityChecked ? " · Gateway 状态暂不可用，暂按 2 路执行" : " · 正在读取 Gateway 实时账号能力")}
+                  ，先出先显示，最多 {MAX_NAI_IMAGE_COUNT} 张。
                 </p>
               )}
             </Control>
@@ -4064,7 +4154,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
             <ReplicaNaiReference hideGroupLabel model={model} imageProtocol={imageProtocol} operation={operation} source={source} onRemoveSource={() => { setSource(null); setMask(null); }}
               onSelectOperation={(next) => selectOperation(next as Operation)} onUpload={(file) => { setOperation("img2img"); void importImageAndParameters(file); }}
               onOpenEditor={() => void openImageEditor("canvas")} strength={strength} setStrength={setStrength} />
-            <div className="custom-reference-more"><button type="button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
+            <div className="custom-reference-more"><button type="button" onClick={() => { setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={15} /> 从图库选择</button>
               {operation !== "generate" && <button type="button" onClick={() => selectOperation("generate")}><Sparkles size={15} /> 返回文生图</button>}</div>
           </PanelSection> : <PanelSection title="参考图片" icon={<ImagePlus size={16} />} defaultOpen={false}>
             <div className="nai-reference-grid">
@@ -4095,7 +4185,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               ))}
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <button type="button" className="nai-inline-tool-button" onClick={() => setGalleryPickerOpen(true)}><Images size={15} /> 从图库选择</button>
+              <button type="button" className="nai-inline-tool-button" onClick={() => { setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={15} /> 从图库选择</button>
               <button type="button" data-tutorial-editor="canvas" className="nai-inline-tool-button" disabled={!source} onClick={() => void openImageEditor("canvas")}><Maximize2 size={15} /> 无限画布</button>
               <label className="nai-inline-tool-button"><FileUp size={15} /> 导入图片<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { void importImageAndParameters(event.target.files?.[0]); event.target.value = ""; }} /></label>
             </div>
@@ -4135,7 +4225,6 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
 
   function runOperation(approvedConfirmation?: string, allowAutonomousCost = false, queueRequested = false, queueSignal?: AbortSignal): Promise<void> {
     if (!queueRequested && generationInFlight.current) return imageActiveRequestRef.current ?? Promise.resolve();
-    if (!queueRequested && !queueSignal) queuedGenerationApprovalRef.current = null;
     const originGoalId = !queueSignal && !queueRequested && goalRunRef.current?.status === "running" ? goalRunRef.current.id : undefined;
     const request = performImageOperation(approvedConfirmation, allowAutonomousCost, queueRequested, queueSignal, originGoalId);
     if (!queueRequested) { imageActiveRequestRef.current = request; const release = () => { if (imageActiveRequestRef.current === request) imageActiveRequestRef.current = null; }; void request.then(release, release); }
@@ -4239,8 +4328,12 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
           : "当前参数可能进入高价档";
       const confirmation = `将生成 ${outputCount} 张图像（${requestMode}）。\n${payment}${operation === "vibe-transfer" && referenceImageCount > encodedVibeCount ? `\n其中 ${referenceImageCount - encodedVibeCount} 张风格参考需先付费预处理；成功的编码将缓存并在以后复用，生成失败也不会退回已完成的编码费用。` : ""}`;
       if (approvedConfirmation !== confirmation) {
-        queuedGenerationApprovalRef.current = queueRequested ? () => { if (imageOwnerRef.current === imageQueueScope) void runOperation(confirmation, allowAutonomousCost, true); } : null;
-        setGenerationConfirmation(confirmation);
+        if (queueRequested) {
+          const approved = await lfnConfirm(confirmation, { title: "确认生成与费用", confirmLabel: "确认并加入队列", alert: true });
+          if (approved && studioMountedRef.current && imageOwnerRef.current === imageQueueScope) {
+            await runOperation(confirmation, allowAutonomousCost, true);
+          }
+        } else setGenerationConfirmation(confirmation);
         return;
       }
     }
@@ -4401,7 +4494,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         base.upscale_model = upscaleModel;
         base.n = 1;
       }
-      // 分批次：每片 1 张、最多 2 路在途、错峰 0.5s 启动，
+      // 分批次：每片 1 张，按可用账号能力确定并发，错峰启动。
       // 网关会把并发请求分摊到多个启用账号；一次性保持单请求 n 张（≤8）。
       // 超分单次固定 1 张，避免重复扣费。
       const sequential = batchMode === "sequential" && outputCount > 1;
@@ -4414,7 +4507,10 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       let partialMessage = "";
       if (sequential) {
         const BATCH_CHUNK = studioBatchSize(batchMode);
-        const BATCH_PARALLEL = Math.max(1, batchConcurrency);
+        // A queued batch uses current capacity when it starts. Zero sends one at a time
+        // so the server can still choose a fallback route or return its capacity error.
+        const BATCH_PARALLEL = Math.max(1, gatewayImageConcurrency(batchCapabilityRequest,
+          usesGatewayBatch ? gatewayImageCapacityRef.current : null) ?? 2);
         const chunkSizes = splitImageBatches(count, BATCH_CHUNK);
         let chunkOffset = 0;
         const chunkStarts = chunkSizes.map((size) => {
@@ -5068,7 +5164,8 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
       if (metadataRestore.preferences.sampling) { setSteps(item.steps); setScale(item.scale); setSampler(item.sampler); if (item.noise_schedule) setSchedule(item.noise_schedule); }
       if (metadataRestore.preferences.seed) setSeed(item.seed == null || item.seed === 0 ? "" : String(item.seed));
       setOperation("generate");
-    } else applyImageAsSource(item.image, nextOperation as Operation);
+    } else if (nextOperation === "upscale" && !parseLocalHistoryImageSource(item.image)) openMobileUpscale(item.image);
+    else applyImageAsSource(item.image, nextOperation as Operation);
   }
   const mobileHistoryItems = sessionHistory;
   function openStudioHistoryItem(item: ReplicaHistoryItem) {
@@ -5170,6 +5267,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
     <section className="mobile-tool-card mobile-tool-mode">
       <div className="mobile-tool-card-heading"><span><SlidersHorizontal size={18} />当前操作</span><small>选择图片处理方式</small></div>
       <Control label="图像操作"><PopupSelect ariaLabel="图像操作" value={operation} options={mobileOperationOptions} onChange={(value) => selectOperation(value as Operation)} /></Control>
+    </section>
+    <section className="mobile-tool-card">
+      <div className="mobile-tool-card-heading"><span><Maximize2 size={18} />超分辨率</span><small>放大当前图片</small></div>
+      <div className="mobile-reference-tools">
+        <button type="button" className="mobile-reference-action" disabled={generating} onClick={() => openMobileUpscale()}>V5 超分</button>
+        <button type="button" className="mobile-reference-action" disabled={generating} onClick={() => openMobileTiledUpscale()}>分块超分</button>
+      </div>
     </section>
     <div className="mobile-tool-group-heading"><Images size={17} /><h3>图片与参考</h3><span>展开设置</span></div>
     <div className="mobile-tool-references">
@@ -5359,7 +5463,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               notice={notice}
               onDismissNotice={() => setNotice("")}
               onClearWorkspace={clearWorkspaceImages}
-              resultContent={displayedImages.length > 0 ? <ReplicaMedia variant={replicaVariant} images={displayedImages} width={width} height={height} seed={seed} progress={generating ? streamProgress || batchProgress || "正在生成…" : undefined} onOpen={setLightboxIndex} onUse={(image, value) => applyImageAsSource(image, value as Operation)} /> : undefined}
+              resultContent={displayedImages.length > 0 ? <ReplicaMedia variant={replicaVariant} images={displayedImages} width={width} height={height} seed={seed} progress={generating ? streamProgress || batchProgress || "正在生成…" : undefined} onOpen={setLightboxIndex} onUse={(image, value) => value === "upscale" ? openMobileUpscale(image) : applyImageAsSource(image, value as Operation)} onTiledUpscale={openMobileTiledUpscale} /> : undefined}
               sourcePreviewContent={source ? <MobileReferencePreview source={source} placement="workspace" onRemove={removeMobileReference} /> : undefined}
               sourceStatusContent={source ? <MobileReferencePreview source={source} placement="compact" onRemove={removeMobileReference} /> : undefined}
               historyContent={historyEnabled ? mobileHistoryPanel : undefined}
@@ -5375,12 +5479,13 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
               referenceContent={<div className="mobile-reference-tools">{(operation === "vibe-transfer" || operation === "precise-reference") && renderReferenceLibrary(operation)}
                 <input ref={mobileReferenceFileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { handleMobileReferenceUpload(event.target.files?.[0]); event.target.value = ""; }} />
                 <button type="button" className="mobile-reference-action is-primary" onClick={() => mobileReferenceFileRef.current?.click()}><ImagePlus size={18} />上传图片</button>
-                <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation("img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
+                <button type="button" className="mobile-reference-action" onClick={() => { setMobileSheet(null); setReplicaGalleryOperation(operation === "upscale" ? "upscale" : "img2img"); setGalleryPickerOpen(true); }}><Images size={18} />从图库选择</button>
                 <button type="button" data-tutorial-editor="inpaint" className="mobile-reference-action" disabled={generating} onClick={() => {
                   if (source) void openImageEditor("inpaint");
                   else router.push("/image/editor?mode=inpaint");
                 }}><Brush size={18} />进入图像编辑器</button>
                 <Link className="mobile-reference-action" href="/image/editor/history"><History size={18} />重绘历史</Link>
+                <button type="button" className="mobile-reference-action" disabled={generating} onClick={() => openMobileUpscale()}><Maximize2 size={18} />V5 超分</button>
               </div>}
               moreContent={<LauncherDestinationGroups admin={isAdmin} workspace />}
               operationOptions={mobileOperationOptions}
@@ -5984,7 +6089,7 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
                 onClick={() => {
                   const approved = generationConfirmation;
                   setGenerationConfirmation(null);
-                  const queuedApproval = queuedGenerationApprovalRef.current; queuedGenerationApprovalRef.current = null; if (queuedApproval) queuedApproval(); else void runOperation(approved);
+                  void runOperation(approved);
                 }}
                 className="rounded-lg bg-[var(--rose)] px-4 py-2 text-sm font-semibold text-white"
               >
@@ -5995,21 +6100,21 @@ export default function ImageStudio({ userName, userId, authenticated, layoutEdi
         </div>
       )}
       {galleryPickerOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={() => setGalleryPickerOpen(false)}>
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-lg bg-[var(--panel)] p-4" onClick={(event) => event.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <b>从公开图库选择图片</b>
-              <button type="button" aria-label="关闭图库选择器" onClick={() => setGalleryPickerOpen(false)}><X size={18} /></button>
-            </div>
+        <AdaptiveDialog labelledBy="studio-gallery-picker-title" onClose={() => setGalleryPickerOpen(false)} wide>
+          <header className="lfn-adaptive-heading">
+            <h2 id="studio-gallery-picker-title">从公开图库选择图片</h2>
+            <button type="button" aria-label="关闭图库选择器" onClick={() => setGalleryPickerOpen(false)}><X size={18} /></button>
+          </header>
+          <div className="lfn-adaptive-body">
             <GalleryPicker
               returnDataUrl
               onSelect={(dataUrl) => {
-                applyImageAsSource(dataUrl, replicaLayout ? replicaGalleryOperation : "img2img");
+                applyImageAsSource(dataUrl, replicaGalleryOperation);
                 setGalleryPickerOpen(false);
               }}
             />
           </div>
-        </div>
+        </AdaptiveDialog>
       )}
       {maskEditorOpen && source && (
         <MaskEditor

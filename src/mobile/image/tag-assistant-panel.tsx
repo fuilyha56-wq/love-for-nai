@@ -3,6 +3,7 @@ import { AssistantResourcePicker } from "./assistant-resource-picker";
 import { assistantDropFiles, hasAssistantImageDrag, type AssistantImageResource, type AssistantImageSource } from "@/lib/assistant-image-resource";
 
 import { useEffect, useEffectEvent, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { ArrowDown, ArrowUp, Check, ChevronDown, Copy, Expand, Minimize2, Plus, RefreshCw, Settings2, Sparkles, Square, Trash2, X } from "lucide-react";
 import { AssistantModelPicker, AssistantSourceControl, type AssistantModelControl } from "./assistant-model-picker";
 import { AssistantReasoningControl } from "./assistant-reasoning-control";
@@ -144,6 +145,12 @@ export function TagAssistantPanel(p: Props) {
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [composerOptionsOpen]);
+  function focusComposer() {
+    // Reveal the field before focusing it within the user's gesture, so mobile
+    // browsers can open the software keyboard.
+    if (inputCollapsed) flushSync(() => setInputCollapsed(false));
+    inputRef.current?.focus({ preventScroll: true });
+  }
   function chooseShortcut(item: AssistantShortcut) {
     if (item.action === "new" && (busy || !p.sessionControl || p.sessionControl.pending)) return;
     if (item.action === "image" && (p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES)) return;
@@ -155,7 +162,7 @@ export function TagAssistantPanel(p: Props) {
       else if (item.action === "new") void p.sessionControl?.create("新会话").catch(() => setSessionsOpen(true));
       else if (item.action === "image") uploadRef.current?.click();
     }
-    if (!item.action) requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
+    if (!item.action) focusComposer();
   }
   function submit() {
     const input = p.input.trim();
@@ -169,7 +176,7 @@ export function TagAssistantPanel(p: Props) {
     setSubmitted(input); setReferencesExpanded(false); jumpToLatest(); p.onInputChange("");
     inputRef.current?.blur(); setInputCollapsed(true);
   }
-  function editMessage(text: string) { p.onInputChange(text); setInputCollapsed(false); requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true })); }
+  function editMessage(text: string) { p.onInputChange(text); focusComposer(); }
   function retryMessage(text: string) { if (busy) return; if (p.onSubmit(text) === false) return; setSubmitted(text); setInputCollapsed(true); }
   const [resourcePickerOpen, setResourcePickerOpen] = useState(false);
   const [imageDragActive, setImageDragActive] = useState(false);
@@ -223,7 +230,7 @@ export function TagAssistantPanel(p: Props) {
       {showWelcome && <div className="assistant-welcome">
         <div><Sparkles size={26} /></div><h3>{p.mode === "goal" ? "让想法逐步成形" : "从一个想法开始"}</h3>
         <p>{p.mode === "goal" ? "描述最终目标，助手会评估每轮结果并提出调整。" : "描述画面或添加参考图，整理成适合当前模型的提示词。"}</p>
-        <button type="button" onClick={() => { p.onInputChange("请整理当前提示词，保留主体与画面意图，优化描述和结构。"); inputRef.current?.focus(); }}>整理当前提示词<ArrowUp size={13} /></button>
+        <button type="button" onClick={() => editMessage("请整理当前提示词，保留主体与画面意图，优化描述和结构。")}>整理当前提示词<ArrowUp size={13} /></button>
         <button type="button" disabled={p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES} onClick={() => uploadRef.current?.click()}>添加参考图<Plus size={13} /></button>
       </div>}
       {!allTurns && turns.length > visibleTurns.length && <button className="assistant-older-turns" type="button" onClick={() => { followingRef.current = false; setFollow(false); setAllTurns(true); }}>查看更早的 {turns.length - visibleTurns.length} 轮对话</button>}
@@ -275,11 +282,7 @@ export function TagAssistantPanel(p: Props) {
       </div>
     </div>}
     <div className="assistant-composer-area" ref={composerRef}>
-      {inputCollapsed && <div className="assistant-compose-bar"><button type="button" aria-label={inputCollapsed ? "展开助手输入区" : "折叠助手输入区"} aria-expanded={!inputCollapsed} onClick={() => {
-        if (!inputCollapsed) { inputRef.current?.blur(); setExpandedInput(false); setComposerOptionsOpen(false); }
-        setInputCollapsed(!inputCollapsed);
-        if (inputCollapsed) requestAnimationFrame(() => inputRef.current?.focus({ preventScroll: true }));
-      }}>{inputCollapsed ? <ArrowUp size={14} /> : <ChevronDown size={14} />}<span>{inputCollapsed ? p.input ? "继续编辑草稿" : "发送新消息" : "收起输入区，阅读对话"}</span></button>{inputCollapsed && busy && <button type="button" onClick={p.goal?.status === "running" ? p.onStopGoal : p.onCancel}><Square size={13} />停止</button>}</div>}
+      {inputCollapsed && <div className="assistant-compose-bar"><button type="button" aria-label="展开助手输入区" aria-expanded={false} onClick={focusComposer}><ArrowUp size={14} /><span>{p.input ? "继续编辑草稿" : "发送新消息"}</span></button>{busy && <button type="button" onClick={p.goal?.status === "running" ? p.onStopGoal : p.onCancel}><Square size={13} />停止</button>}</div>}
       <form className={`assistant-composer assistant-attachments${expandedInput ? " is-expanded" : ""}`} data-assistant-image-drop={imageDragActive ? "active" : undefined} onDragOver={event => { if (hasAssistantImageDrag(event.dataTransfer)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setImageDragActive(true); } }} onDragLeave={event => { if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setImageDragActive(false); }} onDrop={event => { const files = assistantDropFiles(event.dataTransfer.files); setImageDragActive(false); if (files.length) { event.preventDefault(); event.stopPropagation(); addImages(files); } }} onSubmit={event => { event.preventDefault(); submit(); }}>
         {!!shortcuts.length && <div id={shortcutId} className="assistant-shortcuts" role="listbox" aria-label="助手快捷指令">{shortcuts.map((item, index) => <button key={item.command} id={`${shortcutId}-${index}`} type="button" role="option" aria-selected={index === activeShortcut} disabled={item.action === "new" && p.sessionControl?.pending || item.action === "image" && (p.imagesLoading || p.images.length >= MAX_ASSISTANT_IMAGES)} onPointerDown={(event) => event.preventDefault()} onClick={() => chooseShortcut(item)}><b>{item.command}</b><span>{item.title}</span></button>)}</div>}
         <div className="assistant-editor"><textarea ref={inputRef} value={p.input} maxLength={ASSISTANT_INPUT_MAX_LENGTH} aria-label="标签助手输入" aria-describedby={countId} aria-controls={shortcuts.length ? shortcutId : undefined} aria-activedescendant={shortcuts.length ? `${shortcutId}-${activeShortcut}` : undefined} onChange={event => { setShortcutIndex(0); setShortcutsDismissed(false); p.onInputChange(event.target.value); }} onKeyDown={event => {

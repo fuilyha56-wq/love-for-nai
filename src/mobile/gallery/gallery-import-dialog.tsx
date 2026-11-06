@@ -3,10 +3,10 @@
 import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { ImagePlus, Sparkles, X } from "lucide-react";
+import { ImagePlus, Maximize2, Sparkles, X } from "lucide-react";
 import styles from "./gallery-import-dialog.module.css";
 
-/** Shared by the desktop and mobile gallery, including work detail pages. */
+/** Import from either the mobile gallery grid or a work's detail page. */
 export function GalleryImportDialog({ item, onClose }: {
   item: { id: string; title: string };
   onClose: () => void;
@@ -48,6 +48,9 @@ export function GalleryImportDialog({ item, onClose }: {
           </Link>
           <Link href={`/image?galleryId=${encodeURIComponent(item.id)}&importMode=img2img`} prefetch={false}>
             <ImagePlus size={22} aria-hidden="true" /><span><strong>图生图</strong><small>同时将作品作为源图，基于原图创作</small></span>
+          </Link>
+          <Link href={`/image?galleryId=${encodeURIComponent(item.id)}&importMode=upscale`} prefetch={false}>
+            <Maximize2 size={22} aria-hidden="true" /><span><strong>V5 超分</strong><small>将作品作为源图，打开 2× 扩散超分</small></span>
           </Link>
         </nav>
       </div>

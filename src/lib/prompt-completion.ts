@@ -8,6 +8,46 @@ export function promptCompletionText(hit: PromptCompletion): string {
   return hit.insertion || hit.name;
 }
 
+export function normalizePromptCompletionQuery(query: string): string {
+  return query.normalize("NFKC").toLowerCase().replace(/[\s_]+/g, " ").trim();
+}
+
+export function isPromptCompletionQuery(query: string): boolean {
+  return query.length <= 80 && (query.length >= 2 || /\p{Script=Han}/u.test(query));
+}
+
+export function promptCompletionHitRank(query: string, hit: PromptCompletion): number {
+  const compact = /\p{Script=Han}/u.test(query);
+  const normalize = (value: string) => {
+    const normalized = normalizePromptCompletionQuery(value);
+    return compact ? normalized.replaceAll(" ", "") : normalized;
+  };
+  const keyword = normalize(query);
+  if (!keyword) return 4;
+  return Math.min(...[hit.name, hit.displayName, hit.zh].map((label) => {
+    if (!label) return 4;
+    const text = normalize(label);
+    if (text === keyword) return 0;
+    if (text.startsWith(keyword)) return 1;
+    if (text.includes(` ${keyword}`)) return 2;
+    return text.includes(keyword) ? 3 : 4;
+  }));
+}
+
+export function mergePromptCompletions(query: string, hits: PromptCompletion[], maximum: number): PromptCompletion[] {
+  const matches = new Map<string, { hit: PromptCompletion; rank: number }>();
+  for (const hit of hits) {
+    const insertion = promptCompletionText(hit).trim();
+    const key = (hit.insertion && hit.insertion !== hit.name ? insertion : promptTagText(insertion)).toLowerCase();
+    if (!key) continue;
+    const rank = promptCompletionHitRank(query, hit);
+    const previous = matches.get(key);
+    if (!previous) matches.set(key, { hit, rank });
+    else if (rank < previous.rank) matches.set(key, { hit: { ...previous.hit, zh: hit.zh ?? previous.hit.zh }, rank });
+  }
+  return [...matches.values()].sort((left, right) => left.rank - right.rank).slice(0, maximum).map(({ hit }) => hit);
+}
+
 let wordlistRequest: Promise<string[]> | null = null;
 /** Reuse the bundled NovelAI wordlist so basic suggestions work without the remote tag service. */
 export function loadPromptCompletionWordlist(): Promise<string[]> {

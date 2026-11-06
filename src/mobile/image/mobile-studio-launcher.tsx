@@ -24,6 +24,13 @@ function isWorkspacePane(value: MobileStudioSheet | null): value is WorkspacePan
   return value === "prompt" || value === "parameters" || value === "assistant";
 }
 
+function revealPromptField(field: HTMLElement, scroller: HTMLElement) {
+  const viewport = scroller.getBoundingClientRect();
+  const rect = field.getBoundingClientRect();
+  const clipped = rect.top + Math.min(rect.height, 44, scroller.clientHeight) - viewport.bottom;
+  if (clipped > 0) scroller.scrollTop += clipped;
+}
+
 // Keep expensive editors mounted, with their own drafts, selection and scroll.
 const WorkspaceContent = memo(function WorkspaceContent({ pane, active, children }: { pane: WorkspacePane; active: boolean; children: ReactNode }) {
   return <div className={`mobile-studio-workspace-content mobile-studio-${pane === "prompt" ? "prompt" : "sheet"}-content is-${pane}`} data-workspace-pane={pane} hidden={!active} inert={!active} aria-hidden={!active}>{children}</div>;
@@ -121,6 +128,30 @@ export function MobileStudioLauncher({ promptSummary, model, operation, operatio
     if (!dialogOpen || !(document.activeElement instanceof HTMLElement) || !document.activeElement.closest("[hidden], [inert]")) return;
     activeSheetRef.current?.querySelector<HTMLButtonElement>('.mobile-studio-workspace-switch [aria-current="page"], .mobile-studio-sheet-header button')?.focus({ preventScroll: true });
   }, [activeSheet, dialogOpen, activeSheetRef]);
+
+  useLayoutEffect(() => {
+    const dialog = activeSheetRef.current;
+    const pane = dialog?.querySelector<HTMLElement>('[data-workspace-pane="prompt"]');
+    if (!promptOpen || !dialog || !pane) return;
+    let previousHeight = dialog.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const height = dialog.clientHeight;
+      const shrank = height < previousHeight;
+      previousHeight = height;
+      const field = document.activeElement;
+      if (!shrank || !pane.contains(field) ||
+        !(field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && field.type === "text"))) return;
+
+      // The keyboard can leave less room than the toolbar plus one line of text.
+      // Scroll only the workspace's own containers and keep the field focused.
+      const tagEditor = field.closest<HTMLElement>(".replica-shared-tag-editor");
+      if (tagEditor) revealPromptField(field, tagEditor);
+      revealPromptField(field, pane);
+      revealPromptField(field, dialog);
+    });
+    observer.observe(dialog);
+    return () => observer.disconnect();
+  }, [promptOpen, activeSheetRef]);
 
   function openWorkspace(next: WorkspacePane) {
     setWorkspace((previous) => ({ ...previous, pane: next,

@@ -1,34 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { outboundFetch } from "@/lib/outbound";
 import { SlidingWindowRateLimiter, trustedClientKey } from "@/lib/rate-limit";
-import { tagZh } from "@/lib/tag-translations";
-import { readCatalogTag, searchTagCatalog, tagCatalogStatus } from "@/lib/tag-catalog";
+import { autocompleteTagTranslation, canonicalTagForChineseAlias, matchBundledTagTranslations, tagZh } from "@/lib/tag-translations";
+import { readCatalogTag, searchTagCatalog, searchTagCatalogAutocomplete, tagCatalogStatus } from "@/lib/tag-catalog";
+import { isPromptCompletionQuery, normalizePromptCompletionQuery, promptCompletionHitRank, type PromptCompletion } from "@/lib/prompt-completion";
 
 type DanbooruTag = {
   name: string;
   category: number;
   post_count: number;
-};
-
-// 常见中文词的直译捷径，未命中时回退到 Danbooru 自身的模糊匹配。
-const chineseTerms: Record<string, string> = {
-  女孩: "girl",
-  男孩: "boy",
-  白发: "white_hair",
-  黑发: "black_hair",
-  长发: "long_hair",
-  短发: "short_hair",
-  红眼: "red_eyes",
-  蓝眼: "blue_eyes",
-  绿眼: "green_eyes",
-  微笑: "smile",
-  和服: "kimono",
-  校服: "school_uniform",
-  猫耳: "cat_ears",
-  风景: "scenery",
-  夜晚: "night",
-  雨: "rain",
-  花: "flower",
 };
 
 type AutocompleteItem = {
@@ -65,6 +45,7 @@ type TagHit = {
   // 中文翻译（Aaalice 词库勘误表，无翻译时省略）。
   zh?: string;
 };
+type AutocompleteTag = PromptCompletion & { deprecated?: boolean };
 
 function toHit(name: string, category: number, postCount: number): TagHit {
   const zh = tagZh(name);
@@ -121,6 +102,28 @@ async function matchByWords(keyword: string): Promise<TagHit[]> {
     );
 }
 
+function rankAutocompleteTags(hits: AutocompleteTag[], query: string) {
+  return hits.map((hit) => ({ hit, rank: promptCompletionHitRank(query, hit) }))
+    .sort((a, b) => a.rank - b.rank || Number(Boolean(a.hit.deprecated)) - Number(Boolean(b.hit.deprecated))
+      || (b.hit.postCount ?? 0) - (a.hit.postCount ?? 0) || a.hit.name.length - b.hit.name.length || a.hit.name.localeCompare(b.hit.name))
+    .slice(0, 10).map(({ hit }) => hit);
+}
+
+function localAutocompleteTags(query: string, chinese: boolean) {
+  const hits = new Map<string, AutocompleteTag>(searchTagCatalogAutocomplete(query).map((hit) => [hit.name, hit]));
+  if (chinese) {
+    for (const bundled of matchBundledTagTranslations(query)) {
+      const catalog = hits.get(bundled.name);
+      if (!catalog) {
+        hits.set(bundled.name, { ...bundled, displayName: bundled.name.replaceAll("_", " "), categoryName: "本地词表", local: true });
+      } else if (promptCompletionHitRank(query, bundled) < promptCompletionHitRank(query, catalog)) {
+        hits.set(bundled.name, { ...catalog, zh: bundled.zh });
+      }
+    }
+  }
+  return rankAutocompleteTags([...hits.values()], query);
+}
+
 export async function GET(request: NextRequest) {
   if (request.nextUrl.searchParams.get("status") === "1") return NextResponse.json(tagCatalogStatus(), { headers: { "Cache-Control": "no-store" } });
   const catalogKey = request.nextUrl.searchParams.get("key");
@@ -130,9 +133,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(item ? { item } : { message: "未找到标签" }, { status: item ? 200 : 404, headers: { "Cache-Control": "no-store" } });
   }
   const rawQuery = request.nextUrl.searchParams.get("q")?.trim() || "";
-  if (rawQuery.length < 2 || rawQuery.length > 80)
+  const autocomplete = request.nextUrl.searchParams.get("mode") === "autocomplete";
+  const normalized = autocomplete ? normalizePromptCompletionQuery(rawQuery).replaceAll(" ", "_")
+    : (canonicalTagForChineseAlias(rawQuery) || rawQuery).toLowerCase().replaceAll(" ", "_");
+  const chinese = /\p{Script=Han}/u.test(normalized);
+  if (rawQuery.length > 80 || (autocomplete ? !isPromptCompletionQuery(normalized) : rawQuery.length < 2))
     return NextResponse.json(
-      { message: "请输入 2–80 个字符的标签关键词" },
+      { message: autocomplete ? "请输入 1–80 个中文字符或 2–80 个其他字符" : "请输入 2–80 个字符的标签关键词" },
       { status: 400 },
     );
 
@@ -154,28 +161,32 @@ export async function GET(request: NextRequest) {
       },
     );
 
-  const normalized = (chineseTerms[rawQuery] || rawQuery)
-    .toLowerCase()
-    .replaceAll(" ", "_");
-  const catalog = searchTagCatalog(normalized, 10);
-  if (catalog?.length) return NextResponse.json({ query: rawQuery, normalizedQuery: normalized, tags: catalog, source: "catalog" }, { headers: { "Cache-Control": "no-store" } });
-  const cached = cache.get(normalized);
+  if (autocomplete) {
+    const tags = localAutocompleteTags(normalized, chinese);
+    if (tags.length || chinese) {
+      return NextResponse.json({ query: rawQuery, normalizedQuery: normalized, tags }, { headers: { "Cache-Control": "no-store" } });
+    }
+  } else {
+    const catalog = searchTagCatalog(normalized, 10);
+    if (catalog?.length) return NextResponse.json({ query: rawQuery, normalizedQuery: normalized, tags: catalog, source: "catalog" }, { headers: { "Cache-Control": "no-store" } });
+  }
+  const cacheKey = autocomplete ? `autocomplete:${normalized}` : normalized;
+  const cached = cache.get(cacheKey);
   if (cached && cached.expiresAt > now) return NextResponse.json(cached.data);
 
   try {
-    let tags = await matchByName(normalized);
-    // name_matches 只做整串通配，多词或部分词需要 autocomplete 的词级匹配。
-    if (!tags.length) tags = await matchByWords(normalized);
+    let tags = await (autocomplete ? matchByWords(normalized).catch(() => []) : matchByName(normalized));
+    if (!tags.length) tags = await (autocomplete ? matchByName(normalized) : matchByWords(normalized));
     const data = {
       query: rawQuery,
       normalizedQuery: normalized,
-      tags,
+      tags: autocomplete ? rankAutocompleteTags(tags.map((tag) => ({ ...tag, zh: autocompleteTagTranslation(tag.name) })), normalized) : tags,
     };
     for (const [key, entry] of cache) {
       if (entry.expiresAt <= now) cache.delete(key);
     }
     if (cache.size >= 1_000) cache.clear();
-    cache.set(normalized, { expiresAt: now + 5 * 60_000, data });
+    cache.set(cacheKey, { expiresAt: now + 5 * 60_000, data });
     return NextResponse.json(data);
   } catch {
     return NextResponse.json(

@@ -247,7 +247,9 @@
 .replica-regex-test {margin-top:20px;display:grid;gap:8px}
 .replica-regex-test>label {display:grid;gap:7px;font-weight:600}
 .replica-regex-test textarea,.replica-regex-test output {display:block;padding:10px;min-height:80px;width:100%;border:0;border-radius:7px;background:var(--rp-control);white-space:pre-wrap;overflow-wrap:anywhere}
-.replica-completion-panel {font-family:var(--font-sans);animation:replica-prompt-enter 140ms ease-out}
+.tag-suggest-panel.replica-completion-panel {position:fixed;right:auto;bottom:auto;z-index:1100;visibility:hidden;overscroll-behavior:contain;touch-action:pan-y;font-family:var(--font-sans);animation:replica-prompt-enter 140ms ease-out}
+.replica-completion-panel.is-compact {padding:4px}
+.replica-completion-panel.is-compact .tag-suggest-head {display:none}
 .replica-completion-panel .tag-suggest-item {width:100%}
 .replica-completion-panel .tag-suggest-name {min-width:0;overflow-wrap:anywhere}
 .replica-completion-panel .tag-suggest-zh {display:block;margin-top:2px;font-size:11px;font-weight:400;color:var(--muted);max-height:40px;overflow:hidden}

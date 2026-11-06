@@ -54,6 +54,7 @@ export async function POST(request: Request): Promise<Response> {
   const generation = nativeGeneration ?? externalGeneration(payload);
   if (!generation)
     return withExternalCors(Response.json({ message: "图像尺寸或张数参数无效" }, { status: 400 }));
+  const preserveWebp = payload.image_format === "webp";
 
   const nativeUpstream = await resolvedNaiImageUpstream();
   if (nativeUpstream) {
@@ -74,6 +75,7 @@ export async function POST(request: Request): Promise<Response> {
         body: rawBody,
         contentType,
         generation,
+        preserveWebp,
         samplingAudit: nativeSamplingAudit(body),
         prompt: typeof body.input === "string" ? body.input : undefined,
       },

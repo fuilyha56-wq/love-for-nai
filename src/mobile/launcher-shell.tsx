@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Aperture, Bell, BookOpen, BookText, Brush, ChartNoAxesColumn, ChevronLeft, ChevronRight, Coins, Folder, Images, KeyRound, LayoutDashboard, Megaphone, MoreHorizontal, Scan, Settings, ShieldCheck, Tags, UserRound, Users, X } from "lucide-react";
+import { Aperture, Bell, BookOpen, BookText, Brush, ChartNoAxesColumn, ChevronLeft, ChevronRight, Coins, Folder, Images, KeyRound, LayoutDashboard, Maximize2, Megaphone, MoreHorizontal, PanelsTopLeft, Scan, Settings, ShieldCheck, Tags, Trophy, UserRound, Users, X } from "lucide-react";
 import { useDialogFocus } from "./ui/use-dialog-focus";
 import { MobileBottomNav } from "./ui/mobile-bottom-nav";
 import "./launcher-shell.css";
@@ -31,17 +31,22 @@ export const launcherDestinations = [
   { href: "/announcements", label: "站点公告", icon: Megaphone },
   { href: "/settings#models", label: "模型与密钥", icon: KeyRound },
   { href: "/settings", label: "设置", icon: Settings },
+  { href: "/image?operation=upscale", label: "V5 超分", icon: Maximize2, description: "将源图放大至 2×" },
+  { href: "/image?operation=tiled-upscale", label: "分块超分", icon: PanelsTopLeft, description: "用图像编辑器分块放大" },
+  { href: "/comic", label: "漫画分镜", icon: BookOpen },
+  { href: "/gallery/activities", label: "活动榜单", icon: Trophy },
 ] as const;
 
 export function launcherPathActive(pathname: string, href: string) {
-  if (href.includes("#")) return false;
+  if (href.includes("#") || href.includes("?")) return false;
   if (href === "/image") return pathname === "/image";
   if (href === "/image/editor") return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 const destinationGroups = [
-  { title: "创作与工具", hrefs: ["/settings#prompts", "/image/editor", "/image/editor/history", "/stories", "/studio", "/verify"] },
+  { title: "图像工具", hrefs: ["/image?operation=upscale", "/image?operation=tiled-upscale", "/image/editor", "/image/editor/history", "/verify"] },
+  { title: "创作与素材", hrefs: ["/settings#prompts", "/comic", "/stories", "/studio", "/gallery/activities"] },
   { title: "账号与记录", hrefs: ["/profile", "/notifications", "/usage"] },
   { title: "模型与用量", hrefs: ["/settings#models", "/models", "/pricing"] },
   { title: "帮助与设置", hrefs: ["/docs", "/announcements", "/settings"] },
@@ -53,7 +58,9 @@ export function LauncherDestinationGroups({ admin = false, workspace = false, on
     <h2>{group.title}</h2><div>{group.hrefs.map(href => {
       const item = launcherDestinations.find(destination => destination.href === href)!;
       const Icon = item.icon;
-      return <Link key={href} href={href} prefetch={false} onClick={onNavigate} aria-current={launcherPathActive(pathname, href) ? "page" : undefined}><Icon size={20} aria-hidden="true" /><span>{item.label}</span></Link>;
+      return <Link key={href} href={href} prefetch={false} onClick={onNavigate} aria-current={launcherPathActive(pathname, href) ? "page" : undefined}>
+        <Icon size={20} aria-hidden="true" /><span>{item.label}{"description" in item && <small>{item.description}</small>}</span><ChevronRight size={16} className="launcher-destination-chevron" aria-hidden="true" />
+      </Link>;
     })}{group.title === "帮助与设置" && workspace && <Link href="/image/setting/layout" onClick={onNavigate}><LayoutDashboard size={20} /><span>工作台布局</span></Link>}{group.title === "账号与记录" && admin && <Link href="/admin" onClick={onNavigate}><ShieldCheck size={20} /><span>管理中心</span></Link>}</div>
   </section>)}</nav>;
 }
@@ -74,7 +81,7 @@ export function LauncherShell({ children }: { children: ReactNode }) {
     fetch("/api/admin", { signal: controller.signal }).then(response => response.ok ? response.json() : { admin: false }).then(result => { if (!controller.signal.aborted) setAdmin(result.admin === true); }).catch(() => undefined);
     return () => controller.abort();
   }, [pathname]);
-  const imageViewer = pathname.startsWith("/gallery/") || pathname.startsWith("/history/");
+  const imageViewer = (pathname.startsWith("/gallery/") && pathname !== "/gallery/activities") || pathname.startsWith("/history/");
   const immersive = imageViewer || pathname === "/image" || pathname === "/image/editor" || pathname === "/image/setting/layout";
   const changeRail = () => setExpanded(value => { try { localStorage.setItem("lfn-mobile-launcher-rail-expanded", value ? "0" : "1"); } catch { /* Keep the current session usable. */ } return !value; });
   return <div className="launcher-shell" data-rail-expanded={expanded} data-launcher-route={pathname} data-immersive={immersive} data-image-viewer={imageViewer}>

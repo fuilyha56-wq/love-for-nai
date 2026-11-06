@@ -110,6 +110,12 @@ Danbooru 或 Wikipedia 无法直连时设置 `LFN_OUTBOUND_PROXY`。只有在受
 
 必须将 `LFN_SESSION_SECRET` 替换为至少 32 字节的随机值。LFN 不保存用户密码，NewAPI 上游会话仅保存在 AES-GCM 加密的 `HttpOnly` Cookie 中。使用 HTTPS 域名后应将 `LFN_COOKIE_SECURE` 改为 `true`；纯 HTTP IP 预览保持为 `false`。
 
+### 图片 V2 来源签名
+
+LFN 使用 Ed25519 签署来源声明，并用 SHA-256 绑定原始图片字节。新密钥保存在服务端数据卷的 `watermark-v2-keys.json`，旧 `watermark-keys.json` 用于验证历史 RSA 签名。升级和备份时应保留这两个文件，多实例部署应使用同一套持久化签名密钥。
+
+Gateway 对接时先部署 LFN 的 V2 签名服务。将 Gateway 的 `LFN_WATERMARK_SIGNER_URL` 指向 LFN 私有入口的 `/api/internal/image-watermark`，为两端配置同一个独立随机令牌（例如 `openssl rand -hex 32`）。优先以只读文件挂载令牌并设置 `LFN_WATERMARK_SIGNER_TOKEN_FILE` 为容器内路径，也可通过服务端的 `LFN_WATERMARK_SIGNER_TOKEN` 注入。使用受信的内部网络或 HTTPS 连接。公开反代会拦截内部签名路径，公开校验使用 `/api/images/verify-watermark`。
+
 ## 验证
 
 ```bash

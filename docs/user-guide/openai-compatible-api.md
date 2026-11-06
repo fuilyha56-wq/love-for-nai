@@ -1,6 +1,6 @@
 # OpenAI 图像兼容 API 与 Python 示例
 
-鉴权统一使用 `Authorization: Bearer <NewAPI图像密钥>`。`https://lfn.example` 为占位根地址。这里实现图像接口，不表示 LfN 对外提供全部 OpenAI 聊天、Responses 或音频接口。
+鉴权统一使用 `Authorization: Bearer <NewAPI图像密钥>`。`https://lfn.example` 为占位根地址。这里实现图像接口，不表示 LFN 对外提供全部 OpenAI 聊天、Responses 或音频接口。
 
 ## 查询模型与第一次生成
 

@@ -21,9 +21,9 @@
 
 ## Launcher 连不上
 
-第三方 API 站点填根地址，API Token 填完整 NewAPI 图像 Key，不填 LfN 密码或系统访问令牌。先用 curl 请求 `/v1/models` 和 `/user/subscription` 验证，再测试一张小图。
+第三方 API 站点填根地址，API Token 填完整 NewAPI 图像 Key，不填 LFN 密码或系统访问令牌。先用 curl 请求 `/v1/models` 和 `/user/subscription` 验证，再测试一张小图。
 
-订阅摘要中的余额是 LfN AFF 兼容显示，不是官方 Anlas。其他 `/user` 账户路由拒绝访问是当前隔离边界，不要向第三方客户端提供上游管理员凭据。
+订阅摘要中的余额是 LFN AFF 兼容显示，不是官方 Anlas。其他 `/user` 账户路由拒绝访问是当前隔离边界，不要向第三方客户端提供上游管理员凭据。
 
 ## 流式有进度却没有图片
 

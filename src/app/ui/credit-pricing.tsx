@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Calculator, RefreshCw, X } from "lucide-react";
 import { useDialogFocus } from "@/mobile/ui/use-dialog-focus";
 import { usePanelHistory } from "./use-panel-history";
+import { V45LimitDailyPriceTable } from "./v45-limit-daily-price-table";
 import { dailyImageDay, roundAffAmount, type DailyImageBillingState } from "@/lib/daily-image-pricing";
 import { CNY_PER_AFF, DEFAULT_IMAGE_BASE_FEES, splitImageCreditCost, type ImagePricingGeneration } from "@/lib/image-pricing";
 import { formatAff, formatCny, quoteCredits, type CreditPricing } from "@/lib/credit-pricing";
@@ -28,14 +29,16 @@ export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; 
         {Object.entries(pricing.fixedCosts).map(([model, cost]) => <tr key={model}><th>{model} · 固定价优先</th><td colSpan={2}>{formatAff(cost)} AFF / 张</td><td>覆盖该模型的公式与每日阶梯</td></tr>)}
       </tbody></table>
     </div>
-    <p className="credit-price-note">单张、≤28 步、≤1024² 像素且无付费参考等条件全部满足时，使用小图档基础费；普通模型和 Limit 模型按相同参数判定。多张一次提交、超出范围或付费参考使用常规档基础费并额外计 Anlas；逐张提交按各张参数分别计算。Medium 的 Anlas 量按其模型规则计算。</p>
+    <p className="credit-price-note">单张、≤28 步、≤1024² 像素且无付费参考等条件全部满足时，使用小图档基础费。开启每日阶梯时，V4.5 Limit 小图使用下方独立阶梯。普通模型多张一次提交、超出范围或使用付费参考时，按常规档基础费和 Anlas 计费。逐张提交按各张参数分别计算。</p>
     {!policy.enabled && <p className="credit-price-warning">每日阶梯当前关闭：生图按基础费加 Anlas 费用计算。</p>}
+    <V45LimitDailyPriceTable policy={policy} state={state} scrollClassName="credit-price-table-scroll" />
     {(["v45", "v5"] as const).map(family => {
       const count = state?.day === dailyImageDay() ? state.counts[family] : 0;
       const tiers = policy[family];
       const rate = family === "v5" ? policy.v5AnlasCny : policy.v45AnlasCny;
-      return <div key={family} className="credit-price-table-scroll" tabIndex={0} role="region" aria-label={`${family === "v5" ? "V5" : "V4.5"} 每日阶梯表，可横向滚动`}>
-        <table><caption>{family === "v5" ? "V5" : "V4.5"} 每日阶梯{state ? ` · 今日 ${count} 张` : " · 从第 1 张计数"}</caption>
+      const label = family === "v5" ? "V5" : "V4.5 常规模型";
+      return <div key={family} className="credit-price-table-scroll" tabIndex={0} role="region" aria-label={`${label} 每日阶梯表，可横向滚动`}>
+        <table><caption>{label} 每日阶梯{state ? ` · 今日 ${count} 张` : " · 从第 1 张计数"}</caption>
           <thead><tr><th>当天第几张</th><th>每日附加费</th><th>Anlas 倍率</th><th>整体倍率</th><th>{family === "v5" ? "High 小图 / 张" : "小图 / 张"}</th>{family === "v5" && <th>Medium 小图 / 张</th>}<th>有效 Anlas 价</th></tr></thead>
           <tbody>{tiers.map((tier, index) => {
             const base = baseFee(family === "v5" ? "v5LimitBaseAff" : "v45LimitBaseAff");
@@ -52,7 +55,7 @@ export function CreditPriceTables({ pricing, state }: { pricing: CreditPricing; 
         </table>
       </div>;
     })}
-    <p className="credit-price-note">每张 AFF =（基础 AFF + 每日附加费 ÷ 0.005 + 计费 Anlas × 单价 × Anlas 倍率 ÷ 0.005）× 整体倍率。附加费为本档参考值减首档参考值，最低为 0；跨档批次按每张所属阶梯结算。独立操作不参与每日阶梯。</p>
+    <p className="credit-price-note">常规阶梯每张 AFF =（基础 AFF + 每日附加费 ÷ 0.005 + 计费 Anlas × 单价 × Anlas 倍率 ÷ 0.005）× 整体倍率。附加费为本档参考值减首档参考值，最低为 0。跨档批次按每张所属阶梯结算。独立操作使用各自的价格。</p>
   </div>;
 }
 

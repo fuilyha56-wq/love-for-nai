@@ -1,8 +1,8 @@
 import { dailyImagePolicy } from "@/lib/daily-image-billing";
 import { RiskAdmissionError, moderationFromUpstream, queuedRiskHeaders, riskAdmissionResponse } from "@/lib/light-risk";
 import { NextResponse } from "next/server";
-import { randomUUID } from "node:crypto";
-import { watermarkImageResponse } from "@/lib/image-response-watermark";
+import { imageWatermarkErrorResponse } from "@/lib/image-response-watermark";
+import { watermarkImages, WatermarkSigningError } from "@/lib/image-watermark";
 import {
   affStatus,
   refundImageCredits,
@@ -56,10 +56,7 @@ export async function POST(request: Request) {
   } catch (error) {
     return invalidJsonResponse(error);
   }
-  const response = await generateImage(request, session, body);
-  return (await watermarkImageResponse(response, session.userId, body.model || "unknown", {
-    requestId: response.headers.get("X-LFN-Request-Id") || randomUUID(),
-  })).response;
+  return generateImage(request, session, body);
 }
 
 async function generateImage(request: Request, session: NonNullable<Awaited<ReturnType<typeof getSession>>>, body: Record<string, unknown> & { model?: string; prompt?: string; negative_prompt?: string; negativePrompt?: string; width?: number; height?: number }) {
@@ -242,8 +239,8 @@ async function generateImage(request: Request, session: NonNullable<Awaited<Retu
         { status: upstream.status || 502 },
       );
     }
-    const images = imageFromResult(result);
-    if (!images.length) {
+    const generatedImages = imageFromResult(result);
+    if (!generatedImages.length) {
       await audit.finish({ status: 502, paymentSource, generatedSamples: 0, error: "上游未返回图片" });
       if (creditCharge) {
         affRefunded = true;
@@ -251,6 +248,9 @@ async function generateImage(request: Request, session: NonNullable<Awaited<Retu
       }
       return NextResponse.json({ message: "上游未返回图片" }, { status: 502 });
     }
+    const { images } = await watermarkImages(generatedImages, session.userId, model, {
+      required: true, requestId: audit.requestId, requestFingerprint: audit.requestFingerprint,
+    });
     const completedSamples = Math.min(samples, images.length);
     if (creditCharge && completedSamples < samples) {
       await refundImageCredits(session.userId, creditCharge, completedSamples, { settlementId, requestId: audit.requestId });
@@ -260,7 +260,7 @@ async function generateImage(request: Request, session: NonNullable<Awaited<Retu
       creditCharge = { ...creditCharge, ...current, cost: packageCost + personalCost, packageCost, personalCost };
     }
     if (settlementId && completedSamples === samples) await updateImageSettlement(settlementId, { generatedSamples: completedSamples, status: "succeeded" });
-    await audit.finish({ status: 200, paymentSource, generatedSamples: completedSamples, billing: { ...(creditCharge ? { lfnChargedAff: creditCharge.packageChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) + creditCharge.personalChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) } : {}), ...(Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : {}) } });
+    await audit.finish({ status: 200, paymentSource, generatedSamples: completedSamples, watermarkStatus: "embedded", billing: { ...(creditCharge ? { lfnChargedAff: creditCharge.packageChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) + creditCharge.personalChargesBySample.slice(0, completedSamples).reduce((n, v) => n + v, 0) } : {}), ...(Number.isFinite(anlas) && anlas >= 0 ? { gatewayAnlasCost: anlas } : {}) } });
     return NextResponse.json({
       image: images[0],
       images,
@@ -287,11 +287,16 @@ async function generateImage(request: Request, session: NonNullable<Awaited<Retu
             totalBalance: creditCharge.totalBalance,
           }
         : null,
-    }, { headers: audit.responseHeaders() });
+    }, { headers: audit.responseHeaders({ "X-LFN-Watermark": "embedded" }) });
   } catch (error) {
     const admission = riskAdmissionResponse(error);
     if (admission) { await audit.finish({ status: admission.status }); return new Response(admission.body, { status: admission.status, headers: audit.responseHeaders(admission.headers) }); }
     const queueAborted = error instanceof ModelConcurrencyQueueAbortError;
+    if (error instanceof WatermarkSigningError) {
+      if (!affRefunded && creditCharge) await refundImageCredits(session.userId, creditCharge, 0, { settlementId, requestId: audit.requestId });
+      await audit.finish({ status: 502, paymentSource, generatedSamples: 0, watermarkStatus: "failed", error: "图片来源签名失败" });
+      return imageWatermarkErrorResponse(audit.responseHeaders());
+    }
     await audit.finish({ status: queueAborted ? 503 : 502, error: error instanceof Error ? error.message : "图像请求失败" });
     if (!affRefunded && creditCharge && (!upstreamAttempted || queueAborted)) {
       affRefunded = true;

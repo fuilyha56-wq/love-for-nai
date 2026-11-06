@@ -20,6 +20,8 @@
 # production
 /build
 /data
+watermark-keys.json
+watermark-v2-keys.json
 
 # misc
 .DS_Store

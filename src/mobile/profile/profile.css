@@ -13,6 +13,12 @@
 .profile-account-link { display: flex; min-height: 36px; align-items: center; gap: 7px; margin-top: 18px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 650; text-decoration: none; }
 .profile-account-link:hover { border-color: var(--rose); color: var(--rose); }
 .profile-account-link:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }
+.profile-section-shortcuts { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px; margin-top:16px; padding:4px; border-radius:8px; background:var(--surface); }
+.profile-section-shortcuts a { display:flex; min-width:0; min-height:44px; align-items:center; gap:7px; padding:6px 8px; border-radius:6px; background:var(--panel); font-size:12px; font-weight:600; line-height:1.4; }
+.profile-section-shortcuts svg { flex-shrink:0; color:var(--accent-text); }
+.profile-section-shortcuts span { min-width:0; overflow-wrap:anywhere; }
+.profile-section-shortcuts a:hover { color:var(--accent-text); background:var(--surface-muted); }
+.profile-content #account-security { scroll-margin-top:70px; }
 .profile-logout-button { display: flex; width: 100%; min-height: 38px; align-items: center; gap: 8px; margin-top: 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); padding: 8px 10px; color: var(--muted); font-size: 12px; font-weight: 650; text-align: left; cursor: pointer; }
 .profile-logout-button:hover:not(:disabled) { border-color: var(--rose); background: color-mix(in srgb, var(--rose) 7%, var(--panel)); color: var(--rose); }
 .profile-logout-button:focus-visible { outline: 2px solid var(--rose); outline-offset: 2px; }

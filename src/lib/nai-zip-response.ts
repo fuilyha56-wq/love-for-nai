@@ -1,13 +1,30 @@
 import JSZip from "jszip";
 import sharp from "sharp";
+import { detectWatermarkImageMime } from "./image-watermark-container";
 
 const imageName = /\.(png|webp|jpe?g)$/i;
-const isWebp = (bytes: Uint8Array) => bytes.length >= 12 && Buffer.from(bytes.subarray(0, 4)).toString("ascii") === "RIFF" && Buffer.from(bytes.subarray(8, 12)).toString("ascii") === "WEBP";
-const isPng = (bytes: Uint8Array) => Buffer.from(bytes.subarray(0, 8)).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-const isJpeg = (bytes: Uint8Array) => bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+const dataImage = /^data:image\/[\w.+-]+;base64,/i;
+
+export async function readNaiJsonImages(payload: unknown): Promise<Buffer[]> {
+  if (!payload || typeof payload !== "object") return [];
+  const root = payload as Record<string, unknown>;
+  const rows = Array.isArray(payload) ? payload : Array.isArray(root.data) ? root.data : Array.isArray(root.images) ? root.images : [root.data || root];
+  const images: Buffer[] = [];
+  for (const row of rows) {
+    const fields = row && typeof row === "object" ? row as Record<string, unknown> : {};
+    let value = typeof row === "string" ? row : fields.b64_json || fields.image || fields.url;
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (/^https?:\/\//i.test(value)) value = await (await import("./provider/http")).downloadProviderImage(value);
+    if (typeof value !== "string") continue;
+    const bytes = Buffer.from(value.replace(dataImage, ""), "base64");
+    if (!detectWatermarkImageMime(bytes)) throw new Error("invalid image");
+    images.push(bytes);
+  }
+  return images;
+}
 
 /** Launcher ZIP readers accept PNG/JPEG, but omit WebP entries entirely. */
-export async function compatibleNaiZipResponse(source: Response): Promise<Response> {
+export async function compatibleNaiZipResponse(source: Response, preserveWebp = false): Promise<Response> {
   const headers = new Headers(source.headers);
   for (const key of ["content-length", "content-encoding", "content-range", "content-md5", "digest", "etag"])
     headers.delete(key);
@@ -19,15 +36,15 @@ export async function compatibleNaiZipResponse(source: Response): Promise<Respon
     let changed = false;
     let original: ArrayBuffer | undefined;
     const png = async (bytes: Uint8Array) => sharp(bytes, { limitInputPixels: 32 * 1024 * 1024 }).keepMetadata().png().toBuffer();
+    const append = async (bytes: Uint8Array) => {
+      const mime = detectWatermarkImageMime(bytes);
+      if (!mime) throw new Error("invalid image");
+      const ext = mime === "image/jpeg" ? "jpg" : mime === "image/webp" && preserveWebp ? "webp" : "png";
+      archive.file(`image_${count++}.${ext}`, mime === "image/webp" && !preserveWebp ? await png(bytes) : bytes);
+    };
     if (type.includes("json")) {
-      const result = await source.json() as { data?: Array<{ b64_json?: unknown }>; usage?: unknown };
-      const images = Array.isArray(result?.data) ? result.data : [];
-      for (const item of images) {
-        if (typeof item?.b64_json !== "string" || !item.b64_json.trim()) continue;
-        const bytes = Buffer.from(item.b64_json.replace(/^data:image\/[^;]+;base64,/, ""), "base64");
-        if (!bytes.length) throw new Error("empty image");
-        archive.file(`image_${count++}.${isJpeg(bytes) ? "jpg" : "png"}`, isWebp(bytes) ? await png(bytes) : bytes);
-      }
+      const result = await source.json() as { usage?: unknown };
+      for (const bytes of await readNaiJsonImages(result)) await append(bytes);
       headers.set("X-LFN-Usage", encodeURIComponent(JSON.stringify(result?.usage ?? null)));
       changed = true;
     } else {
@@ -37,7 +54,7 @@ export async function compatibleNaiZipResponse(source: Response): Promise<Respon
         zip = await JSZip.loadAsync(original);
         const entries = Object.values(zip.files).filter(entry => !entry.dir && imageName.test(entry.name));
         for (const entry of entries) {
-          if (/\.webp$/i.test(entry.name)) {
+          if (!preserveWebp && /\.webp$/i.test(entry.name)) {
             const output = await png(await entry.async("uint8array"));
             let name = entry.name.replace(/\.webp$/i, ".png");
             while (zip.file(name)) name = `converted_${name}`;
@@ -47,9 +64,8 @@ export async function compatibleNaiZipResponse(source: Response): Promise<Respon
           }
           count++;
         }
-      } else if (isPng(bytes) || isJpeg(bytes) || isWebp(bytes)) {
-        archive.file(`image_0.${isJpeg(bytes) ? "jpg" : "png"}`, isWebp(bytes) ? await png(bytes) : bytes);
-        count = 1;
+      } else if (detectWatermarkImageMime(bytes)) {
+        await append(bytes);
         changed = true;
       }
     }

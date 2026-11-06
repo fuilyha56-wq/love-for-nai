@@ -16,7 +16,7 @@ import { ReplicaFixedTagsDialog, ReplicaPromptModal } from "./replica-fixed-tags
 import { PromptAutocompleteTextarea } from './prompt-autocomplete';
 import { TagChipEditor } from './tag-chip-editor';
 import { InlineChatMenu, InlineChatZone, type InlineChatSession } from './inline-chat';
-import { tagZh } from '@/lib/tag-translations';
+import { autocompleteTagTranslation, tagZh } from '@/lib/tag-translations';
 import "./replica-prompt-editor.css";
 import { resolveImageModelCapabilities, type ImageProviderProtocol } from "@/lib/image-model-capabilities";
 import { composeModelPrompt, transformModelPromptOnBlur } from "@/lib/model-prompt";
@@ -395,7 +395,7 @@ export function ReplicaPromptEditor({ variant, prompt, negative, onPromptChange,
     const change = editorTarget === "positive" ? onPromptChange : onNegativeChange;
     const editorKey = JSON.stringify([editorTarget, model, imageProtocol || "auto", operation || "generate", assistantModel, assistantProviderId, assistantGroup]);
     return !natural && tagModes[editorTarget]
-      ? <div key={editorKey} style={{ height: editorHeight }} className='replica-shared-tag-editor'><TagChipEditor value={value} onChange={change} zhOf={(tag) => tagZh(tag.replaceAll(' ', '_'))}
+      ? <div key={editorKey} style={{ height: editorHeight }} className='replica-shared-tag-editor'><TagChipEditor value={value} onChange={change} zhOf={autocompleteTagTranslation}
         autocomplete={config.settings.autocomplete} library={config.library} cooccurrence={config.settings.cooccurrence} relatedSamples={relatedSamples}
         resolveCopy={config.settings.resolveAliasesOnCopy ? (text) => resolvePromptAliases(text, config.library) : undefined} /></div>
       : <PromptTextInput key={editorKey} variant={variant} target={editorTarget} value={value} onChange={change} config={config} onAssistant={onAssistant} assistantModel={assistantModel} assistantProviderId={assistantProviderId} assistantGroup={assistantGroup} imageModel={model} imageProtocol={imageProtocol} operation={operation} natural={natural} onError={setNotice} height={editorHeight} relatedSamples={relatedSamples} />;
