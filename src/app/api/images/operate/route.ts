@@ -19,6 +19,7 @@ import {
   resolvedNaiImageUpstream,
   resolvedNewApiBaseUrl,
 } from "@/lib/newapi";
+import { ensureManagedFallbackToken } from "@/lib/newapi-db";
 import { resolvedAuthProviderId } from "@/lib/platform";
 import { reserveHistoryImageIds, saveHistory } from "@/lib/history";
 import { watermarkImageResponse } from "@/lib/image-response-watermark";
@@ -528,7 +529,10 @@ async function operateImage(request: Request, session: NonNullable<Awaited<Retur
         token = platformUpstream.token;
         baseUrlOverride = platformUpstream.baseUrl;
       } else {
-        token = await getImageToken(session, model);
+        const managedKey = await ensureManagedFallbackToken(session.userId, model).catch(() => null);
+        token = managedKey
+          ? (managedKey.startsWith("sk-") ? managedKey : `sk-${managedKey}`)
+          : await getImageToken(session, model);
       }
     } else if ((await resolvedAuthProviderId()) === "local") {
       const fallback = await resolvedImageUpstream();
